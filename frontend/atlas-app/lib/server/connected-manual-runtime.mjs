@@ -73,6 +73,14 @@ export async function validateLearningRuntimeConfiguration({memoryEnabled,learni
   }
 }
 
+export async function validateMarketRuntimeConfiguration({marketAutomaticEnabled,client}) {
+  if(!marketAutomaticEnabled)return;
+  const [installed]=await client.$queryRawUnsafe("SELECT to_regclass('atlas_manual_connected.market_job') IS NOT NULL AS installed");
+  requireThat(installed?.installed===true,503,'MARKET_QUEUE_SCHEMA_REQUIRED');
+  const [grants]=await client.$queryRawUnsafe("SELECT has_table_privilege(current_user,'atlas_manual_connected.market_job','SELECT') AND has_table_privilege(current_user,'atlas_manual_connected.market_job','INSERT') AND (SELECT bool_and(has_column_privilege(current_user,'atlas_manual_connected.market_job',c,'UPDATE')) FROM unnest(ARRAY['state','attempts','recoveries','claim_id','lease_until','dispatch_id','public_hash','response','response_hash','code','available_at','updated_at','audit']) c) AS allowed");
+  requireThat(grants?.allowed===true,503,'MARKET_QUEUE_GRANTS_REQUIRED');
+}
+
 /** Private CPU service behind the approved Vercel staff application.
  * The signed transport forwards the ordinary staff cookie; auth rechecks the
  * independently restricted manual DB role on every short transaction. */
@@ -120,7 +128,10 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const stationConfig=manualStationSettings(env,staffConfig.origin);
   const researchConfig=manualResearchSettings(env),dealerConfiguration=manualDealerConfigurationLoader(env);
   const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
-  const connected=createConnectedManual({displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
+  const marketAutomaticEnabled=env.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED==='true';
+  const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
+  requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
+  const connected=createConnectedManual({marketAutomaticEnabled,marketConcurrency,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
     processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
@@ -130,8 +141,11 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
   const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers,reviewDisplay:connected.reviewDisplay});
-  const validateConfiguration=()=>validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
-  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.reportImages?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();}};
+  const validateConfiguration=async()=>{
+    await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
+    await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient});
+  };
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();}};
 }
 
 export function manualReportImageSettings(env) {

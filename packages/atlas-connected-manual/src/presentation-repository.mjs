@@ -121,11 +121,18 @@ export function createPresentationRepository({ boundary, keyPrefix, maxOriginalB
     async market(staff, cardId, requestId) {
       uuid(requestId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
-        const state = await scope(tx, principal, cardId, null, true);
+        const state = await scope(tx, principal, cardId);
         const [row] = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid', cardId, requestId);
-        requireThat(row && row.actor_id === principal.id, 404, 'PRESENTATION_MARKET_NOT_FOUND');
+        requireThat(row, 404, 'PRESENTATION_MARKET_NOT_FOUND');
         requireThat(row.approval_action_id === state.publication.action_id, 409, 'PRESENTATION_APPROVAL_STALE');
         return { ...row, input: stored(row.request, row.request_hash), saved: row.result ? stored(row.result, row.result_hash) : null };
+      });
+    },
+    latestMarket(staff, cardId) {
+      return boundary.transaction(staff, async ({ tx, principal }) => {
+        const state = await scope(tx, principal, cardId);
+        const [row] = await tx.$queryRawUnsafe('SELECT request_id FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY created_at DESC,request_id DESC LIMIT 1', cardId, state.publication.action_id);
+        return row?.request_id ?? null;
       });
     },
     async finishMarket(staff, cardId, requestId, result) {

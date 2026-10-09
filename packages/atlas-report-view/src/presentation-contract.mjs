@@ -28,10 +28,17 @@ const dealerUrl = z.string().max(300).refine(value => {
   } catch { return false; }
 });
 const sale = z.strictObject({ id: text, title: z.string().trim().min(1).max(500), listingUrl,
-  grader: z.string().trim().min(1).max(40), grade: z.string().trim().min(1).max(40), soldAt: date.nullable(),
+  grader: z.string().trim().min(1).max(40).nullable(), grade: z.string().trim().min(1).max(40).nullable(), soldAt: date.nullable(),
+  raw: z.boolean().optional(), rawCondition: text.nullable().optional(),
+  designation: z.enum(['STANDARD', 'BLACK_LABEL', 'PRISTINE', 'PERFECT']).nullable().optional(),
+  language: text.nullable().optional(), printing: text.nullable().optional(), variant: text.nullable().optional(),
+  identityStatus: z.enum(['MATCH', 'UNKNOWN']).optional(),
   priceMinor: money.nullable(), currency, priceBasis: z.enum(['sold', 'accepted_offer_unknown'])
 }).superRefine((value, ctx) => {
   if ((value.priceBasis === 'sold') !== (value.priceMinor !== null)) ctx.addIssue({ code: 'custom', message: 'Only a disclosed sold amount can be a price' });
+  if (value.raw === true ? value.grader !== null || value.grade !== null || value.designation != null : value.grader === null || value.grade === null) {
+    ctx.addIssue({ code: 'custom', message: 'Raw cards and graded cards must retain distinct condition evidence' });
+  }
 });
 export const reportPresentationSchema = z.strictObject({ version: z.literal('atlas-report-presentation-v1'),
   binding: bindingSchema, revision: z.number().int().positive().max(2147483647), updatedAt: date,

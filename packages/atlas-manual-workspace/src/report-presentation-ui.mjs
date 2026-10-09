@@ -1,3 +1,4 @@
+export { groupSoldReferences, saleAmountLabel } from './sold-reference-ui.mjs';
 // Display helpers only. Identity, sale evidence and offers come from the server;
 // none of these functions calculates a grade or creates a market valuation.
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -42,7 +43,7 @@ export function photoTilt(event, rect) {
 
 export function saleReferenceRows(sales) {
   return Array.isArray(sales) ? sales.filter(sale => sale && nonempty(sale.id) && nonempty(sale.title)
-    && nonempty(sale.grader) && nonempty(sale.grade) && safePresentationLink(sale.listingUrl)
+    && (sale.raw === true || nonempty(sale.grader) && nonempty(sale.grade)) && safePresentationLink(sale.listingUrl)
     && (sale.soldAt === null || Number.isFinite(Date.parse(sale.soldAt))) && /^[A-Z]{3}$/.test(sale.currency ?? '')
     && (sale.priceBasis === 'accepted_offer_unknown' || sale.priceBasis === 'sold' && Number.isSafeInteger(sale.priceMinor) && sale.priceMinor >= 0))
     .slice().sort((a, b) => (Date.parse(b.soldAt) || 0) - (Date.parse(a.soldAt) || 0)) : [];

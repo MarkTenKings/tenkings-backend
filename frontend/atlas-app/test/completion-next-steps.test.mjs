@@ -21,10 +21,10 @@ const render = props => exports.default({ published: true, reportHref: 'https://
 
 test('approved next steps expose label, NFC setup, explicit comps and report without starting work', () => {
   let opened = 0;
-  const tree = render({ labelState: 'READY', marketAvailable: true, onToggleLabel: () => opened++, onToggleMarket: () => opened++ });
+  const tree = render({ labelState: 'READY', marketAvailable: true, marketAutomatic: true, onToggleLabel: () => opened++, onToggleMarket: () => opened++ });
   assert.equal(opened, 0);
   assert.match(text(tree), /Print the label/); assert.match(text(tree), /enrolled Mac station and a qualified tag profile/);
-  assert.match(text(tree), /Search on request/); assert.doesNotMatch(text(tree), /NFC verified|Printed|Searching/);
+  assert.match(text(tree), /Automatic after approval/); assert.doesNotMatch(text(tree), /NFC verified|Printed|Searching/);
   const buttons = all(tree, node => node.type === 'button');
   assert.deepEqual(buttons.map(text), ['Open label & print', 'Review sold comps']);
   buttons[1].props.onClick(); assert.equal(opened, 1);
@@ -55,4 +55,10 @@ test('open tools have explicit collapse controls and a missing report URL is not
   assert.deepEqual(all(tree, node => node.type === 'button').map(text), ['Hide label', 'Hide sold comps']);
   assert.ok(all(tree, node => node.type === 'button').every(node => node.props['aria-expanded']));
   assert.match(text(tree), /Report link unavailable/); assert.equal(all(tree, node => node.type === 'a').length, 1);
+});
+
+
+test('provider access alone does not claim approval-triggered searches are enabled', () => {
+  const tree = render({ marketAvailable: true, marketAutomatic: false, onToggleMarket() {} });
+  assert.match(text(tree), /Search on request/); assert.doesNotMatch(text(tree), /Automatic after approval|fetched and saved automatically/);
 });

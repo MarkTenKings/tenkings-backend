@@ -104,7 +104,7 @@ export default function IdentityCorrection({ card, csrf, disabled = false, onCor
             <label>Card category<select value={profile} onChange={event => { edited.current = true; setProfile(event.target.value); setConfirmed(false); setResult(null); }}>
                 <option value="SPORTS">Sports</option><option value="POKEMON">Pokémon</option></select></label>
             <div className={styles.fields}>{identityFields[profile].map(([key, label, required]) => <label key={key}>{label}{required ? ' *' : ''}
-                <input type="text" required={Boolean(required)} maxLength={key === 'year' ? 24 : 120} value={values[key] ?? ''} onChange={event => edit(key, event.target.value)}/></label>)}
+                <input type="text" required={Boolean(required)} maxLength={key === 'year' ? 24 : 120} value={values[key] ?? ''} onChange={event => edit(key, event.target.value)}/>{key === 'parallel' && <small>Record observed language, edition, finish or stamp; for sports include color, serial numbering or autograph. Leave unknown details unconfirmed.</small>}</label>)}
                 {profile === 'POKEMON' && <label>Pokémon layout<select value={values.layoutType ?? ''} onChange={event => edit('layoutType', event.target.value)}>
                     <option value="">Unspecified in existing record</option><option value="POKEMON">Pokémon</option><option value="TRAINER">Trainer</option><option value="ENERGY">Energy</option></select></label>}</div>
             <label>Reason for this correction<textarea required rows={3} maxLength={1000} value={reason} onChange={event => { setReason(event.target.value); setConfirmed(false); }}/></label>

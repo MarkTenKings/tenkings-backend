@@ -351,8 +351,9 @@ function ReportExperience({ report, explanation, available, images, approved = f
   </section>;
 }
 
-export function CompletedReviewCard({descriptor, expectedHash, name, grade, reportNumber, brandSrc}) {
+export function CompletedReviewCard({descriptor, expectedHash, name, grade, reportNumber, brandSrc, compact = false}) {
   const verified = useVerifiedImage(descriptor?.sha256 === expectedHash ? descriptor : null);
+  if (compact) return <figure aria-label="Approved card photograph">{verified.url ? <img src={verified.url} alt={`${name} · approved front photograph`}/> : <span role="status">{verified.error ? 'Photo unavailable' : 'Loading saved card…'}</span>}</figure>;
   return <figure className="mc-complete-card" aria-label="Approved card and ATLAS label">
     <figcaption className="mc-complete-card-label"><img src={brandSrc} alt="ATLAS Grading"/><span><b>{name}</b><small>{reportNumber}</small></span><strong>{Number.isFinite(grade) ? grade : '—'}</strong></figcaption>
     <div className="mc-complete-card-photo">{verified.url ? <img src={verified.url} alt={`${name} · approved front photograph`}/> : <span role="status">{verified.error ? 'Photo unavailable · approval saved' : 'Loading saved card…'}</span>}</div>

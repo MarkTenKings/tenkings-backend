@@ -10,7 +10,7 @@ export function createReportResearchClient(options) {
   const {storage,request,cardId,staffId,approvalActionId,cryptoImpl=globalThis.crypto}=options;
   const key=`atlas-research-observation:${staffId}:${cardId}`;
   const scoped=key=>key.replace(/^atlas-report-market:/,'atlas-report-research:');
-  const base=createReportMarketClient({...options,storage:{getItem:key=>storage.getItem(scoped(key)),setItem:(key,value)=>storage.setItem(scoped(key),value),removeItem:key=>storage.removeItem(scoped(key))},
+  const base=createReportMarketClient({...options,autoDiscovery:false,storage:{getItem:key=>storage.getItem(scoped(key)),setItem:(key,value)=>storage.setItem(scoped(key),value),removeItem:key=>storage.removeItem(scoped(key))},
     request:(path,input)=>request(path.replace(/\/market\/search$/,'/research/search'),input)});
   let running=false;
   function pendingObservation(){

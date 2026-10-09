@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { projectSelectedSoldReferences } from '../src/sold-reference-projection.mjs';
 const require = createRequire(new URL('../../atlas-manual-workspace/package.json', import.meta.url));
-const source = await readFile(new URL('../../ebay-sold-comps-v2/src/index.ts', import.meta.url), 'utf8');
-const { code } = await require('esbuild').transform(source, { loader: 'ts', format: 'esm', target: 'es2022' });
+const built = await require('esbuild').build({ entryPoints: [fileURLToPath(new URL('../../ebay-sold-comps-v2/src/index.ts', import.meta.url))], bundle: true, write: false, format: 'esm', platform: 'node', target: 'es2022' });
+const code = built.outputFiles[0].text;
 const engine = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 const input = { category: 'POKEMON', cardName: 'Charmander', year: '2023', productSet: 'Scarlet Violet 151', cardNumber: '004' };
 function candidate(overrides = {}) {
@@ -31,4 +31,14 @@ test('empty selections stay absent and stale or duplicated selections fail inste
   const value = candidate(), source = result([value]); assert.equal(projectSelectedSoldReferences(source, []), null);
   for (const ids of [['missing'], [value.id, value.id]]) assert.throws(() => projectSelectedSoldReferences(source, ids));
   assert.throws(() => projectSelectedSoldReferences({ ...source, engineVersion: 'unknown' }, [value.id]));
+});
+test('grade metadata cannot contradict the grader and absent identity checks never establish a match', () => {
+  const value = candidate();
+  for (const gradeEvidence of [{ status: 'RAW', designation: null }, { status: 'GRADED', designation: 'BLACK_LABEL' },
+    { status: 'GRADED', designation: 'PERFECT' }, { status: 'anything', designation: null }]) {
+    assert.throws(() => projectSelectedSoldReferences(result([{ ...value, gradeEvidence }]), [value.id]));
+  }
+  const variantEvidence = { status: 'MATCH', observed: { language: ['english'], finish: ['reverse holo'], parallelSignals: ['reverse holo'] } };
+  const sale = projectSelectedSoldReferences(result([{ ...value, variantEvidence }]), [value.id]).sales[0];
+  assert.equal(sale.identityStatus, 'UNKNOWN'); assert.equal(sale.variant, 'reverse holo');
 });

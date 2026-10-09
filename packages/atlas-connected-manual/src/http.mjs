@@ -15,7 +15,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const publicationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/publication$`);
   const finishingRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/finishing/(${id})$`);
   const presentationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation(?:/(uploads|remove)(?:/(${id})/(sign|complete))?)?$`);
-  const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market/(search|select)$`);
+  const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market(?:/(search|select))?$`);
   const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search|contribute)$`);
   const dealerRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/dealer-offers$`);
   const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image|thumbnail|display-retry)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
@@ -95,12 +95,14 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       }
       const marketFound=marketRoute.exec(url.pathname);
       if(marketFound){
-        requireThat(!url.search && req.method==='POST',405,'METHOD_NOT_ALLOWED');
-        requireThat(connected.market?.enabled,503,'MARKET_DISABLED');
-        requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+        const write=Boolean(marketFound[2]);
+        requireThat(!url.search && req.method===(write?'POST':'GET'),405,'METHOD_NOT_ALLOWED');
+        requireThat(connected.market,503,'MARKET_DISABLED');
+        if(write)requireThat(connected.market.enabled,503,'MARKET_DISABLED');
+        if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
           && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
-        const staff=await boundary.authenticate(req.headers.cookie??'',req.headers['x-atlas-csrf']);
-        const result=marketFound[2]==='search'?await connected.market.preview(staff,marketFound[1],req.body):await connected.market.select(staff,marketFound[1],req.body);
+        const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
+        const result=!write?await connected.market.status(staff,marketFound[1]):marketFound[2]==='search'?await connected.market.preview(staff,marketFound[1],req.body):await connected.market.select(staff,marketFound[1],req.body);
         res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
       }
       const presentationFound=presentationRoute.exec(url.pathname);
@@ -112,7 +114,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
           && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
         const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
         if(step)object(req.body,[]);
-        const result=!action?await connected.presentation.status(staff,cardId)
+        const result=!action?{...await connected.presentation.status(staff,cardId),...(connected.market?.status?{marketSearch:await connected.market.status(staff,cardId)}:{})}
           :action==='remove'?await connected.presentation.remove(staff,cardId,req.body)
           :!step?await connected.presentation.plan(staff,cardId,req.body)
           :step==='sign'?await connected.presentation.sign(staff,cardId,uploadId):await connected.presentation.complete(staff,cardId,uploadId);

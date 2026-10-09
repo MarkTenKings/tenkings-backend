@@ -1,4 +1,10 @@
+import { matchEbaySoldCompsV2VariantEvidence, readEbaySoldCompsV2GradeEvidence } from "./identity-evidence";
+import type { EbaySoldCompsV2VariantIdentity, EbaySoldCompsV2VariantEvidence, EbaySoldCompsV2GradeEvidence } from "./identity-evidence";
+export { readEbaySoldCompsV2GradeEvidence } from "./identity-evidence";
+export type { EbaySoldCompsV2VariantIdentity, EbaySoldCompsV2VariantEvidence, EbaySoldCompsV2GradeEvidence } from "./identity-evidence";
+
 export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.3.0";
+export const EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY = "ATLAS_IDENTITY_V1" as const;
 export const EBAY_SOLD_COMPS_V2_SOURCE = "EBAY_SOLD" as const;
 export const EBAY_SOLD_COMPS_V2_REQUEST_COUNT = 240;
 export const EBAY_SOLD_COMPS_V2_RESULT_LIMIT = 60;
@@ -20,6 +26,9 @@ export type EbaySoldCompsV2SearchInput = {
   cardNumber?: string | null;
   targetGrade?: number | null;
   queryOverride?: string | null;
+  /** Opt-in title evidence; keeps legacy snapshots and Ten Kings grouping intact. */
+  matchingPolicy?: typeof EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY;
+  variantIdentity?: EbaySoldCompsV2VariantIdentity;
 };
 
 export type EbaySoldCompV2Candidate = {
@@ -40,6 +49,8 @@ export type EbaySoldCompV2Candidate = {
   parallelMatch: EbaySoldCompsV2ParallelMatch;
   matchScore: number;
   matchReason: string;
+  variantEvidence?: EbaySoldCompsV2VariantEvidence;
+  gradeEvidence?: EbaySoldCompsV2GradeEvidence;
 };
 
 export type EbaySoldCompsV2SearchResult = {
@@ -208,6 +219,17 @@ function invalidInput(message: string): never {
 
 function validatedSearchInput(input: EbaySoldCompsV2SearchInput) {
   if (input.category !== "SPORTS" && input.category !== "POKEMON") invalidInput("Category must be SPORTS or POKEMON.");
+  if (input.matchingPolicy !== undefined && input.matchingPolicy !== EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY) invalidInput("Unsupported matching policy.");
+  if (input.variantIdentity !== undefined) {
+    if (input.matchingPolicy !== EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY || !isRecord(input.variantIdentity)) invalidInput("Variant identity requires the ATLAS matching policy.");
+    for (const [key, value] of Object.entries(input.variantIdentity)) {
+      if (!["language", "edition", "finish", "promo", "stamp", "serialDenominator", "autograph", "memorabilia"].includes(key)) invalidInput("Unsupported variant identity field.");
+      if (value == null) continue;
+      if (["promo", "autograph", "memorabilia"].includes(key)) { if (typeof value !== "boolean") invalidInput("Variant flags must be boolean or unknown."); }
+      else if (key === "serialDenominator") { if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 999999) invalidInput("Serial denominator must be a positive integer."); }
+      else if (typeof value !== "string" || !cleanText(value) || value.length > 160) invalidInput("Variant labels must be between 1 and 160 characters.");
+    }
+  }
   const queryOverride = cleanText(input.queryOverride);
   const identityName = cleanText(input.category === "SPORTS" ? input.playerName : input.cardName);
   const year = cleanText(input.year);
@@ -263,6 +285,7 @@ export function buildEbaySoldCompsV2Query(input: EbaySoldCompsV2SearchInput): st
 
 const variantSignals = (value: unknown): string[] => {
   const normalized = normalizeEbaySoldCompsV2Text(value)
+    .replace(/\b(?:non\s?holo(?:graphic|foil)?|non\s?foil|no holo|not holo)\b/g, "")
     .replace(/\b(?:bgs\s+(?:pristine\s+)?10\s+)?black label\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -294,7 +317,7 @@ function parallelMatch(input: EbaySoldCompsV2SearchInput, title: string): EbaySo
     .replace(/\b(?:psa|bgs|sgc|cgc)\s*(?:(?:gem|mint|pristine|nm|mt)\s*)*(?:10|[1-9])(?:\s+(?:0|5))?\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const actualSignals = variantSignals(evidence);
+  const actualSignals = variantSignals(input.category === "POKEMON" ? evidence.replace(/\bblack\s+(?:and\s+)?white\b/g, " ") : evidence);
   if (expectedIsBase) return actualSignals.length ? "CONTRADICTORY" : "MATCH";
   if (phraseMatches(expected, evidence, 1)) return "MATCH";
   if (!actualSignals.length) return "UNKNOWN";
@@ -547,9 +570,12 @@ export function parseEbaySoldCompsV2Candidate(
   const productId = directProductId;
   const listingUrl = productId ? `https://www.ebay.com/itm/${productId}` : null;
   if (!title || !listingUrl) return null;
-  const { grader, numericGrade } = graderFromTitle(title);
+  const scoped = input.matchingPolicy === EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY;
+  const gradeDetails = scoped ? readEbaySoldCompsV2GradeEvidence(title, cleanText(value.condition)) : null;
+  const { grader, numericGrade } = gradeDetails ?? graderFromTitle(title);
   const targetGrade = input.targetGrade == null ? null : mapTenKingsGradeToPsaGrade(input.targetGrade);
-  const variant = parallelMatch(input, title);
+  const variantEvidence = scoped ? matchEbaySoldCompsV2VariantEvidence(input, title, normalizeEbaySoldCompsV2Text) : null;
+  const variant = variantEvidence?.status ?? parallelMatch(input, title);
   const identity = scoreIdentity(input, title, variant);
   const price = priceFrom(value);
   return {
@@ -565,11 +591,12 @@ export function parseEbaySoldCompsV2Candidate(
     condition: cleanText(value.condition)?.slice(0, MAX_CONDITION_LENGTH) ?? null,
     grader,
     numericGrade,
-    raw: grader === null,
+    raw: gradeDetails ? gradeDetails.evidence.status === "RAW" : grader === null,
     group: groupFor(grader, numericGrade, targetGrade),
     parallelMatch: variant,
     matchScore: identity.matchScore,
     matchReason: [identity.matchReason, price.selectionNote].filter(Boolean).join("; "),
+    ...(variantEvidence && gradeDetails ? { variantEvidence, gradeEvidence: gradeDetails.evidence } : {}),
   };
 }
 

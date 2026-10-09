@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateLearningRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
+import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateLearningRuntimeConfiguration,validateMarketRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
 
 test('report images prefer their dedicated private key without changing shared provider configuration',()=>{
  const shared='fixture-shared-not-a-real-key',dedicated='fixture-image-not-a-real-key';
@@ -74,4 +74,13 @@ test('private startup refuses legacy retrieval when the learning lifecycle is in
  await validateLearningRuntimeConfiguration({memoryEnabled:true,learningEnabled:true,client});
  await validateLearningRuntimeConfiguration({memoryEnabled:false,learningEnabled:false,client});assert.equal(calls,1);
  await validateLearningRuntimeConfiguration({memoryEnabled:true,learningEnabled:false,client:{$queryRawUnsafe:async()=>[{installed:false}]}});
+});
+
+
+test('automatic market startup is cold when disabled and refuses absent queue or incomplete grants',async()=>{
+ let calls=0;const client={$queryRawUnsafe:async sql=>{calls++;return sql.includes('to_regclass')?[{installed:true}]:[{allowed:true}];}};
+ await validateMarketRuntimeConfiguration({marketAutomaticEnabled:false,client});assert.equal(calls,0);
+ await validateMarketRuntimeConfiguration({marketAutomaticEnabled:true,client});assert.equal(calls,2);
+ await assert.rejects(validateMarketRuntimeConfiguration({marketAutomaticEnabled:true,client:{$queryRawUnsafe:async()=>[{installed:false}]}}),{code:'MARKET_QUEUE_SCHEMA_REQUIRED'});
+ await assert.rejects(validateMarketRuntimeConfiguration({marketAutomaticEnabled:true,client:{$queryRawUnsafe:async sql=>sql.includes('to_regclass')?[{installed:true}]:[{allowed:false}]}}),{code:'MARKET_QUEUE_GRANTS_REQUIRED'});
 });

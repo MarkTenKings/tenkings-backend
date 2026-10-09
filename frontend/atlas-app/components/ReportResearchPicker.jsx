@@ -38,6 +38,6 @@ function ResearchDetails({preview,client,disabled}){
   </section>;
 }
 export default function ReportResearchPicker(props){
-  return <ReportMarketPicker {...props} createClient={createReportResearchClient} pickerOptions={options}
+  return <ReportMarketPicker {...props} automatic={false} createClient={createReportResearchClient} pickerOptions={options}
     renderDetails={(preview,client)=><ResearchDetails key={`${props.staffId}:${props.cardId}:${props.approvalActionId}`} preview={preview} client={client} disabled={props.disabled}/>}/>;
 }

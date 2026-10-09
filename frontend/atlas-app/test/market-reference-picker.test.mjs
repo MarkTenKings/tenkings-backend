@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as soldReferences from '../../../packages/atlas-manual-workspace/src/sold-reference-ui.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
@@ -25,6 +26,7 @@ function fixture() {
   const exports = {};
   vm.runInNewContext(code, { exports, Intl, Date, structuredClone, require(name) {
     if (name === 'react') return react;
+    if (name === '@atlas/manual-workspace/sold-references') return soldReferences;
     if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
     return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
   } });
@@ -34,11 +36,11 @@ function fixture() {
 }
 test('optional picker performs no lookup on mount and never preselects even a priced graded sale', async () => {
   const f = fixture(); assert.equal(f.searches, 0); assert.equal(f.saves.length, 0);
-  assert.match(f.text(), /Manual search · no lookup starts automatically/);
+  assert.match(f.text(), /no lookup starts from opening this tool/);
   f.button('Find sold cards').props.onClick(); f.render(); await flush(); f.render();
   assert.equal(f.searches, 1); assert.equal(f.find(node => node.type === 'input')[0].props.checked, false);
   assert.match(f.text(), /1 sold comp ready for your review/);
-  assert.match(f.text(), /Variant needs review/); assert.match(f.text(), /ATLAS 9.5/); assert.match(f.text(), /PSA 9/); assert.match(f.text(), /\$40.00/);
+  assert.match(f.text(), /Identity \/ variant needs review/); assert.match(f.text(), /ATLAS 9.5/); assert.match(f.text(), /PSA 9/); assert.match(f.text(), /\$40.00/);
   const listing = f.find(node => node.type === 'a')[0]; assert.equal(listing.props.href, ready().preview.candidates[0].sale.listingUrl);
   assert.equal(listing.props.target, '_blank'); assert.equal(listing.props.rel, 'noopener noreferrer');
   f.props.available = false; assert.equal(f.render(), null); assert.equal(f.searches, 1);
@@ -51,7 +53,7 @@ test('explicit search shows running then empty results without claiming ready sa
   assert.match(f.text(), /Finding sold cards…/); assert.doesNotMatch(f.text(), /Manual search|ready for your review/);
   assert.equal(f.button('Find sold cards').props.disabled, true);
   const result = ready(); result.preview.candidates = []; finish(result); await flush(); f.render();
-  assert.match(f.text(), /No disclosed graded sales were found/); assert.doesNotMatch(f.text(), /comps ready/);
+  assert.match(f.text(), /No qualifying sold listings/); assert.doesNotMatch(f.text(), /comps ready/);
   assert.equal(f.searches, 1); assert.equal(f.saves.length, 0);
 });
 
@@ -84,6 +86,38 @@ test('a late search for a different approval cannot appear in the current report
 test('quota refusal explains the account action without suggesting unknown-search recovery', async () => {
   const f = fixture(); f.search = async () => ({ state: 'UNAVAILABLE', reason: 'PROVIDER_QUOTA_REACHED' });
   f.button('Find sold cards').props.onClick(); await flush(); f.render();
-  assert.match(f.text(), /quota is exhausted/); assert.match(f.text(), /up to 40/); assert.doesNotMatch(f.text(), /saved search is not confirmed/);
+  assert.match(f.text(), /quota is exhausted/); assert.doesNotMatch(f.text(), /up to 40/); assert.doesNotMatch(f.text(), /saved search is not confirmed/);
   assert.equal(f.searches, 1); assert.equal(f.find(node => node.type === 'table').length, 0);
+});
+
+
+test('saved automatic results are visible without a lookup, remain unselected and survive same-result polling', () => {
+  const f = fixture(); f.props.automatic = true; f.props.savedSource = ready(); f.render();
+  assert.equal(f.searches, 0); assert.equal(f.saves.length, 0); assert.match(f.text(), /Fixture sold card/);
+  f.find(node => node.type === 'input')[0].props.onChange({ target: { checked: true } }); f.render();
+  f.props.savedSource = structuredClone(f.props.savedSource); f.render();
+  assert.equal(f.find(node => node.type === 'input')[0].props.checked, true);
+  f.props.savedSource = { ...ready(), previewId: 'new-saved-result' }; f.render();
+  assert.equal(f.find(node => node.type === 'input')[0].props.checked, false);
+});
+test('queued and searching status cannot start another lookup; unknown uses only a free check', () => {
+  const f = fixture(); let checks = 0; f.props.onCheck = () => checks++;
+  for (const state of ['QUEUED', 'SEARCHING']) { f.props.savedSource = { state, refreshable: false }; f.render(); assert.equal(f.button('Find sold cards').props.disabled, true); }
+  f.props.savedSource = { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN', refreshable: false }; f.render();
+  f.button('Check saved search').props.onClick(); assert.equal(checks, 1); assert.equal(f.searches, 0);
+});
+test('exact grade tabs keep raw, special designation, language and variant distinct with selection across groups', () => {
+  const f = fixture(), source = ready(), seed = source.preview.candidates[0];
+  source.preview.candidates = [
+    { ...seed, sale: { ...seed.sale, id: 'raw', raw: true, grader: null, grade: null, rawCondition: 'Near mint' } },
+    { ...seed, sale: { ...seed.sale, id: 'bgs', grader: 'BGS', grade: '10', designation: 'STANDARD', language: 'English' } },
+    { ...seed, sale: { ...seed.sale, id: 'black', grader: 'BGS', grade: '10', designation: 'BLACK_LABEL', language: 'English' } },
+    { ...seed, sale: { ...seed.sale, id: 'japanese', grader: 'BGS', grade: '10', designation: 'STANDARD', language: 'Japanese' } },
+  ]; f.props.savedSource = source; f.render();
+  const tabs = () => f.find(node => node.props?.role === 'tab'); assert.equal(tabs().length, 4);
+  assert.match(text(tabs()[0]), /Ungraded/); assert.match(f.text(), /Black Label/);
+  f.find(node => node.type === 'input')[0].props.onChange({ target: { checked: true } }); f.render();
+  tabs()[1].props.onClick(); f.render(); assert.equal(f.find(node => node.type === 'input')[0].props.checked, false);
+  f.find(node => node.type === 'input')[0].props.onChange({ target: { checked: true } }); f.render(); assert.match(f.text(), /2 selected across all groups/);
+  tabs()[0].props.onKeyDown({ key: 'End', preventDefault() {} }); f.render(); assert.equal(tabs().at(-1).props['aria-selected'], true);
 });

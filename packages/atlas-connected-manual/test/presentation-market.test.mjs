@@ -80,3 +80,52 @@ test('only definitive typed provider refusals become recoverable unavailable res
   }
   assert.equal((await createPresentationMarket({ now, provider: async () => { throw { code: 'SOLDCOMPS_QUOTA_REACHED', statusCode: 429 }; } }).preview(f)).state, 'UNKNOWN');
 });
+
+async function pokemonFixture(identity) {
+  const value = await fixture(); value.packet.report.cardProfile = 'POKEMON';
+  value.packet.report.identity = { cardName: 'Pikachu', year: '2023', productSet: 'Scarlet & Violet 151',
+    cardNumber: '025/165', parallel: null, ...identity };
+  value.publicHash = digest(JSON.stringify(value.packet)); return value;
+}
+function titleResult(context, titles) {
+  return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: context.query, retrievedAt: now().toISOString(),
+    candidates: titles.map((title, i) => parseEbaySoldCompsV2Candidate({ title, itemId: String(123456789010 + i),
+      url: `https://www.ebay.com/itm/${123456789010 + i}`, soldPrice: '40.00', soldCurrency: 'USD', bestOfferAccepted: false,
+      endedAt: '2026-09-21' }, context.input)) };
+}
+test('paid response can be reprojected locally and raw/special grades survive exact selection without relabeling', async () => {
+  const f = await pokemonFixture(), context = publishedMarketQuery(f), prefix = '2023 Pikachu Scarlet & Violet 151 025/165';
+  const result = titleResult(context, [`${prefix} Ungraded`, `${prefix} CGC 10 Pristine`, `${prefix} CGC 10`, `${prefix} BGS 10 Black Label`]);
+  const market = createPresentationMarket({ now }), ready = market.project(f, result);
+  assert.equal(ready.preview.candidates.length, 4);
+  const selected = market.select({ ...f, ...ready, selectedIds: ready.preview.candidates.map(value => value.sale.id) });
+  const raw = selected.sales.find(value => value.raw); assert.equal(raw.grader, null); assert.equal(raw.grade, null);
+  assert.equal(selected.sales.find(value => value.title.endsWith('Pristine')).designation, 'PRISTINE');
+  assert.equal(selected.sales.find(value => value.title.endsWith('CGC 10')).designation, null);
+  assert.equal(selected.sales.find(value => value.title.endsWith('Black Label')).designation, 'BLACK_LABEL');
+  assert.equal(ready.preview.candidates.every(value => value.requiresReview), true);
+  assert.equal(Object.hasOwn(selected, 'estimate'), false);
+});
+test('collector zero typography is equivalent; omitted denominator stays unknown; explicit different denominator is excluded', async () => {
+  const f = await pokemonFixture(), context = publishedMarketQuery(f), prefix = '2023 Pikachu Scarlet & Violet 151';
+  const result = titleResult(context, [`${prefix} #25/165 PSA 9`, `${prefix} #025 PSA 9`, `${prefix} #25/189 PSA 9`]);
+  const ready = createPresentationMarket({ now }).project(f, result);
+  assert.equal(ready.preview.candidates.length, 2); assert.equal(ready.preview.excluded.contradictory, 1);
+  assert.equal(ready.preview.candidates[1].identityEvidence.status, 'UNKNOWN');
+  assert.ok(ready.preview.candidates[1].identityEvidence.reasonCodes.includes('collector_denominator_missing'));
+});
+test('explicit identity conflicts and card lots never enter selectable references', async () => {
+  const f = await pokemonFixture(), context = publishedMarketQuery(f), prefix = 'Pikachu Scarlet & Violet 151 025/165 PSA 9';
+  const ready = createPresentationMarket({ now }).project(f, titleResult(context, [`2021 ${prefix}`, `2023 ${prefix} lot of 3 cards`]));
+  assert.equal(ready.preview.candidates.length, 0); assert.equal(ready.preview.excluded.contradictory, 1);
+  assert.equal(ready.preview.excluded.undisclosedOrUnsupported, 1);
+});
+test('retained legacy preview remains explicitly selectable; unrelated input changes still fail', async () => {
+  const f = await fixture(), context = publishedMarketQuery(f), market = createPresentationMarket({ now });
+  const ready = market.project(f, source(context));
+  delete ready.preview.input.matchingPolicy; ready.sourceHash = digest(canonical(ready.preview));
+  const input = { ...f, ...ready, selectedIds: [ready.preview.candidates[0].sale.id] };
+  assert.equal(market.select(input).sales.length, 1);
+  ready.preview.input.parallel = 'unrelated variant'; ready.sourceHash = digest(canonical(ready.preview));
+  assert.throws(() => market.select({ ...input, ...ready }), { code: 'MARKET_PUBLICATION_MISMATCH' });
+});

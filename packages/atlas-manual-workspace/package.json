@@ -19,7 +19,8 @@
     "./report-review": "./dist/FinalReportReview.js",
     "./image-cache": "./dist/VerifiedImageCacheBoundary.js",
     "./report-review.css": "./src/report-review.css",
-    "./rapid-review": "./src/rapid-review.mjs"
+    "./rapid-review": "./src/rapid-review.mjs",
+    "./sold-references": "./src/sold-reference-ui.mjs"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

@@ -5,17 +5,18 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // Only request ids and selection ids are retained in the browser. Search
 // evidence and its integrity hash stay in the server's approved-card scope.
-export function createReportMarketClient({ cardId, staffId, approvalActionId, request, storage, cryptoImpl = globalThis.crypto }) {
+export function createReportMarketClient({ cardId, staffId, approvalActionId, request, storage, cryptoImpl = globalThis.crypto, autoDiscovery = true }) {
   check(uuid(cardId) && uuid(staffId) && uuid(approvalActionId) && storage && typeof request === 'function');
   const key = `atlas-report-market:${staffId}:${cardId}`, path = `/api/staff/manual-connected/cards/${cardId}/presentation`;
-  let running = false, sawReady = false;
+  let running = false, sawReady = false, latest = null;
   const post = (url, body) => request(url, { method: 'POST', body });
   function pending() {
     let saved; try { saved = JSON.parse(storage.getItem(key) ?? 'null'); } catch { throw fail('MARKET_PENDING_INVALID'); }
     if (saved) check(saved.version === 1 && saved.cardId === cardId && saved.staffId === staffId
       && uuid(saved.search?.requestId) && uuid(saved.search?.approvalActionId)
       && Number.isSafeInteger(saved.search?.expectedRevision) && saved.search.expectedRevision >= 0
-      && (!saved.selection || (uuid(saved.selection.requestId) && saved.selection.previewId === saved.search.requestId
+      && (!saved.previewId || uuid(saved.previewId))
+      && (!saved.selection || (uuid(saved.selection.requestId) && saved.selection.previewId === (saved.previewId ?? saved.search.requestId)
         && Array.isArray(saved.selection.selectedIds) && saved.selection.selectedIds.length > 0)), 'MARKET_PENDING_INVALID');
     return saved;
   }
@@ -24,6 +25,13 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
   async function current() {
     const status = await request(path);
     check(status.approvalActionId === approvalActionId && Number.isSafeInteger(status.revision) && status.revision >= 0, 'MARKET_APPROVAL_STALE');
+    if (autoDiscovery && status.marketSearch) {
+      const market = status.marketSearch;
+      check(!market.approvalActionId || market.approvalActionId === approvalActionId, 'MARKET_APPROVAL_STALE');
+      latest = market;
+      const saved = pending();
+      if ((saved?.previewId ?? saved?.search.requestId) === market.previewId && (market.state === 'READY' || ['FAILED', 'UNAVAILABLE'].includes(market.state) && market.refreshable === true)) sawReady = true;
+    }
     return status;
   }
   async function exclusive(work) { check(!running, 'MARKET_CLIENT_BUSY'); running = true; try { return await work(); } finally { running = false; } }
@@ -52,6 +60,7 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
       check(!saved || saved.search.approvalActionId === approvalActionId, 'MARKET_APPROVAL_STALE');
       if (!saved || sawReady) {
         const status = await current();
+        if (autoDiscovery && status.marketSearch?.refreshable === false) return status.marketSearch;
         saved = { version: 1, cardId, staffId, search: { requestId: cryptoImpl.randomUUID(), approvalActionId, expectedRevision: status.revision } };
         save(saved); sawReady = false;
       }
@@ -66,13 +75,28 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
         throw error;
       }
       if (result?.state === 'UNAVAILABLE') { clear(saved); return result; }
-      check(result?.previewId === saved.search.requestId, 'MARKET_PREVIEW_MISMATCH');
+      check(result?.previewId === (saved.previewId ?? saved.search.requestId)
+        || result?.requestId === saved.search.requestId && uuid(result.previewId), 'MARKET_PREVIEW_MISMATCH');
+      if (result.previewId !== (saved.previewId ?? saved.search.requestId)) {
+        // The server may retry local processing of retained provider evidence.
+        // Keep both the exact refresh request and its original saved preview.
+        saved = { ...saved, previewId: result.previewId }; save(saved);
+      }
+      if (autoDiscovery && ['QUEUED', 'SEARCHING', 'FAILED', 'UNKNOWN'].includes(result.state)) { latest = result; if (result.state === 'FAILED' && result.refreshable === true) sawReady = true; return result; }
       if (result.state === 'PENDING' || result.state === 'UNKNOWN') throw fail(`MARKET_SEARCH_${result.state}`);
       check(result.state === 'READY' && result.preview?.binding?.approvalVersion > 0, 'MARKET_PREVIEW_INVALID');
       sawReady = true; return result;
     }),
     select: input => exclusive(async () => {
-      let saved = pending(); check(saved && saved.search.requestId === input.previewId, 'MARKET_PREVIEW_MISMATCH');
+      let saved = pending();
+      if (!saved?.selection && (!saved || (saved.previewId ?? saved.search.requestId) !== input.previewId)) {
+        check(autoDiscovery, 'MARKET_PREVIEW_MISMATCH');
+        const status = await current();
+        check(latest?.state === 'READY' && latest.previewId === input.previewId && uuid(input.previewId), 'MARKET_PREVIEW_MISMATCH');
+        saved = { version: 1, cardId, staffId, search: { requestId: input.previewId, approvalActionId, expectedRevision: status.revision } };
+        save(saved); sawReady = true;
+      }
+      check(saved && (saved.previewId ?? saved.search.requestId) === input.previewId, 'MARKET_PREVIEW_MISMATCH');
       check(Array.isArray(input.selectedIds) && input.selectedIds.length > 0 && input.selectedIds.length <= 60
         && new Set(input.selectedIds).size === input.selectedIds.length && input.selectedIds.every(id => typeof id === 'string'), 'MARKET_SELECTION_INVALID');
       if (saved.selection) check(same(saved.selection.selectedIds, input.selectedIds), 'MARKET_SELECTION_PENDING');

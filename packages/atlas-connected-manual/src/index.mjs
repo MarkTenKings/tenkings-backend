@@ -1,3 +1,5 @@
+import { createMarketJobStore, recordApprovalMarket } from './market-job-store.mjs';
+import { createMarketWorker } from './market-worker.mjs';
 import { createReportImageStore } from './report-image-store.mjs';
 import { createReportImages } from './report-images.mjs';
 import { createReviewDisplay } from './review-display.mjs';
@@ -57,7 +59,7 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
     try{return await work();}finally{const next=waiting.shift();if(next)next();else active--;}
   };
 }
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,displayEnabled=false,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,reportImageProvider=null,reportImageConcurrency=2,
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,displayEnabled=false,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketAutomaticEnabled=false,marketConcurrency=2,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,reportImageProvider=null,reportImageConcurrency=2,
   processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
@@ -87,7 +89,11 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const station=stationConfig?createFinishingStationService({...stationConfig,finishing,repository:createFinishingStationRepository({boundary,validateAccess})}):null;
   const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix,validateAccess}):null;
   const presentation=presentationEnabled?createPresentationService({repository:presentationRepository,storage,processPhoto:photoProcessor,keyPrefix,run:limited}):null;
-  const market=presentationEnabled?createPresentationMarketService({repository:presentationRepository,approved:finishing,artifacts,provider:marketProvider,run:limited}):null;
+  requireThat(!marketAutomaticEnabled || presentationEnabled && marketProvider && typeof boundary.machineTransaction==='function',503,'MARKET_AUTOMATIC_CONFIGURATION_INVALID');
+  const marketJobs=marketAutomaticEnabled?createMarketJobStore({boundary,validateAccess}):null;
+  const marketWorker=marketJobs?createMarketWorker({store:marketJobs,approved:finishing,publication,artifacts,provider:marketProvider,concurrency:marketConcurrency,
+    authorityFor:job=>boundary.machineOwner({ownerId:job.actor_id,accessVersion:job.access_version}),onError:onWorkerError}):null;
+  const market=presentationEnabled?createPresentationMarketService({repository:presentationRepository,approved:finishing,artifacts,provider:marketProvider,run:limited,jobs:marketJobs,worker:marketWorker}):null;
   requireThat(!researchConfig || presentationEnabled && marketProvider,503,'RESEARCH_PRESENTATION_REQUIRED');
   const dealerOffers=presentationEnabled?createDealerOfferService({repository:presentationRepository,approved:finishing,loadConfiguration:dealerConfiguration}):null;
   const research=researchConfig?createAtlasResearchService({boundary,repository:presentationRepository,approved:finishing,intake,storage,artifacts,receiptClient,validateAccess,config:researchConfig,run:limited}):null;
@@ -95,7 +101,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
   }
-  const repository=createManualRepository({boundary,validateAccess,validateCommit: memoryEnabled ? validateConfirmationCommit : null,approvalCommitted:publicationRepository.approvalCommitted,
+  const repository=createManualRepository({boundary,validateAccess,validateCommit: memoryEnabled ? validateConfirmationCommit : null,approvalCommitted:async context=>{
+    await publicationRepository.approvalCommitted(context);
+    if(marketJobs)await recordApprovalMarket(context);
+  },
     validateSource:async({tx,principal,cardId,draft,initial})=>{
     await intakeRepository.assertCurrentPair(tx,principal,{cardId,sourceHash:draft.source?.sourceHash});
     if(initial){const [saved]=await tx.$queryRawUnsafe('SELECT revision FROM atlas_manual_connected.details WHERE card_id=$1::uuid FOR SHARE',cardId);
@@ -153,7 +162,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     resolveConfirmation: input => assistance.resolveConfirmation(input),
     assertReviewComplete: input => assistance.assertReviewComplete(input),
     afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
-    afterApprove: (staff,cardId,actionId)=>publication.publish(staff,cardId,actionId),
+    afterApprove: async (staff,cardId,actionId)=>{
+      try { return await publication.publish(staff,cardId,actionId); }
+      finally { void marketWorker?.wake(); }
+    },
     measure:input=>limited(()=>measureDefectWorkspaceEdit(input)),
     assertCurrent:({card,staff})=>current(staff,card),
     prepare:({geometry,side,source,staff})=>limited(async()=>{
@@ -187,13 +199,13 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,learningEnabled,provider:defectProvider,receiptClient,onWorkerError});
-  const connected={dealerOperations,reportImages,reviewDisplay,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  const connected={dealerOperations,marketWorker,marketJobs,reportImages,reviewDisplay,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status,geometryLearning]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
         learningEnabled?readNativeGeometryAdvice({boundary,earlyGeometry,staff:input.staff,cardId:input.card.cardId}).catch(error=>{
           if([401,403].includes(error?.status))throw error;onWorkerError({code:'GEOMETRY_LEARNING_UNAVAILABLE'});return null;
         }):null]);
-      return {...extras,...(geometryLearning?{geometryLearning}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
+      return {...extras,...(geometryLearning?{geometryLearning}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),marketAutomaticEnabled:Boolean(marketJobs),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
     },
     thumbnails:createThumbnailReader({intake,workflow,readManifest:manifest,imageReadUrl,reviewDisplay}),
     open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl}),

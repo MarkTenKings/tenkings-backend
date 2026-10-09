@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { reportIdentityRows, validSlabPhoto, photoTilt, saleReferenceRows, moneyLabel, evidenceDate, safePresentationLink } from './report-presentation-ui.mjs';
+import { reportIdentityRows, validSlabPhoto, photoTilt, saleReferenceRows, moneyLabel, evidenceDate, safePresentationLink, groupSoldReferences, saleAmountLabel } from './report-presentation-ui.mjs';
 
 export function CardIdentityDetails({ report, details }) {
   const rows = reportIdentityRows(report, details);
@@ -36,18 +36,28 @@ export function SlabPhotoHero({ photo, brandSrc }) {
 }
 
 function MarketReferences({ market, printing }) {
-  const [grader, setGrader] = useState('ALL');
-  const sales = saleReferenceRows(market?.sales), graders = [...new Set(sales.map(sale => sale.grader))].sort();
-  const selected = graders.includes(grader) ? grader : 'ALL', filtered = printing || selected === 'ALL' ? sales : sales.filter(sale => sale.grader === selected);
+  const [groupKey, setGroupKey] = useState(''), tabs = useRef(null);
+  const sales = saleReferenceRows(market?.sales), groups = groupSoldReferences(sales);
+  const selected = groups.find(group => group.key === groupKey) ?? groups[0];
+  const visible = printing ? groups : selected ? [selected] : [];
   const estimate = market?.estimate;
   const low = estimate && moneyLabel(estimate.lowMinor, estimate.currency), high = estimate && moneyLabel(estimate.highMinor, estimate.currency);
   if (!sales.length && !(low && high)) return null;
-  return <section className="rr-market" aria-label="Market references"><div className="rr-section-heading"><div><p className="rr-eyebrow">THE MARKET</p><h2>Sales, with context.</h2><p>Recent sales are reference points. Different graders, grades and sale dates can carry different prices.</p></div>
-    {graders.length > 1 && <label className="rr-grader-filter">Grader<select aria-label="Filter sales by grader" value={selected} onChange={event => setGrader(event.target.value)}><option value="ALL">All graders</option>{graders.map(name => <option key={name}>{name}</option>)}</select></label>}
-  </div>
+  function navigate(event, index) {
+    const target = event.key === 'Home' ? 0 : event.key === 'End' ? groups.length - 1 : event.key === 'ArrowRight' ? (index + 1) % groups.length : event.key === 'ArrowLeft' ? (index + groups.length - 1) % groups.length : null;
+    if (target === null) return; event.preventDefault(); setGroupKey(groups[target].key);
+    const button = tabs.current?.querySelectorAll('[role="tab"]')[target]; button?.focus(); button?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  return <section className="rr-market" aria-label="Market references"><div className="rr-section-heading"><div><p className="rr-eyebrow">THE MARKET</p><h2>Sales, with context.</h2><p>Selected sold references, grouped by their recorded grade and identity. Different grading companies are not equivalent.</p></div></div>
     {low && high && <div className="rr-valuation"><div><p className="rr-eyebrow">MARKET ESTIMATE</p><strong>{low === high ? low : `${low} – ${high}`}</strong><p>As of <time dateTime={estimate.asOf}>{evidenceDate(estimate.asOf)}</time> · {estimate.sampleCount} sale{estimate.sampleCount === 1 ? '' : 's'}</p></div><p>{estimate.method}</p></div>}
-    {sales.length > 0 && <><div className="rr-sales-scroll" role="region" aria-label="eBay sold reference table" tabIndex={0}><table className="rr-sales-table"><caption>eBay sold references · Most recent first</caption><thead><tr><th scope="col">Sold</th><th scope="col">Card</th><th scope="col">Grader / grade</th><th scope="col">Sale amount</th></tr></thead><tbody>{filtered.map(sale => <tr key={sale.id}><td>{sale.soldAt ? <time dateTime={sale.soldAt}>{evidenceDate(sale.soldAt)}</time> : 'Date not supplied'}</td><td><a href={sale.listingUrl} target="_blank" rel="noopener noreferrer">{sale.title}<span className="rr-external-mark" aria-hidden="true"> ↗</span></a></td><td><span className="rr-sale-grader">{sale.grader}</span><span className="rr-sale-grade">{sale.grade}</span></td><td>{sale.priceBasis === 'accepted_offer_unknown' ? <span className="rr-price-unknown">Accepted offer<br/>Amount undisclosed</span> : moneyLabel(sale.priceMinor, sale.currency)}</td></tr>)}</tbody></table></div>
-      <p className="rr-help">Sale amounts are shown as supplied by the source. Grades from different companies are shown as recorded; they are not equivalent ATLAS grades. Retrieved <time dateTime={market.observedAt}>{evidenceDate(market.observedAt)}</time>.</p></>}
+    {sales.length > 0 && <>
+      {!printing && <div className="rr-sale-groups" role="tablist" aria-label="Sales by grade, condition and variant" ref={tabs}>{groups.map((group, index) => <button type="button" key={group.key} role="tab" id={`rr-sales-tab-${index}`} aria-controls="rr-sales-panel" aria-selected={group.key === selected.key} tabIndex={group.key === selected.key ? 0 : -1} onClick={() => setGroupKey(group.key)} onKeyDown={event => navigate(event, index)}><strong>{group.label}</strong><span>{group.candidates.length} observed {group.candidates.length === 1 ? 'sale' : 'sales'}</span><small>{group.identityLabel}</small>{group.needsReview && <small>Identity details not fully established</small>}</button>)}</div>}
+      <div id="rr-sales-panel" role={printing ? undefined : 'tabpanel'} aria-labelledby={printing ? undefined : `rr-sales-tab-${groups.indexOf(selected)}`}>
+        {visible.map(group => <div className="rr-sale-group" key={group.key}><div className="rr-sale-group-heading"><h3>{group.label} sales</h3><span>Most recent first</span></div><p className="rr-sale-group-identity">{group.identityLabel}</p>
+          <div className="rr-sales-scroll"><table className="rr-sales-table"><caption>eBay sold references · {group.label} · Most recent first</caption><thead><tr><th scope="col">Date</th><th scope="col">Sold listing</th><th scope="col">Sold price</th></tr></thead><tbody>{group.candidates.map(sale => <tr key={sale.id}><td>{sale.soldAt ? <time dateTime={sale.soldAt}>{evidenceDate(sale.soldAt)}</time> : 'Date not supplied'}</td><td><a href={sale.listingUrl} target="_blank" rel="noopener noreferrer">{sale.title}<span className="rr-external-mark" aria-hidden="true"> ↗</span></a></td><td>{sale.priceBasis === 'accepted_offer_unknown' ? <span className="rr-price-unknown">Accepted offer<br/>Amount undisclosed</span> : saleAmountLabel(sale)}</td></tr>)}</tbody></table></div>
+        </div>)}
+      </div><p className="rr-help">Sale amounts are shown as supplied by the source. Grades from different companies are shown as recorded; they are not equivalent ATLAS grades. Retrieved <time dateTime={market.observedAt}>{evidenceDate(market.observedAt)}</time>.</p>
+    </>}
   </section>;
 }
 

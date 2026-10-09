@@ -422,11 +422,12 @@ test('market references sort recent sales with original grader/currency, undiscl
   props.presentation.dealerOffers = [{ id: 'expired', dealerName: 'Expired shop', dealerUrl: '/dealers?dealer=shop&service=buy', expiresAt: '2001-01-01T00:00:00Z', amountMinor: 999999, currency: 'USD', kind: 'firm', terms: 'Terms' }];
   props.presentation.dealerDirectory = { url: '/dealers?service=buy' };
   const before = structuredClone(props.report), f = harness(props, { publicView: true });
-  const rows = all(f.control('eBay sold reference table'), node => node.type === 'tbody')[0].props.children[0]; assert.ok(text(rows[0]).includes('Recent undisclosed'));
-  assert.equal(f.has('Amount undisclosed'), true); assert.equal(f.has('USD 100.00'), true);
+  assert.equal(f.has('Amount undisclosed'), true); assert.equal(f.has('Older sale'), false);
   assert.equal(f.has('Expired shop'), false); assert.equal(f.has('MARKET ESTIMATE'), false);
-  f.control('Filter sales by grader').props.onChange({ target: { value: 'PSA' } }); f.render();
-  assert.equal(f.has('Recent undisclosed sale'), false); assert.equal(f.has('Older sale'), true);
+  f.nodes(node => node.props?.role === 'tab' && text(node).startsWith('PSA'))[0].props.onClick(); f.render();
+  assert.equal(f.has('Recent undisclosed sale'), false); assert.equal(f.has('Older sale'), true); assert.equal(f.has('$100.00'), true);
+  f.listeners.get('beforeprint')(); f.render(); assert.equal(f.has('Recent undisclosed sale'), true); assert.equal(f.has('Older sale'), true);
+  f.listeners.get('afterprint')(); f.render(); assert.equal(f.has('Recent undisclosed sale'), false);
   assert.ok(f.nodes(node => node.type === 'a' && node.props.href === '/dealers?service=buy').length);
   assert.deepEqual(props.report, before);
 });

@@ -50,7 +50,7 @@ test('market search persists its source before returning and exact replay does n
 test('provider completion uncertainty leaves a durable no-repeat fence', async () => {
   const f = await setup(); f.failFinish();
   await assert.rejects(f.service.preview({}, f.cardId, f.input)); assert.equal(f.calls(), 1);
-  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'PENDING', previewId: f.input.requestId }); assert.equal(f.calls(), 1);
+  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'PENDING', previewId: f.input.requestId, approvalActionId: f.actionId }); assert.equal(f.calls(), 1);
 });
 test('lost provider response saves UNKNOWN and replay never dispatches another paid lookup', async () => {
   const f = await setup(); f.failProvider();
@@ -58,7 +58,7 @@ test('lost provider response saves UNKNOWN and replay never dispatches another p
   assert.equal(first.state, 'UNKNOWN'); assert.equal(first.previewId, f.input.requestId);
   assert.equal(f.requests.get(f.input.requestId).state, 'UNKNOWN');
   const replay = await f.service.preview({}, f.cardId, f.input);
-  assert.deepEqual(replay, { state: 'UNKNOWN', previewId: f.input.requestId }); assert.equal(f.calls(), 1);
+  assert.deepEqual(replay, { state: 'UNKNOWN', previewId: f.input.requestId, approvalActionId: f.actionId }); assert.equal(f.calls(), 1);
 });
 test('client-supplied preview is not accepted and saved source corruption cannot become public references', async () => {
   const f = await setup(), first = await f.service.preview({}, f.cardId, f.input);
@@ -77,8 +77,8 @@ test('saved terminal refusal preserves only its allowlisted reason and never rep
   const f = await setup();
   f.requests.set(f.input.requestId, { state: 'UNAVAILABLE', input: f.input,
     saved: { state: 'UNAVAILABLE', reason: 'PROVIDER_QUOTA_REACHED', privateText: 'must not leak' } });
-  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'UNAVAILABLE', previewId: f.input.requestId, reason: 'PROVIDER_QUOTA_REACHED' });
+  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'UNAVAILABLE', previewId: f.input.requestId, approvalActionId: f.actionId, reason: 'PROVIDER_QUOTA_REACHED' });
   f.requests.get(f.input.requestId).saved.reason = 'untrusted text';
-  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'UNAVAILABLE', previewId: f.input.requestId });
+  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'UNAVAILABLE', previewId: f.input.requestId, approvalActionId: f.actionId });
   assert.equal(f.calls(), 0);
 });

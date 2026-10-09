@@ -11,22 +11,22 @@ const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEac
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function fixture({ available = true, pending = null } = {}) {
-  const slots = [], effects = []; let cursor = 0, dirty, tree;
-  const f = { clients: [], changes: [], props: { cardId: 'one', staffId: 'staff', approvalActionId: 'approval', csrf: 'csrf', available, onChange: value => f.changes.push(value) } };
+  const slots = [], effects = [], timers = new Map(); let cursor = 0, dirty, tree, nextTimer = 0;
+  const f = { clients: [], changes: [], timers, props: { cardId: 'one', staffId: 'staff', approvalActionId: 'approval', csrf: 'csrf', available, onChange: value => f.changes.push(value) } };
   const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], value => { if (!Object.is(slots[index], value)) { slots[index] = value; dirty = true; } }]; },
     useRef(initial) { const index = cursor++; if (!(index in slots)) slots[index] = { current: initial }; return slots[index]; },
     useEffect(callback, deps) { const index = cursor++, previous = slots[index]; if (!previous || deps.some((value, i) => value !== previous.deps[i])) { slots[index] = { deps, cleanup: previous?.cleanup }; effects.push(() => { slots[index].cleanup?.(); slots[index].cleanup = callback(); }); } },
   };
   const exports = {};
-  vm.runInNewContext(code, { exports, window: { sessionStorage: {} }, require(name) {
+  vm.runInNewContext(code, { exports, window: { sessionStorage: {} }, setTimeout(callback) { const id = ++nextTimer; timers.set(id, callback); return id; }, clearTimeout(id) { timers.delete(id); }, require(name) {
     if (name === 'react') return react;
     if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
     if (name === './MarketReferencePicker') return { __esModule: true, default: 'picker' };
     if (name === '../lib/manual-client.mjs') return { manualRequest() {}, manualMessage: error => error.message };
     if (name === '../lib/report-market-client.mjs') return { createReportMarketClient(options) {
       const client = { options, reads: 0, previews: 0, saved: pending, resumes: 0,
-        async read() { client.reads++; return { revision: 0, approvalActionId: options.approvalActionId }; }, pending() { return client.saved; },
+        async read() { client.reads++; return f.read ? f.read(options) : { revision: 0, approvalActionId: options.approvalActionId }; }, pending() { return client.saved; },
         async preview() { client.previews++; }, async select(input) { return f.select?.(input); },
         async resumeSelection() { client.resumes++; client.saved = null; return { revision: 1 }; } };
       f.clients.push(client); return client;
@@ -66,4 +66,20 @@ test('late research preview cannot populate evidence for the next card',async()=
   f.clients[0].preview=()=>new Promise(resolve=>{finish=resolve;});
   const pending=f.find(node=>node.type==='picker')[0].props.onPreview();f.props.cardId='another';f.render();await flush();f.render();
   finish({state:'READY',research:{privateEvidence:'prior-card'}});await pending;f.render();assert.equal(f.find(node=>node.type==='details')[0].props.result,null);
+});
+
+
+test('saved approval result appears on mount without a provider search and polling stops at READY', async () => {
+  const f = fixture(); let state = 'QUEUED'; f.read = options => ({ revision: 0, approvalActionId: options.approvalActionId, marketSearch: { state, previewId: 'saved-result', refreshable: state === 'READY' } });
+  await flush(); f.render(); assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.state, 'QUEUED');
+  assert.equal(f.timers.size, 1); const tick = [...f.timers.values()][0]; f.timers.clear(); state = 'READY'; await tick(); f.render();
+  assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.state, 'READY'); assert.equal(f.timers.size, 0); assert.equal(f.clients[0].previews, 0);
+});
+test('late polling for the previous approval cannot replace the new card saved result', async () => {
+  const f = fixture(); f.read = options => ({ revision: 0, approvalActionId: options.approvalActionId, marketSearch: { state: 'QUEUED', previewId: options.cardId } });
+  await flush(); f.render(); const tick = [...f.timers.values()][0]; f.timers.clear(); let finish;
+  f.read = () => new Promise(resolve => { finish = resolve; }); const pending = tick();
+  f.props.cardId = 'next-card'; f.read = options => ({ revision: 0, approvalActionId: options.approvalActionId, marketSearch: { state: 'READY', previewId: options.cardId } });
+  f.render(); await flush(); f.render(); finish({ revision: 0, marketSearch: { state: 'READY', previewId: 'old-card' } }); await pending; f.render();
+  assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.previewId, 'next-card'); assert.equal(f.timers.size, 0);
 });
