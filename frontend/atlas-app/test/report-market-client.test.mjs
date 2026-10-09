@@ -133,3 +133,15 @@ test('a mismatched recovery response cannot silently replace the saved preview',
   const f = fixture(); f.search = () => ({ state: 'QUEUED', requestId: randomUUID(), previewId: randomUUID(), refreshable: false });
   await assert.rejects(f.client.preview(), { code: 'MARKET_PREVIEW_MISMATCH' }); assert.equal(f.client.pending().previewId, undefined);
 });
+
+
+test('confirmed expired provider evidence buys no search on read and uses a new id only on explicit fresh search', async () => {
+  const f = fixture(), first = await f.client.preview();
+  f.client = createReportMarketClient(f.options);
+  f.marketSearch = { state: 'FAILED', approvalActionId: f.approvalActionId, previewId: first.previewId,
+    reason: 'MARKET_PREVIEW_EXPIRED', refreshable: true, refreshAction: 'SEARCH_AGAIN' };
+  await f.client.read(); assert.equal(f.searches, 1); assert.equal(f.client.pending().search.requestId, first.previewId);
+  f.search = body => ({ state: 'QUEUED', requestId: body.requestId, previewId: body.requestId, refreshable: false });
+  const fresh = await f.client.preview(); assert.notEqual(fresh.previewId, first.previewId); assert.equal(f.searches, 2);
+  assert.equal(f.client.pending().search.requestId, fresh.previewId); assert.equal(f.client.pending().previewId, undefined);
+});

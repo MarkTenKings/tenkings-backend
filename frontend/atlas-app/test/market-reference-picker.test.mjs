@@ -121,3 +121,15 @@ test('exact grade tabs keep raw, special designation, language and variant disti
   f.find(node => node.type === 'input')[0].props.onChange({ target: { checked: true } }); f.render(); assert.match(f.text(), /2 selected across all groups/);
   tabs()[0].props.onKeyDown({ key: 'End', preventDefault() {} }); f.render(); assert.equal(tabs().at(-1).props['aria-selected'], true);
 });
+
+
+test('confirmed expired saved evidence offers an explicit fresh search; other saved failures retry locally and unknown only checks', async () => {
+  const f = fixture(); f.props.automatic = true; let checks = 0; f.props.onCheck = () => checks++;
+  f.props.savedSource = { state: 'FAILED', reason: 'LOCAL_PROJECTION_FAILED', refreshable: true, refreshAction: 'RETRY_SAVED_RESPONSE' }; f.render();
+  assert.ok(f.button('Retry saved results')); assert.equal(f.searches, 0);
+  f.props.savedSource = { state: 'FAILED', reason: 'MARKET_PREVIEW_EXPIRED', refreshable: true, refreshAction: 'SEARCH_AGAIN' }; f.render();
+  assert.match(f.text(), /saved provider result is too old/); assert.ok(f.button('Start fresh search')); assert.equal(f.searches, 0);
+  f.button('Start fresh search').props.onClick(); await flush(); f.render(); assert.equal(f.searches, 1);
+  f.props.savedSource = { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN', refreshable: false }; f.render();
+  f.button('Check saved search').props.onClick(); assert.equal(checks, 1); assert.equal(f.searches, 1); assert.equal(f.button('Start fresh search'), undefined);
+});

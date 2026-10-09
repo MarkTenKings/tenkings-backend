@@ -23,7 +23,7 @@ export function marketJobStatus(row) {
   return { state, previewId: row.request_id, approvalActionId: row.approval_action_id,
     updatedAt: new Date(row.updated_at ?? row.created_at).toISOString(), ...(row.code ? { reason: row.code } : {}),
     refreshable: !['QUEUED','SEARCHING','UNKNOWN'].includes(state),
-    ...(state === 'FAILED' && row.response ? { refreshAction: 'RETRY_SAVED_RESPONSE' } : {}) };
+    ...(state === 'FAILED' && row.response ? { refreshAction: row.code === 'MARKET_PREVIEW_EXPIRED' ? 'SEARCH_AGAIN' : 'RETRY_SAVED_RESPONSE' } : {}) };
 }
 
 /** Runs in the existing human-approval transaction, after publication intent.
@@ -132,7 +132,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         requireThat(revision.revision === input.expectedRevision, 409, 'PRESENTATION_REVISION_STALE');
         const [recoverable]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid
           ORDER BY created_at DESC,request_id DESC LIMIT 1`,cardId,input.approvalActionId);
-        if(recoverable?.state==='FAILED'&&recoverable.response){
+        if(recoverable?.state==='FAILED'&&recoverable.response&&recoverable.code!=='MARKET_PREVIEW_EXPIRED'){
           return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET state='QUEUED',attempts=0,recoveries=recoveries+1,code='MARKET_RESPONSE_RECOVERED',
             available_at=clock_timestamp(),updated_at=clock_timestamp(),audit=audit||jsonb_build_array(jsonb_build_object('event','RECOVERY','requestId',$2::text,'requestHash',$3::text,'actorId',$4::text,'at',clock_timestamp()))
             WHERE request_id=$1::uuid RETURNING *`,recoverable.request_id,input.requestId,digest(canonical(input)),principal.id))[0]);

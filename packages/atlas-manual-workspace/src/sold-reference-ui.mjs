@@ -38,6 +38,9 @@ export function saleDateLabel(value) {
   return value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(value)) : 'Date unavailable';
 }
 export function marketSearchMessage(value) {
+  if (value?.state === 'FAILED' && value.reason === 'MARKET_PREVIEW_EXPIRED' && value.refreshable === true && value.refreshAction === 'SEARCH_AGAIN') {
+    return 'The saved provider result is too old for a new reference selection. Start a fresh search to fetch current sold listings.';
+  }
   const reason = ({ PROVIDER_QUOTA_REACHED: 'The sold-sales provider quota is exhausted. Ask an administrator to check the account.',
     PROVIDER_REQUEST_LIMITED: 'The provider has limited requests. The saved search will show its next available state here.',
     PROVIDER_CONFIGURATION_ERROR: 'The sold-sales provider credential needs attention from an administrator.',

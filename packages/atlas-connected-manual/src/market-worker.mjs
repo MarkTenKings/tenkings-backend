@@ -24,7 +24,7 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
   const tasks = new Set(); let stopped = true, cycling = null, timer = null;
   const emit = error => { try { onError({ code: /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'MARKET_WORKER_INTERRUPTED' }); } catch { /* Logging cannot change receipts. */ } };
   async function execute(job) {
-    let dispatched = false, responseSaved = Boolean(job.response), providerFailed = null, leaseLost = false, renewing = Promise.resolve();
+    let dispatched = false, responseSaved = Boolean(job.response), providerFailed = null, previewExpired = false, leaseLost = false, renewing = Promise.resolve();
     const heartbeat = timers.setInterval(() => { renewing = renewing.then(async () => {
       if (!await store.renew(job)) leaseLost = true;
     }).catch(error => { leaseLost = true; emit(error); }); }, heartbeatMs); heartbeat.unref?.();
@@ -47,14 +47,16 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
         responseSaved = true;
       }
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
-      const result = market.project(source, response);
+      let result;
+      try { result = market.project(source, response); }
+      catch (error) { previewExpired = error?.code === 'MARKET_PREVIEW_EXPIRED'; throw error; }
       const artifactHash = digest(JSON.stringify(result.preview));
       const ref = await artifacts.write(result.preview, { cardId: job.card_id, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
       requireThat(result.sourceHash === digest(canonical(result.preview)), 503, 'MARKET_PREVIEW_CORRUPT');
       await store.finish(job, { result: { state: 'READY', ref, artifactHash, sourceHash: result.sourceHash } });
     } catch (error) {
       emit(error);
-      const failure = providerFailed ?? (responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
+      const failure = providerFailed ?? (previewExpired ? { code: 'MARKET_PREVIEW_EXPIRED', disposition: 'FAILED' } : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
         : dispatched ? { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' }
         : { code: 'MARKET_PREPARATION_INTERRUPTED', disposition: 'RETRY' });
       try { await store.finish(job, failure); } catch (saveError) { emit(saveError); }

@@ -7,14 +7,14 @@ import { marketJobStatus, marketJobGrantSQL } from '../src/market-job-store.mjs'
 import { publishedMarketQuery } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
-async function setup({ providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1 } = {}) {
+async function setup({ providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1, now } = {}) {
   const fixture = await publicationFixture(); await fixture.publication.publish({}, fixture.cardId, fixture.actionId);
   const manifest = JSON.parse(fixture.row.manifest);
   const packet = await fixture.artifacts.read(manifest.packet.ref, { cardId: fixture.cardId, kind: 'PUBLIC_REPORT', sourceHash: manifest.packet.sourceHash });
   const source = { packet, publicHash: fixture.row.public_hash, row: fixture.row }, context = publishedMarketQuery(source);
   let calls = 0, writes = 0, maxActive = 0, active = 0, publicationCalls = 0;
   const rows = Array.from({ length: jobs }, () => ({ request_id: randomUUID(), card_id: fixture.cardId, approval_action_id: fixture.actionId,
-    state: 'QUEUED', attempts: 0, response: null, source_hash: fixture.row.source_hash, report_hash: fixture.row.report_hash }));
+    state: 'QUEUED', created_at: new Date().toISOString(), attempts: 0, response: null, source_hash: fixture.row.source_hash, report_hash: fixture.row.report_hash }));
   const before = structuredClone(fixture.row);
   const store = {
     async claim() { const row = rows.find(row => row.state === 'QUEUED'); if (!row) return null;
@@ -31,7 +31,7 @@ async function setup({ providerError = null, failArtifact = false, loseResponseR
     artifacts: { ...fixture.artifacts, async write(...args) { writes++; if (failArtifact) { failArtifact = false; throw Error('Object storage unavailable'); } return fixture.artifacts.write(...args); } },
     provider: async () => { calls++; active++; maxActive = Math.max(maxActive, active); await new Promise(resolve => setImmediate(resolve)); active--;
       if (providerError) throw providerError; return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: context.query, retrievedAt: new Date().toISOString(), candidates: [] }; },
-    authorityFor: () => ({ machine: true }), concurrency: 2 });
+    authorityFor: () => ({ machine: true }), concurrency: 2, now });
   return { worker, rows, before, fixture, calls: () => calls, writes: () => writes, maxActive: () => maxActive, publicationCalls: () => publicationCalls };
 }
 test('construction and GET status stay cold; automatic jobs run independently and save exact response before preview', async () => {
@@ -65,4 +65,14 @@ test('only typed explicit refusals permit retries; status hides all private job/
   assert.equal(status.state,'SEARCHING'); assert.equal(status.refreshable,false); assert.equal(status.response,undefined); assert.equal(status.actor_id,undefined);
   const grants = marketJobGrantSQL('atlas_fixture_manual'); assert.equal(/DELETE|TRUNCATE|ALL|UPDATE ON/.test(grants), false);
   assert.throws(() => marketJobGrantSQL('bad"role'));
+});
+
+
+test('retained response expiry conclusively stops local retries and offers only explicit new search', async () => {
+  let elapsed=0;const f=await setup({failArtifact:true,now:()=>new Date(Date.now()+elapsed)});
+  await f.worker.drainOnce();assert.equal(f.rows[0].state,'QUEUED');const response=structuredClone(f.rows[0].response);
+  elapsed=48*60*60*1000;await f.worker.drainOnce();await f.worker.drainOnce();
+  assert.equal(f.rows[0].state,'FAILED');assert.equal(f.rows[0].code,'MARKET_PREVIEW_EXPIRED');
+  assert.equal(f.calls(),1);assert.equal(f.writes(),1);assert.deepEqual(f.rows[0].response,response);
+  const status=marketJobStatus(f.rows[0]);assert.equal(status.refreshable,true);assert.equal(status.refreshAction,'SEARCH_AGAIN');
 });

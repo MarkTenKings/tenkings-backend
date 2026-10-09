@@ -72,6 +72,7 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   if (!available) return null;
   const blocked = disabled || Boolean(busy) || pending, current = savedSource?.state === 'READY' ? source : savedSource ?? source;
   const waiting = ['QUEUED', 'SEARCHING', 'PENDING'].includes(current?.state), uncertain = current?.state === 'UNKNOWN';
+  const expired = current?.state === 'FAILED' && current.reason === 'MARKET_PREVIEW_EXPIRED' && current.refreshable === true && current.refreshAction === 'SEARCH_AGAIN';
   const groups = groupSoldReferences(source?.preview.candidates), active = groups.find(group => group.key === activeGroup) ?? groups[0];
   const notice = busy || status || marketSearchMessage(current);
   const cardName = card?.playerName || card?.cardName;
@@ -85,7 +86,7 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   return <section className={styles.panel} aria-label="Grade report sales references">
     <div className={styles.heading}><div><p className={styles.eyebrow}>REPORT · MARKET REFERENCES</p><h3>{title}</h3></div>
       <button type="button" disabled={blocked || waiting || current?.refreshable === false && !uncertain}
-        onClick={() => { if ((uncertain || automatic && searchPending) && callbacks.current.onCheck) void callbacks.current.onCheck(); else void search(); }}>{uncertain || searchPending ? 'Check saved search' : current?.refreshAction === 'RETRY_SAVED_RESPONSE' ? 'Retry saved results' : source ? refreshLabel : searchLabel}</button></div>
+        onClick={() => { if ((uncertain || automatic && searchPending) && callbacks.current.onCheck) void callbacks.current.onCheck(); else void search(); }}>{uncertain || searchPending ? 'Check saved search' : expired ? 'Start fresh search' : current?.refreshAction === 'RETRY_SAVED_RESPONSE' ? 'Retry saved results' : source ? refreshLabel : searchLabel}</button></div>
     {(cardName || cardImage) && <div className={styles.cardHeading}>{cardImage && <div className={styles.cardImage}>{cardImage}</div>}<div><h4>{cardName || 'Approved card'}{card?.cardNumber && <span> #{card.cardNumber}</span>}</h4>
       {card?.parallel && <span className={styles.variant}>{card.parallel}</span>}<p>{[card?.year, card?.manufacturer, card?.productSet].filter(Boolean).join(' · ')}</p><small>Approved ATLAS identity · Unrecorded variant details remain unconfirmed</small></div></div>}
     <p className={styles.note}>{note}</p>
