@@ -1,5 +1,11 @@
 # ATLAS variant photos — lead handoff, 2026-10-10
 
+## Existing-card behavior clarified — October 10, 2026, 18:02 UTC
+
+User’s Charizard ex Paldean Fates054/091 screenshot shows Holofoil/Holo metadata but no listing photos. Read-only diagnosis found card1d4cd8b8’s READY reference job created09:10:56UTC/finished09:11:04UTC before the hybrid release, no listing audit events and no Charizard listing-source journal entries. Existing READY snapshots are not automatically enriched on deployment/open; discovery skips cards with an existing same-source/identity/policy job. Explicit reference-library refresh creates a new generation without rerunning grading. A fresh eligible card enters the new background path after identification completes. Previous acceptance proved the two expressly refreshed Mewtwo/Drake cards, not automatic backfill of every historical card.
+
+The screenshot’s local Holo choice was subsequently confirmed by the human at18:01:47.562459UTC (current saved English Holo,identityRevision2/cardRevision18). Diagnosis did not refresh, discard, select or change anything. Preserve that decision. Evidence: `atlas-hybrid-photos-20261010-r2/acceptance/charizard-existing-card-diagnosis.json`. No code/deployment/provider call occurred.
+
 ## Final verified checkpoint — October 10, 2026, 17:42 UTC
 
 **Integration complete and real photos visually verified in production for Pokémon and sports.** This supersedes all unfinished acceptance statements below. No further deployment, restart, source purchase or human grading action is required to finish this task.
