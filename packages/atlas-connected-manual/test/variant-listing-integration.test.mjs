@@ -26,6 +26,18 @@ test('listing preparation requires durable worker capability; unknown and retain
  await assert.rejects(service.prepare({identity},{executeListingSource:async()=>{throw Object.assign(Error('priority'),{code:'VARIANT_GRADING_PRIORITY_DEFERRED'});}}),{code:'VARIANT_GRADING_PRIORITY_DEFERRED'});
 });
 
+test('hung metadata discovery cannot block independent listing retrieval, but external cancellation prevents dispatch',async()=>{
+ const metadata={prepare:()=>new Promise(()=>{})},provider=createVariantListingProvider({fetchImpl:noNetwork,cache:{get:noNetwork,getRetained:noNetwork,put:noNetwork},now});let dispatches=0;
+ const service=createVariantCatalogService({providers:[metadata],listingProvider:provider,now,timeoutMs:10});
+ const executeListingSource=async request=>{dispatches++;const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});
+  return {state:'REUSED',source:{...responseFor(request),bodyText,sha256:sha(bodyText)}};};
+ const result=await service.prepare({identity},{executeListingSource});assert.equal(dispatches,1);
+ assert(result.problems.includes('CATALOG_UNAVAILABLE'));assert(!result.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
+ const controller=new AbortController(),reason=Error('external cancellation');
+ const pending=service.prepare({identity},{signal:controller.signal,executeListingSource});controller.abort(reason);
+ await assert.rejects(pending,error=>error===reason);assert.equal(dispatches,1);
+});
+
 test('one saved source supplies separate physical cards and refreshed photos; authenticated retained GET stays offline after TTL and checks the current result',async()=>{
  const bytes=await sharp({create:{width:12,height:16,channels:3,background:'#125cab'}}).png().toBuffer(),entries=new Map(),journal=new Map();
  let paid=0,images=0,writes=0;

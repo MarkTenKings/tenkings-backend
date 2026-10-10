@@ -98,7 +98,8 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       return bounded(signal, timeoutMs, active => catalogClient.submit(prepared.proposal, active));
     },
     async prepare(input, { signal, executeListingSource } = {}) {
-      const base = await bounded(signal, timeoutMs, async signal => {
+      let base;
+      try{base = await bounded(signal, timeoutMs, async signal => {
       abort(signal);
       const identity = normalizeVariantIdentity(input.identity), candidates = [], problems = [];
       if (!identity.name || !identity.setName || !identity.cardNumber || !identity.year) {
@@ -135,7 +136,14 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       }
       abort(signal);
       return createVariantReviewSnapshot({ identity, candidates, problems, truncated, capturedAt: new Date(now()).toISOString() });
-      });
+      });}catch(error){
+        abort(signal);
+        if(!listingProvider||error.code!=='VARIANT_CATALOG_TIMEOUT')throw error;
+        // A metadata timeout does not spend the independent listing window.
+        // The cancelled metadata phase cannot later add to this saved result.
+        base=createVariantReviewSnapshot({identity:normalizeVariantIdentity(input.identity),candidates:[],
+          problems:['CATALOG_UNAVAILABLE','PROVIDER_UNAVAILABLE'],capturedAt:new Date(now()).toISOString()});
+      }
       if(!listingProvider||base.problems.includes('IDENTITY_INCOMPLETE'))return base;
       const identity=normalizeVariantIdentity(input.identity),problems=base.problems.filter(p=>!['NO_VARIANTS_FOUND','NO_DIAGNOSTIC_PHOTOS'].includes(p));
       let candidates=base.candidates,truncated=base.coverage.metadata==='truncated';
