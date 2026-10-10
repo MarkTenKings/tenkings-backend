@@ -1,5 +1,32 @@
 # ATLAS variant photos — lead handoff, 2026-10-10
 
+## Latest continuation checkpoint — October 10, 2026, 17:15 UTC
+
+**Software installed; required real-photo screen acceptance is still unfinished.** This section supersedes the historical checkpoint below. Continue here; do not redeploy or restart the investigation.
+
+- Worktree/branch remain exactly as documented below. App source `3927ba07827f4a40c0413cbdceb3e43ccfc0135a`; final docs-only commit may follow. All changes pushed; original dirty checkout untouched.
+- Staff `dpl_GAbHcHQmGTxsz5GndbYPTyXCYpzD` / `atlas-grading-staff-1tdny4dlr-ten-kings.vercel.app`; public `dpl_E2m6UXHRhBfZ5oNmaTtFQ3k465ye` / `atlas-grading-public-q5rc539dw-ten-kings.vercel.app`; customer remains exact `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app`.
+- Main `c1fb9c561d83cbc2a0b123b1c8beb063cffad07352b186a821abadd5a68859cf`, started `2026-10-10T17:09:57.3933189Z`; worker `b8cb14f330f9de3aa3848be7d2a8e3a6f45ced1fb08c493974b4c5d956a2a02d`, started `2026-10-10T17:12:23.103191066Z`. Both source3927/image `sha256:2ddf7a56756a1df3ba8a50569446838023d3760dbd8b9813dc0e6347461ef184`; zero restarts/OOM, `unless-stopped`. Main14CPU/28GiB, worker1CPU/1GiB/pool1/concurrency1 unchanged.
+- Controls Staff79/Customer43/PublicReader52/STAFF SMS60/CUSTOMER SMS21. Schema79/121 unchanged. Final census all16activezero/all3priorityfalse; all protected history/ledgers/drafts exactly match pre-release. Four acceptance cards unchanged, zero variant confirmations, no actual listing source/image cache entries.
+
+Implemented: exact `listing_photo` schema with listing `{id,title,url}`, `provenance.provider='ebay_sold_comps_v2'`, usage `provider_reference`; immutable raw/source/image evidence; canonical case/collector alias source identity; permanent dispatch journal in existing cache with advisory locks, no retry after uncertainty; separate worker-only SoldComps key copied from existing credential. Main reader has no listing credential or network capability. Explicit compatible photos attach to retained Scrydex names; ambiguous claims stay independent. Seller photos never feed the variant model or make a human decision. Total metadata timeout now falls back to partial discovery and continues the independent listing window, preserving cancellation. Exact already-live74 admission fix carried forward. UI shows seller attribution/side-by-side comparison, generic artwork once, missing-photo compact choices, preserved identity/grade and discard/refresh path. Automatic postapproval comps are unchanged and tested; no actual approval was manufactured.
+
+Evidence packet `/Users/markthomas/.codex/atlas-handoffs/atlas-hybrid-photos-20261010-r2`:
+- `release-checkpoint.json` indexes13 exact receipt hashes. Native279/279, source1248/native16/dependency29 checks; no native compilation/install. PostgreSQL21 groups in prior packet `atlas-visual-variant-review-20261009/hybrid-orchestration-postgres-r3/result.json`. UI/client50 tests and actual adapter-to-UI PNG path; browser synthetic desktop/mobile evidence in `atlas-hybrid-photos-20261010/ui`.
+- `runtime/plan.json` SHA `fa8e148693ee6b4381267b442b0b198c7673372b9dce8d11f9103e05c8c8cac9`. All prepare/stage/fence/stop/main/restore/grants/worker/restart/public operations succeeded once. `web` route/promote succeeded once; canonical routing/assets/CSP passed.
+- `read-smoke/result.json` SHA `3ad8a0b3225404d04362c1555c2bee3ede4be4377d2302699930011cef8113f2`:11 signed sessionless reads, no mutations. This is not authenticated photo proof.
+- `runtime/final-controls.json` SHA `e900c447f972590e5242efffa5e12d14af7c915beef7a14078d1dacb97362d38`; `resource-baseline.json` verifies14CPU/28GiB and1CPU/1GiB and zero restarts/OOM. Local synthetic acquisition performance measured warm manual-read/commit p95 +3.57ms, not a production grading guarantee.
+- `acceptance/{before,after-activation}.json`: all four target cards/revisions/identities preserved; zero sources/photos/confirmations; existing10 market jobs unchanged. `acceptance/observe.py <fresh-tag>` is read-only and captures job/source/image descriptors plus computed retained byte hashes; do not reuse output tags.
+- Earlier `atlas-hybrid-photos-20261010` b61 image/staff candidate is superseded before activation, with no runtime/control/promotion or paid request. Preserve receipts; never replay old intents.
+
+Remaining work is concrete: normal staff sign-in, then one authorized reference-library refresh for existing Mewtwo and one Drake draft. No approval, variant selection, grading step or new card needed. Browser Chrome ATLAS profile has a separate tab opened for acceptance; original saved manual tab stays untouched. At17:13 a cached queue showed “Your session ended”; navigation to `/admin` returned normal Staff sign-in. User was asked asynchronously to sign in and reply “signed in”; no reply yet. Do not extract cookies, synthesize sessions/private browser API calls, impersonate human approval or re-run completed grading work.
+
+After sign-in use real UI and confirm current3927 screen, then refresh references, observe actual worker acquisition, verify byte hashes using fresh read-only observation, and visibly inspect real photo rendering/comparison for Pokémon and sports. Same canonical identity must buy at most one source request; retained sources survive TTL/refresh. If photos are missing, inspect retained response without repurchasing. Capture actual screen evidence and compare saved history. Measure queue/resource/read behavior during acquisition honestly; do not promise zero grading slowdown. This required acceptance remains open and the feature must not be described as fully working based on automated tests.
+
+The completed release freeze is lifted for documentation and any evidence-backed follow-up fixes. Sealed release helpers require the exact3927 source and will refuse a changed HEAD; they are historical after the completed cutover. Create a fresh narrow successor only if an actual bug requires one. No additional restart or deployment is currently needed.
+
+## Historical takeover checkpoint (superseded by continuation above)
+
 ## Start here
 
 The user requests a fresh Astra lead. Finish the approved feature; do not restart the investigation or describe it as complete. User is frustrated by hidden identity, empty variant references and credit consumption. Communicate simply, keep work bounded, and prove actual photos on the staff screen. All specialist agents have stopped; no production cutover is in flight.

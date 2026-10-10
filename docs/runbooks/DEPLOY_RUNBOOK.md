@@ -1,5 +1,13 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## ATLAS hybrid reference photos — software installed October 10, 2026; real-photo acceptance pending
+
+Latest software source is `3927ba07827f4a40c0413cbdceb3e43ccfc0135a`. Staff/public/native successor is installed and canonical routing verified. Staff `dpl_GAbHcHQmGTxsz5GndbYPTyXCYpzD`, public `dpl_E2m6UXHRhBfZ5oNmaTtFQ3k465ye`; customer remains `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp`. Both native processes use qualified image `sha256:2ddf7a56756a1df3ba8a50569446838023d3760dbd8b9813dc0e6347461ef184`, with existing main14CPU/28GiB and isolated worker1CPU/1GiB/pool1/concurrency1. Controls: Staff79 / Customer43 / PublicReader52 / STAFF SMS60 / CUSTOMER SMS21. Staff79/public121 ledgers and protected card/action/approval/grading/market/variant histories are unchanged.
+
+The approved integration uses Scrydex Pokémon names and existing SoldComps listing photos for Pokémon/sports, prepares references in the worker, serves retained hash-verified bytes, and keeps staff confirmation explicit. Saved identity/grade and prior screen repairs remain. Existing postapproval comps remain approval-gated. No migration or grant change. Isolated native279 tests, actual PostgreSQL21 groups, canonical routing and11 signed read checks passed. **This is not completed real-photo acceptance:** no paid listing request or reference refresh has run; existing jobs are preserved. Normal staff sign-in is required before refreshing one Mewtwo and one Drake draft and proving actual photos on the staff screen. Do not synthesize a session, variant confirmation or approval.
+
+Current checkpoint and exact continuation instructions: [hybrid handoff](../handoffs/ATLAS_VARIANT_HYBRID_HANDOFF_2026-10-10.md). Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-hybrid-photos-20261010-r2/release-checkpoint.json`. Earlier dated deployment claims below are historical where superseded. All release mutation intents are consumed; do not replay them.
+
 ## ATLAS staff order desk operations — published and read-only acceptance verified October 9 Pacific / October 10 UTC, 2026
 
 Application source: `1e55ddb47aedca560b6d16f26e96c9c158980bf0`; fresh release packet: `~/.codex/atlas-handoffs/atlas-staff-order-desk-20261009`. Completed observations below are backed by the packet receipt index; recorded read-only acceptance passed; ordinary reviewer limitations remain explicit. Earlier dated deployment checkpoints are historical where superseded; their consumed migration, control, runtime and promotion intents must not be replayed.

@@ -1,5 +1,13 @@
 # Ten Kings Master Product Context
 
+## ATLAS hybrid reference photos — software installed October 10, 2026; real-photo acceptance pending
+
+Latest software source is `3927ba07827f4a40c0413cbdceb3e43ccfc0135a`. Staff/public/native successor is installed and canonical routing verified. Staff `dpl_GAbHcHQmGTxsz5GndbYPTyXCYpzD`, public `dpl_E2m6UXHRhBfZ5oNmaTtFQ3k465ye`; customer remains `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp`. Both native processes use qualified image `sha256:2ddf7a56756a1df3ba8a50569446838023d3760dbd8b9813dc0e6347461ef184`, with existing main14CPU/28GiB and isolated worker1CPU/1GiB/pool1/concurrency1. Controls: Staff79 / Customer43 / PublicReader52 / STAFF SMS60 / CUSTOMER SMS21. Staff79/public121 ledgers and protected card/action/approval/grading/market/variant histories are unchanged.
+
+The approved integration uses Scrydex Pokémon names and existing SoldComps listing photos for Pokémon/sports, prepares references in the worker, serves retained hash-verified bytes, and keeps staff confirmation explicit. Saved identity/grade and prior screen repairs remain. Existing postapproval comps remain approval-gated. No migration or grant change. Isolated native279 tests, actual PostgreSQL21 groups, canonical routing and11 signed read checks passed. **This is not completed real-photo acceptance:** no paid listing request or reference refresh has run; existing jobs are preserved. Normal staff sign-in is required before refreshing one Mewtwo and one Drake draft and proving actual photos on the staff screen. Do not synthesize a session, variant confirmation or approval.
+
+Current checkpoint and exact continuation instructions: [hybrid handoff](../handoffs/ATLAS_VARIANT_HYBRID_HANDOFF_2026-10-10.md). Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-hybrid-photos-20261010-r2/release-checkpoint.json`. Earlier dated deployment claims below are historical where superseded. All release mutation intents are consumed; do not replay them.
+
 ## Verified release checkpoint — October 10, 2026, 15:28 UTC
 
 The reference-image display repair is live. Staff/public web source is `1ac53f279792f56da756c664ec5449b07f48ab0b`: staff `dpl_FSxFGmfAUpSNyU78P9x3DVskkPCc` / `atlas-grading-staff-2hpw6tvkj-ten-kings.vercel.app`; public `dpl_DP5uAtv3MTZ8JBdyDH3agEYED6rp` / `atlas-grading-public-joh50xjea-ten-kings.vercel.app`. Customer remains `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp`, source `546fd382d51ec42674d54114cbfcad83c574b79f`. All four public aliases, exact staff/customer assets and the narrow catalog image CSP passed canonical verification. Only the public staff-routing environment row changed.
