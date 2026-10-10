@@ -150,7 +150,7 @@ export function validateVariantCandidate(input) {
       // This is the only permitted cross-provider image attachment. Scrydex
       // owns the choice name; the seller still owns an unreviewed photo claim.
       fail(c.authority === 'provider_candidate' && c.applicability === 'unknown' && c.canonical === null
-        && ['scrydex', 'ebay_sold_comps_v2'].includes(c.source.provider)
+        && ['scrydex', 'manufacturer_checklist', 'ebay_sold_comps_v2'].includes(c.source.provider)
         && i.publication === null && i.visibleDiagnosticIds.length === 0
         && i.provenance.provider === 'ebay_sold_comps_v2' && i.provenance.usage === 'provider_reference'
         && HASH.test(i.sourceResponseSha256) && i.sourceResponseSha256 === i.provenance.sourceSha256

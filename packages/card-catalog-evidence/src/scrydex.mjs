@@ -46,7 +46,7 @@ export function importScrydexVariantCandidates({ identity, card, source }) {
   const choices = [], seen = new Set();
   for (const variant of card.variants) {
     if (!safe(variant?.name) || variant.name.length > 100 || seen.has(variant.name)) continue; seen.add(variant.name);
-    const label = labelFor(variant.name), finishUnknown = /^(?:normal|standard|unknown)$/i.test(label), recordId = `${card.id}:variant:${variant.name}`;
+    const label = labelFor(variant.name), finishUnknown = /^(?:standard|unknown)$/i.test(label), recordId = `${card.id}:variant:${variant.name}`;
     if (label.length > 120) continue;
     const exact = frontImages(variant.images).filter(url => !generic.includes(url) && uses.get(url) === 1);
     const images = [...new Set(exact.length ? exact : generic)].slice(0, 4).map(url => ({

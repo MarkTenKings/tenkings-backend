@@ -10,8 +10,8 @@ const requiredText = (label: string, max = 120) => z
   .min(1, `${label} is required.`)
   .max(max, `${label} is too long.`);
 
-const optionalText = (label: string) => z
-  .union([z.string().max(120, `${label} is too long.`), z.null()])
+const optionalText = (label: string, max = 120) => z
+  .union([z.string().max(max, `${label} is too long.`), z.null()])
   .optional()
   .transform((value) => {
     const trimmed = value?.trim();
@@ -20,8 +20,8 @@ const optionalText = (label: string) => z
 
 const sportsIdentitySchema = z.object({
   playerName: requiredText("Player name"),
-  year: requiredText("Year", 24),
-  manufacturer: requiredText("Manufacturer"),
+  year: optionalText("Year", 24),
+  manufacturer: optionalText("Manufacturer"),
   productSet: requiredText("Product / set"),
   parallel: optionalText("Parallel"),
   insert: optionalText("Insert"),
@@ -30,7 +30,9 @@ const sportsIdentitySchema = z.object({
 
 const pokemonIdentitySchema = z.object({
   cardName: requiredText("Card name"),
-  year: requiredText("Year", 24),
+  year: optionalText("Year", 24),
+  // Omission must stay omission for historical Pokémon identity hashes.
+  manufacturer: z.string().trim().min(1).max(120).optional(),
   productSet: requiredText("Set"),
   parallel: optionalText("Parallel"),
   cardNumber: optionalText("Card number"),

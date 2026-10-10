@@ -14,7 +14,7 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false, correctionFailure = null } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false, correctionFailure = null, needsSetup = false } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
@@ -49,6 +49,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       return { jobs: f.approved ? [] : f.jobs };
     }
     if (url.endsWith(`/${key}`)) return packet;
+    if (url.endsWith(`/${packet.cardId}`)) return {manual:needsSetup?null:{current:true}};
     if (url.endsWith('/thumbnail')) return {images:{FRONT:{state:'READY',preview:{url:'/front-thumb.jpg'}},BACK:{state:'READY',preview:{url:'/back-thumb.jpg'}}}};
     if (url.endsWith(`/${key}/review`)) { f.approved = true; return response; }
     if (url.endsWith('/batch/resume')) {
@@ -69,7 +70,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       if (name === './RapidReviewControls') return {AtlasSoundControl:'AtlasSoundControl'};
       if (name === 'react') return react;
       if (name === 'next/router') return { useRouter: () => router };
-      if (name === './ManualCards') return {ManualWorkspace:'ManualWorkspace'};
+      if (name === './ManualCards') return {__esModule:true,default:'ManualCards',ManualWorkspace:'ManualWorkspace'};
       if (name === './BatchImport') return BatchImport;
       if (['next/link', './Shell'].includes(name)) return () => null;
       if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
@@ -99,24 +100,13 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
   f.dispose = () => { f.disposed = true; slots.forEach(slot => slot?.cleanup?.()); };
   f.render(); await f.flush(); return f;
 }
-test('batch approval owns one popup before POST and prepares only the exact committed label', async () => {
-  const f = await fixture(); assert.equal(f.popups.length, 0); assert.equal(f.finishing().length, 0);
-  f.ready(); const pending = f.approve(); assert.equal(f.popups.length, 1);
-  assert.deepEqual(f.events.filter(event => ['POPUP', 'POST'].includes(event)), ['POPUP', 'POST']);
-  await pending; await f.flush();
-  assert.equal(f.finishing().length, 1); assert.equal(f.finishing()[0].props.plan, f.plan);
-  assert.equal(f.finishing()[0].props.autoPrintWindow, f.popups[0]); assert.equal(f.finishing()[0].props.printDisabled, false);
-  const post = f.calls.find(call => call.options.method === 'POST');
-  assert.equal(post.options.body.reviewed, true); assert.equal(post.options.body.images.FRONT, 'd'.repeat(64));
-  assert.equal(post.options.body.reportHash, f.packet.reportHash); f.dispose();
-});
 test('final corrections begin only on the explicit gesture and retain the exact displayed machine report binding', async () => {
   const f = await fixture();
   assert.equal(f.actions.length, 0);
-  f.find(node => node.type === 'button' && text(node) === 'Review geometry / make corrections')[0].props.onClick();
+  f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick();
   await f.flush();
   assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
-  assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'ordinary');
+  assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'rapid');
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
 });
@@ -140,23 +130,10 @@ test('the contextual correction action retains the same explicit final-review bi
 test('a corrected report continues the current final review and cannot approve the old machine report', async () => {
   const f = await fixture({ correcting: true });
   assert.equal(f.find(node => node.type === 'button' && /Approve & print/.test(text(node))).length, 0);
-  f.find(node => node.type === 'button' && text(node) === 'Continue final review')[0].props.onClick();
+  f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick();
   await f.flush();
-  assert.equal(f.actions.length, 0); assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'ordinary');
+  assert.equal(f.actions.length, 0); assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'rapid');
   f.dispose();
-});
-test('mismatched label cannot print; pending publication closes popup without reading a label', async () => {
-  for (const options of [{ mismatch: true }, { pending: true }]) {
-    const f = await fixture(options); f.ready(); await f.approve(); await f.flush();
-    assert.equal(f.popups[0].closed, true); assert.equal(f.finishing().length, 0); assert.match(f.text(), /Report approved/);
-    if (options.pending) assert.equal(f.calls.some(call => call.url.includes('/finishing/')), false);
-    f.dispose();
-  }
-});
-test('unmount during approval closes its popup and discards late label effects', async () => {
-  const f = await fixture({ deferred: true }); f.ready(); const pending = f.approve();
-  f.dispose(); f.release(); await pending; await f.flush();
-  assert.equal(f.popups[0].closed, true); assert.equal(f.calls.some(call => call.url.includes('/finishing/')), false);
 });
 test('a delayed queue response cannot display a prior staff account after account change', async () => {
   const f = await fixture({ deferredJobs: true });
@@ -199,26 +176,17 @@ test('resume binds the displayed revision once and reconciles a lost response wi
 
 test('partial batch report keeps evidence visible and gives geometry action instead of a certification or loading message',async()=>{
   const f=await fixture({partial:true});assert.equal(f.reviews().length,1);f.ready();
-  assert.match(f.text(),/Defect analysis and measurements are saved/);assert.doesNotMatch(f.text(),/trained reviewer is required|Loading the exact/);
-  const approve=f.find(node=>node.type==='button'&&text(node)==='Approve & print next')[0];assert.equal(approve.props.disabled,true);
-  await approve.props.onClick();await f.flush();assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);
-  f.find(node=>node.type==='button'&&text(node)==='Review geometry / make corrections')[0].props.onClick();await f.flush();
-  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,0);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'ordinary');f.dispose();
+  assert.equal(f.find(node=>node.type==='button'&&/Approve/.test(text(node))).length,0);
+  f.find(node=>node.type==='button'&&text(node)==='Review card →')[0].props.onClick();await f.flush();
+  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,0);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'rapid');f.dispose();
 });
 
 test('old scoring policy explains the approval block and opens the bound final review only on an explicit gesture', async () => {
   const f = await fixture({ oldScoringPolicy: true }); f.ready();
-  assert.match(f.text(), /This draft uses an earlier scoring policy/);
-  assert.match(f.text(), /recalculate its saved measurements with the current policy before approval/);
-  assert.doesNotMatch(f.text(), /trained reviewer is required/);
-  const approve = f.find(node => node.type === 'button' && text(node) === 'Approve & print next')[0];
-  assert.equal(approve.props.disabled, true);
-  await approve.props.onClick(); await f.flush();
-  assert.equal(f.actions.length, 0); assert.equal(f.popups.length, 0);
-  assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
-  f.find(node => node.type === 'button' && text(node) === 'Review updated scoring')[0].props.onClick(); await f.flush();
+  assert.equal(f.find(node=>node.type==='button'&&/Approve/.test(text(node))).length,0);
+  f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick(); await f.flush();
   assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
-  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog')[0].props.job.navigationMode, 'ordinary');
+  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog')[0].props.job.navigationMode, 'rapid');
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
 });
@@ -235,7 +203,7 @@ test('label queue opens saved completion workspace directly instead of another n
 
  test('failed rapid entry exposes retry for the same card and intent without losing the report', async () => {
   const f = await fixture({ correctionFailure: { code: 'MANUAL_TEMPORARILY_UNAVAILABLE' } });
-  f.find(node => node.type === 'button' && text(node) === 'Start rapid review →')[0].props.onClick();
+  f.find(node => node.type === 'button' && text(node) === 'Start review →')[0].props.onClick();
   await f.flush();
   assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog').length, 0);
   assert.equal(f.reviews().length, 1);
@@ -248,8 +216,20 @@ test('label queue opens saved completion workspace directly instead of another n
 });
 test('a refused stale review points to saved work and offers the existing workspace', async () => {
   const f = await fixture({ correctionFailure: { code: 'BATCH_REVIEW_STALE' } });
-  f.find(node => node.type === 'button' && text(node) === 'Start rapid review →')[0].props.onClick(); await f.flush();
+  f.find(node => node.type === 'button' && text(node) === 'Start review →')[0].props.onClick(); await f.flush();
   assert.match(f.text(), /newer saved work/); assert.doesNotMatch(f.text(), /This step did not finish/);
   f.find(node => node.type === 'button' && text(node) === 'Open saved card workspace')[0].props.onClick();
-  assert.deepEqual(f.routes, [`/manual/${f.packet.cardId}?from=batch`]); assert.equal(f.popups.length, 0); f.dispose();
+  await f.flush();assert.deepEqual(f.routes, []);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog').length,1);assert.equal(f.actions.length,1,'saved-work fallback never tries to adopt the stale report again'); assert.equal(f.popups.length, 0); f.dispose();
+});
+
+
+test('partial metadata and photo recovery use the same review dialog without a fabricated report binding',async()=>{
+  for(const needsSetup of [false,true]){
+    const f=await fixture({attention:true,needsSetup});
+    assert.equal(f.find(node=>node.type==='button'&&/^Needs attention/.test(text(node))).length,0);
+    assert.ok(f.find(node=>node.type==='button'&&/^Review/.test(text(node)))[0]);
+    f.find(node=>node.type==='button'&&text(node)==='Start review →')[0].props.onClick();await f.flush();
+    const dialog=f.find(node=>node.type?.name==='RapidReviewDialog')[0];assert.ok(dialog);assert.equal(dialog.props.job.needsSetup,needsSetup);
+    assert.equal(f.actions.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);assert.deepEqual(f.routes,[]);f.dispose();
+  }
 });

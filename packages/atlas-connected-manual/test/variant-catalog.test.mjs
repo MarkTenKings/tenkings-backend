@@ -23,7 +23,7 @@ function clientFixture(category = 'SPORTS') {
   return { manifest, client, identity, calls, revoke: () => { current = false; } };
 }
 
-for (const category of ['SPORTS', 'POKEMON']) test(`${category}: final-review catalog scopes enumerate photos without assuming physical scope`, async () => {
+for (const category of ['SPORTS']) test(`${category}: final-review catalog scopes enumerate photos without assuming physical scope`, async () => {
   const f = clientFixture(category), service = createVariantCatalogService({ catalogClient: f.client, providers: [], now });
   const result = await service.prepare({ identity: f.identity, cardId: 'private-card', sourceHash: 'physical-source' });
   assert.equal(result.candidates.length, category === 'SPORTS' ? 2 : 4, 'source program/number collisions remain separate choices');
@@ -68,7 +68,7 @@ test('a hung catalog is bounded and a byte substitution never becomes a referenc
 });
 
 test('confirmed choices create idempotent unreviewed metadata proposals; replay never exports photographs or publishes', async () => {
-  const f = clientFixture('POKEMON'), service = createVariantCatalogService({ catalogClient: f.client, providers: [], now });
+  const f = clientFixture('SPORTS'), service = createVariantCatalogService({ catalogClient: f.client, providers: [], now });
   const snapshot = await service.prepare({ identity: f.identity }), candidate = snapshot.candidates.find(c => c.images.length);
   const payload = { decision: 'SELECTED', cardId: '11111111-1111-4111-8111-111111111111', actionId: '22222222-2222-4222-8222-222222222222',
     sourceHash: 'a'.repeat(64), identityRevision: 2, identityHash: 'b'.repeat(64), identity: candidate.identity,
@@ -85,4 +85,10 @@ test('confirmed choices create idempotent unreviewed metadata proposals; replay 
   const manual = prepareVariantCatalogObservation({ ...payload, decision: 'MANUAL', candidateId: null, catalog: null, parallel: 'English Cosmos Holo', observedFeatures: 'Visible galaxy pattern in the picture window.' });
   assert.equal(manual.proposal.identity.cardId, null); assert.equal(manual.proposal.basedOnPublication, null); assert.deepEqual(manual.proposal.images, []);
   assert.throws(() => prepareVariantCatalogObservation({ ...payload, decision: 'MANUAL', candidateId: null, observedFeatures: '' }), /INVALID/);
+});
+
+test('Pokémon uses configured Scrydex only: no shared demand or secondary metadata acquisition',async()=>{
+ let calls=0;const fail=async()=>{calls++;throw Error('unexpected lookup')};
+ const service=createVariantCatalogService({catalogClient:{findCurrentSetCatalogPublications:fail,prepareSetDemand:fail},fetchImpl:fail,now});
+ const result=await service.prepare({identity:clientFixture('POKEMON').identity});assert.equal(calls,0);assert.equal(result.candidates.length,0);
 });

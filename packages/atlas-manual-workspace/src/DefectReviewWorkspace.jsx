@@ -71,12 +71,33 @@ function ExactFindingOverlay({shape,visible}) {
   return visible&&shape.path?<svg className="ad-exact-outline" viewBox="0 0 1270 1778" preserveAspectRatio="none" aria-hidden="true"><path d={shape.path}/></svg>:null;
 }
 
-function FindingsOverviewSide({ workspace, side, image, offset, astra, disabled, readOnly, onReady, onSelectFinding, onSelectSide, onAddFinding, onRestoreFinding, onRetry, renderObservations }) {
+function FindingsOverviewSide({ workspace, side, image, offset, astra, disabled, readOnly, onReady, onSelectFinding, onSelectSide, onAddFinding, onRestoreFinding, onRetry, renderObservations, expanded, hidden, onExpand, resetView, onInspectionStateChange }) {
   const slot = workspace.sides[side], descriptor = image?.inspection;
   const binding = inspectionImageBinding(workspace, side, image);
   const supplied = descriptor?.url && descriptor.sha256 === slot.frame.inspectionImageSha256;
   const verified = useVerifiedImage(supplied ? descriptor : null);
   const [loaded, setLoaded] = useState(null), [clean, setClean] = useState(false);
+  const viewport = useRef(null), gesture = useRef(null), suppressClick = useRef(false);
+  const [size, setSize] = useState({ width: 400, height: 560 });
+  const sizeRef = useRef(size);
+  const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
+  const [selected, setSelected] = useState(null);
+  const inspecting = Boolean(selected) || view.zoom > 1;
+  useEffect(() => { onInspectionStateChange?.(side, inspecting); }, [side, inspecting, onInspectionStateChange]);
+  const fit = () => { setView({ zoom: 1, pan: { x: 0, y: 0 } }); setSelected(null); };
+  useEffect(() => { fit(); setClean(false); }, [binding, resetView]);
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const resize = () => {
+      const next = { width: element.clientWidth, height: element.clientHeight };
+      if (!next.width || !next.height) return;
+      const before = sizeRef.current; sizeRef.current = next; setSize(next);
+      setView(previous => resizeInspectionView(previous, before, next));
+    };
+    const observer = new ResizeObserver(resize); observer.observe(element); resize();
+    return () => observer.disconnect();
+  }, []);
   const ready = Boolean(supplied && verified.url && loaded === binding);
   useEffect(() => { onReady(side, ready ? binding : null); }, [side, ready, binding, onReady]);
   const findings = slot.findings.filter(finding => finding.reviewResult !== 'REMOVED');
@@ -86,20 +107,70 @@ function FindingsOverviewSide({ workspace, side, image, offset, astra, disabled,
   const proposals = astra?.status === 'READY' && proposalFrameMatches(workspace, astra, side)
     ? (astra.proposals ?? []).filter(proposal => proposal.side === side && proposal.reviewStatus === 'UNREVIEWED') : [];
   const reviewed = new Set(reviewedDefectFindingIds(workspace, side));
-  const select = finding => { if (ready && !disabled) onSelectFinding?.({ ...finding, side }); };
+  const selectedFinding = findings.find(finding => finding.id === selected);
+  const select = finding => {
+    if (!ready || disabled || suppressClick.current) return;
+    setSelected(finding.id); setClean(false);
+    const bounds = inspectionBounds(finding);
+    if (bounds) setView(focusInspectionBounds(bounds, sizeRef.current));
+  };
+  const zoom = factor => setView(previous => zoomInspectionAt(previous, previous.zoom * factor,
+    { x: size.width / 2, y: size.height / 2 }, size));
+  const pan = delta => setView(previous => ({ ...previous, pan: clampInspectionPan({ x: previous.pan.x + delta.x, y: previous.pan.y + delta.y }, previous.zoom, size) }));
+  useEffect(() => {
+    const element = viewport.current;
+    const wheel = event => {
+      // Normal scrolling remains page scrolling; Ctrl/trackpad pinch zooms.
+      if (!event.ctrlKey || !ready || disabled) return;
+      event.preventDefault(); const rect = element.getBoundingClientRect();
+      setView(previous => zoomInspectionAt(previous, previous.zoom * Math.exp(-event.deltaY * .005), { x: event.clientX - rect.left, y: event.clientY - rect.top }, sizeRef.current));
+    };
+    element?.addEventListener('wheel', wheel, { passive: false });
+    return () => element?.removeEventListener('wheel', wheel);
+  }, [ready, disabled]);
+  const pointerDown = event => {
+    if (!ready || disabled || view.zoom <= 1 || event.button !== 0 || event.target.closest?.('[role="button"]')) return;
+    suppressClick.current = false;
+    gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, pan: view.pan };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const pointerMove = event => {
+    const start = gesture.current; if (!start || start.id !== event.pointerId) return;
+    const x = event.clientX - start.x, y = event.clientY - start.y;
+    if (Math.hypot(x, y) > 4) suppressClick.current = true;
+    setView(previous => ({ ...previous, pan: clampInspectionPan({ x: start.pan.x + x, y: start.pan.y + y }, previous.zoom, sizeRef.current) }));
+  };
+  const pointerEnd = () => { gesture.current = null; setTimeout(() => { suppressClick.current = false; }, 0); };
+  const scale = fitInspectionScale(size) * view.zoom;
   const add = () => { if (ready && !disabled && !readOnly && !slot.pending) onAddFinding?.({ side, imageSha256: slot.frame.inspectionImageSha256, findingId: null, intent: 'ADD' }); };
-  return <section className="ad-overview-side" aria-label={`${name(side)} findings overview`}>
+  return <section className="ad-overview-side" hidden={hidden} aria-label={`${name(side)} findings overview`}>
     <header><h2>{name(side)}</h2><span>{findings.length} {findings.length === 1 ? 'finding' : 'findings'}{proposals.length ? ` · ${proposals.length} new suggestions` : ''}</span></header>
     <div className="ad-overview-photo-controls"><button type="button" disabled={!ready} aria-pressed={clean} onClick={() => setClean(value => !value)}>{clean ? 'Show all markings' : 'View clean photo'}</button>
       <button type="button" disabled={!ready || disabled || readOnly || Boolean(slot.pending)} onClick={add}>Add {name(side).toLowerCase()} finding</button></div>
-    <div className="ad-overview-photo">
+    <div className="ad-overview-view-controls" aria-label={`${name(side)} photograph controls`}>
+      <button type="button" aria-label={`Zoom out ${name(side)}`} disabled={!ready || view.zoom <= 1} onClick={() => zoom(1 / 1.5)}>−</button>
+      <span aria-live="polite">{Math.round(view.zoom * 100)}%</span>
+      <button type="button" aria-label={`Zoom in ${name(side)}`} disabled={!ready || view.zoom >= MAX_INSPECTION_ZOOM} onClick={() => zoom(1.5)}>+</button>
+      <button type="button" disabled={!ready} onClick={fit}>Fit {name(side).toLowerCase()}</button>
+      <button type="button" aria-expanded={expanded} onClick={() => onExpand(expanded ? null : side)}>{expanded ? 'Show both sides' : `Expand ${name(side).toLowerCase()}`}</button>
+    </div>
+    <div ref={viewport} className="ad-overview-photo" tabIndex={0} role="group" aria-label={`${name(side)} photograph. Use plus and minus to zoom, arrow keys to pan, and zero to fit.`}
+      style={{ touchAction: view.zoom > 1 ? 'none' : 'pan-y', cursor: view.zoom > 1 ? 'grab' : 'default' }}
+      onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd} onPointerCancel={pointerEnd} onLostPointerCapture={pointerEnd}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget || !ready) return;
+        const moves = { ArrowLeft: { x: 60, y: 0 }, ArrowRight: { x: -60, y: 0 }, ArrowUp: { x: 0, y: 60 }, ArrowDown: { x: 0, y: -60 } };
+        if (moves[event.key]) { event.preventDefault(); pan(moves[event.key]); }
+        else if (['+', '=', '-', '0'].includes(event.key)) { event.preventDefault(); if (event.key === '0') fit(); else zoom(event.key === '-' ? 1 / 1.5 : 1.5); }
+      }}>
+      <div className="ad-overview-plane" style={{ width: INSPECTION_SIZE.width, height: INSPECTION_SIZE.height, transform: `translate(${size.width / 2 + view.pan.x}px,${size.height / 2 + view.pan.y}px) scale(${scale}) translate(-50%,-50%)` }}>
       {verified.url ? <img key={binding} src={verified.url} alt={`${name(side)} full inspection photograph`} draggable="false"
         onLoad={event => setLoaded(event.currentTarget.naturalWidth === 1350 && event.currentTarget.naturalHeight === 1858 ? binding : null)} onError={() => setLoaded(null)} />
         : <div className="ad-overview-photo-placeholder" role={verified.error ? 'alert' : 'status'}>{verified.error ? 'This photograph could not be verified.' : supplied ? 'Verifying photograph…' : 'Inspection photograph unavailable.'}</div>}
       {ready && !clean && <svg className="ad-overview-traces" viewBox="0 0 1350 1858" role="group" aria-label={`${name(side)} all finding markings`}>
         <g transform="translate(40 40)">{shapes.filter(shape => shape.path).map(({ finding, number, path, anchor }) => {
           const marker = anchor && { x: Math.max(48, Math.min(1222, anchor.x + 68)), y: Math.max(48, Math.min(1730, anchor.y - 52)) };
-          return <g key={finding.id} role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined} aria-label={`Inspect ${name(side)} finding ${number}: ${TYPES[finding.defectType]}`} data-finding-id={finding.id}
+          return <g key={finding.id} role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined} aria-pressed={selected === finding.id} aria-label={`Inspect ${name(side)} finding ${number}: ${TYPES[finding.defectType]}`} data-finding-id={finding.id}
             onClick={() => select(finding)} onKeyDown={event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); select(finding); } }}>
             <path className="ad-overview-trace-hit" d={path}/><path className="ad-overview-trace" d={path}/>
             {marker && <g className="ad-overview-marker"><path d={`M${anchor.x} ${anchor.y}L${marker.x} ${marker.y}`}/><circle cx={marker.x} cy={marker.y} r="38"/><text x={marker.x} y={marker.y}>{number}</text></g>}
@@ -109,7 +180,12 @@ function FindingsOverviewSide({ workspace, side, image, offset, astra, disabled,
           <polygon className="ad-overview-proposal" points={proposal.canonicalContour.map(point => `${point.x * 1269},${point.y * 1777}`).join(' ')}/>
         </g>)}</g>
       </svg>}
+      </div>
     </div>
+    <div className="ad-overview-pan-controls" aria-label={`Pan ${name(side)} photograph`}>
+      <span>{view.zoom > 1 ? 'Drag photo or use arrows' : 'Zoom to inspect details'}</span>{[['←',60,0],['↑',0,60],['↓',0,-60],['→',-60,0]].map(([label,x,y]) => <button key={label} type="button" aria-label={`Pan ${name(side)} ${label}`} disabled={!ready || view.zoom <= 1} onClick={() => pan({ x, y })}>{label}</button>)}
+    </div>
+    {selectedFinding && <section className="ad-overview-selected" aria-label={`Selected ${name(side)} finding`}><div><strong>{TYPES[selectedFinding.defectType]}</strong><span>{areaOf(selectedFinding).toLocaleString('en-US', { maximumFractionDigits: 6 })} mm² · {regionsOf(selectedFinding).map(region => region.zone.toLowerCase()).join(', ')}</span></div><button type="button" disabled={disabled || readOnly || Boolean(slot.pending)} onClick={() => onSelectFinding?.({ ...selectedFinding, side })}>Edit finding</button><button type="button" onClick={fit}>Return to all findings</button></section>}
     {!ready && verified.url && <p role="status">Verifying the complete saved photograph before review.</p>}
     {verified.error && <button type="button" disabled={disabled} onClick={verified.retry}>Retry {name(side).toLowerCase()} photograph</button>}
     {slot.pending && <p className="ad-overview-pending" role="status">Your change is saved. Measurement must finish before approval. <button type="button" disabled={disabled || readOnly || !onRetry} onClick={() => onRetry?.(side)}>Retry measurement</button><button type="button" disabled={disabled} onClick={() => onSelectSide?.(side)}>Review pending change</button></p>}
@@ -127,8 +203,16 @@ function FindingsOverviewSide({ workspace, side, image, offset, astra, disabled,
 
 /** Display-only paired entry. The host owns the one deliberate, durable
  * both-side confirmation and the separate final report approval. */
-export function FindingsOverview({ workspace, images, astra, disabled = false, readOnly = false, onReadyChange, onSelectFinding, onSelectSide, onAddFinding, onRestoreFinding, onRetry, renderObservations }) {
+export function FindingsOverview({ workspace, images, astra, disabled = false, readOnly = false, onReadyChange, onSelectFinding, onSelectSide, onAddFinding, onRestoreFinding, onRetry, renderObservations, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onRequestingChange, onInspectionStateChange, inspectionReset }) {
   const [ready, setReady] = useState({});
+  const [expanded, setExpanded] = useState(null), [resetView, setResetView] = useState(0);
+  const [inspectingSides, setInspectingSides] = useState({});
+  const sideInspectionChanged = useCallback((side, active) => setInspectingSides(previous => previous[side] === active ? previous : { ...previous, [side]: active }), []);
+  const inspecting = Boolean(expanded) || Object.values(inspectingSides).some(Boolean);
+  useEffect(() => { onInspectionStateChange?.(inspecting); }, [inspecting, onInspectionStateChange]);
+  useEffect(() => { setExpanded(null); setResetView(value => value + 1); }, [inspectionReset]);
+  const [requesting, setRequesting] = useState(false), [analysisError, setAnalysisError] = useState('');
+  const requestLock = useRef(false);
   const overview = useRef(null);
   useEffect(() => {
     const element = overview.current;
@@ -138,24 +222,48 @@ export function FindingsOverview({ workspace, images, astra, disabled = false, r
     const fit = () => {
       if (window.innerWidth <= 700) return;
       const bottom = element.getBoundingClientRect().bottom;
-      const tops = [...element.querySelectorAll('.ad-overview-photo')].map(photo => photo.getBoundingClientRect().top + element.scrollTop);
+      const tops = [...element.querySelectorAll('.ad-overview-side:not([hidden]) .ad-overview-photo')].map(photo => photo.getBoundingClientRect().top + element.scrollTop);
       const height = Math.max(0, Math.floor(bottom - Math.max(...tops) - 12));
       element.style.setProperty('--ad-overview-photo-height', `${height}px`);
     };
     const observer = new ResizeObserver(fit);
     observer.observe(element);
-    element.querySelectorAll('.ad-overview-intro,.ad-overview-side>header,.ad-overview-photo-controls').forEach(node => observer.observe(node));
+    element.querySelectorAll('.ad-overview-intro,.ad-overview-analysis,.ad-overview-side>header,.ad-overview-photo-controls,.ad-overview-view-controls,.ad-overview-side-switch').forEach(node => observer.observe(node));
     window.addEventListener('resize', fit);
     fit();
     return () => { observer.disconnect(); window.removeEventListener('resize', fit); };
-  }, []);
+  }, [expanded]);
   const onReady = useCallback((side, value) => setReady(previous => previous[side] === value ? previous : { ...previous, [side]: value }), []);
   const bothReady = SIDES.every(side => images?.[side]?.inspection?.sha256 === workspace.sides[side].frame.inspectionImageSha256
     && ready[side] === inspectionImageBinding(workspace, side, images?.[side]));
   useEffect(() => { onReadyChange?.(bothReady); }, [bothReady, onReadyChange]);
+  const analysis = astraReviewState(workspace, astra);
+  async function requestAnalysis(mode) {
+    if (disabled || requestLock.current || mode !== 'refresh' && readOnly) return;
+    if (mode === 'start' && (!analysis.mayRequest || !bothReady || !onAnalyzeDefects)) return;
+    if (mode === 'resume' && (!astra?.resumeAvailable || !onResumeAnalysis)) return;
+    if (mode === 'replace' && (analysis.status !== 'UNKNOWN' || !astra?.replacement || astra.backgroundAccepted || !bothReady || astra.requestAvailable === false || !onReplaceAnalysis)) return;
+    requestLock.current = true; setRequesting(true); setAnalysisError(''); onRequestingChange?.(true);
+    try {
+      const input = { base: Object.fromEntries(SIDES.map(side => [side, defectBase(workspace, side)])), actor: 'HUMAN' };
+      if (mode === 'refresh') await onRefreshAnalysis?.();
+      else if (mode === 'resume') await onResumeAnalysis();
+      else if (mode === 'replace') await onReplaceAnalysis(input);
+      else await onAnalyzeDefects(input);
+    } catch { setAnalysisError('The analysis status could not be confirmed. Your photographs and findings remain saved. Check the saved status before continuing.'); }
+    finally { requestLock.current = false; setRequesting(false); onRequestingChange?.(false); }
+  }
   const frontCount = workspace.sides.FRONT.findings.filter(finding => finding.reviewResult !== 'REMOVED').length;
-  return <div ref={overview} className="ad-findings-overview" aria-label="All findings on Front and Back"><p className="ad-overview-intro">Review both full photographs. Select a marked finding to inspect or correct it, or add anything that was missed.</p>
-    <div className="ad-overview-pair">{SIDES.map(side => <FindingsOverviewSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]} offset={side === 'FRONT' ? 0 : frontCount} astra={astra}
+  return <div ref={overview} className="ad-findings-overview" aria-label="All findings on Front and Back"><p className="ad-overview-intro">Zoom and move either photograph. Select a marking to inspect it; choose Edit finding only when a correction is needed.</p>
+    {analysis.enabled && <details className="ad-overview-analysis" open={analysis.status !== 'READY'}><summary>ATLAS analysis · {analysis.status === 'READY' ? 'Saved' : analysis.status.toLowerCase()}</summary><p role="status">{requesting ? 'Checking the saved analysis…' : analysis.message}</p>{analysisError && <p role="alert">{analysisError}</p>}
+      {astra?.limitations?.length > 0 && <ul aria-label="ATLAS image limitations">{astra.limitations.filter(value => typeof value === 'string').slice(0,8).map((value,index) => <li key={index}>{value}</li>)}</ul>}
+      <div>{onRefreshAnalysis && <button type="button" disabled={disabled || requesting} onClick={() => requestAnalysis('refresh')}>Check saved analysis</button>}
+        {astra?.resumeAvailable && onResumeAnalysis && <button type="button" disabled={disabled || requesting || readOnly} onClick={() => requestAnalysis('resume')}>Retry saved analysis</button>}
+        {analysis.status !== 'READY' && analysis.mayRequest && onAnalyzeDefects && <button type="button" disabled={disabled || requesting || readOnly || !bothReady} onClick={() => requestAnalysis('start')}>Find defects with ATLAS</button>}
+        {analysis.status === 'UNKNOWN' && astra?.replacement && !astra.backgroundAccepted && onReplaceAnalysis && <button type="button" disabled={disabled || requesting || readOnly || !bothReady || astra.requestAvailable === false} onClick={() => requestAnalysis('replace')}>Start a new ATLAS analysis</button>}
+      </div></details>}
+    {expanded && <nav className="ad-overview-side-switch" aria-label="Expanded photograph">{SIDES.map(side => <button key={side} type="button" aria-pressed={expanded === side} onClick={() => setExpanded(side)}>{name(side)}</button>)}<button type="button" onClick={() => { setExpanded(null); setResetView(value => value + 1); }}>Return to all findings</button></nav>}
+    <div className={`ad-overview-pair${expanded ? ' ad-overview-expanded' : ''}`}>{SIDES.map(side => <FindingsOverviewSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]} offset={side === 'FRONT' ? 0 : frontCount} astra={astra} expanded={expanded === side} hidden={Boolean(expanded && expanded !== side)} onExpand={setExpanded} resetView={resetView} onInspectionStateChange={sideInspectionChanged}
       disabled={disabled} readOnly={readOnly} onReady={onReady} onSelectFinding={onSelectFinding} onSelectSide={onSelectSide} onAddFinding={onAddFinding} onRestoreFinding={onRestoreFinding} onRetry={onRetry} renderObservations={renderObservations}/>)}</div>
   </div>;
 }
@@ -322,6 +430,10 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
     if (initialInspection.view && initialInspection.size)
       setView(resizeInspectionView(initialInspection.view, initialInspection.size, viewportSizeRef.current));
     if (initialInspection.intent === 'ADD') start(null);
+    else if (initialInspection.intent === 'EDIT') {
+      const target = slot.findings.find(finding => finding.id === initialInspection.findingId);
+      if (target && target.reviewResult !== 'REMOVED') start(target);
+    }
   }, [ready, initialInspection, side]);
   useEffect(() => {
     if (!hidden && ready) onInspectionChange?.({side, findingId:selected, imageSha256:slot.frame.inspectionImageSha256, view, size:viewportSize});

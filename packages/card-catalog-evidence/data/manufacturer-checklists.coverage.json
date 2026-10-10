@@ -1,0 +1,227 @@
+{
+  "asOf": "2026-10-10",
+  "complete": false,
+  "requestedYears": {
+    "from": 1990,
+    "through": 2026
+  },
+  "acquisition": [
+    {
+      "manufacturer": "Donruss",
+      "sport": "football",
+      "state": "normalized",
+      "sources": 1,
+      "explicitRows": 14794
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "baseball",
+      "state": "needs_parser",
+      "sources": 18,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "baseball",
+      "state": "normalized",
+      "sources": 62,
+      "explicitRows": 227298
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "basketball",
+      "state": "needs_parser",
+      "sources": 1,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "basketball",
+      "state": "normalized",
+      "sources": 20,
+      "explicitRows": 7501
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "football",
+      "state": "needs_parser",
+      "sources": 23,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "football",
+      "state": "normalized",
+      "sources": 93,
+      "explicitRows": 416860
+    },
+    {
+      "manufacturer": "Panini",
+      "sport": "baseball",
+      "state": "normalized",
+      "sources": 1,
+      "explicitRows": 13483
+    },
+    {
+      "manufacturer": "Panini",
+      "sport": "basketball",
+      "state": "normalized",
+      "sources": 3,
+      "explicitRows": 88697
+    },
+    {
+      "manufacturer": "Panini",
+      "sport": "football",
+      "state": "normalized",
+      "sources": 1,
+      "explicitRows": 30106
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": null,
+      "state": "indexed",
+      "sources": 406,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "baseball",
+      "state": "needs_parser",
+      "sources": 26,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "baseball",
+      "state": "normalized",
+      "sources": 347,
+      "explicitRows": 258875
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "baseball",
+      "state": "unavailable",
+      "sources": 33,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "basketball",
+      "state": "needs_parser",
+      "sources": 3,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "basketball",
+      "state": "normalized",
+      "sources": 53,
+      "explicitRows": 31492
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "basketball",
+      "state": "unavailable",
+      "sources": 1,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "football",
+      "state": "needs_parser",
+      "sources": 2,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "football",
+      "state": "normalized",
+      "sources": 32,
+      "explicitRows": 27311
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "football",
+      "state": "unavailable",
+      "sources": 1,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "sport": "football",
+      "state": "needs_parser",
+      "sources": 1,
+      "explicitRows": 0
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "sport": "football",
+      "state": "normalized",
+      "sources": 4,
+      "explicitRows": 2433
+    }
+  ],
+  "normalizedYearBounds": [
+    {
+      "manufacturer": "Donruss",
+      "earliest": "2024",
+      "latest": "2024"
+    },
+    {
+      "manufacturer": "Leaf",
+      "earliest": "2012-13",
+      "latest": "2026"
+    },
+    {
+      "manufacturer": "Panini",
+      "earliest": "2024",
+      "latest": "2025"
+    },
+    {
+      "manufacturer": "Topps",
+      "earliest": "2018",
+      "latest": "2026"
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "earliest": "2024",
+      "latest": "2026"
+    }
+  ],
+  "counts": {
+    "sourceRecords": 1132,
+    "retainedFiles": 691,
+    "explicitRows": 1118850,
+    "retainedDistinctFileHashes": 691
+  },
+  "limitations": [
+    "No year or manufacturer archive is asserted complete.",
+    "Topps officially states pre-2018 checklists unavailable.",
+    "Panini snapshot covers six selected products, not all visible archive years or programs.",
+    "Leaf current index fully traversed; 217 classified source files retained, with ambiguous and unsupported sheets excluded.",
+    "Upper Deck current football filter captured; historical baseball/basketball/football catalogs and discontinued manufacturers remain gaps.",
+    "Set-wide parallels and unspecified printing plates are not expanded.",
+    "Physical applicability remains unknown until staff review.",
+    "Serving rows are deduplicated within source and exclude labels/identities over bounded field lengths; SQLite preserves retained source rows."
+  ],
+  "servingBundle": {
+    "sources": 617,
+    "explicitRows": 1115165,
+    "gzipBytes": 5947612,
+    "jsonBytes": 37961788,
+    "sha256": "aa6d5d6ece1e5818ec49bde7857894ba0b99ff8593b97ac3e62a24bce261aece"
+  },
+  "validation": {
+    "parserTests": 8,
+    "providerTests": 7,
+    "realCardLookups": [
+      "2024 Donruss Optic Drake Maye #229: 44",
+      "2025-26 Topps Basketball Cooper Flagg #201: 5",
+      "2026 Leaf Football Antwann Hill Jr. #AMA-AHJ: 4",
+      "2026 Upper Deck CFL Stavros Katsantonis #1: 7"
+    ],
+    "firstLoadFourLookupsMs": 941,
+    "maximumResidentSetBytes": 536723456,
+    "measuredHeapUsedBytes": 204937872
+  }
+}

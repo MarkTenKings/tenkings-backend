@@ -73,7 +73,7 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
     const asset=assets.get(hash);if(!asset)throw Error('Verified demo image missing');
     return {url:`/images/${hash}`,sha256:hash,byteCount:asset.bytes.length,width,height};
   };
-  const view=()=>structuredClone({card:{id:cardId,revision,contentHash:`fixture-${revision}`},geometry,defects,
+  const view=()=>structuredClone({card:{id:cardId,revision,contentHash:`fixture-${revision}`,draft:{source:{sourceHash:sha(sourcePng)},identityRevision:1}},geometry,defects,
     images:Object.fromEntries(SIDES.map(side=>{const slot=geometry.sides[side],prepared=slot.prepared?.frame;
       return [side,{original:descriptor(slot.image.frameSha256,slot.image.width,slot.image.height),
         ...(prepared?{inspection:descriptor(prepared.inspection.sha256,1350,1858),rectified:descriptor(prepared.rectified.sha256,1270,1778)}:{})}];})),

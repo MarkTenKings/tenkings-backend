@@ -212,11 +212,11 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       if(['SELECTED','MANUAL'].includes(input.action.decision)){const candidate=job?.result?.catalog?.candidates.find(c=>c.candidateId===input.action.candidateId);const observedAt=new Date().toISOString(),payload={decision:input.action.decision,cardId,actionId:input.actionId,sourceHash:input.action.sourceHash,identityRevision:revision,identityHash:variantIdentityHash(identity),identity:{...variantCatalogIdentity('playerName'in identity?'SPORTS':'POKEMON',identity),language:candidate?.identity.language??null},parallel:identity.parallel,observedFeatures:input.action.observedFeatures??null,catalog:job?.catalog??null,candidateId:input.action.candidateId,observedAt,referencePermission:input.action.referencePermission??null},text=canonical(payload,{maxBytes:2097152});
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_contribution(action_id,card_id,actor_id,access_version,payload,payload_hash) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6)`,input.actionId,cardId,principal.id,principal.accessVersion,text,digest(text));}
     },
-    async reserveListingSource(job,request){requireThat(canonical(request)===canonical(prepareVariantListingRequest(job.input.identity)),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
+    async reserveListingSource(job,request){requireThat(canonical(request)===canonical(prepareVariantListingRequest(job.input.identity,request.printing??null)),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
       await listingLock(tx,request.requestKey);
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} AND j.state='RUNNING' FOR UPDATE`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');
-      requireThat(canonical(request)===canonical(prepareVariantListingRequest(unpack(live).input.identity)),409,'VARIANT_LISTING_REQUEST_CHANGED');
+      requireThat(canonical(request)===canonical(prepareVariantListingRequest(unpack(live).input.identity,request.printing??null)),409,'VARIANT_LISTING_REQUEST_CHANGED');
       const retained=await listingRead(tx,listingDispatchKey(request.requestKey)),response=await listingRead(tx,listingResponseKey(request.requestKey));
       requireThat(!response||retained,503,'VARIANT_LISTING_JOURNAL_CONFLICT');
       if(retained){requireThat(retained.schemaVersion==='variant-listing-dispatch/v1'&&canonical(retained.request)===canonical(request),503,'VARIANT_LISTING_JOURNAL_CONFLICT');

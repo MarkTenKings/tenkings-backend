@@ -120,33 +120,33 @@ test('listing tile and comparison retain catalog label, exact image listing titl
  const listingLink=f.find(node=>node.type==='a'&&text(node)===image.listing.title);assert.equal(listingLink.length,1);assert.equal(listingLink[0].props.href,image.listing.url);
  assert.equal(listingLink[0].props.rel,'noopener noreferrer');assert.equal(f.find(node=>node.type==='a'&&node.props.href===image.provenance.sourceUrl).length,0);
  assert.equal(f.radios()[0].props.checked,false);assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);
- f.find(node=>node.type==='button'&&text(node).startsWith('Compare details'))[0].props.onClick({currentTarget:{focus(){}}});f.render();
+ f.find(node=>node.type==='button'&&node.props['aria-label']==='Enlarge Scrydex · Reverse Holo reference')[0].props.onClick({currentTarget:{focus(){}}});f.render();
  const comparison=f.find(node=>node.type?.name==='Comparison')[0];assert.equal(comparison.props.reference.relationship,'listing_photo');
  const dialog=fixture({component:'Comparison',props:comparison.props});assert.ok(dialog.text().includes(image.listing.title));assert.match(dialog.text(),/eBay listing photo/);
  assert.equal(dialog.find(node=>node.type==='a'&&text(node)===image.listing.title)[0].props.href,image.listing.url);assert.equal(dialog.button('Enlarge both photos').props['aria-pressed'],false);
  dialog.button('Enlarge both photos').props.onClick();dialog.render();assert.equal(dialog.button('Fit both photos').props['aria-pressed'],true);
  dialog.dispose();f.dispose();
 });
-test('repeated artwork appears once as shared context while named printings without photos remain compact choices',async()=>{
+test('named variants stay selectable without photos; repeated artwork never substitutes for a variant photo',async()=>{
  const f=fixture(),base=f.status.result.catalog.candidates[0];f.status.result.suggestion=null;
  f.status.result.catalog.candidates=['Normal','Holo','Reverse Holo','Stamped','Other finish'].map((label,index)=>({...base,candidateId:`art-${index}`,label,parallel:label,images:[artworkImage]}));
  await flush();f.render();assert.equal(f.radios().length,5);assert.ok(f.radios().every(radio=>!radio.props.checked&&!radio.props.disabled));
- assert.equal(f.find(node=>node.type?.name==='ReferencePhoto').length,1);assert.equal((f.text().match(/Card artwork · finish is not shown/g)??[]).length,1);
- assert.equal(f.find(node=>node.type==='article'&&node.props['data-has-photo']===false).length,5);assert.equal(f.find(node=>node.type==='button'&&text(node).startsWith('Compare details')).length,0);
- assert.equal((f.text().match(/Reference photo unavailable/g)??[]).length,5);assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);f.dispose();
+ assert.equal(f.find(node=>node.type?.name==='ReferencePhoto').length,0);assert.match(f.text(),/No matching reference photo yet/);
+ f.radios()[2].props.onChange();f.render();assert.match(text(f.find(node=>node.props['aria-label']==='Variant reference preview')[0]),/Reverse Holo/);
+ assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);f.dispose();
 });
 test('unknown seller variant remains visibly unconfirmed and separate from an explicitly supported catalog variant',async()=>{
  const f=fixture(),base=f.status.result.catalog.candidates[0];f.status.result.suggestion=null;
- f.status.result.catalog.candidates=[{...base,candidateId:'known',label:'Reverse Holo',images:[]},{...base,candidateId:'unknown',label:'Listing · printing unconfirmed',parallel:null,images:[listingImage()]}];
- await flush();f.render();assert.equal(f.radios().length,2);assert.equal(f.radios()[0].props.disabled,false);assert.equal(f.radios()[1].props.disabled,true);
- assert.match(f.text(),/Printing unconfirmed/);assert.ok(f.radios().every(radio=>!radio.props.checked));assert.equal(f.writes.length,0);f.dispose();
+ f.status.result.catalog.candidates=[{...base,candidateId:'known',label:'Reverse Holo',images:[]},{...base,candidateId:'unknown',label:'Listing · printing unconfirmed',source:{provider:'ebay_sold_comps_v2'},parallel:null,images:[listingImage()]}];
+ await flush();f.render();assert.equal(f.radios().length,1);assert.equal(f.radios()[0].props.disabled,false);
+ assert.match(f.text(),/Other saved reference photos/);assert.ok(f.radios().every(radio=>!radio.props.checked));assert.equal(f.writes.length,0);f.dispose();
 });
 test('actual listing adapter and Scrydex composition produce a displayable retained photo with exact listing attribution',async()=>{
  const {prepareVariantListingRequest,createVariantListingProvider,composeVariantListingCandidates}=await import('../../../packages/atlas-connected-manual/src/variant-listing-provider.mjs');
  const {importScrydexVariantCandidates,scrydexVariantSearchUrl}=await import('../../../packages/card-catalog-evidence/src/index.mjs');
  const digest=value=>createHash('sha256').update(value).digest('hex'),capturedAt='2026-10-10T10:00:00.000Z';
  const identity={category:'POKEMON',name:'Mewtwo',year:'2016',setName:'Evolutions',cardNumber:'051/108',manufacturer:null,language:null};
- const title='2016 Pokemon Evolutions Mewtwo #51/108 English Reverse Holo',id='123456780001',request=prepareVariantListingRequest(identity);
+ const title='2016 Pokemon Evolutions Mewtwo #51/108 English Reverse Holo',id='123456780001',printing={name:'Reverse Holofoil',language:'en'},request=prepareVariantListingRequest(identity,printing);
  const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:1,hasNextPage:false,items:[{itemId:id,title,url:`https://www.ebay.com/itm/${id}`,thumbnailUrl:'https://i.ebayimg.com/images/g/fixture/s-l300.jpg',listingType:'sold',condition:'Ungraded',endedAt:'2026-10-09',soldPrice:'99.95',soldCurrency:'USD',bestOfferAccepted:false}]});
  const source={schemaVersion:'variant-listing-response/v1',requestKey:request.requestKey,url:request.url,httpStatus:200,contentType:'application/json',bodyText,sha256:digest(bodyText),capturedAt};
  const sharp=createRequire(new URL('../../../packages/atlas-connected-manual/package.json',import.meta.url))('sharp');
@@ -154,7 +154,7 @@ test('actual listing adapter and Scrydex composition produce a displayable retai
  const provider=createVariantListingProvider({now:()=>Date.parse(capturedAt),cache:{get:async key=>entries.get(key),getRetained:async key=>entries.get(key),put:async(key,value)=>entries.set(key,structuredClone(value))},fetchImpl:async url=>{assert.equal(url,'https://i.ebayimg.com/images/g/fixture/s-l300.jpg');imageReads++;return new Response(bytes,{headers:{'content-type':'image/png'}});}});
  const evidence=await provider.acquireImages({request,source});assert.equal(imageReads,1);
  const choices=importScrydexVariantCandidates({identity,card:{id:'xy12-51',name:'Mewtwo',number:'51',printed_number:'51/108',language_code:'en',expansion:{id:'xy12',name:'Evolutions',release_date:'2016/11/02',is_online_only:false,printed_total:108},images:[{type:'front',large:'https://images.scrydex.com/pokemon/xy12-51/large'}],variants:[{name:'normal',images:[]},{name:'reverseHolofoil',images:[]}]},source:{url:scrydexVariantSearchUrl(identity),sha256:digest('scrydex fixture'),capturedAt}});
- const composed=composeVariantListingCandidates({identity,candidates:choices,evidence}),attached=composed.candidates.find(candidate=>candidate.images.some(image=>image.relationship==='listing_photo'));
+ const composed=composeVariantListingCandidates({identity,candidates:choices,evidence,printing}),attached=composed.candidates.find(candidate=>candidate.images.some(image=>image.relationship==='listing_photo'));
  assert.ok(attached);assert.equal(attached.source.provider,'scrydex');assert.ok(choices.some(candidate=>candidate.label===attached.label));
  const f=fixture();f.props.identity={cardName:identity.name,productSet:identity.setName,cardNumber:identity.cardNumber};f.status.result.catalog.candidates=composed.candidates;f.status.result.suggestion=null;await flush();f.render();
  const reference=f.exports.variantReference(attached,f.props.cardId,{artwork:false});assert.equal(reference.relationship,'listing_photo');assert.equal(reference.provenance.provider,'ebay_sold_comps_v2');assert.equal(reference.provenance.usage,'provider_reference');assert.equal(reference.sha256,digest(bytes));
@@ -193,7 +193,7 @@ test('number padding preserves same-card grouping while explicit denominator and
 });
 test('compatible collector number without a stated set total is visibly unconfirmed rather than an exact full match',async()=>{
  const f=fixture();f.props.identity.cardNumber='025/165';await flush();f.render();
- assert.match(f.text(),/This card’s printings/);assert.match(f.text(),/Full collector number unconfirmed · check the number and set total/);
+ assert.match(f.text(),/Variants for this card/);assert.match(f.text(),/Full collector number unconfirmed · check the number and set total/);
  assert.equal(f.radios().length,4);assert.equal(f.writes.length,0);f.dispose();
 });
 test('an unresolved hold never claims human-confirmed identity or offers to retry an inherited grading check',async()=>{
@@ -233,4 +233,16 @@ test('denied opted-in save keeps exact permission pending and locks all contribu
  contributionToggle(f).props.onChange({target:{checked:false}});f.render();assert.equal(contributionToggle(f).props.checked,true);
  assert.ok(f.find(node=>node.type==='fieldset'&&node.props['aria-label']==='Optional reference photo contribution')[0].props.disabled);f.remount();await flush();f.render();assert.equal(contributionToggle(f).props.checked,true);assert.match(rightsNote(f).props.value,/photographer permitted/);
  f.save=null;f.button('Check retained decision').props.onClick();await flush();f.render();assert.deepEqual(f.writes,[original,original]);f.dispose();
+});
+
+test('Scrydex series aliases show named variants in primary group, while wrong card/year and flagged set aliases remain separate',()=>{
+ const f=fixture(),group=f.exports.variantCandidateGroup,identity={cardName:'Pikachu',productSet:'Scarlet & Violet—151',cardNumber:'025/165',year:'2023'};
+ const c={identity:{name:'Pikachu',setName:'151',cardNumber:'25/165',year:'2023',language:'en'},source:{provider:'scrydex'},warnings:[]};
+ assert.equal(group(c,identity),'same');assert.equal(group({...c,warnings:['SET_NAME_REQUIRES_REVIEW']},identity),'other');
+ assert.equal(group({...c,identity:{...c.identity,name:'Raichu'}},identity),'other');assert.equal(group({...c,identity:{...c.identity,year:'2024'}},identity),'other');f.dispose();
+});
+test('saved manufacturer fallback is bound to the current photograph source and does not mutate the identity',async()=>{
+ const f=fixture();f.props.savedIdentification={sourceHash:f.props.sourceHash,fields:{manufacturer:'Pokémon'}};await flush();f.render();
+ assert.match(f.text(),/ManufacturerPokémon/);assert.equal(f.props.identity.manufacturer,undefined);assert.equal(f.writes.length,0);
+ f.props.savedIdentification.sourceHash=hash('e');f.render();assert.match(f.text(),/ManufacturerNot recorded/);f.dispose();
 });

@@ -14,7 +14,7 @@ export function intakePhotoAttention(saved) {
     // corrections newer than the automatic intake proposal.
     if (saved.manual?.current) return [];
     const geometry = saved.earlyGeometry?.[side];
-    if (geometry?.uploadId === upload.uploadId && (geometry.state === 'FAILED'
+    if (geometry && geometry.uploadId === upload.uploadId && (geometry.state === 'FAILED'
         || geometry.state === 'NEEDS_REVIEW' && geometry.machineUsable !== true)) return [{ key: `photo-${side}`, side,
       message: `${name(side)} card outline needs review. Use Edit ${name(side)} geometry below to place or correct the outline.` }];
     return [];

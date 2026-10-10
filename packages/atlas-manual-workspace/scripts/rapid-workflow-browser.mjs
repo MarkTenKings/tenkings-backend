@@ -41,7 +41,7 @@ const server=createServer(async(q,r)=>{try{
 await new Promise(resolve=>server.listen(Number(process.env.ATLAS_PREVIEW_PORT||0),'127.0.0.1',resolve));
 if(process.env.ATLAS_PREVIEW_ONLY==='1'){console.log(`Synthetic rapid workspace: http://127.0.0.1:${server.address().port}`);await new Promise(()=>{});}
 const browser=await chromium.launch({channel:'chrome',headless:true}),page=await browser.newPage(),errors=[],checks=[];
-page.on('pageerror',error=>errors.push(error.message));
+page.on('pageerror',error=>errors.push(error.stack??error.message));
 try{
  await page.goto(`http://127.0.0.1:${server.address().port}`);
  const front=page.getByRole('button',{name:'Approve Front borders and centering',exact:true});await front.waitFor();await page.waitForFunction(()=>!document.querySelector('.mc-rapid-approve')?.disabled);
@@ -51,13 +51,38 @@ try{
  }
  await page.setViewportSize({width:1440,height:900});await front.click();const back=page.getByRole('button',{name:'Approve Back borders and centering',exact:true});await back.waitFor();await page.waitForFunction(()=>!document.querySelector('.mc-rapid-approve')?.disabled);assert.equal(actions.length,0);
  failNext=true;await back.click();await page.locator('.fg-error').waitFor();assert.equal(geometryStatus(adapter.view().geometry).confirmed,false);await back.click();
- const approve=page.getByRole('button',{name:'Approve finding 1 of 2',exact:true});await approve.waitFor();await page.waitForFunction(()=>!document.querySelector('.mc-rapid-approve')?.disabled);
- await page.getByRole('button',{name:'Edit trace',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Save trace',exact:true}).count(),0);await page.getByRole('button',{name:'Cancel trace',exact:true}).click();
- await page.getByRole('region',{name:'Front defects',exact:true}).getByRole('button',{name:'Add finding',exact:true}).click();await page.getByRole('button',{name:'Cancel trace',exact:true}).click();
- for(const size of [{width:1440,height:900},{width:390,height:844},{width:844,height:390}]){
-  await page.setViewportSize(size);const dimensions=await page.getByRole('region',{name:'Front image inspection',exact:true}).evaluate(node=>({height:node.clientHeight,width:node.clientWidth,bottom:node.getBoundingClientRect().bottom,dock:document.querySelector('#atlas-rapid-actions').getBoundingClientRect().top}));assert.ok(dimensions.height>80,JSON.stringify({size,dimensions}));assert.ok(dimensions.bottom<=dimensions.dock);checks.push({stage:'findings',viewport:size,...dimensions});await page.screenshot({path:resolve(output,`rapid-findings-${size.width}.png`)});
+ const approve=page.getByRole('button',{name:'Approve all findings on Front and Back',exact:true});await approve.waitFor();await page.waitForFunction(()=>!document.querySelector('.mc-rapid-approve')?.disabled);
+ const before=actions.length,tracePaths=await page.locator('.ad-overview-trace').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('d')));
+ assert.equal(tracePaths.length,2);
+ await page.getByRole('button',{name:'Zoom in Front',exact:true}).click();
+ await page.getByRole('button',{name:'Pan Front →',exact:true}).click();
+ await page.getByRole('button',{name:'Expand front',exact:true}).click();
+ await page.screenshot({path:resolve(output,'rapid-findings-expanded.png')});
+ assert.deepEqual(await page.locator('.ad-overview-trace').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('d'))),tracePaths);
+ await page.getByRole('navigation',{name:'Expanded photograph',exact:true}).getByRole('button',{name:'Back',exact:true}).click();
+ await page.locator('#atlas-rapid-actions').getByRole('button',{name:'Return to all findings',exact:true}).click();
+ await page.locator('.ad-overview-side-switch').waitFor({state:'detached'});
+ assert.equal(await page.locator('.ad-overview-side:not([hidden])').count(),2);
+ assert.equal(await page.locator('.fg-stage').count(),0);
+ await page.getByRole('button',{name:'Inspect Back finding 2',exact:true}).click();
+ assert.equal(await page.locator('.ad-findings-overview').count(),1);assert.equal(actions.length,before);
+ assert.deepEqual(await page.locator('.ad-overview-trace').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('d'))),tracePaths);
+ await page.locator('#atlas-rapid-actions').getByRole('button',{name:'Return to all findings',exact:true}).click();
+ await page.locator('.ad-overview-selected').waitFor({state:'detached'});
+ assert.equal(await page.locator('.fg-stage').count(),0);
+ await page.locator('#atlas-rapid-actions').getByRole('button',{name:'Back to geometry',exact:true}).waitFor();
+ for(const size of [{width:1440,height:900},{width:1024,height:768},{width:390,height:844},{width:320,height:844}]){
+  await page.setViewportSize(size);await page.getByRole('button',{name:'Fit front',exact:true}).click();
+  const dimensions=await page.locator('.ad-findings-overview').evaluate(node=>({width:node.clientWidth,scrollWidth:node.scrollWidth,documentWidth:document.documentElement.scrollWidth,viewport:innerWidth,photos:[...node.querySelectorAll('.ad-overview-photo')].map(photo=>({width:photo.clientWidth,height:photo.clientHeight}))}));
+  assert.ok(dimensions.documentWidth<=size.width);assert.ok(dimensions.scrollWidth<=dimensions.width+1);assert.ok(dimensions.photos.every(photo=>photo.width>100&&photo.height>100));
+  checks.push({stage:'findings',viewport:size,...dimensions});await page.screenshot({path:resolve(output,`rapid-findings-${size.width}.png`)});
  }
- await page.setViewportSize({width:1440,height:900});await approve.click();await page.getByRole('button',{name:'Approve finding 2 of 2',exact:true}).click();await page.getByRole('button',{name:'Approve final grade and queue label',exact:true}).waitFor();
+ await page.setViewportSize({width:1440,height:900});await page.getByRole('button',{name:'Inspect Front finding 1',exact:true}).click();
+ await page.getByRole('button',{name:'Edit finding',exact:true}).click();await page.getByRole('button',{name:'Cancel trace',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Cancel trace',exact:true}).click();
+ await page.getByRole('button',{name:'Return to all findings',exact:true}).last().click();
+ assert.equal(actions.length,before,'inspection, editing cancellation and return never approve');
+ await approve.click();await page.getByRole('button',{name:'Approve final grade and queue label',exact:true}).waitFor();
  assert.ok(adapter.view().defects.confirmation);assert.equal(actions.includes('APPROVE_REPORT'),false);assert.deepEqual(errors,[]);await page.screenshot({path:resolve(output,'rapid-final-grade.png')});
  await writeFile(resolve(output,'rapid-workflow-proof.json'),JSON.stringify({passed:true,checks,actions,errors,limits:'Synthetic pixels, actual React ManualWorkspace and shared shell, isolated in-memory transport with real reducers. Real local CPU preparation and trace reprojection/measurement; no production authentication, paid inference or real report approval.'},null,2));console.log(JSON.stringify({passed:true,evidence:output,checks:checks.length}));
 }catch(error){await page.screenshot({path:resolve(output,'failure.png')}).catch(()=>{});console.error(JSON.stringify({error:String(error),errors,body:await page.locator('body').innerText().catch(()=>''),actions}));throw error;}finally{await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

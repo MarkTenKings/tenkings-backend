@@ -130,3 +130,11 @@ test('manual path preserves the existing rejection of unmeasurable borderless ce
   input.capture.front.centeringQuad = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
   assert.throws(() => previewAtlasManualReport(input), /positive total/);
 });
+
+
+test('unknown year and manufacturer do not change measurement score or bypass photograph inspection',()=>{
+  const known=source(),partial=source();partial.identity.year=null;partial.identity.manufacturer=null;
+  const report=previewAtlasManualReport(partial);assert.deepEqual(report.grade,previewAtlasManualReport(known).grade);
+  assert.equal(report.identity.year,null);assert.equal(report.identity.manufacturer,null);
+  delete partial.manualInspection;assert.throws(()=>previewAtlasManualReport(partial),/INSPECTION_REQUIRED/);
+});

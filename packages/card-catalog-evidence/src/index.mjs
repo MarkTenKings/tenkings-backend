@@ -437,10 +437,9 @@ export { VARIANT_REVIEW_VERSION, VARIANT_CATALOG_REVISION, VARIANT_REVIEW_LIMITS
   normalizeVariantIdentity, variantDemandKey, compareVariantCardNumber, compareVariantIdentity, isVariantProviderImageUrl, isVariantPhotoComparable,
   variantCandidateId, variantSelectionParallel, validateVariantCandidate, variantSnapshotHash, createVariantReviewSnapshot, validateVariantReviewSnapshot,
   variantChoicesFromPublishedLookup } from './variant-review.mjs';
-export { VARIANT_SOURCE_CACHE_VERSION, VARIANT_SOURCE_LIMITS, variantSourceCacheKey, validateVariantSourceCacheEntry, createVariantSourceReader } from './source-cache.mjs';
-export { TCGDEX_VARIANT_PROVIDER_REVISION, importTcgdexVariantCandidates, createTcgdexVariantProvider } from './tcgdex.mjs';
 export { SCRYDEX_METADATA_LIMITS, isScrydexMetadataUrl, createScrydexMetadataReader } from './scrydex-reader.mjs';
 export { SCRYDEX_VARIANT_PROVIDER_REVISION, importScrydexVariantCandidates, scrydexVariantSearchUrl, createScrydexVariantProvider } from './scrydex.mjs';
 export { VARIANT_PROVIDER_MEDIA_LIMITS, createVariantProviderImageReader } from './provider-media.mjs';
 
 export { CATALOG_DEMAND_VERSION, CATALOG_DEMAND_POLICY, CATALOG_DEMAND_LIMITS, normalizeCatalogDemand, catalogDemandKey, catalogDemandResultHash, validateCatalogDemandResult, validateCatalogDemandAcquisition, filterCatalogDemandResult, isCatalogDemandSourceUrl, catalogDemandSourceKind } from './demand.mjs';
+export { MANUFACTURER_CHECKLIST_REVISION, createManufacturerChecklistVariantProvider } from './manufacturer-checklist.mjs';

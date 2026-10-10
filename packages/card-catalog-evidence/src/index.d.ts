@@ -127,24 +127,8 @@ export function validateVariantReviewSnapshot(input: unknown): DeepReadonly<Vari
 /** Server-only: use results from the authenticated current SetOps publication reader. */
 export function variantChoicesFromPublishedLookup(result: DeepReadonly<LookupResult>): readonly DeepReadonly<VariantCandidate>[];
 
-export const VARIANT_SOURCE_CACHE_VERSION: 'variant-source-cache/v1';
-export const VARIANT_SOURCE_LIMITS: Readonly<{ responseBytes: number; timeoutMs: number; ttlMs: number; memoryEntries: number }>;
-export type VariantSourceCacheEntry = { schemaVersion: typeof VARIANT_SOURCE_CACHE_VERSION; key: string; url: string; body: string;
-  sha256: string; capturedAt: string; expiresAt: string };
-export type VariantSourceCache = { get(key: string): Promise<VariantSourceCacheEntry | null | undefined>; put(key: string, value: VariantSourceCacheEntry): Promise<unknown> };
 export type VariantSourceReceipt = { url: string; sha256: string; capturedAt: string };
 export type VariantSourceReader = { json(url: string, options?: { signal?: AbortSignal; budget?: { remaining: number } }): Promise<{ data: unknown; source: VariantSourceReceipt }> };
-export function variantSourceCacheKey(url: string): string;
-export function validateVariantSourceCacheEntry(entry: unknown, url: string): VariantSourceCacheEntry;
-export function createVariantSourceReader(options?: { cache?: VariantSourceCache | null; fetchImpl?: typeof fetch; now?: () => number; timeoutMs?: number }): VariantSourceReader;
-export const TCGDEX_VARIANT_PROVIDER_REVISION: 'tcgdex-variant-import/v1';
-export function importTcgdexVariantCandidates(input: { identity: Partial<VariantIdentity> & { category: Category }; language: string;
-  card: unknown; set: unknown; cardSource: VariantSourceReceipt; setSource: VariantSourceReceipt }): readonly DeepReadonly<VariantCandidate>[];
-export function createTcgdexVariantProvider(options?: { reader?: VariantSourceReader; discoveryLanguage?: string }): {
-  readonly id: 'tcgdex'; readonly revision: typeof TCGDEX_VARIANT_PROVIDER_REVISION;
-  prepare(identity: Partial<VariantIdentity> & { category: Category }, options?: { signal?: AbortSignal }): Promise<{ candidates: readonly DeepReadonly<VariantCandidate>[]; problems: string[]; truncated: boolean }>;
-};
-
 export type VariantDurableCache = { get(key: string): Promise<unknown>; getRetained(key: string): Promise<unknown>; put(key: string, value: unknown): Promise<unknown> };
 export type AcquiredVariantImage = { bytes: Uint8Array; sha256: string; mimeType: 'image/jpeg' | 'image/png' | 'image/webp'; width: number; height: number };
 export type VariantProviderImageReader = {
@@ -158,7 +142,7 @@ export const SCRYDEX_METADATA_LIMITS: Readonly<{ bytes: number; timeoutMs: numbe
 export type ScrydexMetadataReader = VariantSourceReader & { retained(url: string, sha256: string): Promise<{ data: unknown; source: VariantSourceReceipt }> };
 export function isScrydexMetadataUrl(url: unknown): boolean;
 export function createScrydexMetadataReader(options: { apiKey: string; teamId: string; cache: VariantDurableCache; fetchImpl?: typeof fetch; now?: () => number }): ScrydexMetadataReader;
-export const SCRYDEX_VARIANT_PROVIDER_REVISION: 'scrydex-variant-import/v1';
+export const SCRYDEX_VARIANT_PROVIDER_REVISION: 'scrydex-variant-import/v2';
 export function scrydexVariantSearchUrl(identity: Partial<VariantIdentity> & { category: Category }): string;
 export function importScrydexVariantCandidates(input: { identity: Partial<VariantIdentity> & { category: Category }; card: unknown; source: VariantSourceReceipt }): readonly DeepReadonly<VariantCandidate>[];
 export function createScrydexVariantProvider(options: { reader: ScrydexMetadataReader; imageReader?: VariantProviderImageReader | null }): {
@@ -186,3 +170,18 @@ export function validateCatalogDemandAcquisition(input: unknown): CatalogDemandR
 export function filterCatalogDemandResult(input: unknown, card?: { name: string; cardNumber: string } | null): CatalogDemandResult;
 export function isCatalogDemandSourceUrl(input: unknown): boolean;
 export function catalogDemandSourceKind(url: string): 'manufacturer' | 'secondary';
+
+export const MANUFACTURER_CHECKLIST_REVISION: 'manufacturer-checklist/v1';
+/** Explicit source rows only; the partial catalog never establishes physical printing. */
+export type ManufacturerChecklistCatalog = { schemaVersion: typeof MANUFACTURER_CHECKLIST_REVISION; complete: false;
+  sources: { manufacturer: string; manufacturerAliases?: string[]; sport: 'baseball' | 'basketball' | 'football'; year: string;
+    setName: string; aliases: string[]; url: string; sha256: string }[];
+  strings?: string[];
+  rows: ([sourceIndex: number, printingLabel: string, cardNumber: string, athlete: string, sourceLocator: string] |
+    [sourceIndex: number, printingLabel: number, cardNumber: number, athlete: number, sourceLocator: number])[] };
+export function createManufacturerChecklistVariantProvider(options?: { catalog?: ManufacturerChecklistCatalog | null;
+  loadCatalog?: (() => Promise<ManufacturerChecklistCatalog>) | null; limit?: number }): {
+  readonly id: 'manufacturer_checklist'; readonly revision: typeof MANUFACTURER_CHECKLIST_REVISION;
+  prepare(identity: Partial<VariantIdentity> & { category: Category }, options?: { signal?: AbortSignal }):
+    Promise<{ candidates: readonly DeepReadonly<VariantCandidate>[]; problems: string[]; truncated: boolean }>;
+};

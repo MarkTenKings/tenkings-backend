@@ -666,7 +666,9 @@ test('paired overview verifies both full photographs, marks every exact trace, a
   f.ready();assert.equal(readiness.at(-1),true);
   assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,2);
   assert.equal(f.nodes(node=>node.props?.className==='ad-overview-traces')[0].props.viewBox,'0 0 1350 1858');
-  await f.clickControl('Inspect Back finding 2');assert.equal(events[0][0],'select');assert.equal(events[0][1].id,state.sides.BACK.findings[0].id);
+  await f.clickControl('Inspect Back finding 2');assert.equal(events.length,0,'focusing a marker is display-only');
+  assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,2,'every trace stays present while focusing');
+  await f.click('Edit finding','Back');assert.equal(events[0][0],'select');assert.equal(events[0][1].id,state.sides.BACK.findings[0].id);
   assert.deepEqual(events[0][1].finalTrace,state.sides.BACK.findings[0].finalTrace);
   await f.click('Add front finding');assert.deepEqual(JSON.parse(JSON.stringify(events[1])),['add',{side:'FRONT',imageSha256:state.sides.FRONT.frame.inspectionImageSha256,findingId:null,intent:'ADD'}]);
   await f.click('View clean photo','Front');assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,1);
@@ -695,4 +697,26 @@ test('overview image changes revoke readiness and pending suggestions remain dis
   assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,2);
   f.props.images={...f.props.images,BACK:{inspection:{url:'blob:wrong',sha256:'f'.repeat(64)}}};f.render();
   assert.equal(readiness.at(-1),false);assert.equal(f.button('Add back finding').props.disabled,true);assert.equal(f.calls.length,0);
+});
+
+
+test('overview zoom, pan, expansion and return preserve every exact trace and never approve',async()=>{
+  const state=workspace(),events=[],f=harness({workspace:state,onSelectFinding:value=>events.push(value)},undefined,'FindingsOverview');f.ready();
+  const traces=()=>f.nodes(node=>node.props?.className==='ad-overview-trace').map(node=>node.props.d);
+  const original=traces();await f.clickControl('Zoom in Front');assert.deepEqual(traces(),original);
+  await f.clickControl('Pan Front →');assert.deepEqual(traces(),original);
+  await f.click('Expand front');assert.deepEqual(traces(),original);assert.equal(f.side('Back').props.hidden,true);
+  await f.click('Back');assert.equal(f.side('Front').props.hidden,true);assert.equal(f.side('Back').props.hidden,false);
+  await f.click('Return to all findings');assert.equal(f.side('Front').props.hidden,false);assert.equal(f.side('Back').props.hidden,false);
+  await f.clickControl('Inspect Front finding 1');assert.equal(events.length,0);assert.deepEqual(traces(),original);
+  await f.click('Return to all findings','Front');assert.deepEqual(traces(),original);
+  assert.equal(events.length,0);assert.equal(f.calls.length,0);assert.equal(state.confirmation,null);
+});
+
+test('overview keeps uncertain accepted analysis read-only until an explicit saved-status check',async()=>{
+  const calls=[],f=harness({workspace:workspace(),astra:{enabled:true,status:'UNKNOWN',backgroundAccepted:true,collectionStopped:true,replacement:{id:'not-permission'},requestAvailable:true},onRefreshAnalysis:async()=>calls.push('GET'),onAnalyzeDefects:async()=>calls.push('START'),onReplaceAnalysis:async()=>calls.push('REPLACE')},undefined,'FindingsOverview');f.ready();
+  assert.equal(calls.length,0);assert.ok(f.has('no result was collected'));
+  assert.equal(f.nodes(node=>node.type==='button'&&text(node)==='Start a new ATLAS analysis').length,0);
+  assert.equal(f.nodes(node=>node.type==='button'&&text(node)==='Find defects with ATLAS').length,0);
+  await f.click('Check saved analysis');assert.deepEqual(calls,['GET']);assert.equal(f.calls.length,0);
 });

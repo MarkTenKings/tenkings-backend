@@ -41,14 +41,14 @@ test('conditional variant gallery is distinct from generic card artwork and neve
   assert.ok(importScrydexVariantCandidates({ identity: target, card: duplicatedGeneric, source: source() }).every(c => c.images[0].relationship === 'card_art_only'));
 });
 
-test('Scrydex does not substitute online cards, wrong language, denominator, year or set; missing finish stays unknown', () => {
+test('Scrydex does not substitute online cards, wrong language, denominator, year or set; Normal retains its literal provider name', () => {
   for (const change of [c => { c.expansion.is_online_only = true; }, c => { c.language_code = 'JA'; },
     c => { c.printed_number = '4/105'; }, c => { c.expansion.release_date = '2024/01/01'; }, c => { c.expansion.name = 'Base Set 2'; }, c => { c.name = 'Charizard V'; }]) {
     const altered = structuredClone(card); change(altered);
     assert.deepEqual(importScrydexVariantCandidates({ identity: { ...target, language: 'en' }, card: altered, source: source() }), []);
   }
   const unknown = structuredClone(card); unknown.variants = [{ name: 'normal' }];
-  assert.equal(importScrydexVariantCandidates({ identity: target, card: unknown, source: source() })[0].parallel, null);
+  assert.equal(importScrydexVariantCandidates({ identity: target, card: unknown, source: source() })[0].parallel, 'Normal');
   assert.deepEqual(importScrydexVariantCandidates({ identity: { ...target, category: 'SPORTS' }, card, source: source() }), []);
 });
 
@@ -134,7 +134,7 @@ test('retained live list envelope preserves five Pikachu printings and the sole 
   const result = await provider.prepare(actual);
   assert.equal(result.candidates.length, 5); assert.equal(result.truncated, false);
   assert.deepEqual(result.candidates.map(c => c.label), ['Normal', 'Reverse Holofoil', 'Cosmos Holofoil', 'Pokémon Together Stamp', 'Snowflake Stamp']);
-  assert.deepEqual(result.candidates.map(c => c.parallel), [null, 'Reverse Holofoil', 'Cosmos Holofoil', 'Pokémon Together Stamp', 'Snowflake Stamp']);
+  assert.deepEqual(result.candidates.map(c => c.parallel), ['Normal', 'Reverse Holofoil', 'Cosmos Holofoil', 'Pokémon Together Stamp', 'Snowflake Stamp']);
   assert.deepEqual(result.candidates.map(c => c.source.recordId), ['normal', 'reverseHolofoil', 'cosmosHolofoil', 'pokemonTogetherStamp', 'snowflakeStamp'].map(name => `sv3pt5-25:variant:${name}`));
   assert.ok(result.candidates.every(c => c.candidateId === variantCandidateId(c)), 'display labels preserve deterministic validated candidate identities');
   assert.equal(result.candidates.filter(c => c.images[0].relationship === 'exact').length, 1);

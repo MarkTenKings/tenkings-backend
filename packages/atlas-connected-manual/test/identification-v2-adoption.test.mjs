@@ -374,7 +374,8 @@ test('Pokémon V2 uses one model call with dependent Front detail; publisher and
   assert.throws(() => gradingIdentity(adopted.details), { name: 'SpeedsterIdentityValidationError' });
   const reviewed = await f.save({ layoutType: 'POKEMON' }), identity = gradingIdentity(reviewed.details);
   assert.equal(identity.cardName, 'Pikachu'); assert.equal(identity.cardNumber.length, 80);
-  for (const forbidden of ['manufacturer', 'playerName', 'insert', 'variant']) assert.equal(Object.hasOwn(identity, forbidden), false);
+  assert.equal(identity.manufacturer,'The Pokémon Company');
+  for (const forbidden of ['playerName', 'insert', 'variant']) assert.equal(Object.hasOwn(identity, forbidden), false);
   assert.equal(identity.parallel, null);
 });
 
@@ -401,7 +402,7 @@ test('in-flight category, profile and layout edits keep grading identity categor
   const adopted = await f.details.read(f.staff, f.cardId), identity = gradingIdentity(adopted.details);
   assert.equal(adopted.details.fields.category, 'Pokémon'); assert.equal(adopted.details.profile, 'POKEMON');
   assert.equal(identity.cardName, 'Human Trainer'); assert.equal(identity.layoutType, 'TRAINER');
-  assert.equal(Object.hasOwn(identity, 'manufacturer'), false); assert.equal(Object.hasOwn(identity, 'playerName'), false);
+  assert.equal(identity.manufacturer,adopted.details.fields.manufacturer); assert.equal(Object.hasOwn(identity, 'playerName'), false);
 });
 
 test('cleared category and profile are not inferred back from a late suggestion', async () => {

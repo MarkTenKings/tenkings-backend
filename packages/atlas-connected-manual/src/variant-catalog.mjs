@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, normalizeVariantIdentity, compareVariantCardNumber, variantChoicesFromPublishedLookup,
-  createVariantReviewSnapshot, validateVariantCandidate, validateVariantReviewSnapshot, createVariantSourceReader,
-  createTcgdexVariantProvider, createScrydexVariantProvider, createScrydexMetadataReader, createVariantProviderImageReader } from '@tenkings/card-catalog-evidence';
+  createVariantReviewSnapshot, validateVariantCandidate, validateVariantReviewSnapshot,
+  createScrydexVariantProvider, createScrydexMetadataReader, createVariantProviderImageReader, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
 import { prepareVariantCatalogObservation } from './variant-catalog-proposal.mjs';
-import { variantChoicesFromDemand } from './variant-demand.mjs';
 import {prepareVariantListingRequest,composeVariantListingCandidates} from './variant-listing-provider.mjs';
 
 const abort = signal => signal?.throwIfAborted();
@@ -40,7 +39,7 @@ function scopedQuery(identity, publication, candidate) {
 export function createVariantCatalogService({ catalogClient = null, providers, cache = null, scrydex = null, listingProvider = null, inspectProviderImage = null,
   fetchImpl = globalThis.fetch, now = () => Date.now(), timeoutMs = 45000 } = {}) {
   if (providers === undefined) {
-    providers = [createTcgdexVariantProvider({ reader: createVariantSourceReader({ cache, fetchImpl, now }) })];
+    providers = [createManufacturerChecklistVariantProvider()];
     if (scrydex !== null) {
       const inspectImage = inspectProviderImage ?? (async bytes => {
         const sharp = (await import('sharp')).default, decoder = sharp(bytes, { limitInputPixels: 52000000, failOn: 'warning' });
@@ -106,27 +105,6 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         return createVariantReviewSnapshot({ identity, candidates, problems: ['IDENTITY_INCOMPLETE'], capturedAt: new Date(now()).toISOString() });
       }
       let truncated = false;
-      try {
-        const catalog = await catalogChoices(identity, signal); candidates.push(...catalog.candidates); problems.push(...catalog.problems); truncated ||= catalog.truncated;
-      } catch { abort(signal); problems.push('CATALOG_UNAVAILABLE'); }
-      // Only the isolated worker calls prepare. This uses the shared host's
-      // deduplicated set acquisition, never the grading pool or browser GET.
-      if(catalogClient?.prepareSetDemand && !candidates.some(c=>c.applicability==='supported')
-        && (identity.category!=='SPORTS'||identity.manufacturer)) {
-        let demand;
-        try { demand=await catalogClient.prepareSetDemand({demand:{category:identity.category,year:identity.year,
-          manufacturer:identity.manufacturer,setName:identity.setName,language:identity.language},
-          card:{name:identity.name,cardNumber:identity.cardNumber}},signal);
-          candidates.push(...variantChoicesFromDemand(demand,identity)); truncated ||= demand.coverage==='truncated';
-          if(demand.state==='UNAVAILABLE') problems.push('CATALOG_UNAVAILABLE');
-        } catch { abort(signal); problems.push('CATALOG_UNAVAILABLE'); }
-        // A sibling request may still be preparing this set. Retry before
-        // saving immutable comparison inputs; do not pin an empty READY job.
-        if(demand&&['QUEUED','RUNNING'].includes(demand.state)){
-          if(!listingProvider)throw fail('VARIANT_CATALOG_PENDING');
-          problems.push('CATALOG_UNAVAILABLE');
-        }
-      }
       for (const provider of providers) {
         abort(signal);
         try {
@@ -134,6 +112,9 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
           candidates.push(...result.candidates.map(validateVariantCandidate)); problems.push(...result.problems); truncated ||= result.truncated;
         } catch { abort(signal); problems.push('PROVIDER_UNAVAILABLE'); }
       }
+      try {
+        const catalog = identity.category === 'POKEMON' || candidates.length > 0 ? { candidates: [], problems: [], truncated: false } : await catalogChoices(identity, signal); candidates.push(...catalog.candidates); problems.push(...catalog.problems); truncated ||= catalog.truncated;
+      } catch { abort(signal); problems.push('CATALOG_UNAVAILABLE'); }
       abort(signal);
       return createVariantReviewSnapshot({ identity, candidates, problems, truncated, capturedAt: new Date(now()).toISOString() });
       });}catch(error){
@@ -151,17 +132,30 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       // separate bounded windows. Discovery cannot consume the paid send's
       // deadline. Only the worker can supply this durable dispatch capability.
       if(typeof executeListingSource!=='function')problems.push('LISTING_SOURCE_NOT_CONFIGURED');
-      else try{
-        const request=prepareVariantListingRequest(identity);
-        const saved=await bounded(signal,timeoutMs,active=>executeListingSource(request,()=>listingProvider.fetchSource(request,{signal:active})));
-        if(saved.state==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
-        else{
-          if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
-          const evidence=await bounded(signal,timeoutMs,active=>listingProvider.acquireImages({request,source:saved.source},{signal:active}));
-          const composed=composeVariantListingCandidates({identity,candidates,evidence});
-          candidates=composed.candidates;problems.push(...composed.problems);truncated||=composed.truncated;
-        }
-      }catch(error){abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;problems.push('LISTING_SOURCE_UNAVAILABLE');}
+      else {
+        // One durable, shared request for each catalog printing, never for each
+        // staff visit. Bound fan-out; absent photos do not hide known choices.
+        const named = candidates.filter(c => ['scrydex', 'manufacturer_checklist'].includes(c.source.provider)
+          && c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'));
+        const searches = [...new Map(named.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language}),
+          {name:c.label,language:c.identity.language}])).values()];
+        const pending = searches.filter(printing => !named.some(c => c.label === printing.name && c.identity.language === printing.language
+          && c.images.some(i => i.relationship === 'listing_photo' || i.relationship === 'exact' && i.sha256)));
+        // Snapshot validation already caps this at 48 known choices. Every
+        // printing gets one journaled search; repeated cards and refreshes reuse it.
+        for (const printing of pending) try {
+          abort(signal);
+          const request=prepareVariantListingRequest(identity,printing);
+          const saved=await bounded(signal,timeoutMs,active=>executeListingSource(request,()=>listingProvider.fetchSource(request,{signal:active})));
+          if(saved.state==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
+          else {
+            if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
+            const evidence=await bounded(signal,timeoutMs,active=>listingProvider.acquireImages({request,source:saved.source},{signal:active}));
+            const composed=composeVariantListingCandidates({identity,candidates,evidence,printing});
+            candidates=composed.candidates;problems.push(...composed.problems);truncated||=composed.truncated;
+          }
+        } catch(error) { abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;problems.push('LISTING_SOURCE_UNAVAILABLE'); }
+      }
       abort(signal);return createVariantReviewSnapshot({identity,candidates,problems,truncated,capturedAt:new Date(now()).toISOString()});
     },
     /** Reauthorize publication and resolve images again after a process restart.

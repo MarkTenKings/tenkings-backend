@@ -24,7 +24,8 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   await fixture.admin.$executeRawUnsafe('UPDATE atlas_manual.card SET content=$2,content_hash=$3,revision=revision+1 WHERE id=$1::uuid',cardB,canonical(aliasDraft),digest(canonical(aliasDraft)));
   assert.equal(await store.discover(),2);
   const a=await store.claim(2),b=await second.claim(2);assert.deepEqual(new Set([a.card_id,b.card_id]),new Set([cardA,cardB]));
-  const request=prepareVariantListingRequest(a.input.identity);assert.deepEqual(prepareVariantListingRequest(b.input.identity),request);
+  const printing={name:'Reverse Holofoil',language:'en'},request=prepareVariantListingRequest(a.input.identity,printing);assert.deepEqual(prepareVariantListingRequest(b.input.identity,printing),request);
+  assert.notEqual(prepareVariantListingRequest(a.input.identity,{name:'Holofoil',language:'en'}).requestKey,request.requestKey);
   const forgedInput={...a.input,identity:{...a.input.identity,name:'Different player'}};
   await assert.rejects(store.reserveListingSource({...a,input:forgedInput},prepareVariantListingRequest(forgedInput.identity)),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
   const reservations=await Promise.all([store.reserveListingSource(a,request),second.reserveListingSource(b,request)]);
@@ -69,7 +70,7 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   const revokedCard=await seed();await store.discover();const revoked=await store.claim(1);assert.equal(revoked.card_id,revokedCard);
   await fixture.admin.$executeRawUnsafe('UPDATE atlas_staff."StaffIdentity" SET "accessVersion"="accessVersion"+1 WHERE id=$1::uuid',revoked.actor_id);
   await assert.rejects(store.reserveListingSource(revoked,prepareVariantListingRequest(revoked.input.identity)),{code:'VARIANT_LEASE_LOST'});
-  return ['two cap-one restricted PostgreSQL clients reserve one shared canonical identity despite case/collector aliases; expired/uncertain journal never repurchases',
+  return ['two cap-one restricted PostgreSQL clients reserve one shared named-printing request per canonical identity despite case/collector aliases; expired/uncertain journal never repurchases',
    'late exact raw response survives lease expiry, duplicate save is idempotent, conflicting/oversized/forged completion refuses',
    'same-identity physical card and explicit refresh reuse retained source; model fields stay empty; changed identity, forged input, revoked access and expired lease reject dispatch'];
  }finally{await client.$disconnect();}

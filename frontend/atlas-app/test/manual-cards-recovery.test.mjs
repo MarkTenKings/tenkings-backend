@@ -311,7 +311,7 @@ test('an edit arriving during a details save is retained and cannot silently ini
 });
 
 test('grading identity errors are explained inline before any journal or request',async()=>{
-  for(const [field,value]of [['Name',''],['Year',''],['Manufacturer',''],['Product / set','x'.repeat(121)]]){
+  for(const [field,value]of [['Name',''],['Year','x'.repeat(25)],['Manufacturer','x'.repeat(121)],['Product / set','x'.repeat(121)]]){
     const store=storage(null),f=harness(store,async()=>assert.fail('invalid identity must not write'),{readCard:sportsCard});
     f.render();await flush();f.render();f.change(field,value);f.render();f.submit();await flush();f.render();
     assert.equal(f.field(field).props['aria-invalid'],true);assert.match(f.text(),/Check the highlighted card details/);assert.equal(store.getItem(key),null);
@@ -476,15 +476,15 @@ test('final geometry correction holds explain preserving findings and deliberate
 });
 
 
-test('batch correction immediately marks only the missing Year field and clears the marker after correction',async()=>{
-  const card=sportsCard();card.details.fields.year='';
-  const f=harness(storage(null),async()=>assert.fail('Navigation never saves or grades'),{readCard:()=>card,fromBatch:true});
+test('unknown Year and Manufacturer remain editable without blocking geometry or inventing metadata',async()=>{
+  let card=sportsCard();card.details.fields.year='';card.details.fields.manufacturer='';const posts=[];
+  const f=harness(storage(null),async(path,{body})=>{posts.push({path,body});if(path.endsWith('/initialize'))card={...card,manual:{current:true,revision:1}};return {};},{readCard:()=>card,fromBatch:true});
   f.render();await flush();f.render();
-  assert.equal(f.field('Year').props['aria-invalid'],true);
-  assert.equal(f.attention('detail-year'),true);assert.equal(f.attention('detail-name'),false);
-  assert(f.reviewIssues().some(issue=>issue.key==='detail-year'));
-  f.change('Year','2023-24');f.render();assert.equal(f.attention('detail-year'),false);
-  assert(!f.reviewIssues().some(issue=>issue.key==='detail-year'));f.dispose();
+  assert.equal(f.field('Year').props['aria-invalid'],false);assert.equal(f.field('Manufacturer').props['aria-invalid'],false);
+  assert.equal(f.attention('detail-year'),false);assert.equal(f.attention('detail-manufacturer'),false);
+  f.submit();await flush();f.render();assert.equal(f.workspace(),true);assert.equal(f.workspaceProps().rapid,true);
+  assert.equal(posts.filter(post=>post.path.endsWith('/initialize')).length,1);
+  assert.equal(card.details.fields.year,'');assert.equal(card.details.fields.manufacturer,'');f.dispose();
 });
 
 test('batch correction marks only the retained unprepared Front, preserving the ready Back',async()=>{
@@ -547,10 +547,10 @@ test('failed photo has a direct manual editor path, saves exact side settings, a
 });
 test('manual entry explains invalid details and retains changes without starting geometry',async()=>{
  let card=failedPhotos();const posts=[],f=harness(storage(null),async(path)=>{posts.push(path);return {};},{readCard:()=>card,fromBatch:true});
- f.render();await flush();f.render();f.change('Year','');f.change('Front photo background','WHITE');f.render();
+ f.render();await flush();f.render();f.change('Name','');f.change('Front photo background','WHITE');f.render();
  f.click('Edit Front geometry');await flush();f.render();
  assert.equal(posts.filter(p=>!p.endsWith('/geometry')).length,0);assert.equal(f.workspace(),false);
- assert.equal(f.field('Year').props['aria-invalid'],true);assert.equal(f.field('Front photo background').props.value,'WHITE');
+ assert.equal(f.field('Name').props['aria-invalid'],true);assert.equal(f.field('Front photo background').props.value,'WHITE');
 });
 test('manual entry cannot race an incomplete pair, upload, or uncertain command',async()=>{
  for(const blocker of ['pair','upload','command']){

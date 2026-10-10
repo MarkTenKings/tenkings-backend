@@ -12,11 +12,6 @@
       "sha256": "a47ab65be0c7c4a3243d406905efd845b4878612d18fabaa317b2ba491004821"
     },
     {
-      "source": "frontend/nextjs-app/lib/ai-grader-v2/identity.ts",
-      "canonical": "packages/atlas-grading-core/src/identity.ts",
-      "sha256": "a46dbfa5a594cf56467a60d52251b18c09e23c6a44f46d4dd3c54ad7e239092c"
-    },
-    {
       "source": "frontend/nextjs-app/lib/ai-grader-v2/card-type-map-contracts.ts",
       "canonical": "packages/atlas-grading-core/src/card-type-map-contracts.ts",
       "sha256": "b9b0c1ccd4b426ec39f66dc94b8f9761092ce799cbfd3abe6ac84e9c38dbde4c"
@@ -60,6 +55,16 @@
       "optimizedSha256": "2afca46f877c1c9c7ec0ca82f809466a18a7220fdd3794800ae7fc8304bf15ce",
       "reason": "Reuse the same validated bitmap and canonical RLE within one decode; copy decoded byte characters directly without iterator/callback allocation. Frozen format, hash preimage and rejection checks remain unchanged. No mutable-object cache.",
       "equivalenceTest": "packages/atlas-grading-core/test/trace-bitmap-wire.test.mjs"
+    }
+  ],
+  "evolvedModules": [
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/identity.ts",
+      "canonical": "packages/atlas-grading-core/src/identity.ts",
+      "sha256": "a46dbfa5a594cf56467a60d52251b18c09e23c6a44f46d4dd3c54ad7e239092c",
+      "currentSha256": "8dfd98b37861ca52f43e816b78b203d9ac695d032a8387da9f918150b868f387",
+      "reason": "Allow unknown year/manufacturer to remain null during inspection; retain optional supplied Pok\u00e9mon manufacturer. Historical canonical identity objects keep exactly the same bytes when no optional manufacturer is supplied. Grading formulas, photograph inspection and report approval gates are unchanged.",
+      "compatibilityTest": "packages/atlas-grading-core/test/identity.test.mjs"
     }
   ]
 }

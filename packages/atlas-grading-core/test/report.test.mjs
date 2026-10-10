@@ -29,6 +29,12 @@ test('historical canonical modules and explicitly recorded optimizations retain 
   assert.equal(optimized.sha256, 'db1e4afdc0ff81c304289eca2ba70580123818141eb0943e84703eb71312faf7');
   assert.equal(createHash('sha256').update(readFileSync(new URL('../src/trace-bitmap-wire.ts', import.meta.url))).digest('hex'), optimized.optimizedSha256);
   assert.equal(optimized.equivalenceTest, 'packages/atlas-grading-core/test/trace-bitmap-wire.test.mjs');
+  assert.equal(manifest.evolvedModules.length, 1);
+  const identity = manifest.evolvedModules[0];
+  assert.equal(identity.canonical, 'packages/atlas-grading-core/src/identity.ts');
+  assert.equal(identity.sha256, 'a46dbfa5a594cf56467a60d52251b18c09e23c6a44f46d4dd3c54ad7e239092c');
+  assert.equal(createHash('sha256').update(readFileSync(new URL('../src/identity.ts', import.meta.url))).digest('hex'), identity.currentSha256);
+  assert.equal(identity.compatibilityTest, 'packages/atlas-grading-core/test/identity.test.mjs');
 });
 test('draft recalculates the existing rule and preserves unreviewed findings without approval', () => {
   const input = source(), report = previewAtlasReport(input);

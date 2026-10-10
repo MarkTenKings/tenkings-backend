@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { canonicalJson, normalizeVariantIdentity, compareVariantIdentity, compareVariantCardNumber,
-  variantCandidateId, validateVariantCandidate, VARIANT_REVIEW_LIMITS } from '@tenkings/card-catalog-evidence';
+import { canonicalJson, normalizeVariantIdentity, compareVariantCardNumber,
+  validateVariantCandidate, VARIANT_REVIEW_LIMITS } from '@tenkings/card-catalog-evidence';
 import { buildEbaySoldCompsV2Query, parseEbaySoldCompsV2Candidate,
   EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION } from '@tenkings/ebay-sold-comps-v2';
 import { inspectStaffInventoryResearchSale, inspectStaffInventoryResearchTitle } from '@tenkings/card-research-core/decisions';
@@ -39,17 +39,25 @@ function productParts(identity) {
   return parts.length === 2 && parts.every(Boolean) ? { product: parts[0], insert: parts[1] }
     : { product: identity.setName, insert: null };
 }
-function engineInput(identity) {
+// Checklist subset names remain in the saved label. Search only the finish
+// suffix when the manufacturer uses one of these explicit base-row prefixes.
+function listingSearchLabel(identity, label) {
+  if (identity.category === 'POKEMON') return label.replace(/\bholofoil\b|\bholographic\b/gi, 'Holo').replace(/\bstamp(?:ed)?\b/gi, '').trim();
+  if (/^(?:rated rookies?|rookies?|base(?: cards?(?: [ivx]+)?)?)$/i.test(label)) return label;
+  const suffix = label.replace(/^(?:rated rookies?|rookies?|base(?: cards?(?: [ivx]+)?)?)\s*[-–—:]?\s+/i, '').trim();
+  return suffix || label;
+}
+function engineInput(identity, printing = null) {
   const { product, insert } = productParts(identity);
   return { matchingPolicy: EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY, category: identity.category,
     year: identity.year, manufacturer: identity.manufacturer, productSet: product, insert,
     ...(identity.category === 'SPORTS' ? { playerName: identity.name } : { cardName: identity.name }),
-    cardNumber: identity.cardNumber, parallel: null,
-    variantIdentity: { language: languageNames[identity.language] ?? identity.language } };
+    cardNumber: identity.cardNumber, parallel: printing ? listingSearchLabel(identity, printing.name) : null,
+    variantIdentity: { language: languageNames[printing?.language ?? identity.language] ?? printing?.language ?? identity.language } };
 }
 /** One public identity => one request key. No physical photo, grade, approval,
  * generation or time bucket changes its billing identity. */
-export function prepareVariantListingRequest(input) {
+export function prepareVariantListingRequest(input, printing = null) {
   const fields = ['category', 'name', 'year', 'setName', 'cardNumber', 'manufacturer', 'language'];
   check(input && Object.keys(input).every(k => fields.includes(k)), 'VARIANT_LISTING_IDENTITY');
   const normalized = normalizeVariantIdentity(Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === 'string' ? normalize(v) : v])));
@@ -57,16 +65,22 @@ export function prepareVariantListingRequest(input) {
     v === null || k === 'category' ? v : k === 'cardNumber' ? canonicalNumber(v) : v.toLowerCase()])));
   check(identity.name && identity.year && identity.setName && identity.cardNumber
     && (identity.category !== 'SPORTS' || identity.manufacturer), 'VARIANT_LISTING_IDENTITY_INCOMPLETE');
-  const query = buildEbaySoldCompsV2Query(engineInput(identity));
+  if (printing !== null) {
+    check(keys(printing, ['name', 'language']) && typeof printing.name === 'string'
+      && printing.name.trim().length > 0 && printing.name.length <= 120 && !/[\x00-\x1f\x7f]/.test(printing.name), 'VARIANT_LISTING_PRINTING');
+    printing = { name: normalize(printing.name).toLowerCase(), language: normalizeVariantIdentity({ category: identity.category, language: printing.language }).language };
+    check(!identity.language || !printing.language || identity.language === printing.language, 'VARIANT_LISTING_PRINTING_LANGUAGE');
+  }
+  const query = [buildEbaySoldCompsV2Query(engineInput(identity, printing)), printing?.language && printing.language !== 'en' ? languageNames[printing.language] ?? printing.language : null].filter(Boolean).join(' ');
   const url = new URL(endpoint);
   url.search = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(VARIANT_LISTING_LIMITS.results),
     page: '1', sold: 'true', includeCompleteListing: 'true', exactMatch: 'true', hydrateBoa: 'false' }).toString();
   const request = { schemaVersion: 'variant-listing-request/v1', revision: VARIANT_LISTING_REVISION,
-    parserRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, identity, query, url: url.href };
+    parserRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, identity, ...(printing ? { printing } : {}), query, url: url.href };
   return { ...request, requestKey: `variant-listing-source:v1:${hash(canonicalJson(request))}` };
 }
 function validateRequest(request) {
-  check(same(prepareVariantListingRequest(request?.identity), request), 'VARIANT_LISTING_REQUEST_CHANGED');
+  check(same(prepareVariantListingRequest(request?.identity, request?.printing ?? null), request), 'VARIANT_LISTING_REQUEST_CHANGED');
   return request;
 }
 function validateSource(request, source) {
@@ -148,25 +162,47 @@ function variantSignature(label) {
   remaining = remaining.replace(/\bstamp(?:ed)?\b/g, '').trim();
   return !remaining && Object.values(result).some(v => v.length) ? result : null;
 }
-function compatibleScrydexPhoto(candidate, listing, target) {
-  if (candidate.source.provider !== 'scrydex' || candidate.parallel === null || candidate.authority !== 'provider_candidate') return false;
-  const comparison = compareVariantIdentity(target, candidate.identity), observed = listingFacts(listing), expected = variantSignature(candidate.parallel);
-  if (comparison.conflicts.length || !expected || compareVariantCardNumber(target.cardNumber, candidate.identity.cardNumber) !== 'match'
-    || listing.identityEvidence.reason_codes.includes('collector_denominator_missing')
-    || observed.language.length !== 1 || languageCodes[observed.language[0]] !== candidate.identity.language) return false;
-  if (observed.serialDenominators.length || observed.autograph !== null || observed.memorabilia !== null || observed.promo !== null) return false;
-  return ['finish', 'edition', 'stamp'].every(k => same([...expected[k]].sort(), [...observed[k]].sort()));
+/** A named search supplies context, never proof of a seller's variant claim.
+ * Missing language is allowed for display; explicit conflicts remain excluded. */
+function compatibleNamedPhoto(candidate, listing, request, choices) {
+  if (!['scrydex', 'manufacturer_checklist'].includes(candidate.source.provider)
+    || candidate.authority !== 'provider_candidate' || !candidate.parallel
+    || claimText(candidate.label) !== claimText(request.printing.name)
+    || candidate.identity.language !== request.printing.language) return false;
+  const target = request.identity, observed = listingFacts(listing), expected = variantSignature(candidate.parallel);
+  if (compareVariantCardNumber(target.cardNumber, candidate.identity.cardNumber) === 'conflict'
+    || observed.language.length && (!request.printing.language || observed.language.some(v => languageCodes[v] !== request.printing.language))) return false;
+  if (expected) {
+    if (observed.serialDenominators.length || observed.autograph !== null || observed.memorabilia !== null || observed.promo !== null && expected.stamp.length === 0) return false;
+    return ['finish', 'edition', 'stamp'].every(k => same([...expected[k]].sort(), [...observed[k]].sort()));
+  }
+  // Sports subset/finish words can appear in a different order in the title.
+  // A Blue Hyper photo cannot attach to Blue or the base subset row.
+  if (target.category === 'SPORTS') {
+    const words = label => claimText(listingSearchLabel(target,label)).split(' ').map(w=>w.replace(/^(rookie|refractor|prizm)s$/, '$1'));
+    const titleWords = new Set(claimText(listing.listing.title).split(' ').map(w=>w.replace(/^(rookie|refractor|prizm)s$/, '$1')));
+    const wanted = words(candidate.parallel), has = label => words(label).every(w=>titleWords.has(w));
+    if (!has(candidate.parallel)) return false;
+    const base = /^(?:rated rookies?|rookies?|base(?: cards?(?: [ivx]+)?)?)$/i.test(candidate.parallel);
+    return !choices.some(other => other.candidateId !== candidate.candidateId && other.source.provider === 'manufacturer_checklist'
+      && other.parallel && has(other.parallel) && (base || words(other.parallel).length > wanted.length
+        && wanted.every(w=>words(other.parallel).includes(w))));
+  }
+  // Provider Normal stays literal; it never becomes Non-Holo by inference.
+  return ` ${claimText(listing.listing.title)} `.includes(` ${claimText(candidate.parallel)} `);
 }
+
 function catalogListingImage(image, source) {
   validateImageDescriptor(image);
   check(image.sourceResponseSha256 === source.sha256, 'VARIANT_LISTING_IMAGE_SOURCE');
   return { ...image, publication: null, provenance: { provider: listingProviderId,
     sourceUrl: source.url, sourceSha256: source.sha256, usage: 'provider_reference' }, visibleDiagnosticIds: [] };
 }
-/** Keep provider choice names intact; compatible listing photos remain a
- * separate provenance branch. Incomplete claims stay independent choices. */
-export function composeVariantListingCandidates({ identity, candidates = [], evidence }) {
-  const request = prepareVariantListingRequest(identity), target = normalizeVariantIdentity(identity);
+/** Attach seller evidence to an existing named printing only. The listing
+ * transport still reads legacy requests, but cannot manufacture new choices. */
+export function composeVariantListingCandidates({ identity, candidates = [], evidence, printing = null }) {
+  check(printing !== null, 'VARIANT_LISTING_PRINTING_REQUIRED');
+  const request = prepareVariantListingRequest(identity, printing);
   check(evidence?.schemaVersion === 'variant-listing-evidence/v1' && evidence.revision === VARIANT_LISTING_REVISION
     && evidence.requestKey === request.requestKey && same(evidence.identity, request.identity) && evidence.query === request.query
     && evidence.source?.url === request.url && HASH.test(evidence.source.sha256) && date(evidence.source.capturedAt)
@@ -179,8 +215,8 @@ export function composeVariantListingCandidates({ identity, candidates = [], evi
     check(same(listing.listing, listing.image.listing) && listing.identityEvidence.status === 'UNREVIEWED'
       && listing.identityEvidence.physicalVariantConfirmed === false, 'VARIANT_LISTING_EVIDENCE');
     const image = catalogListingImage(listing.image, evidence.source);
-    const matches = choices.filter(c => compatibleScrydexPhoto(c, listing, request.identity));
-    // More than one compatible named choice is ambiguous; keep it independent.
+    const matches = choices.filter(c => compatibleNamedPhoto(c, listing, request, choices));
+    // Multiple compatible catalog choices are ambiguous; do not attach the photo.
     if (matches.length === 1 && matches[0].images.length < VARIANT_REVIEW_LIMITS.imagesPerCandidate
       && matches[0].source.references.length < 8) {
       const c = matches[0];
@@ -190,16 +226,7 @@ export function composeVariantListingCandidates({ identity, candidates = [], evi
       c.warnings = [...new Set([...c.warnings.filter(v => v !== 'REFERENCE_IMAGE_MISSING'), ...listingWarnings])];
       continue;
     }
-    const observed = listingFacts(listing), claimed = claimedParallel(observed), parallel = claimed && claimed.length <= 120 ? claimed : null;
-    const c = { authority: 'provider_candidate', label: parallel ? `Listing: ${parallel}` : 'Listing photo — variant unconfirmed',
-      identity: { ...target, language: observed.language.length === 1 ? languageCodes[observed.language[0]] ?? null : null },
-      parallel, canonical: null, applicability: 'unknown', diagnostics: [], images: [image],
-      source: { provider: listingProviderId, recordId: listing.listing.id, url: evidence.source.url, sha256: evidence.source.sha256,
-        references: [{ url: evidence.source.url, sha256: evidence.source.sha256 }] },
-      warnings: [...listingWarnings, 'APPLICABILITY_UNCONFIRMED', ...(!parallel ? ['FINISH_UNVERIFIED'] : []),
-        ...(observed.language.length !== 1 ? ['LANGUAGE_UNCONFIRMED'] : []),
-        ...(listing.identityEvidence.reason_codes.includes('collector_denominator_missing') ? ['DENOMINATOR_UNVERIFIED'] : [])] };
-    choices.push({ ...c, candidateId: variantCandidateId(c) });
+
   }
   truncated ||= choices.length > VARIANT_REVIEW_LIMITS.candidates;
   return { candidates: choices.slice(0, VARIANT_REVIEW_LIMITS.candidates).map(validateVariantCandidate),
@@ -208,7 +235,7 @@ export function composeVariantListingCandidates({ identity, candidates = [], evi
 /** Pure projection; raw source retains prices but this visual-discovery result
  * deliberately contains none. A seller's title is a claim, never publication. */
 export function projectVariantListingSource(request, source) {
-  const payload = validateSource(request, source), input = engineInput(request.identity), listings = [], excluded = [];
+  const payload = validateSource(request, source), input = engineInput(request.identity, request.printing), listings = [], excluded = [];
   const seen = new Map(), conflicts = new Set();
   // The provider can return its default 60-row page despite count=40. Retain
   // exact bytes, detect duplicate conflicts across that page, and project only

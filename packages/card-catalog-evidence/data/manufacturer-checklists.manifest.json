@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "manufacturer-checklist/v1",
+  "capturedAt": "2026-10-10T21:54:06.882Z",
+  "complete": false,
+  "sources": 617,
+  "explicitRows": 1115165,
+  "gzipBytes": 5947612,
+  "jsonBytes": 37961788,
+  "sha256": "aa6d5d6ece1e5818ec49bde7857894ba0b99ff8593b97ac3e62a24bce261aece",
+  "decodedSha256": "45345e4478b9f6a01885c7793502c0f499f17122e2ca412582f4264916e9255e",
+  "sourceManifestSha256": "9f21f6960b6b2adafc6a0471c1642d3aaf07f5b1bcdb9cf7fadc1a7692f9b069"
+}

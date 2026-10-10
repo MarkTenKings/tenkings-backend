@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import { prepareVariantListingRequest as prepare, projectVariantListingSource as project,
   createVariantListingProvider as provider, composeVariantListingCandidates as compose, VARIANT_LISTING_LIMITS as limits } from '../src/variant-listing-provider.mjs';
 import { importScrydexVariantCandidates, validateVariantCandidate, createVariantReviewSnapshot,
-  isVariantPhotoComparable, scrydexVariantSearchUrl } from '@tenkings/card-catalog-evidence';
+  isVariantPhotoComparable, scrydexVariantSearchUrl, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
 
 const sha = v => createHash('sha256').update(v).digest('hex');
 const capturedAt = '2026-10-10T10:00:00.000Z', now = () => Date.parse(capturedAt);
@@ -36,11 +36,6 @@ const scrydexChoices = () => importScrydexVariantCandidates({ identity, card: { 
   images: [{ type: 'front', large: 'https://images.scrydex.com/pokemon/xy12-51/large' }],
   variants: ['normal', 'holofoil', 'reverseHolofoil', 'cosmosHolofoil', 'snowflakeStamp'].map(name => ({ name, images: [] })) },
   source: { url: scrydexVariantSearchUrl(identity), sha256: sha('scrydex'), capturedAt } });
-async function acquireFixture(rows, target = identity) {
-  const bytes = await png(), request = prepare(target), cache = cacheFixture();
-  const p = provider({ cache, now, fetchImpl: async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }) });
-  return { evidence: await p.acquireImages({ request, source: source(request, rows) }), cache, bytes };
-}
 
 test('public identity request is deterministic, bounded, ungraded and preserves unknown language/finish', () => {
   const request = prepare(identity), url = new URL(request.url);
@@ -67,72 +62,11 @@ test('paid request canonicalization shares case, whitespace, language and safe c
   assert.equal(prepare(sports).requestKey, prepare({ ...sports, name: 'DRAKE MAYE', manufacturer: 'PANINI', cardNumber: '#dt-dm' }).requestKey);
 });
 
-test('composition attaches only explicit compatible finish and language claims while preserving Scrydex names and provenance', async () => {
-  const original = scrydexChoices(), before = JSON.stringify(original); assert.equal(original.length, 5);
-  const { evidence } = await acquireFixture([
-    item(1, '2016 Evolutions Mewtwo #51/108 Reverse Holo English'),
-    item(2, '2016 Evolutions Mewtwo #51/108 Cosmos Holo English'),
-    item(3, '2016 Evolutions Mewtwo #51/108 Snowflake Stamp English'),
-    item(4, '2016 Evolutions Mewtwo #51/108 Non Holo English'),
-    item(5, '2016 Evolutions Mewtwo #51/108 Reverse Holo'),
-    item(6, '2016 Evolutions Mewtwo #51 Reverse Holo English'),
-  ]);
-  const result = compose({ identity, candidates: original, evidence });
-  assert.equal(result.candidates.length, 8); assert.equal(JSON.stringify(original), before);
-  for (const originalChoice of original) {
-    const choice = result.candidates.find(c => c.candidateId === originalChoice.candidateId);
-    assert.equal(choice.label, originalChoice.label); assert.equal(choice.parallel, originalChoice.parallel);
-    for (const key of ['provider', 'recordId', 'sha256', 'url']) assert.equal(choice.source[key], originalChoice.source[key]);
-  }
-  for (const label of ['Reverse Holofoil', 'Cosmos Holofoil', 'Snowflake Stamp']) {
-    const choice = result.candidates.find(c => c.label === label), photo = choice.images.find(i => i.relationship === 'listing_photo');
-    assert.ok(photo, label); assert.equal(photo.provenance.provider, 'ebay_sold_comps_v2');
-    assert.equal(photo.sourceResponseSha256, evidence.source.sha256); assert.equal(isVariantPhotoComparable(choice, photo), false);
-  }
-  assert.equal(result.candidates.find(c => c.label === 'Normal').images.some(i => i.relationship === 'listing_photo'), false);
-  assert.equal(result.candidates.find(c => c.label === 'Holofoil').images.some(i => i.relationship === 'listing_photo'), false);
-  const snapshot = createVariantReviewSnapshot({ identity, candidates: result.candidates, capturedAt });
-  assert.equal(snapshot.coverage.images, 'partial'); assert.ok(snapshot.problems.includes('NO_DIAGNOSTIC_PHOTOS'));
-  assert.doesNotMatch(JSON.stringify(result), /99\.95|soldPrice|soldCurrency/);
-});
-
-test('sports photos preserve saved identity; missing finish remains unknown, strict listing attribution cannot gain authority', async () => {
-  const target = { ...sports, cardNumber: 'DTBH-DME' }, title = '2025 Panini Donruss Optic Drake Maye Donruss Threads #DTBH-DME';
-  const { evidence, cache, bytes } = await acquireFixture([item(1, title)], target);
-  const [choice] = compose({ identity: target, evidence }).candidates, photo = choice.images[0];
-  assert.deepEqual(choice.identity, target); assert.equal(choice.parallel, null);
-  assert.equal(choice.authority, 'provider_candidate'); assert.equal(choice.applicability, 'unknown');
-  assert.equal(photo.listing.title, title); assert.equal(isVariantPhotoComparable(choice, photo), false);
-  const reader = provider({ cache, now: () => now() + 2 * limits.ttlMs, fetchImpl: noNetwork, inspectImage: noNetwork });
-  assert.equal((await reader.readImage(photo)).sha256, sha(bytes));
-  for (const mutate of [c => { c.images[0].listing.title = 'forged'; }, c => { c.images[0].listing.url = 'https://evil.test'; },
-    c => { c.images[0].sourceResponseSha256 = sha('forged'); }, c => { c.images[0].relationship = 'exact'; },
-    c => { c.images[0].provenance.usage = 'reviewed_catalog'; }, c => { c.images[0].provenance.provider = 'scrydex'; },
-    c => { c.images[0].visibleDiagnosticIds = ['invented']; }, c => { c.source.references = []; },
-    c => { c.authority = 'reviewed_catalog'; }, c => { c.applicability = 'supported'; }]) {
-    const changed = structuredClone(choice); mutate(changed); assert.throws(() => validateVariantCandidate(changed));
-  }
-  await assert.rejects(reader.readImage({ ...photo, provenance: { ...photo.provenance, sourceUrl: 'https://api.sold-comps.com/v1/scrape?forged=true' } }), /REFERENCE_UNAVAILABLE/);
-});
-
 test('conflicting language, ambiguous editions/finishes and imitation claims are excluded', () => {
   const request = prepare(identity), base = '2016 Evolutions Mewtwo #51/108';
   const result = project(request, source(request, ['English Japanese Holo', 'First Edition Unlimited Holo', 'Non Holo Reverse Holo',
     'Custom Reverse Holo', 'Replica Holo', 'Maybe Holo', 'Holo?'].map((claim, n) => item(n, `${base} ${claim}`))));
   assert.equal(result.listings.length, 0);
-});
-
-test('unknown Scrydex labels, wrong language and extra edition/stamp claims remain independent photo choices', async () => {
-  const { evidence } = await acquireFixture([
-    item(1, '2016 Evolutions Mewtwo #51/108 Reverse Holo French'),
-    item(2, '2016 Evolutions Mewtwo #51/108 Reverse Holo First Edition English'),
-    item(3, '2016 Evolutions Mewtwo #51/108 Reverse Holo Staff Stamp English'),
-    item(4, '2016 Evolutions Mewtwo #51/108')]);
-  const original = scrydexChoices(), result = compose({ identity, candidates: original, evidence });
-  assert.equal(result.candidates.length, original.length + 4);
-  assert.ok(result.candidates.filter(c => c.source.provider === 'scrydex').every(c => c.images.every(i => i.relationship !== 'listing_photo')));
-  assert.equal(result.candidates.find(c => c.source.recordId === item(4).itemId).parallel, null);
-  assert.throws(() => compose({ identity: { ...identity, cardNumber: '52/108' }, candidates: original, evidence }), /EVIDENCE/);
 });
 
 test('one metadata GET retains exact public source bytes and no bearer; failure body is retained without retry', async () => {
@@ -313,4 +247,50 @@ test('bounded source read cancels stalled body and never issues another paid req
     calls++; return new Response(new ReadableStream({ cancel() { cancelled++; } }), { headers: { 'content-type': 'application/json' } });
   } });
   await assert.rejects(p.fetchSource(request), /CANCELLED/); assert.equal(calls, 1); assert.equal(cancelled, 1);
+});
+
+test('named requests share a durable public printing key and reject language conflicts or injected fields',()=>{
+ const a=prepare(identity,{name:'Reverse Holofoil',language:'English'});
+ assert.deepEqual(a,prepare({...identity,cardNumber:'#051/0108'},{name:' reverse holofoil ',language:'en'}));
+ assert.match(a.query,/reverse holo/i);assert.doesNotMatch(a.query,/holofoil/i);assert.doesNotMatch(a.query,/english/i,'English seller titles often omit the language; contradictory languages are rejected from returned evidence');
+ assert.notEqual(a.requestKey,prepare(identity,{name:'Holofoil',language:'en'}).requestKey);
+ assert.notEqual(a.requestKey,prepare(identity).requestKey);
+ assert.throws(()=>prepare({...identity,language:'ja'},{name:'Reverse Holofoil',language:'en'}),/LANGUAGE/);
+ assert.throws(()=>prepare(identity,{name:'Reverse Holofoil',language:'en',cardId:'private'}),/PRINTING/);
+});
+test('named searches attach explicit finish claims without inventing extra variants or requiring a seller language word',async()=>{
+ const printing={name:'Reverse Holofoil',language:'en'},request=prepare(identity,printing),bytes=await png();
+ const p=provider({cache:cacheFixture(),now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});
+ const evidence=await p.acquireImages({request,source:source(request,[
+  item(1,'2016 Pokemon Evolutions Mewtwo #51/108 Reverse Holo'),
+  item(2,'2016 Pokemon Evolutions Mewtwo #51/108 Holo English'),
+  item(3,'2016 Pokemon Evolutions Mewtwo #51/108 Reverse Holo Japanese'),
+  item(4,'2016 Pokemon Evolutions Mewtwo #51/108'),
+ ])});
+ const choices=scrydexChoices(),result=compose({identity,candidates:choices,evidence,printing});
+ assert.equal(result.candidates.length,choices.length);
+ const reverse=result.candidates.find(c=>c.label==='Reverse Holofoil'),photos=reverse.images.filter(i=>i.relationship==='listing_photo');
+ assert.equal(photos.length,1);assert.equal(photos[0].listing.id,'123456780001');
+ assert(result.candidates.every(c=>c.source.provider==='scrydex'));
+ assert.throws(()=>compose({identity,candidates:choices,evidence,printing:{name:'Holofoil',language:'en'}}),/EVIDENCE/);
+});
+
+test('manufacturer printings receive only matching sports photos, preserving named rows and exact seller provenance',async()=>{
+ const target={category:'SPORTS',name:'Drake Maye',year:'2024',setName:'Donruss Optic',cardNumber:'229',manufacturer:'Panini',language:null};
+ const catalog={schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[{manufacturer:'Panini',year:'2024',setName:'Donruss Optic',sport:'football',aliases:[],url:'https://www.paniniamerica.net/checklist.html',sha256:sha('owned checklist fixture')}],
+  rows:['Rated Rookies','Rated Rookies Blue','Rated Rookies Blue Hyper'].map(label=>[0,label,'229','Drake Maye','New England Patriots'])};
+ const {candidates}=await createManufacturerChecklistVariantProvider({catalog}).prepare(target),printing={name:'Rated Rookies Blue Hyper',language:null},request=prepare(target,printing);
+ assert.match(request.query,/blue hyper/i);assert.doesNotMatch(request.query,/rated rookies/i);
+ const title='2024 Panini Donruss Optic Drake Maye #229 Blue Hyper Rated Rookie',bytes=await png(),cache=cacheFixture();
+ const p=provider({cache,now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});
+ const evidence=await p.acquireImages({request,source:source(request,[item(1,title),item(2,'2024 Panini Donruss Optic Drake Maye #229 Blue Rated Rookie')])});
+ const result=compose({identity:target,candidates,evidence,printing}),choice=result.candidates.find(c=>c.label===printing.name),photo=choice.images[0];
+ assert.equal(result.candidates.length,3);assert.equal(choice.images.length,1);assert.equal(photo.listing.title,title);assert.equal(choice.parallel,printing.name);
+ assert.equal(choice.source.provider,'manufacturer_checklist');assert.equal(choice.authority,'provider_candidate');assert.equal(choice.applicability,'unknown');assert.equal(isVariantPhotoComparable(choice,photo),false);
+ assert.equal(result.candidates.filter(c=>c.images.length).length,1);
+ const reader=provider({cache,now:()=>now()+2*limits.ttlMs,fetchImpl:noNetwork,inspectImage:noNetwork});assert.equal((await reader.readImage(photo)).sha256,sha(bytes));
+ for(const mutate of [c=>{c.images[0].listing.title='forged'},c=>{c.images[0].relationship='exact'},c=>{c.images[0].provenance.usage='reviewed_catalog'},c=>{c.authority='reviewed_catalog'},c=>{c.applicability='supported'}]){const changed=structuredClone(choice);mutate(changed);assert.throws(()=>validateVariantCandidate(changed));}
+ const blue={name:'Rated Rookies Blue',language:null},blueRequest=prepare(target,blue),blueEvidence=await p.acquireImages({request:blueRequest,source:source(blueRequest,[item(1,title)])});
+ assert(compose({identity:target,candidates,evidence:blueEvidence,printing:blue}).candidates.every(c=>c.images.length===0),'Blue Hyper is never shown as Blue');
+ assert.throws(()=>compose({identity:target,candidates,evidence}),/PRINTING_REQUIRED/);
 });

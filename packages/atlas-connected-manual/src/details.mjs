@@ -33,7 +33,7 @@ export function gradingIdentity(details) {
   const f = details.fields;
   return canonicalizeNewSpeedsterSessionIdentity(details.profile, details.profile === 'SPORTS'
     ? { playerName:f.name,year:f.year,manufacturer:f.manufacturer,productSet:f.set_name,parallel:details.parallel,insert:details.insert,cardNumber:f.card_number }
-    : { cardName:f.name,year:f.year,productSet:f.set_name,parallel:details.parallel,cardNumber:f.card_number,layoutType:details.layoutType });
+    : { cardName:f.name,year:f.year,...(f.manufacturer.trim()?{manufacturer:f.manufacturer}:{}),productSet:f.set_name,parallel:details.parallel,cardNumber:f.card_number,layoutType:details.layoutType });
 }
 export function mergeSuggestions(current, result, sourceHash) {
   const next = structuredClone(checkDetails(current));
