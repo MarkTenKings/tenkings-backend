@@ -5,10 +5,12 @@ import { variantBinding } from './variant-job-store.mjs';
 /** Uses the existing durable grading executor only after an explicit identity
  * correction. Repeated worker scans resume the exact action; they never invent
  * replacement requests for ambiguous paid outcomes or change human findings. */
-export function createVariantRecheck({ store, boundary, workflow, assistance, onError = () => {} }) {
+export function createVariantRecheck({ store, boundary, workflow, assistance, onError = () => {}, admitDispatch = null }) {
   requireThat(store && boundary && workflow && assistance?.repository, 503, 'VARIANT_RECHECK_CONFIGURATION');
   let running = null;
   async function execute(row) {
+    const admit = admitDispatch ? () => admitDispatch({ actionId: row.analysis_action_id }) : null;
+    if (admit && !await admit()) return;
     const staff = boundary.machineOwner({ ownerId: row.owner_id, accessVersion: row.access_version });
     const card = await workflow.service.read(staff, row.card_id), binding = variantBinding(card);
     if (binding.sourceHash !== row.source_hash || binding.identityRevision !== row.identity_revision || binding.identityHash !== row.identity_hash) return;
@@ -18,7 +20,11 @@ export function createVariantRecheck({ store, boundary, workflow, assistance, on
     if (previous) {
       const status = await assistance.repository.status(staff, { cardId: card.cardId, analysisId: previous.analysisId });
       if (status.retired || status.state !== 'PREPARED') return;
-      await assistance.executor.resume(staff, { cardId: card.cardId, analysisId: previous.analysisId });
+      if (Number.isFinite(Date.parse(previous.expiresAt)) && Date.parse(previous.expiresAt) <= Date.now()) {
+        await assistance.repository.retireUndispatched(staff, { cardId:card.cardId, actionId:row.analysis_action_id, baseHash:previous.baseHash, code:'DEFECT_ANALYSIS_REQUEST_EXPIRED' });
+        return;
+      }
+      await assistance.executor.resume(staff, { cardId: card.cardId, analysisId: previous.analysisId, admitDispatch: admit });
       return;
     }
     const state = await workflow.hydrate(card);
@@ -26,7 +32,7 @@ export function createVariantRecheck({ store, boundary, workflow, assistance, on
     // Hydration and reference reads cannot turn an older card revision into a
     // fresh request. The executor repeats its own card/source checks under lock.
     requireThat(canonical(variantBinding(await workflow.service.read(staff, card.cardId))) === canonical(binding), 409, 'VARIANT_IDENTITY_STALE');
-    await assistance.analyzeMachine(staff, card.cardId, { actionId: row.analysis_action_id, base });
+    await assistance.analyzeMachine(staff, card.cardId, { actionId: row.analysis_action_id, base }, { admitDispatch: admit });
   }
   return () => {
     if (running) return running;

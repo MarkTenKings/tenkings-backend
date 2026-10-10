@@ -9,7 +9,7 @@ import { createVariantRecheck } from '../src/variant-recheck.mjs';
 import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 
 const env = { ATLAS_MANUAL_ENABLED: 'true', ATLAS_MANUAL_VARIANT_REVIEW_ENABLED: 'true', ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED: 'true',
-  ATLAS_MANUAL_DEFECT_MEMORY_ENABLED: 'true', ATLAS_VARIANT_WORKER_ENABLED: 'true', ATLAS_MANUAL_OPENAI_KEY: 'synthetic-config-only-key',
+  ATLAS_MANUAL_DEFECT_MEMORY_ENABLED: 'true', ATLAS_VARIANT_WORKER_ENABLED: 'true', ATLAS_MANUAL_OPENAI_KEY: 'synthetic-config-only-key', ATLAS_VARIANT_OPENAI_KEY:'distinct-synthetic-variant-key',
   ATLAS_MANUAL_DATABASE_URL: 'postgresql://main:password@localhost/cards?schema=atlas_manual&connection_limit=4&sslmode=require',
   ATLAS_VARIANT_DATABASE_URL: 'postgresql://variant:password@localhost/cards?schema=atlas_manual&connection_limit=1&sslmode=require' };
 test('variant configuration is cold, explicit and isolates the one-connection worker role', () => {
@@ -20,7 +20,7 @@ test('variant configuration is cold, explicit and isolates the one-connection wo
   assert.equal(isolated.ATLAS_MANUAL_DATABASE_URL, env.ATLAS_VARIANT_DATABASE_URL);
   assert.equal(isolated.ATLAS_MANUAL_DEFECT_MEMORY_ENABLED, 'true');
   assert.equal(variantReviewSettings({ ...env, ATLAS_VARIANT_SCRYDEX_API_KEY: 'ignored-ambient-key' }).scrydex, null);
-  for (const change of [{ VERCEL: '1' }, { ATLAS_VARIANT_DATABASE_URL: env.ATLAS_MANUAL_DATABASE_URL },
+  for (const change of [{ ATLAS_VARIANT_OPENAI_KEY:undefined }, { ATLAS_VARIANT_OPENAI_KEY:env.ATLAS_MANUAL_OPENAI_KEY }, { VERCEL: '1' }, { ATLAS_VARIANT_DATABASE_URL: env.ATLAS_MANUAL_DATABASE_URL },
     { ATLAS_VARIANT_DATABASE_URL: env.ATLAS_VARIANT_DATABASE_URL.replace('connection_limit=1', 'connection_limit=2') },
     { ATLAS_VARIANT_DATABASE_URL: env.ATLAS_VARIANT_DATABASE_URL.replace('localhost', 'foreignhost') },
     { ATLAS_VARIANT_SCRYDEX_ENABLED: 'true' }]) assert.throws(() => variantWorkerSettings({ ...env, ...change }));
@@ -69,3 +69,9 @@ test('variant recheck creates one deterministic request, resumes only PREPARED, 
   assert.deepEqual(state, before);
   row.identity_hash = digest('different identity'); previous = null; await run(); assert.equal(requests, 1);
 });
+
+ test('recheck defers before preparation and safely retires an expired saved PREPARED request',async()=>{
+  const card=cardFixture(),b=variantBinding(card),row={owner_id:'owner',access_version:1,card_id:card.cardId,source_hash:b.sourceHash,identity_revision:b.identityRevision,identity_hash:b.identityHash,analysis_action_id:'11111111-1111-4111-8111-111111111111',reprocess_required:true};
+  let busy=true,reads=0,retirements=0;const run=createVariantRecheck({store:{pendingRechecks:async()=>[row],currentConfirmation:async()=>row},boundary:{machineOwner:x=>x},workflow:{service:{read:async()=>{reads++;return card;}},hydrate:async()=>assert.fail('no hydration')},assistance:{repository:{find:async()=>({analysisId:row.analysis_action_id,baseHash:'fixture',expiresAt:'2000-01-01T00:00:00Z'}),status:async()=>({state:'PREPARED'}),retireUndispatched:async(_staff,input)=>{assert.equal(input.actionId,row.analysis_action_id);assert.equal(input.code,'DEFECT_ANALYSIS_REQUEST_EXPIRED');retirements++;}},executor:{resume:async()=>assert.fail('no stale dispatch')}},admitDispatch:async({actionId})=>{assert.equal(actionId,row.analysis_action_id);return !busy;}});
+  await run();assert.equal(reads,0);busy=false;await run();assert.equal(retirements,1);
+ });

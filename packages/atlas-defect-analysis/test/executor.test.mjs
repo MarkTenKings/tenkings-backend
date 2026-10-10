@@ -190,3 +190,13 @@ test('durable pre-dispatch refusal settles exact replay without new artifacts or
   await assert.rejects(context.executor.prepareAndRun(context.staff, { cardId: retired.cardId, actionId: retired.actionId,
     prepared, baseHash: 'a'.repeat(64), expiresAt: new Date(Date.now() + 120000).toISOString() }), { code: 'DEFECT_ANALYSIS_ACTION_CONFLICT' });
 });
+
+test('optional low priority admission preserves exact PREPARED evidence and never claims or POSTs while busy',async()=>{
+ const prepared=preparedFixture(),context=setup(async()=>new Response(JSON.stringify(responseFixture(prepared)),{status:200,headers:{'content-type':'application/json'}}));
+ const input={cardId:prepared.evidence.cardId,actionId:prepared.evidence.analysisId,prepared,expiresAt:new Date(Date.now()+120000).toISOString(),admitDispatch:async()=>false};
+ const result=await context.executor.prepareAndRun(context.staff,input);assert.equal(result.state,'PREPARED');assert.equal(context.activity.calls,0);
+ const before=structuredClone(context.rows.get(prepared.evidence.analysisId));
+ for(let i=0;i<3;i++)await context.executor.resume(context.staff,{cardId:input.cardId,analysisId:input.actionId,admitDispatch:async()=>false});
+ assert.deepEqual(context.rows.get(input.actionId),before);assert.equal(context.activity.calls,0);
+ await context.executor.resume(context.staff,{cardId:input.cardId,analysisId:input.actionId,admitDispatch:async()=>true});assert.equal(context.activity.calls,1);
+});

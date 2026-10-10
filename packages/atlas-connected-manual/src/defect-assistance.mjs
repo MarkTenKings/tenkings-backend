@@ -244,7 +244,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       return { reviewedMemory: await memoryStatus(staff, cardId) };
     },
     learning,
-    async analyze(staff, cardId, input, preparation = null, dispatchSignal = null) {
+    async analyze(staff, cardId, input, preparation = null, dispatchSignal = null, admitDispatch = null) {
       requireThat(executor, 503, 'DEFECT_ANALYSIS_DISABLED');
       object(input, Object.hasOwn(input ?? {}, 'replacement') ? ['actionId', 'base', 'replacement'] : ['actionId', 'base']);
       uuid(input.actionId); object(input.base, SIDES);
@@ -265,7 +265,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
         requireThat(old.baseHash === baseHash, 409, 'DEFECT_ANALYSIS_ACTION_CONFLICT');
         if (old.retired) return project(staff, cardId, old.analysisId);
         requireThat(SIDES.every(side => canonical(input.base[side]) === canonical(baseFromRun(old, side))), 409, 'DEFECT_ANALYSIS_ACTION_CONFLICT');
-        if (old.state === 'PREPARED') await executor.resume(staff, { cardId, analysisId: old.analysisId, dispatchSignal });
+        if (old.state === 'PREPARED') await executor.resume(staff, { cardId, analysisId: old.analysisId, dispatchSignal, admitDispatch });
         return project(staff, cardId, old.analysisId);
       }
       // Reads and same-action recovery never create another provider request.
@@ -298,7 +298,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
         cornerShapes: Object.fromEntries(SIDES.map(side => [side, state.defects.sides[side].cornerShape])),
         binding, images, knowledge, lessonImages, ...(cleanLearning ? { cleanLearning } : {}) }, { signal: dispatchSignal });
       await executor.prepareAndRun(staff, { cardId, actionId: input.actionId, prepared,
-        expiresAt: new Date(Date.now() + 180000).toISOString(), baseHash, dispatchSignal,
+        expiresAt: new Date(Date.now() + 180000).toISOString(), baseHash, dispatchSignal, admitDispatch,
         ...(input.replacement ? { replacement: input.replacement } : {}) });
       return project(staff, cardId, input.actionId);
       } catch (error) {
@@ -314,7 +314,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
         return project(staff, cardId, input.actionId);
       }
     },
-    analyzeMachine: (staff, cardId, input, { dispatchSignal } = {}) => api.analyze(staff, cardId, input, MACHINE_PREPARATION, dispatchSignal),
+    analyzeMachine: (staff, cardId, input, { dispatchSignal, admitDispatch } = {}) => api.analyze(staff, cardId, input, MACHINE_PREPARATION, dispatchSignal, admitDispatch),
     // Internal geometry/shadow consumer. Its source-bound advisory cannot
     // mutate a workspace or certify a native proposal; normal human CAS remains.
     async geometryLearning(staff, cardId, { side, candidates, engineSha256 }) {

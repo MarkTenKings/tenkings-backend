@@ -58,8 +58,12 @@ export function verifyDisposableDocker(container, { id, nonce, port, remote = fa
 }
 
 /** Accepts binaries or a pinned owned container, never an existing database/data directory. */
-export async function disposablePostgres(args, { beforeUpgradeFrom48 } = {}) {
+export async function disposablePostgres(args, { beforeUpgradeFrom48, beforeUpgradeFrom78, afterUpgradeTo79 } = {}) {
     assert(beforeUpgradeFrom48 === undefined || typeof beforeUpgradeFrom48 === 'function', 'Upgrade rehearsal requires an explicit fixture callback');
+    assert(beforeUpgradeFrom78 === undefined || typeof beforeUpgradeFrom78 === 'function');
+    assert(afterUpgradeTo79 === undefined || typeof afterUpgradeTo79 === 'function');
+    assert(!(beforeUpgradeFrom48 && beforeUpgradeFrom78));
+    assert(!afterUpgradeTo79 || beforeUpgradeFrom78);
     const seen = new Set();
     for (let i = 0; i < args.length; i++) {
         assert(!seen.has(args[i]), 'Duplicate disposable fixture argument'); seen.add(args[i]);
@@ -245,39 +249,46 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48 } = {}) {
             await sql(customerGrantSQL(customerRole), [], 'atlas_fixture_template');
         };
         let upgradeLedger;
-        if (beforeUpgradeFrom48) {
+        const upgradeCount = beforeUpgradeFrom78 ? 78 : 48;
+        if (beforeUpgradeFrom48 || beforeUpgradeFrom78) {
+            if (beforeUpgradeFrom78) {
+                assert.equal(source.staffMigrations.length,79);
+                assert.equal(source.staffMigrations[77]?.name,'20261010002000_atlas_staff_order_desk');
+                assert.equal(source.staffMigrations[78]?.name,'20261010003000_atlas_visual_variant_review');
+            } else {
             assert.equal(source.staffMigrations[47]?.name, '20260924030000_manual_research_effects');
             assert.equal(source.staffMigrations[48]?.name, '20260924060000_customer_photo_intake');
             assert.equal(source.staffMigrations.length, 53, 'Review the upgrade boundary before adding further migrations');
             assert.equal(source.staffMigrations[52]?.name, '20260925080000_manual_workspace_discard');
+            }
             // Copy only the exact recorded predecessor bytes into a new owned
             // folder; never hide, rename or mutate the working tree migrations.
-            const staged = join(directory, 'staff-through-48'), stagedMigrations = join(staged, 'migrations');
+            const staged = join(directory, `staff-through-${upgradeCount}`), stagedMigrations = join(staged, 'migrations');
             mkdirSync(stagedMigrations, { recursive: true });
             copyFileSync(join(appRoot, 'prisma/schema.prisma'), join(staged, 'schema.prisma'));
             copyFileSync(join(appRoot, 'prisma/migrations/migration_lock.toml'), join(stagedMigrations, 'migration_lock.toml'));
-            for (const item of source.staffMigrations.slice(0, 48)) {
+            for (const item of source.staffMigrations.slice(0, upgradeCount)) {
                 const target = join(stagedMigrations, item.name); mkdirSync(target);
                 copyFileSync(join(appRoot, 'prisma/migrations', item.name, 'migration.sql'), join(target, 'migration.sql'));
             }
-            assert.deepEqual(inventory(stagedMigrations), source.staffMigrations.slice(0, 48));
+            assert.deepEqual(inventory(stagedMigrations), source.staffMigrations.slice(0, upgradeCount));
             deploy('atlas_staff', 'atlas_fixture_template', join(staged, 'schema.prisma'));
             upgradeLedger = await ledger('atlas_staff');
-            assert.equal(upgradeLedger.length, 48);
-            for (const [index, item] of source.staffMigrations.slice(0, 48).entries()) {
+            assert.equal(upgradeLedger.length, upgradeCount);
+            for (const [index, item] of source.staffMigrations.slice(0, upgradeCount).entries()) {
                 assert.equal(upgradeLedger[index].migration_name, item.name); assert.equal(upgradeLedger[index].checksum, item.sha256);
                 assert(upgradeLedger[index].finished_at && !upgradeLedger[index].rolled_back_at && upgradeLedger[index].applied_steps_count > 0);
             }
             await createServingRoles();
-            writeFileSync(join(directory, 'upgrade-through-48-ledger.json'), JSON.stringify(upgradeLedger, null, 2));
-            await beforeUpgradeFrom48({ directory, source, name: 'atlas_fixture_template', customerRole,
+            writeFileSync(join(directory, `upgrade-through-${upgradeCount}-ledger.json`), JSON.stringify(upgradeLedger, null, 2));
+            await (beforeUpgradeFrom78 ?? beforeUpgradeFrom48)({ directory, source, name: 'atlas_fixture_template', customerRole,
                 customerUrl: url('atlas_fixture_template', 'customer', 'atlas_customer'), adminUrl: url('atlas_fixture_template'),
                 staffUrl: url('atlas_fixture_template', true), operationsUrl: url('atlas_fixture_template', 'operations'),
                 sql: (query, values = []) => sql(query, values, 'atlas_fixture_template') });
         }
         deploy('atlas_staff');
         const staffLedger = await ledger('atlas_staff');
-        if (upgradeLedger) assert.deepEqual(staffLedger.slice(0, 48), upgradeLedger, 'Upgrade changed an existing successful migration ledger row');
+        if (upgradeLedger) assert.deepEqual(staffLedger.slice(0, upgradeCount), upgradeLedger, 'Upgrade changed an existing successful migration ledger row');
         for (const [observed, declared] of [[publicLedger, source.publicMigrations], [staffLedger, source.staffMigrations]]) {
             assert.equal(observed.length, declared.length);
             for (const item of declared) {
@@ -296,7 +307,8 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48 } = {}) {
         // Upgrade acceptance must rely on migration49's existing ACL transfer;
         // regranting here would conceal a broken upgrade path. All existing
         // serving grants precede its snapshot, including the legacy staff path.
-        if (!beforeUpgradeFrom48) await createServingRoles();
+        if (!beforeUpgradeFrom48 && !beforeUpgradeFrom78) await createServingRoles();
+        if (afterUpgradeTo79) await afterUpgradeTo79({ directory, source, sql:(query,values=[])=>sql(query,values,'atlas_fixture_template') });
         let serial = 0; const released = [];
         return { directory, source, sql, url, role, safe, stop,
             async database() {

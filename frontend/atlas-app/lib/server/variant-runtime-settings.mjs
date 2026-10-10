@@ -24,8 +24,8 @@ export function variantWorkerSettings(env) {
     && database.port === main.port && database.pathname === main.pathname && database.username && database.password && database.username !== main.username
     && database.searchParams.get('schema') === 'atlas_manual' && database.searchParams.get('connection_limit') === '1'
     && database.searchParams.get('sslmode') === main.searchParams.get('sslmode'), 503, 'VARIANT_WORKER_DATABASE_CONFIGURATION');
-  const apiKey = env.ATLAS_VARIANT_OPENAI_KEY ?? env.ATLAS_MANUAL_OPENAI_KEY;
-  requireThat(typeof apiKey === 'string' && apiKey.length >= 16 && apiKey.length <= 4096 && !/[\s\x00-\x1f\x7f]/.test(apiKey),
+  const apiKey = env.ATLAS_VARIANT_OPENAI_KEY;
+  requireThat(typeof apiKey === 'string' && apiKey !== env.ATLAS_MANUAL_OPENAI_KEY && apiKey.length >= 16 && apiKey.length <= 4096 && !/[\s\x00-\x1f\x7f]/.test(apiKey),
     503, 'VARIANT_PROVIDER_NOT_CONFIGURED');
   // Deployment fixes one worker, one DB connection and one in-flight comparison.
   // Extra parallelism requires a new capacity qualification, not an env tweak.
@@ -55,7 +55,9 @@ export async function validateVariantRuntimeConfiguration({ enabled, client, wor
     has_table_privilege(current_user,'atlas_manual_connected.variant_job','SELECT') AND
     has_table_privilege(current_user,'atlas_manual_connected.variant_job','INSERT') AND
     has_table_privilege(current_user,'atlas_manual_connected.variant_catalog_cache','SELECT')
-    ${worker ? `AND has_table_privilege(current_user,'atlas_manual_connected.variant_catalog_cache','INSERT')` : ''} AND
+    ${worker ? `AND has_table_privilege(current_user,'atlas_manual_connected.variant_catalog_cache','INSERT')
+      AND has_table_privilege(current_user,'atlas_manual_connected.batch_grading','SELECT')
+      AND has_table_privilege(current_user,'atlas_manual_connected.identification','SELECT')` : ''} AND
     has_table_privilege(current_user,'atlas_manual_connected.variant_confirmation','SELECT')
     ${worker ? '' : `AND has_table_privilege(current_user,'atlas_manual_connected.variant_confirmation','INSERT')`} AND
     has_table_privilege(current_user,'atlas_manual_connected.variant_contribution','SELECT')

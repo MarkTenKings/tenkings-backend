@@ -146,7 +146,7 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
     return reply;
   }
   const executor = {
-    async run({ staff, prepared, actionId, expiresAt, signal, dispatchSignal, baseHash = null, replacement = null }) {
+    async run({ staff, prepared, actionId, expiresAt, signal, dispatchSignal, admitDispatch = null, baseHash = null, replacement = null }) {
       validatePreparedRequest(prepared);
       const { analysisId, cardId, binding } = prepared.evidence;
       const actionHash = analysisActionHash(prepared.evidence, actionId, replacement);
@@ -172,6 +172,10 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
       }
       signal?.throwIfAborted();
       dispatchSignal?.throwIfAborted();
+      // Low-priority admission precedes the irreversible journal claim.
+      // Deferral preserves this exact PREPARED request; normal callers are unchanged.
+      if (admitDispatch && !await admitDispatch({ analysisId, actionId, cardId }))
+        return repository.status(staff, { cardId, analysisId });
       const claim = await repository.claim(staff, { cardId, analysisId, requestHash: prepared.requestHash });
       if (!claim.claimed) return repository.status(staff, { cardId, analysisId });
       let response = null, retained = null;
@@ -209,11 +213,11 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
       // expired session's card authority or make the proposals automatically live.
       return repository.status(staff, { cardId, analysisId });
     },
-    async prepareAndRun(staff, { cardId, actionId, prepared, expiresAt, signal, dispatchSignal, baseHash = null, replacement = null }) {
+    async prepareAndRun(staff, { cardId, actionId, prepared, expiresAt, signal, dispatchSignal, admitDispatch = null, baseHash = null, replacement = null }) {
       validatePreparedRequest(prepared); check(cardId === prepared.evidence.cardId, 'DEFECT_ANALYSIS_ACTION_CONFLICT', 409);
-      return executor.run({ staff, actionId, prepared, expiresAt, signal, dispatchSignal, baseHash, replacement });
+      return executor.run({ staff, actionId, prepared, expiresAt, signal, dispatchSignal, admitDispatch, baseHash, replacement });
     },
-    async resume(staff, { cardId, analysisId, signal, dispatchSignal }) {
+    async resume(staff, { cardId, analysisId, signal, dispatchSignal, admitDispatch = null }) {
       const run = await repository.find(staff, { cardId, analysisId });
       check(run, 'DEFECT_ANALYSIS_NOT_FOUND', 404);
       if (run.state !== 'PREPARED') return repository.status(staff, { cardId, analysisId });
@@ -226,7 +230,7 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
         requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash },
       { signal: signal && dispatchSignal ? AbortSignal.any([signal, dispatchSignal]) : signal ?? dispatchSignal });
       const replacement = run.replacesAnalysisId ? { analysisId: run.replacesAnalysisId, outcomeHash: run.replacesOutcomeHash } : null;
-      return executor.run({ staff, actionId: run.actionId, prepared, expiresAt: run.expiresAt, signal, dispatchSignal, replacement, baseHash: run.baseHash });
+      return executor.run({ staff, actionId: run.actionId, prepared, expiresAt: run.expiresAt, signal, dispatchSignal, admitDispatch, replacement, baseHash: run.baseHash });
     },
     pending({ limit = BACKGROUND_POLICY.batchSize, cursor = null } = {}) {
       return repository.listAcceptedPending({ providerBindingHash: provider.bindingHash, limit, cursor });

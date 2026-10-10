@@ -4,6 +4,7 @@ import {localAccessConfig} from '../../../frontend/atlas-app/lib/server/access/f
 import {createMachineStaffBoundary} from '@atlas/manual-service/machine-auth';
 import {createVariantJobStore} from '../src/variant-job-store.mjs';
 import {createVariantWorker} from '../src/variant-worker.mjs';
+import {createVariantAdmission} from '../src/variant-admission.mjs';
 import {variantCatalog} from '../test/variant-fixture.mjs';
 import {digest} from '@atlas/manual-service/contract';
 import {createRequire} from 'node:module';
@@ -22,7 +23,7 @@ process.once('message',async config=>{
   const catalog={async prepare(){process.send?.({type:'busy'});metrics.cacheReads++;const saved=await store.cache.get(cacheKey);if(saved)metrics.cacheHits++;else{await store.cache.put(cacheKey,entry);metrics.cacheWrites++;}return variantCatalog;}};
   const provider=async()=>{metrics.providerCalls++;const interval={startedAt:Date.now(),finishedAt:null,outcome:config.scenario==='failure'?'UNKNOWN':'RESPONSE'};metrics.providerIntervals.push(interval);try{await new Promise(r=>setTimeout(r,2500));if(config.scenario==='failure')throw Object.assign(Error('Synthetic provider failure'),{code:'SYNTHETIC_PROVIDER_UNKNOWN'});return {ok:true};}finally{interval.finishedAt=Date.now();}};
   provider.prepare=async()=>({evidence:{requestSha256:digest('synthetic-performance')}});
-  worker=createVariantWorker({store,catalog,loadPhotos:async()=>{process.send?.({type:'busy'});const t=performance.now(),startedAt=Date.now();await Promise.all([sharp(image).resize(1270,1778).raw().toBuffer(),sharp(image).resize(1270,1778).raw().toBuffer()]);metrics.decodes+=2;metrics.decodeMs.push(performance.now()-t);metrics.decodeIntervals.push({startedAt,finishedAt:Date.now()});return {};},provider,projectResponse:()=>({candidateId:null,confidence:null,reason:'Synthetic performance fixture',evidence:[]}),intervalMs:5000,heartbeatMs:30000,concurrency:1,onError:e=>{metrics.errors.push(e.code);process.send?.({type:'diagnostic',code:e.code});}});
+  worker=createVariantWorker({store,catalog,admitDispatch:createVariantAdmission({boundary}),loadPhotos:async()=>{process.send?.({type:'busy'});const t=performance.now(),startedAt=Date.now();await Promise.all([sharp(image).resize(1270,1778).raw().toBuffer(),sharp(image).resize(1270,1778).raw().toBuffer()]);metrics.decodes+=2;metrics.decodeMs.push(performance.now()-t);metrics.decodeIntervals.push({startedAt,finishedAt:Date.now()});return {};},provider,projectResponse:()=>({candidateId:null,confidence:null,reason:'Synthetic performance fixture',evidence:[]}),intervalMs:5000,heartbeatMs:30000,concurrency:1,onError:e=>{metrics.errors.push(e.code);process.send?.({type:'diagnostic',code:e.code});}});
   process.on('message',async message=>{if(message?.type!=='stop')return;await worker.stop();await client.$disconnect();process.send?.({type:'done',metrics});process.disconnect();});
   worker.start();
  }catch(e){try{await worker?.stop();await client?.$disconnect();}catch{}process.send?.({type:'error',code:/^[A-Z][A-Z0-9_]+$/.test(e.code??'')?e.code:'LOCAL_PERFORMANCE_CHILD_FAILED'});process.exitCode=1;process.disconnect();}

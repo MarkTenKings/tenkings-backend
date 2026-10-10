@@ -7,6 +7,7 @@ import { createAtlasCatalogClient } from '../src/research-catalog.mjs';
 import { createVariantCatalogService } from '../src/variant-catalog.mjs';
 import { createVariantPhotoProvider, projectVariantPhotoResponse } from '../src/variant-photo-provider.mjs';
 import { createVariantWorker } from '../src/variant-worker.mjs';
+import { createVariantAdmission } from '../src/variant-admission.mjs';
 import { createVariantRecheck } from '../src/variant-recheck.mjs';
 import { createVariantReferenceContribution } from '../src/variant-reference-contribution.mjs';
 
@@ -27,7 +28,8 @@ await runtime.validateConfiguration();
 const connected = runtime.connected, store = connected.variantJobs;
 const catalog = createVariantCatalogService({ catalogClient: settings.catalogToken ? createAtlasCatalogClient({ token: settings.catalogToken }) : null, cache: store.cache, scrydex: settings.scrydex });
 const provider = createVariantPhotoProvider({ apiKey: settings.apiKey, readReferenceImage: catalog.readImage });
-const recheck = createVariantRecheck({ store, boundary: runtime.boundary, workflow: connected.workflow, assistance: connected.assistance, onError });
+const admitDispatch = createVariantAdmission({ boundary: runtime.boundary });
+const recheck = createVariantRecheck({ store, boundary: runtime.boundary, workflow: connected.workflow, assistance: connected.assistance, onError, admitDispatch });
 const contributeReference=createVariantReferenceContribution({store,artifacts:runtime.variantArtifacts,boundary:runtime.boundary,
   workflow:connected.workflow,loadPhotos:runtime.readVariantPhotos,catalog});
 async function backgroundMaintenance() {
@@ -47,7 +49,7 @@ async function backgroundMaintenance() {
 }
 const worker = createVariantWorker({ store, catalog, loadPhotos: runtime.readVariantPhotos, provider,
   projectResponse: projectVariantPhotoResponse, concurrency: settings.concurrency, intervalMs: settings.intervalMs,
-  onError, recheck: backgroundMaintenance });
+  onError, recheck: backgroundMaintenance, admitDispatch });
 let stopping = false;
 async function stop() {
   if (stopping) return; stopping = true;

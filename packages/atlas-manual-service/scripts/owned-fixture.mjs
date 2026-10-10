@@ -13,8 +13,8 @@ import { createManualRepository } from '../src/repository.mjs';
 import { createManualArtifactStore } from '../src/artifacts.mjs';
 import { createFileArtifactTransport } from './file-artifacts.mjs';
 
-export async function createOwnedManualFixture(args) {
-  const cluster = await disposablePostgres(args);
+export async function createOwnedManualFixture(args, upgradeOptions = {}) {
+  const cluster = await disposablePostgres(args, upgradeOptions);
   const clients = new Set();
   const open = url => { const client = new PrismaClient({ datasources: { db: { url } } }); clients.add(client); return client; };
   try {
