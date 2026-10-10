@@ -1,12 +1,24 @@
 # ATLAS variant photos — lead handoff, 2026-10-10
 
-## Existing-card behavior clarified — October 10, 2026, 18:02 UTC
+## Current checkpoint — Rapid Review release and fixed 45 retirement complete
+
+The successor [Rapid Review/reset handoff](ATLAS_RAPID_REVIEW_RESET_HANDOFF_2026-10-10.md) is the current release and operational record. Application/native source `beaf7a1679b1f212ecff3b10cf554e70dfab8867` is live. Findings defaults to complete Front/Back photos with all exact traces, a complete index, correction/add controls and an optional one-at-a-time mode. One explicit **Approve all findings** records both side inspections and confirms the current roster before opening Grade; final report approval remains a separate human action. Top variant controls and the review-preservation fix are live: initially unknown/equivalent printing confirmations retain saved photograph-bound human review, while meaningful known identity corrections and new proposals retain their analysis/review gates.
+
+Staff `dpl_3mvfwxiCptUvQPjtBthjUJBvx6uV` / `atlas-grading-staff-l1d4o35sr-ten-kings.vercel.app` and public `dpl_9D3Qx2ekZ9uBmbLyfy39xS7VbRXU` / `atlas-grading-public-4jn04afx0-ten-kings.vercel.app` serve the release; customer remains `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app` at source `546fd382d51ec42674d54114cbfcad83c574b79f`. Native image is `sha256:14f0c96b8fa6e53653cae89c7544c1940834ba644597085347bad857b3ca6700`. Main `9912f76f1714d1dd58f8e27df3a0f891738bf2390b17d858a988503335c6ca71` started `2026-10-10T18:51:07.044902157Z`; worker `4949a2a8846de22b0f0f5112b879304b0fd82cf6b3cb8d3b5b859e45e8d54212` started `2026-10-10T19:01:36.675307107Z`. Both are ready, `unless-stopped`, with zero restarts/OOM at final observation. Controls Staff 81 / Customer 45 / PublicReader 53 / STAFF SMS 61 / CUSTOMER SMS 21 and schemas 79/121 are the final checkpoint. All 16 active counters are zero, all 3 priority flags false, and protected controls/ledgers/history/both drafts are unchanged. Worker restoration is complete; the temporary hold described in earlier receipts has ended.
+
+The user-authorized fixed 45 retirement committed at `2026-10-10T18:59:01.946Z` through request `c3918c19-a81c-4073-90e6-88d564ec35d4` and 45 tombstones. Final postflight and the authenticated screen show 0 active cards and empty batch queues; 45 intake / 90 upload / 15 manual / 173 action / 5 approval / 5 publication rows and original evidence remain retained. All 5 retired public report GETs now return 404. The older cards named below are historical retired test records; do not refresh, resume or approve them, and do not replay cleanup. Later/new cards were excluded from this consumed scope.
+
+Before retirement, actual production screen acceptance verified paired photos/all saved traces, mode switching, top variant controls and the retained real Pokémon/sports comparisons. No finding, geometry, variant or final approval was manufactured. The separate disposable fixture proved one both-side findings approval reaching Grade with no `APPROVE_REPORT`; 115 focused tests and 438 native qualification tests passed. One existing paid variant response was recovered through the dedicated exact-response collector using one GET and zero POST; no new source search was purchased for acceptance.
+
+Final runtime evidence: `~/.codex/atlas-handoffs/atlas-rapid-review-20261010-r3/runtime/final-observation.json`, SHA `626b07e2d04767cccb4c93bbbb9c3bc92c4df6845d85b05a76c481600dad6e41`; `reset-postflight.json`, SHA `3703f261541afa2f5b7697027d87b8df220b936665c2dcbee6b58d71e38bc2c9`. Retirement receipt: `~/.codex/atlas-handoffs/atlas-rapid-review-20261010/cleanup/executed-final.json`, SHA `36cf760b13a885ad9ba6669863dbfb289a8378a20cea651b000c9901f8618867`. The source freeze is lifted for documentation. All sections below describe historical states or prior plans; their deployment, refresh and acceptance instructions are not current commands.
+
+## Historical existing-card diagnosis — October 10, 2026, 18:02 UTC
 
 User’s Charizard ex Paldean Fates054/091 screenshot shows Holofoil/Holo metadata but no listing photos. Read-only diagnosis found card1d4cd8b8’s READY reference job created09:10:56UTC/finished09:11:04UTC before the hybrid release, no listing audit events and no Charizard listing-source journal entries. Existing READY snapshots are not automatically enriched on deployment/open; discovery skips cards with an existing same-source/identity/policy job. Explicit reference-library refresh creates a new generation without rerunning grading. A fresh eligible card enters the new background path after identification completes. Previous acceptance proved the two expressly refreshed Mewtwo/Drake cards, not automatic backfill of every historical card.
 
 The screenshot’s local Holo choice was subsequently confirmed by the human at18:01:47.562459UTC (current saved English Holo,identityRevision2/cardRevision18). Diagnosis did not refresh, discard, select or change anything. Preserve that decision. Evidence: `atlas-hybrid-photos-20261010-r2/acceptance/charizard-existing-card-diagnosis.json`. No code/deployment/provider call occurred.
 
-## Final verified checkpoint — October 10, 2026, 17:42 UTC
+## Historical hybrid photo acceptance — October 10, 2026, 17:42 UTC
 
 **Integration complete and real photos visually verified in production for Pokémon and sports.** This supersedes all unfinished acceptance statements below. No further deployment, restart, source purchase or human grading action is required to finish this task.
 
@@ -21,7 +33,7 @@ Acceptance receipt: `/Users/markthomas/.codex/atlas-handoffs/atlas-hybrid-photos
 
 ## Historical continuation checkpoint — October 10, 2026, 17:15 UTC
 
-**Software installed; required real-photo screen acceptance is still unfinished.** This section supersedes the historical checkpoint below. Continue here; do not redeploy or restart the investigation.
+**At this historical checkpoint, software was installed and real-photo screen acceptance was unfinished.** Acceptance subsequently completed at17:42UTC; the current release/reset record above supersedes this prior plan.
 
 - Worktree/branch remain exactly as documented below. App source `3927ba07827f4a40c0413cbdceb3e43ccfc0135a`; final docs-only commit may follow. All changes pushed; original dirty checkout untouched.
 - Staff `dpl_GAbHcHQmGTxsz5GndbYPTyXCYpzD` / `atlas-grading-staff-1tdny4dlr-ten-kings.vercel.app`; public `dpl_E2m6UXHRhBfZ5oNmaTtFQ3k465ye` / `atlas-grading-public-q5rc539dw-ten-kings.vercel.app`; customer remains exact `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app`.
@@ -46,7 +58,7 @@ The completed release freeze is lifted for documentation and any evidence-backed
 
 ## Historical takeover checkpoint (superseded by continuation above)
 
-## Start here
+## Historical takeover instructions
 
 The user requests a fresh Astra lead. Finish the approved feature; do not restart the investigation or describe it as complete. User is frustrated by hidden identity, empty variant references and credit consumption. Communicate simply, keep work bounded, and prove actual photos on the staff screen. All specialist agents have stopped; no production cutover is in flight.
 
@@ -54,7 +66,7 @@ Latest approved direction: **Pokémon: Scrydex for available variant names, exis
 
 The user has approved implementation, subagents (Astra Ultra), existing Scrydex account, separate OpenAI worker key, and production repairs. No credential permission is pending. Do not ask again for already-approved work. Do not manufacture staff confirmations or approve real cards to make a test pass.
 
-## Workspaces and process
+## Historical workspaces and process
 
 - WORK HERE: `/Users/markthomas/.codex/worktrees/atlas-automatic-comps/ten-kings-mystery-packs-clean`, branch `codex/atlas-visual-variant-review`. Released app source is `fe64c49e61a046104845451c36bfe2b434bd7c1e`; a docs-only commit follows it for this handoff.
 - DO NOT MODIFY the original dirty/conflicted checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
@@ -64,7 +76,7 @@ The user has approved implementation, subagents (Astra Ultra), existing Scrydex 
 - Apply `/Users/markthomas/.codex/skills/atlas-design-director/SKILL.md` for staff UI. Preserve evidence pixels, readable dark text and straightforward operator actions.
 - **The fe64 source freeze is explicitly lifted after the completed release and final checks below.** Prior sealed release helpers are historical and will intentionally reject a changed working tree. Create a narrowly scoped successor plan; never replay their consumed mutations.
 
-## Production checkpoint: finished and verified
+## Historical production checkpoint: finished and verified
 
 Canonical `https://atlasgrading.com` now serves the fe64 staff/public UI repair. Staff and customer admission enabled; main and separate variant worker ready, restart policies enabled. Final revisions: Staff77 / Customer41 / PublicReader51 / STAFF SMS59 / CUSTOMER SMS21. Staff schema79/public schema121 unchanged.
 
@@ -87,7 +99,7 @@ Evidence packet `/Users/markthomas/.codex/atlas-handoffs/atlas-variant-ui-rebind
 
 Web packet `/Users/markthomas/.codex/atlas-handoffs/atlas-visual-variant-review-20261009/release/identity-visibility-fix-r2-20261010` contains single successful routing/PROMOTE intents and `canonical-result.json` / `provider-after.json`: exact aliases, retained customer, assets/routing and Scrydex/TCGdex image-only CSP verified. Do not replay route/promote or old r1/r2/r3 mutations.
 
-## What the live repair does (and does not)
+## Historical repair behavior and limits
 
 - Restores visible saved name/year/manufacturer/set/card number/parallel above variant choices. Missing variant references no longer say the entire card is unidentified.
 - Shows the current saved grade above the large variant panel; stale grades remain suppressed.
@@ -96,7 +108,7 @@ Web packet `/Users/markthomas/.codex/atlas-handoffs/atlas-visual-variant-review-
 - Prior release allowed `images.scrydex.com` and `assets.tcgdex.net` in image CSP, correcting blocked reference artwork, and fixed white-panel heading contrast.
 - Relevant local suites: preceding identity/grade repair140/140; final variant UI/client suite45/45. A real browser synthetic empty-result fixture was checked. **Authenticated current production screen and actual real variant photo selection are not proven by these tests.** Staff may need normal re-login after release binding changed. Do not approve a card on their behalf.
 
-## Root causes and remaining user problem
+## Historical root causes and remaining user problem
 
 Both Drake drafts still have their original saved identity: 2025/Panini/Donruss Optic Football — Donruss Threads/DTBH-DME, parallel null. IDs `181f749c-50fb-4c4e-8921-aff9101f06e5` (rev10), `4d0d0eae-f44e-42b5-9844-abd03a06bb7b` (rev6). They had no approval, market job or variant confirmation and READY variant jobs with zero candidates. New UI hid saved identity; required variant confirmation prevented approval, so post-approval comps never started. This is not evidence the original card identity was deleted.
 
@@ -104,7 +116,7 @@ Sports reference-photo sourcing from SoldComps was never connected. The pipeline
 
 Scrydex: one real Mewtwo detail request returned HTTP200 with five empty variant image arrays and generic front artwork only. Proof `release/acceptance/mewtwo-scrydex-detail-proof.json`, source body SHA `a2df16d2889eb942d4844ee95ec507bbdd3b83eec4503930aa8b10fbbd6683e1`. Image loading fix is live, but distinct finish/stamp photo selection is unfinished. Never treat five copies of generic art as five diagnostic variant photos. Existing initial worker run had10 READY jobs/20 cache records;4 cards14 generic artwork entries,6 cards no choices,0 diagnostic photos/0 model dispatches.
 
-## Hybrid implementation checkpoint — NOT LIVE
+## Historical hybrid implementation checkpoint — not live at that time
 
 Read these external specialist handoffs under `/Users/markthomas/.codex/atlas-handoffs/atlas-visual-variant-review-20261009/`:
 1. `HYBRID_PROVIDER_HANDOFF.md` — implemented isolated prototype, exact source/test hashes and13/13 offline tests (real Sharp decoding, injected source data, zero live calls).
@@ -126,7 +138,7 @@ Next concrete steps:
 5. UI: uploaded photo beside real listing photo, exact title/source link, useful variant names, short “eBay listing photo” label, generic art once as context, no prices, no auto-choice, no repetitive technical warning walls. Saved identity/grade remain visible and physical fallback remains reachable.
 6. Test focused failure/concurrency/stale/pending paths, then bounded real acceptance for Mewtwo and Drake: actual provider response → cached photos → authenticated screen → human review available. No synthetic confirmation/approval. Measure grading latency/queue behavior before and under background acquisition; report evidence rather than promising zero impact.
 
-## Access and practical details
+## Historical access and practical details
 
 - Existing Vercel CLI authentication works; no new OAuth requirement. Node22 `/Users/markthomas/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin/node`; CLI `/opt/homebrew/bin/vercel`.
 - Provider helper `/Users/markthomas/.codex/atlas-handoffs/atlas-automatic-comps-20261008/provider.mjs` exports client/snapshot. Vercel auth protected at `/Users/markthomas/Library/Application Support/com.vercel.cli/auth.json`; never output tokens.
