@@ -15,6 +15,12 @@ function productName(value, manufacturer) {
   if (text.startsWith(`${maker} `)) text = text.slice(maker.length + 1);
   return text;
 }
+function productScope(value) {
+  const parts = String(value).split(/\s+[—–]\s+/u);
+  return parts.length === 2 && parts.every(v => norm(v))
+    ? { product: parts[0], subset: norm(parts[1]) }
+    : { product: value, subset: null };
+}
 function athleteName(value) {
   const names = String(value).split('/').map(norm);
   // The Panini export sometimes repeats the same athlete on both faces. A
@@ -69,20 +75,43 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       if (!identity.name || !identity.year || !identity.setName || !identity.cardNumber || !identity.manufacturer)
         return { ...empty, problems: ['IDENTITY_INCOMPLETE'] };
       const { sources, index, cell } = await load(); signal?.throwIfAborted();
+      const scope = productScope(identity.setName), athlete = athleteName(identity.name);
+      const maker = norm(identity.manufacturer);
+      function matchingRows(year) {
+        return (index.get(`${norm(year)}|${athlete}`) ?? []).filter(row => {
+          const source = sources[row[0]], label = norm(cell(row,1));
+          // A composite's suffix constrains the literal checklist subset. It
+          // is never discarded to turn an unrelated insert into a candidate.
+          return [source.manufacturer, ...(source.manufacturerAliases ?? [])].some(v => norm(v) === maker)
+            && source.products.has(productName(scope.product, source.manufacturer))
+            && compareVariantCardNumber(identity.cardNumber, cell(row,2)) === 'match'
+            && (!scope.subset || label === scope.subset || label.startsWith(`${scope.subset} `));
+        });
+      }
+      let rows = matchingRows(identity.year), seasonFallback = false;
+      // A bare starting year is a constrained lookup alias for basketball
+      // only. An explicit season never falls back, and exact-year rows win.
+      if (!rows.length && /^\d{4}$/.test(identity.year)) {
+        const endYear = Number(identity.year) + 1;
+        rows = [...matchingRows(`${identity.year}-${String(endYear).slice(-2)}`),
+          ...matchingRows(`${identity.year}-${endYear}`)].filter(row => sources[row[0]].sport === 'basketball');
+        const scopes = new Set(rows.map(row => {
+          const source = sources[row[0]];
+          return `${norm(source.manufacturer)}|${productName(source.setName, source.manufacturer)}`;
+        }));
+        if (scopes.size > 1) return { ...empty, problems: ['PROVIDER_NOT_SUPPORTED'] };
+        seasonFallback = rows.length > 0;
+      }
       const candidates = [], seen = new Set();
-      for (const row of index.get(`${norm(identity.year)}|${athleteName(identity.name)}`) ?? []) {
+      for (const row of rows) {
         const source = sources[row[0]];
-        // Parent manufacturer and explicitly recorded brand aliases are both
-        // public identity descriptors. Do not infer ownership for other brands.
-        const maker = norm(identity.manufacturer);
-        if (![source.manufacturer, ...(source.manufacturerAliases ?? [])].some(v => norm(v) === maker)
-          || !source.products.has(productName(identity.setName, source.manufacturer))
-          || compareVariantCardNumber(identity.cardNumber, cell(row,2)) !== 'match') continue;
         const parallel = cell(row,1), key = norm(parallel);
         if (seen.has(key)) continue;
         seen.add(key);
         const candidate = { authority: 'provider_candidate', label: parallel, identity,
-          parallel, canonical: null, applicability: 'unknown', diagnostics: [], images: [],
+          parallel, canonical: null, applicability: 'unknown',
+          diagnostics: seasonFallback ? [{ id: 'manufacturer-checklist-season',
+            description: `Official checklist season: ${source.year}. Requested starting year: ${identity.year}. Source locator: ${cell(row,4)}.` }] : [], images: [],
           source: { provider: 'manufacturer_checklist', recordId: `manufacturer-row:v1:${digest([source.sha256, row.slice(1).map((_,i) => cell(row,i+1))])}`,
             url: source.url, sha256: source.sha256, references: [] },
           warnings: ['APPLICABILITY_UNCONFIRMED', 'REFERENCE_IMAGE_MISSING'] };

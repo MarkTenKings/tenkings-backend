@@ -294,3 +294,22 @@ test('manufacturer printings receive only matching sports photos, preserving nam
  assert(compose({identity:target,candidates,evidence:blueEvidence,printing:blue}).candidates.every(c=>c.images.length===0),'Blue Hyper is never shown as Blue');
  assert.throws(()=>compose({identity:target,candidates,evidence}),/PRINTING_REQUIRED/);
 });
+
+test('partial insert checklists do not label an explicit Refractor photo as the unqualified insert',async()=>{
+ const target={category:'SPORTS',name:'LaMelo Ball',year:'2025',setName:'Topps Chrome — Ball of Duty',cardNumber:'BD-13',manufacturer:'Topps',language:null};
+ const catalog={schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[{manufacturer:'Topps',year:'2025-26',setName:'Topps Chrome Basketball',sport:'basketball',aliases:[],url:'https://www.topps.com/pages/checklists',sha256:sha('owned LaMelo checklist fixture')}],rows:[[0,'BALL OF DUTY','BD-13','LaMelo Ball','page:14;row:25']]};
+ const {candidates}=await createManufacturerChecklistVariantProvider({catalog}).prepare(target),printing={name:'BALL OF DUTY',language:null},request=prepare(target,printing),bytes=await png();
+ const p=provider({cache:cacheFixture(),now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});
+ // These seller titles were observed in the existing real-card job; the
+ // response envelope and tiny image bytes here are explicitly local fixtures.
+ const evidence=await p.acquireImages({request,source:source(request,[
+  item(1,'2025 Topps Chrome LaMelo Ball PSA 10 GEM Ball of Duty #BD-13 Charlotte Hornets'),
+  item(2,'2025 Topps Chrome LaMelo Ball Ball of Duty Refractor #BD-13 PWE'),
+ ])});
+ assert.equal(evidence.listings.length,2);
+ const result=compose({identity:target,candidates,evidence,printing});
+ assert.equal(result.candidates.length,1);
+ assert.deepEqual(result.candidates[0].images.map(image=>image.listing.id),['123456780001']);
+ assert.equal(result.candidates[0].identity.year,'2025');
+ assert.equal(result.candidates[0].applicability,'unknown');
+});

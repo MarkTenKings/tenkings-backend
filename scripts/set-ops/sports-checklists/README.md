@@ -28,7 +28,13 @@ incomplete identities do not load it. No network or paid provider call occurs.
 `createManufacturerChecklistVariantProvider({ catalog, loadCatalog, limit })`
 returns `prepare(identity)`. Factory defaults read the bundled catalog with a
 48-choice bound. Athlete, product, manufacturer, year and card number must match.
-Only explicit manufacturer brand aliases are accepted. A repeated same-athlete
+Only explicit manufacturer brand aliases are accepted. A composite sports name
+such as `Topps Chrome — Ball of Duty` must match both the parent product and
+the literal subset or a boundary-prefixed parallel. A bare starting year can
+match the immediately following basketball season only when the same exact
+card/name/product/subset evidence is unambiguous and no exact-year match
+exists. The requested grading identity stays unchanged; source season and row
+locator remain in candidate diagnostics. Explicit season conflicts fail closed. A repeated same-athlete
 name on both card faces can match; a different multi-athlete card cannot. Labels
 remain literal printing/subset evidence. Results always remain
 `provider_candidate`, `applicability: unknown`, `canonical: null`; checklist
@@ -44,9 +50,12 @@ photos to each named choice through the existing review composition.
 - [Panini](https://www.paniniamerica.net/checklist.html) is a dependent UI archive.
   Visible year options: football 2004–2025; basketball 2009–2026; baseball
   2004–2005 and 2008–2026. These are index options, **not downloaded coverage**.
-  This bounded snapshot retains six complete official UI CSV exports: 2024
-  football Prizm and Donruss Optic; 2024–25 basketball Prizm, Select and Mosaic;
-  2025 baseball Prizm. Remaining years/programs need resumable acquisition. CSV
+  This bounded snapshot retains seven complete official UI CSV exports: 2024
+  football Prizm and Donruss Optic; 2025 football Donruss Optic; 2024–25 basketball Prizm, Select and Mosaic;
+  2025 baseball Prizm. Remaining years/programs need resumable acquisition. The 2025 Optic export
+  lists Jaxson Dart Donruss Threads variants under official card number `3`;
+  `DTBH-JDT` does not occur in that export. Those numbers are not aliased, so the
+  current `DTBH-JDT` identity remains a documented coverage gap. CSV
   program names containing `(24-25)` provide explicit season evidence.
 - [Leaf](https://www.leaftradingcards.com/releases) exposes 69 current public
   archive pages with 616 product links. All 260 clearly classified target-sport

@@ -10,8 +10,8 @@
       "manufacturer": "Donruss",
       "sport": "football",
       "state": "normalized",
-      "sources": 1,
-      "explicitRows": 14794
+      "sources": 2,
+      "explicitRows": 31593
     },
     {
       "manufacturer": "Leaf",
@@ -165,7 +165,7 @@
     {
       "manufacturer": "Donruss",
       "earliest": "2024",
-      "latest": "2024"
+      "latest": "2025"
     },
     {
       "manufacturer": "Leaf",
@@ -189,39 +189,43 @@
     }
   ],
   "counts": {
-    "sourceRecords": 1132,
-    "retainedFiles": 691,
-    "explicitRows": 1118850,
-    "retainedDistinctFileHashes": 691
+    "sourceRecords": 1133,
+    "retainedFiles": 692,
+    "explicitRows": 1135649,
+    "retainedDistinctFileHashes": 692
   },
   "limitations": [
     "No year or manufacturer archive is asserted complete.",
     "Topps officially states pre-2018 checklists unavailable.",
-    "Panini snapshot covers six selected products, not all visible archive years or programs.",
+    "Panini snapshot covers seven selected products, not all visible archive years or programs.",
     "Leaf current index fully traversed; 217 classified source files retained, with ambiguous and unsupported sheets excluded.",
     "Upper Deck current football filter captured; historical baseball/basketball/football catalogs and discontinued manufacturers remain gaps.",
     "Set-wide parallels and unspecified printing plates are not expanded.",
     "Physical applicability remains unknown until staff review.",
-    "Serving rows are deduplicated within source and exclude labels/identities over bounded field lengths; SQLite preserves retained source rows."
+    "Serving rows are deduplicated within source and exclude labels/identities over bounded field lengths; SQLite preserves retained source rows.",
+    "2025 Donruss Optic official Jaxson Dart Threads rows use card number 3; no explicit alias to DTBH-JDT is supplied, so that printed-number identity remains unmatched."
   ],
   "servingBundle": {
-    "sources": 617,
-    "explicitRows": 1115165,
-    "gzipBytes": 5947612,
-    "jsonBytes": 37961788,
-    "sha256": "aa6d5d6ece1e5818ec49bde7857894ba0b99ff8593b97ac3e62a24bce261aece"
+    "sources": 618,
+    "explicitRows": 1131964,
+    "gzipBytes": 6054311,
+    "jsonBytes": 38417790,
+    "sha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0"
   },
   "validation": {
     "parserTests": 8,
-    "providerTests": 7,
+    "providerTests": 13,
     "realCardLookups": [
       "2024 Donruss Optic Drake Maye #229: 44",
       "2025-26 Topps Basketball Cooper Flagg #201: 5",
       "2026 Leaf Football Antwann Hill Jr. #AMA-AHJ: 4",
-      "2026 Upper Deck CFL Stavros Katsantonis #1: 7"
+      "2026 Upper Deck CFL Stavros Katsantonis #1: 7",
+      "LaMelo Ball 2025 / Topps Chrome \u2014 Ball of Duty / BD-13: one official 2025-26 source row; saved identity unchanged",
+      "Jaxson Dart 2025 Donruss Optic Football \u2014 Donruss Threads / DTBH-JDT: zero; official number 3: nine named choices"
     ],
-    "firstLoadFourLookupsMs": 941,
-    "maximumResidentSetBytes": 536723456,
-    "measuredHeapUsedBytes": 204937872
+    "maximumResidentSetBytes": 538640384,
+    "measuredHeapUsedBytes": 204937872,
+    "firstLoadTwoActiveCardLookupsMs": 889.935291,
+    "measuredBundleSha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0"
   }
 }

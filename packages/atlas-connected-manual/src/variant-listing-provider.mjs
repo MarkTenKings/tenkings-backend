@@ -179,6 +179,10 @@ function compatibleNamedPhoto(candidate, listing, request, choices) {
   // Sports subset/finish words can appear in a different order in the title.
   // A Blue Hyper photo cannot attach to Blue or the base subset row.
   if (target.category === 'SPORTS') {
+    // A partial checklist may name an insert without listing its parallels.
+    // An explicit extra finish still conflicts with that unqualified row,
+    // even when no more-specific choice exists in our retained catalog.
+    if (listing.variantEvidence.reasonCodes.includes('PARALLEL_EXTRA_FEATURE')) return false;
     const words = label => claimText(listingSearchLabel(target,label)).split(' ').map(w=>w.replace(/^(rookie|refractor|prizm)s$/, '$1'));
     const titleWords = new Set(claimText(listing.listing.title).split(' ').map(w=>w.replace(/^(rookie|refractor|prizm)s$/, '$1')));
     const wanted = words(candidate.parallel), has = label => words(label).every(w=>titleWords.has(w));

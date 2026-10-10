@@ -1,12 +1,12 @@
 {
   "schemaVersion": "manufacturer-checklist/v1",
-  "capturedAt": "2026-10-10T21:54:06.882Z",
+  "capturedAt": "2026-10-10T22:04:42.466Z",
   "complete": false,
-  "sources": 617,
-  "explicitRows": 1115165,
-  "gzipBytes": 5947612,
-  "jsonBytes": 37961788,
-  "sha256": "aa6d5d6ece1e5818ec49bde7857894ba0b99ff8593b97ac3e62a24bce261aece",
-  "decodedSha256": "45345e4478b9f6a01885c7793502c0f499f17122e2ca412582f4264916e9255e",
-  "sourceManifestSha256": "9f21f6960b6b2adafc6a0471c1642d3aaf07f5b1bcdb9cf7fadc1a7692f9b069"
+  "sources": 618,
+  "explicitRows": 1131964,
+  "gzipBytes": 6054311,
+  "jsonBytes": 38417790,
+  "sha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0",
+  "decodedSha256": "57eb56b4cc13378cf6a2c4b96f4154bc58c94e71387de4042e2ee4e2489be300",
+  "sourceManifestSha256": "227d91c67fc575e67548a21f4ecaa2764b37aaf1555b002675b58875509baba0"
 }
