@@ -11,12 +11,12 @@ function download(blob: Blob, filename: string) { const url = URL.createObjectUR
 export default function SetCatalogDemandInbox({ token, canReview }: { token?: string; canReview: boolean }) {
   const [items, setItems] = useState<Item[] | null>(null), [detail, setDetail] = useState<CatalogDemandResult | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
-  const generation = useRef(0), authority = useRef({ token, canReview }); authority.current = { token, canReview };
-  useEffect(() => { generation.current++; setItems(null); setDetail(null); setBusy(false); setError(null); return () => { generation.current++; }; }, [token, canReview]);
+  const generation = useRef({ value: 0 }), authority = useRef({ token, canReview }); authority.current = { token, canReview };
+  useEffect(() => { const currentGeneration = generation.current; currentGeneration.value++; setItems(null); setDetail(null); setBusy(false); setError(null); return () => { currentGeneration.value++; }; }, [token, canReview]);
   if (!canReview) return null;
   async function perform(work: (current: () => boolean) => Promise<void>) {
     if (!token || busy) return;
-    const sequence = ++generation.current, current = () => generation.current === sequence && authority.current.token === token && authority.current.canReview;
+    const sequence = ++generation.current.value, current = () => generation.current.value === sequence && authority.current.token === token && authority.current.canReview;
     setBusy(true); setError(null);
     try { await work(current); } catch (e) { if (current()) setError(e instanceof Error ? e.message : 'Prepared sources unavailable.'); }
     finally { if (current()) setBusy(false); }

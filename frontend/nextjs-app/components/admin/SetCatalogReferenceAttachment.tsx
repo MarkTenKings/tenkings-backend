@@ -14,8 +14,8 @@ export default function SetCatalogReferenceAttachment({ token, detail, reference
   const [imageId, setImage] = useState(''), [cardId, setCard] = useState(''), [printingId, setPrinting] = useState('');
   const [represents, setRepresents] = useState<string[]>([]), [diagnostics, setDiagnostics] = useState<string[]>([]);
   const [note, setNote] = useState(''), [accepted, setAccepted] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const generation = useRef(0);
-  useEffect(() => { generation.current++; setImage(''); setCard(''); setPrinting(''); setRepresents([]); setDiagnostics([]); setNote(''); setAccepted(false); setBusy(false); setError(''); return () => { generation.current++; }; }, [token, detail, referenceReview, packet]);
+  const generation = useRef({ value: 0 });
+  useEffect(() => { const currentGeneration = generation.current; currentGeneration.value++; setImage(''); setCard(''); setPrinting(''); setRepresents([]); setDiagnostics([]); setNote(''); setAccepted(false); setBusy(false); setError(''); return () => { currentGeneration.value++; }; }, [token, detail, referenceReview, packet]);
   if (!packet) return <p className="text-sm text-amber-200">Load an existing full catalog review packet below to attach this reference. Canonical card identities and supported printings must already be prepared from authoritative sources.</p>;
   const manifest = packet.manifest, proposal = JSON.parse(detail.canonicalProposalJson);
   const review = referenceReview as { proposalId?: string; submissionSha256?: string; submission?: { images?: { imageId: string; proposedPermission: unknown }[] } };
@@ -25,16 +25,16 @@ export default function SetCatalogReferenceAttachment({ token, detail, reference
   const permission = review.submission?.images?.find(i => i.imageId === imageId)?.proposedPermission;
   async function prepare() {
     if (!packet || !token || busy || !accepted) return;
-    const started = generation.current; setBusy(true); setError('');
+    const started = generation.current.value; setBusy(true); setError('');
     try {
       const response = await fetch('/api/admin/set-ops/catalog/reference-proposals', { method: 'POST', cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'prepare', proposalId: detail.item.proposalId, proposalSha256: detail.item.proposalSha256, submissionSha256: review.submissionSha256,
           packet, imageId, depicted: { cardId, printingId }, representsPrintingIds: represents, visibleDiagnosticIds: diagnostics, reviewNote: note.trim(), acknowledgement: 'PREPARE PHOTO FOR FULL CATALOG REVIEW' }) });
       const text = await response.text(); if (new TextEncoder().encode(text).byteLength > 4 * 1024 * 1024) throw new Error('Prepared packet exceeds its bound.');
       const value = JSON.parse(text); if (!response.ok || value.disposition !== 'requires_authorized_review' || !value.packet?.manifest || !value.packet?.reviewEvidence) throw new Error(value.message || 'Reference preparation failed.');
-      if (started === generation.current) onPrepared(value.packet);
-    } catch (e) { if (started === generation.current) setError(e instanceof Error ? e.message : 'Reference preparation failed.'); }
-    finally { if (started === generation.current) setBusy(false); }
+      if (started === generation.current.value) onPrepared(value.packet);
+    } catch (e) { if (started === generation.current.value) setError(e instanceof Error ? e.message : 'Reference preparation failed.'); }
+    finally { if (started === generation.current.value) setBusy(false); }
   }
   return <section className="space-y-3 rounded border border-white/20 p-3" aria-label="Attach physical catalog reference">
     <h4 className="font-semibold">Prepare this photo for full review</h4>

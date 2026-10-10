@@ -1,11 +1,12 @@
+-- Absolute lease/evidence instants must not depend on the connection time zone.
 -- Isolated acquisition evidence. No approved SetOps/business rows are rewritten.
 CREATE TABLE "SetCatalogDemandJob" (
   "demandKey" TEXT PRIMARY KEY CHECK ("demandKey" ~ '^[a-f0-9]{64}$'),
   "demandJson" JSONB NOT NULL CHECK (octet_length("demandJson"::text) <= 4096),
   state TEXT NOT NULL CHECK (state IN ('QUEUED','RUNNING','READY','UNAVAILABLE')),
   attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 3),
-  "leaseToken" TEXT, "leaseUntil" TIMESTAMP(3), "nextAttemptAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "resultHash" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "leaseToken" TEXT, "leaseUntil" TIMESTAMPTZ(3), "nextAttemptAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "resultHash" TEXT, "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CHECK ((state = 'RUNNING') = ("leaseToken" IS NOT NULL AND "leaseUntil" IS NOT NULL)),
   CHECK (state <> 'READY' OR "resultHash" IS NOT NULL)
 );
@@ -14,7 +15,7 @@ CREATE TABLE "SetCatalogDemandResult" (
   "snapshotHash" TEXT NOT NULL CHECK ("snapshotHash" ~ '^[a-f0-9]{64}$'),
   "resultJson" JSONB NOT NULL CHECK (octet_length("resultJson"::text) <= 8388608),
   requests INTEGER NOT NULL CHECK (requests BETWEEN 0 AND 5), attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 3),
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY ("demandKey","snapshotHash"), UNIQUE ("demandKey",attempt),
   CHECK ("resultJson"->>'demandKey' = "demandKey" AND "resultJson"->>'snapshotHash' = "snapshotHash"),
   CHECK ("resultJson"->>'state' IN ('READY','UNAVAILABLE'))
@@ -23,7 +24,7 @@ CREATE TABLE "SetCatalogDemandSource" (
   "demandKey" TEXT NOT NULL, "snapshotHash" TEXT NOT NULL, "sourceId" TEXT NOT NULL CHECK ("sourceId" ~ '^[a-f0-9]{64}$'),
   sha256 TEXT NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'), "contentType" TEXT NOT NULL,
   bytes BYTEA NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 2097152),
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY ("demandKey","snapshotHash","sourceId"),
   FOREIGN KEY ("demandKey","snapshotHash") REFERENCES "SetCatalogDemandResult"("demandKey","snapshotHash") ON DELETE RESTRICT ON UPDATE RESTRICT
 );
@@ -47,7 +48,7 @@ CREATE TABLE "SetCatalogReferenceSubmission" (
   "proposalSha256" TEXT NOT NULL CHECK ("proposalSha256" ~ '^[a-f0-9]{64}$'),
   "submissionSha256" TEXT NOT NULL CHECK ("submissionSha256" ~ '^[a-f0-9]{64}$'),
   "submissionJson" JSONB NOT NULL CHECK (octet_length("submissionJson"::text) <= 16384),
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CHECK ("submissionJson"->>'proposalSha256' = "proposalSha256" AND "submissionJson"->>'disposition' = 'requires_authorized_review')
 );
 CREATE TRIGGER "SetCatalogReferenceSubmission_immutable" BEFORE UPDATE OR DELETE ON "SetCatalogReferenceSubmission" FOR EACH ROW EXECUTE FUNCTION catalog_demand_immutable();

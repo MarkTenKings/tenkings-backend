@@ -32,7 +32,10 @@ test('demand and photo proposals use real isolated PostgreSQL transactions and i
   let referenceSaved: any;
   const privateArtifacts = new Map<string, Buffer>();
   try {
-    await db.setDraft.create({ data: { setId: savedSet, status: 'APPROVED', normalizedLabel: 'Approved original must not change' } });
+    // SetDraft.id participates in the current-publication composite relation;
+    // match the existing catalog fixture's explicit ID instead of its checked
+    // create path treating that read-only FK scalar as a database default.
+    await db.setDraft.create({ data: { id: randomUUID(), setId: savedSet, status: 'APPROVED', normalizedLabel: 'Approved original must not change' } });
     await db.setProgram.create({ data: { setId: savedSet, programId: 'base', label: 'Base Set' } });
     await db.setCard.create({ data: { setId: savedSet, programId: 'base', cardNumber: '25', playerName: 'Example Player' } });
     const preserved = async () => JSON.stringify(await Promise.all([db.setDraft.findMany(), db.setCard.findMany(), db.setParallel.findMany(), db.setApproval.findMany(), db.setCatalogEvidencePublication.findMany()]));
@@ -41,7 +44,10 @@ test('demand and photo proposals use real isolated PostgreSQL transactions and i
       let count = 0, release!: () => void, started!: () => void;
       const gate = new Promise<void>(r => { release = r; }), claimed = new Promise<void>(r => { started = r; });
       const service = createSetCatalogDemandService({ db, acquire: async (d, attempt) => { count++; started(); await gate; return acquire(d as typeof demand, attempt); } });
-      const first = service({ demand, card: { name: 'Example Player', cardNumber: '025' } }); await claimed;
+      const first = service({ demand, card: { name: 'Example Player', cardNumber: '025' } });
+      await Promise.race([claimed, first.then(result => assert.fail(`Initial demand returned before acquiring: ${JSON.stringify(result)}`))]);
+      const [clock] = await db.$queryRaw<{ zone: string; now: Date; leaseUntil: Date }[]>`SELECT current_setting('TimeZone') AS zone, clock_timestamp() AS now, "leaseUntil" FROM "SetCatalogDemandJob" WHERE "demandKey"=${catalogDemandKey(demand)}`;
+      assert.ok(clock.leaseUntil > clock.now, `Fresh lease must remain live: ${JSON.stringify(clock)}`);
       const waiting = await Promise.all(Array.from({ length: 4 }, () => service({ demand })));
       assert.ok(waiting.every(r => r.state === 'RUNNING')); assert.equal(count, 1); release();
       const result = await first; assert.equal(result.state, 'READY'); assert.equal(result.choices.length, 1);
@@ -65,7 +71,8 @@ test('demand and photo proposals use real isolated PostgreSQL transactions and i
       const d = { ...demand, setName: 'Lease fixture' }, key = catalogDemandKey(d); let release!: () => void, started!: () => void;
       const gate = new Promise<void>(r => { release = r; }), claimed = new Promise<void>(r => { started = r; });
       const old = createSetCatalogDemandService({ db, acquire: async (x, attempt) => { started(); await gate; return acquire(x as typeof demand, attempt); } });
-      const pending = old({ demand: d }); await claimed;
+      const pending = old({ demand: d });
+      await Promise.race([claimed, pending.then(result => assert.fail(`Lease fixture returned before acquiring: ${JSON.stringify(result)}`))]);
       await db.$executeRaw`UPDATE "SetCatalogDemandJob" SET "leaseUntil"=clock_timestamp()-interval '1 second' WHERE "demandKey"=${key}`;
       const fresh = createSetCatalogDemandService({ db, acquire: (x, attempt) => acquire(x as typeof demand, attempt) });
       const saved = await fresh({ demand: d }); assert.equal(saved.attempt, 2); release(); await assert.rejects(pending, /lease expired/);
