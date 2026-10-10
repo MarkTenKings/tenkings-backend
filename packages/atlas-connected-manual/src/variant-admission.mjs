@@ -20,10 +20,17 @@ export function createVariantAdmission({ boundary }) {
           WHERE ($1::uuid IS NULL OR r.action_id<>$1::uuid)
           AND (r.state='PREPARED' AND r.expires_at>clock_timestamp() OR r.state='DISPATCHED')
           AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.request_refusal f WHERE f.card_id=r.card_id AND f.action_id=r.action_id)
-          AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.receipt p WHERE p.analysis_id=r.id AND p.kind='RESPONSE')) AS analysis_busy`, actionId);
+          AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.receipt p WHERE p.analysis_id=r.id AND p.kind='RESPONSE')
+          AND (r.expires_at>clock_timestamp()
+            OR EXISTS(SELECT 1 FROM atlas_defect_analysis.provider_event e WHERE e.analysis_id=r.id AND e.kind='ACCEPTED')
+            OR (NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=r.card_id)
+              AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.run successor
+                WHERE successor.card_id=r.card_id AND successor.replaces_analysis_id=r.id)))) AS analysis_busy`, actionId);
       requireThat(row && ['batch_busy','identification_busy','analysis_busy'].every(key => typeof row[key] === 'boolean'), 503, 'VARIANT_ADMISSION_UNAVAILABLE');
-      // DISPATCHED without RESPONSE stays occupied even after an unknown outcome.
-      // This also serializes accepted asynchronous variant rechecks with comparisons.
+      // A current UNKNOWN never ages out. Explicitly discarded/replaced history
+      // stops occupying priority only after expiry and without provider acceptance;
+      // accepted work can still be collected even after discard or replacement.
+      // No run/receipt is retired, rewritten or redispatched by this observation.
       return !row.batch_busy && !row.identification_busy && !row.analysis_busy;
     });
   };
