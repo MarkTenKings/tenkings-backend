@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import * as contract from '../lib/customer-operations.mjs';
 import * as routes from '../lib/routes.mjs';
+import * as deskContract from '../lib/order-desk-client.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const code = babel.transformSync(readFileSync(new URL('../components/CustomerOperations.jsx', import.meta.url), 'utf8'), {
@@ -22,6 +23,8 @@ function load(react, overrides = {}) {
   vm.runInNewContext(code, { exports, crypto: { randomUUID }, Intl, ...overrides, require(name) {
     if (name === 'react') return react;
     if (name === 'next/link') return 'a';
+    if (name === './OrderDesk') return { __esModule: true, default: 'OrderDesk' };
+    if (name === '../lib/order-desk-client.mjs') return deskContract;
     if (name === './Shell') return { __esModule: true, default: ({ children }) => react.createElement('main', null, children) };
     if (name === '../lib/customer-operations.mjs') return contract;
     if (name === '../lib/routes.mjs') return routes;
@@ -37,11 +40,12 @@ function harness(existingStorage = storage()) {
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
     useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
     useEffect(action, deps) { const i = cursor++, prior = slots[i]; if (!prior || deps.some((v, n) => v !== prior[n])) { slots[i] = deps; effects.push(action); } } };
-  const f = { storage: existingStorage, calls: [], data: structuredClone(empty), csrf: 'fixture-csrf', staff, reloads: 0, lock: false, signedIn: true,
+  const f = { storage: existingStorage, calls: [], data: structuredClone(empty), details: {}, csrf: 'fixture-csrf', staff, reloads: 0, lock: false, signedIn: true,
     response: async () => { throw Error('No fixture response was configured'); } };
   const api = async (path, options = {}) => {
     f.calls.push({ path, ...options, ...(options.body ? { body: structuredClone(options.body) } : {}) });
     if (path === 'session') return { csrf: f.csrf, staff: f.signedIn ? f.staff : null };
+    if (!options.body && path.startsWith('manual-connected/order-desk/orders/')) return { schemaVersion: 1, order: structuredClone(f.details[path.split('/').at(-1)]) };
     if (!options.body) return structuredClone(f.data);
     return f.response(path, options);
   };
@@ -53,7 +57,7 @@ function harness(existingStorage = storage()) {
   f.render = () => { cursor = 0; tree = exported.Operations({ staff }); for (const effect of effects.splice(0)) effect(); return tree; };
   f.nodes = (type, label) => all(tree, n => n.type === type && (label === undefined || text(n).includes(label)));
   f.click = async label => { const node = f.nodes('button', label)[0]; assert.ok(node, label); await node.props.onClick(); f.render(); };
-  f.action = (...args) => { const roster = all(tree, n => n.type === exported.OrderRoster)[0]; assert.ok(roster); return roster.props.onAction(...args); };
+  f.action = (...args) => { const roster = all(tree, n => n.type === 'OrderDesk')[0]; assert.ok(roster); return roster.props.onAction(...args); };
   f.writes = () => f.calls.filter(row => row.body);
   f.saved = () => contract.browserJournal(existingStorage, staff.id).read();
   f.render(); f.render(); return f;
@@ -218,4 +222,19 @@ test('lost return preparation survives reload and only exact saved request ID re
   resumed.data.orders=[{id:input.orderId,returnShipping:{prepared:true,preparedRequestId:randomUUID()},cards:[]}];await resumed.click('Check saved status');assert.ok(resumed.saved());
   resumed.response=async(_path,options)=>{assert.equal(options.body.requestId,input.requestId);resumed.data.orders[0].returnShipping.preparedRequestId=input.requestId;return{orderId:input.orderId,requestId:input.requestId,prepared:true,state:'PENDING'};};
   await resumed.click('Retry exact saved request');assert.equal(resumed.saved(),null);assert.equal(resumed.writes().length,1);assert.equal(resumed.writes()[0].csrf,'fixture-csrf');
+});
+
+test('desk custody reconciles its exact selected order outside the legacy hundred-order roster', async () => {
+  const f = harness(), orderId = randomUUID();
+  f.response = async () => { f.details[orderId] = { ...confirmedData(f.saved()).orders[0], id: orderId }; return { eventId: randomUUID() }; };
+  assert.equal(await f.action('custody', structuredClone(input), { orderId }), true);
+  assert.equal(f.data.orders.length, 0); assert.equal(f.saved(), null);
+  assert.equal(f.calls.some(row => row.path === `manual-connected/order-desk/orders/${orderId}`), true);
+});
+
+test('mismatched targeted order reply leaves the acknowledged custody journal retained', async () => {
+  const f = harness(), orderId = randomUUID();
+  f.response = async () => { f.details[orderId] = confirmedData(f.saved()).orders[0]; return { eventId: randomUUID() }; };
+  assert.equal(await f.action('custody', structuredClone(input), { orderId }), false);
+  assert.equal(f.saved().acknowledged, true); assert.equal(f.saved().orderId, orderId);
 });

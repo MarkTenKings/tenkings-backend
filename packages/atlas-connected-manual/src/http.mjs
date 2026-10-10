@@ -2,8 +2,10 @@ import { createWorkflowHandler } from '@atlas/manual-workflow/http';
 import { createIntakeHandler } from '@atlas/manual-intake/http';
 import { object, requireThat } from '@atlas/manual-service/contract';
 import { createBatchHandler, isBatchPath } from '@atlas/batch-grading/http';
+import { createOrderDeskHandler } from './order-desk-http.mjs';
 
 export function createConnectedHandler({connected,boundary,origin,assertRequest}) {
+  const orderDesk=createOrderDeskHandler({connected,boundary,origin});
   const workflow=createWorkflowHandler({workflow:connected.workflow,boundary,origin,assertRequest,imageDescriptors:connected.imageDescriptors,workspaceExtras:connected.workspaceExtras});
   const intake=createIntakeHandler({service:connected.intake,boundary,origin,assertRequest});
   const batch=connected.batch?createBatchHandler({service:connected.batch,boundary,origin,assertRequest}):null;
@@ -24,6 +26,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
     if(!/^\/api\/staff\/(manual|manual-intake|manual-connected)(?:\/|$)/.test(url.pathname))return false;
     try{
       await assertRequest(req);requireThat(url.origin===origin,400,'MANUAL_REQUEST_INVALID');
+      if(await orderDesk(req,res,url))return true;
       if(isBatchPath(url.pathname)){
         requireThat(batch,503,'BATCH_DISABLED');return batch(req,res);
       }

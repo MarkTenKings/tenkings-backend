@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/index.mjs",
     "./http": "./src/http.mjs",
+    "./order-desk": "./src/order-desk.mjs",
+    "./order-desk-photos": "./src/order-desk-photos.mjs",
+    "./order-desk-inbox": "./src/order-desk-inbox.mjs",
     "./identification": "./src/identification.mjs",
     "./geometry-processing": "./src/geometry-processing.mjs",
     "./transport": "./src/transport.mjs",
