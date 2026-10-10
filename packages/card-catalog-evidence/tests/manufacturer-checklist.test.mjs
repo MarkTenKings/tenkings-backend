@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { gzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import { createManufacturerChecklistVariantProvider, validateVariantCandidate, createVariantReviewSnapshot } from '../src/index.mjs';
 const identity = { category:'SPORTS', name:'Drake Maye', year:'2024', setName:'Donruss Optic', cardNumber:'203', manufacturer:'Panini', language:'en' };
 const source = { manufacturer:'Donruss',manufacturerAliases:['Panini'],sport:'football',year:'2024',setName:'2024 Donruss Optic Football',aliases:['Optic','Donruss Optic'],url:'https://www.paniniamerica.net/checklist.html',sha256:'a'.repeat(64) };
@@ -88,4 +90,94 @@ test('frozen official bundle resolves LaMelo and keeps the Jaxson printed-number
  const official=await provider.prepare({...jaxson,cardNumber:'3'});
  assert.equal(official.candidates.length,9);assert.ok(official.candidates.some(c=>c.label==='Donruss Threads Blue Hyper'));
  assert.ok(official.candidates.every(c=>c.label.startsWith('Donruss Threads ')&&c.source.sha256==='5ea74b6c404251b503f64d635c58d8c714c87d21eef716f5455fb02e0e65d567'));
+});
+
+const hashBytes = value => createHash('sha256').update(value).digest('hex');
+function shardsFor(data) {
+ const files = new Map();
+ const sources = data.sources.map((source, sourceIndex) => {
+  const rows = data.rows.filter(row => row[0] === sourceIndex).map(row => [0, ...row.slice(1)]);
+  const decoded = Buffer.from(JSON.stringify({ ...data, sources:[source], rows }));
+  const bytes = gzipSync(decoded), sha256 = hashBytes(bytes);
+  const shard = {path:`manufacturer-checklists/${sha256}.json.gz`,sha256,decodedSha256:hashBytes(decoded),compressedBytes:bytes.length,decodedBytes:decoded.length,rowCount:rows.length};
+  files.set(shard.path, bytes);
+  return {...source, shard};
+ });
+ const catalog = {schemaVersion:'manufacturer-checklist-index/v2',complete:false,sources};
+ return {catalog,files,loadShard:async descriptor => files.get(descriptor.path)};
+}
+function productsFixture() {
+ return {...catalog,sources:[source,{...source,setName:'Prizm',aliases:['Prizm'],sha256:'b'.repeat(64)},{...source,setName:'Select',aliases:['Select'],sha256:'c'.repeat(64)}],
+  rows:[...catalog.rows,[1,'Base','203','Drake Maye','row:1'],[2,'Silver','203','Drake Maye','row:2']]};
+}
+test('v2 source selection loads only the exact product and preserves v1 IDs, ordering and evidence',async()=>{
+ const data=productsFixture(), f=shardsFor(data), reads=[];
+ const provider=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{reads.push(d.path);return f.loadShard(d);}});
+ assert.deepEqual(await provider.prepare(identity),await createManufacturerChecklistVariantProvider({catalog:data}).prepare(identity));
+ assert.deepEqual(reads,[f.catalog.sources[0].shard.path]);
+ assert.equal((await provider.prepare({...identity,manufacturer:'Topps'})).candidates.length,0);
+ assert.equal(reads.length,1);
+ const duplicate={...catalog,sources:[source,{...source,sha256:'d'.repeat(64)}],rows:[...catalog.rows,[1,'Rated Rookies','203','Drake Maye','row:99']]};
+ const dup=shardsFor(duplicate);
+ assert.deepEqual(await createManufacturerChecklistVariantProvider(dup).prepare(identity),await createManufacturerChecklistVariantProvider({catalog:duplicate}).prepare(identity));
+});
+test('v2 keeps composite and season rules, tries fallback only after no exact matching rows, and skips other sports',async()=>{
+ const exact={...lameloSource,year:'2025',sha256:'b'.repeat(64)}, otherSport={...lameloSource,sport:'football',sha256:'c'.repeat(64)};
+ const data={...lameloCatalog,sources:[exact,otherSport,lameloSource],rows:[[0,'BALL OF DUTY','BD-99','LaMelo Ball','row:1'],[1,'BALL OF DUTY','BD-13','LaMelo Ball','row:2'],[2,...lameloCatalog.rows[0].slice(1)]]};
+ const f=shardsFor(data), reads=[];
+ const p=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{reads.push(d.path);return f.loadShard(d);}});
+ assert.deepEqual(await p.prepare(lameloIdentity),await createManufacturerChecklistVariantProvider({catalog:data}).prepare(lameloIdentity));
+ assert.deepEqual(reads,[f.catalog.sources[0].shard.path,f.catalog.sources[2].shard.path]);
+ assert.equal((await p.prepare({...lameloIdentity,setName:'Topps Chrome — Ball of Dut'})).candidates.length,0);
+ const exactData={...data,rows:[[0,'BALL OF DUTY EXACT','BD-13','LaMelo Ball','row:1'],...data.rows.slice(1)]}, e=shardsFor(exactData), exactReads=[];
+ assert.deepEqual((await createManufacturerChecklistVariantProvider({catalog:e.catalog,loadShard:async d=>{exactReads.push(d.path);return e.loadShard(d);}}).prepare(lameloIdentity)).candidates.map(c=>c.label),['BALL OF DUTY EXACT']);
+ assert.equal(exactReads.length,1);
+ const ambiguous={...lameloCatalog,sources:[lameloSource,{...lameloSource,setName:'Special Edition',aliases:['Topps Chrome'],sha256:'d'.repeat(64)}],rows:[...lameloCatalog.rows,[1,...lameloCatalog.rows[0].slice(1)]]};
+ assert.deepEqual((await createManufacturerChecklistVariantProvider(shardsFor(ambiguous)).prepare(lameloIdentity)).problems,['PROVIDER_NOT_SUPPORTED']);
+});
+test('v2 coalesces concurrent reads, serializes different products and evicts the least recently used of two shards',async()=>{
+ const f=shardsFor(productsFixture()), reads=[];let active=0, peak=0;
+ const p=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{reads.push(d.path);active++;peak=Math.max(peak,active);await new Promise(resolve=>setImmediate(resolve));active--;return f.loadShard(d);}});
+ await Promise.all([p.prepare(identity),p.prepare(identity)]);assert.equal(reads.length,1);
+ await p.prepare({...identity,setName:'Prizm'});await p.prepare(identity);await p.prepare({...identity,setName:'Select'});
+ await p.prepare(identity);assert.equal(reads.length,3);
+ await p.prepare({...identity,setName:'Prizm'});assert.equal(reads.length,4);assert.equal(reads[3],f.catalog.sources[1].shard.path);
+ const fresh=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setImmediate(resolve));active--;return f.loadShard(d);}});
+ await Promise.all(['Donruss Optic','Prizm','Select'].map(setName=>fresh.prepare({...identity,setName})));
+ assert.equal(peak,1);
+});
+test('v2 failed reads can recover and cancelling one shared caller does not cancel the other',async()=>{
+ const f=shardsFor(catalog);let reads=0,release;
+ const p=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{reads++;if(reads===1)throw new Error('offline');await new Promise(resolve=>{release=resolve;});return f.loadShard(d);}});
+ await assert.rejects(p.prepare(identity),/offline/);
+ const controller=new AbortController(), first=p.prepare(identity,{signal:controller.signal}), second=p.prepare(identity);
+ const rejected=assert.rejects(first,{name:'AbortError'});
+ while(!release)await new Promise(resolve=>setImmediate(resolve));
+ controller.abort();release();await rejected;assert.equal((await second).candidates.length,2);assert.equal(reads,2);
+ assert.equal((await p.prepare(identity)).candidates.length,2);assert.equal(reads,2);
+});
+test('v2 rejects descriptor traversal, unsafe bounds and non-partial coverage before reading rows',async()=>{
+ const f=shardsFor(catalog);
+ const patches=[{path:'../catalog.json.gz'},{path:`manufacturer-checklists/${'f'.repeat(64)}.json.gz`},{compressedBytes:4*1024*1024+1},{decodedBytes:8*1024*1024+1},{rowCount:100001},{sha256:'invalid'},{decodedSha256:'invalid'},{extra:true}];
+ for(const patch of patches){const data=structuredClone(f.catalog);Object.assign(data.sources[0].shard,patch);let reads=0;await assert.rejects(createManufacturerChecklistVariantProvider({catalog:data,loadShard:async()=>{reads++;return null;}}).prepare(identity),/INVALID/);assert.equal(reads,0);}
+ for(const patch of [{complete:true},{extra:true}])await assert.rejects(createManufacturerChecklistVariantProvider({...f,catalog:{...f.catalog,...patch}}).prepare(identity),/INVALID/);
+});
+test('v2 validates compressed and decoded hashes, bytes, source metadata and row count on every uncached shard',async()=>{
+ const f=shardsFor(catalog);
+ for(const patch of [{compressedBytes:f.catalog.sources[0].shard.compressedBytes+1},{decodedBytes:f.catalog.sources[0].shard.decodedBytes+1},{decodedSha256:'f'.repeat(64)},{rowCount:2}]){
+  const data=structuredClone(f.catalog);Object.assign(data.sources[0].shard,patch);await assert.rejects(createManufacturerChecklistVariantProvider({...f,catalog:data}).prepare(identity),/INVALID/);
+ }
+ const changed=structuredClone(f.catalog);changed.sources[0].url='https://example.com/other';
+ await assert.rejects(createManufacturerChecklistVariantProvider({...f,catalog:changed}).prepare(identity),/source/);
+ await assert.rejects(createManufacturerChecklistVariantProvider({...f,loadShard:async()=>Buffer.alloc(f.catalog.sources[0].shard.compressedBytes)}).prepare(identity),/compressed bytes\/hash/);
+ // A content hash cannot be reused under changed metadata, even after caching.
+ const shared=structuredClone(f.catalog);shared.sources.push({...shared.sources[0],url:'https://example.com/other'});
+ await assert.rejects(createManufacturerChecklistVariantProvider({...f,catalog:shared}).prepare(identity),/source binding/);
+ const badRow=shardsFor({...catalog,rows:[[0,'Base','203','Drake Maye','']]});
+ await assert.rejects(createManufacturerChecklistVariantProvider(badRow).prepare(identity),/INVALID: row/);
+});
+test('v2 stops oversized gzip output before parsing despite a false small decoded descriptor',async()=>{
+ const f=shardsFor(catalog), bytes=gzipSync(Buffer.alloc(8*1024*1024+1,32)), sha256=hashBytes(bytes);
+ Object.assign(f.catalog.sources[0].shard,{sha256,path:`manufacturer-checklists/${sha256}.json.gz`,compressedBytes:bytes.length});
+ await assert.rejects(createManufacturerChecklistVariantProvider({...f,loadShard:async()=>bytes}).prepare(identity),{code:'ERR_BUFFER_TOO_LARGE'});
 });

@@ -173,14 +173,21 @@ export function catalogDemandSourceKind(url: string): 'manufacturer' | 'secondar
 
 export const MANUFACTURER_CHECKLIST_REVISION: 'manufacturer-checklist/v1';
 /** Explicit source rows only; the partial catalog never establishes physical printing. */
+export type ManufacturerChecklistSource = { manufacturer: string; manufacturerAliases?: string[]; sport: 'baseball' | 'basketball' | 'football'; year: string;
+  setName: string; aliases: string[]; url: string; sha256: string };
 export type ManufacturerChecklistCatalog = { schemaVersion: typeof MANUFACTURER_CHECKLIST_REVISION; complete: false;
-  sources: { manufacturer: string; manufacturerAliases?: string[]; sport: 'baseball' | 'basketball' | 'football'; year: string;
-    setName: string; aliases: string[]; url: string; sha256: string }[];
+  sources: ManufacturerChecklistSource[];
   strings?: string[];
   rows: ([sourceIndex: number, printingLabel: string, cardNumber: string, athlete: string, sourceLocator: string] |
     [sourceIndex: number, printingLabel: number, cardNumber: number, athlete: number, sourceLocator: number])[] };
-export function createManufacturerChecklistVariantProvider(options?: { catalog?: ManufacturerChecklistCatalog | null;
-  loadCatalog?: (() => Promise<ManufacturerChecklistCatalog>) | null; limit?: number }): {
+/** Content-addressed single-source v1 payload; limits are verified before use. */
+export type ManufacturerChecklistShard = { path: string; sha256: string; decodedSha256: string;
+  compressedBytes: number; decodedBytes: number; rowCount: number };
+export type ManufacturerChecklistIndex = { schemaVersion: 'manufacturer-checklist-index/v2'; complete: false;
+  sources: (ManufacturerChecklistSource & { shard: ManufacturerChecklistShard })[] };
+export function createManufacturerChecklistVariantProvider(options?: { catalog?: ManufacturerChecklistCatalog | ManufacturerChecklistIndex | null;
+  loadCatalog?: (() => Promise<ManufacturerChecklistCatalog | ManufacturerChecklistIndex>) | null;
+  loadShard?: ((descriptor: ManufacturerChecklistShard) => Promise<Uint8Array>) | null; limit?: number }): {
   readonly id: 'manufacturer_checklist'; readonly revision: typeof MANUFACTURER_CHECKLIST_REVISION;
   prepare(identity: Partial<VariantIdentity> & { category: Category }, options?: { signal?: AbortSignal }):
     Promise<{ candidates: readonly DeepReadonly<VariantCandidate>[]; problems: string[]; truncated: boolean }>;

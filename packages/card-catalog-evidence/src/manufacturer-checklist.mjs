@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { normalizeVariantIdentity, compareVariantCardNumber, variantCandidateId, validateVariantCandidate } from './variant-review.mjs';
@@ -28,43 +29,115 @@ function athleteName(value) {
   return [...new Set(names)].join(' / ');
 }
 
+const INDEX_REVISION = 'manufacturer-checklist-index/v2';
+const INDEX_BYTES = 16 * 1024 * 1024, SHARD_BYTES = 4 * 1024 * 1024, DECODED_BYTES = 8 * 1024 * 1024;
+const bytesHash = value => createHash('sha256').update(value).digest('hex');
+const canonical = value => JSON.stringify(value, (_, v) => v && !Array.isArray(v) && typeof v === 'object'
+  ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
+async function boundedFile(url, maximum) {
+  const file = await open(url, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await file.stat();
+    check(stat.isFile() && stat.size <= maximum, 'file bounds');
+    const bytes = await file.readFile();
+    check(bytes.length === stat.size && bytes.length <= maximum, 'file changed/bounds');
+    return bytes;
+  } finally { await file.close(); }
+}
+async function bundledCatalog() {
+  try { return JSON.parse(await boundedFile(new URL('../data/manufacturer-checklists.index.json', import.meta.url), INDEX_BYTES)); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  // Retain the v1 bundle/fixture reader while older qualified releases exist.
+  return JSON.parse(gunzipSync(await boundedFile(new URL('../data/manufacturer-checklists.json.gz', import.meta.url), 16 * 1024 * 1024), { maxOutputLength: 96 * 1024 * 1024 }));
+}
+function sourceMetadata(source) {
+  check(source && string(source.manufacturer) && string(source.year) && string(source.setName) && string(source.sport)
+    && ['baseball','basketball','football'].includes(source.sport) && string(source.url, 2048) && HASH.test(source.sha256)
+    && Array.isArray(source.aliases) && source.aliases.length <= 12 && source.aliases.every(v => string(v))
+    && (source.manufacturerAliases === undefined || Array.isArray(source.manufacturerAliases) && source.manufacturerAliases.length <= 8 && source.manufacturerAliases.every(v => string(v))), 'source');
+  const url = new URL(source.url);
+  check(url.protocol === 'https:' && !url.username && !url.password && !url.hash, 'source URL');
+  return { ...source, products: new Set([source.setName, ...source.aliases].map(v => productName(v, source.manufacturer))) };
+}
+function rowCatalog(data, rowLimit = 1500000) {
+  check(data?.schemaVersion === MANUFACTURER_CHECKLIST_REVISION && data.complete === false, 'version/coverage');
+  check(Array.isArray(data.sources) && data.sources.length <= 20000 && Array.isArray(data.rows) && data.rows.length <= rowLimit, 'bounds');
+  const strings = data.strings ?? null;
+  check(strings === null || Array.isArray(strings) && strings.length <= 1500000 && strings.every(v => string(v,160)), 'strings');
+  const cell = (row, column) => strings ? strings[row[column]] : row[column];
+  const sources = data.sources.map(sourceMetadata), index = new Map();
+  for (const row of data.rows) {
+    check(Array.isArray(row) && row.length === 5 && Number.isSafeInteger(row[0]) && sources[row[0]]
+      && (!strings || row.slice(1).every(v => Number.isSafeInteger(v) && v >= 0 && v < strings.length))
+      && string(cell(row,1),120) && string(cell(row,2),120) && string(cell(row,3),120) && string(cell(row,4),160), 'row');
+    const key = `${norm(sources[row[0]].year)}|${athleteName(cell(row,3))}`;
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push(row);
+  }
+  return { kind: 'rows', sources, index, cell };
+}
+function shardIndex(data) {
+  check(data.schemaVersion === INDEX_REVISION && data.complete === false && Object.keys(data).sort().join(',') === 'complete,schemaVersion,sources', 'index version/coverage');
+  check(Array.isArray(data.sources) && data.sources.length <= 20000 && Buffer.byteLength(JSON.stringify(data)) <= INDEX_BYTES, 'index bounds');
+  const sources = data.sources.map(entry => {
+    const { shard, ...metadata } = structuredClone(entry);
+    const source = sourceMetadata(metadata);
+    check(shard && Object.keys(shard).sort().join(',') === 'compressedBytes,decodedBytes,decodedSha256,path,rowCount,sha256'
+      && HASH.test(shard.sha256) && HASH.test(shard.decodedSha256)
+      && shard.path === `manufacturer-checklists/${shard.sha256}.json.gz`
+      && Number.isSafeInteger(shard.compressedBytes) && shard.compressedBytes > 0 && shard.compressedBytes <= SHARD_BYTES
+      && Number.isSafeInteger(shard.decodedBytes) && shard.decodedBytes > 0 && shard.decodedBytes <= DECODED_BYTES
+      && Number.isSafeInteger(shard.rowCount) && shard.rowCount >= 0 && shard.rowCount <= 100000, 'shard descriptor');
+    return { ...source, metadata, shard };
+  });
+  return { kind: 'shards', sources, cell: (row, column) => row[column] };
+}
+
 /** A server-only reader of retained manufacturer rows. It performs no network
  * request, publication, inference over a parallel family, or human decision.
  * The bundled catalog is a partial acquisition snapshot, never complete scope.
  */
-export function createManufacturerChecklistVariantProvider({ catalog = null, loadCatalog = null, limit = 48 } = {}) {
+export function createManufacturerChecklistVariantProvider({ catalog = null, loadCatalog = null, loadShard = null, limit = 48 } = {}) {
   check(Number.isSafeInteger(limit) && limit > 0 && limit <= 48, 'limit');
   check(catalog === null || loadCatalog === null, 'choose one catalog reader');
-  let loaded;
+  check(loadShard === null || typeof loadShard === 'function', 'shard reader');
+  let loaded, loading = Promise.resolve();
+  const cache = new Map(), inFlight = new Map();
   async function load() {
     if (!loaded) loaded = (async () => {
-      const data = catalog ?? await (loadCatalog ?? (async () => JSON.parse(gunzipSync(await readFile(new URL('../data/manufacturer-checklists.json.gz', import.meta.url)), { maxOutputLength: 96 * 1024 * 1024 }).toString('utf8'))))();
-      check(data?.schemaVersion === MANUFACTURER_CHECKLIST_REVISION && data.complete === false, 'version/coverage');
-      check(Array.isArray(data.sources) && data.sources.length <= 20000 && Array.isArray(data.rows) && data.rows.length <= 1500000, 'bounds');
-      const strings = data.strings ?? null;
-      check(strings === null || Array.isArray(strings) && strings.length <= 1500000 && strings.every(v => string(v,160)), 'strings');
-      const cell = (row, column) => strings ? strings[row[column]] : row[column];
-      const sources = data.sources.map(source => {
-        check(source && string(source.manufacturer) && string(source.year) && string(source.setName) && string(source.sport)
-          && ['baseball','basketball','football'].includes(source.sport) && string(source.url, 2048) && HASH.test(source.sha256)
-          && Array.isArray(source.aliases) && source.aliases.length <= 12 && source.aliases.every(v => string(v))
-          && (source.manufacturerAliases === undefined || Array.isArray(source.manufacturerAliases) && source.manufacturerAliases.length <= 8 && source.manufacturerAliases.every(v => string(v))), 'source');
-        const url = new URL(source.url);
-        check(url.protocol === 'https:' && !url.username && !url.password && !url.hash, 'source URL');
-        return { ...source, products: new Set([source.setName, ...source.aliases].map(v => productName(v, source.manufacturer))) };
-      });
-      const index = new Map();
-      for (const row of data.rows) {
-        check(Array.isArray(row) && row.length === 5 && Number.isSafeInteger(row[0]) && sources[row[0]]
-          && (!strings || row.slice(1).every(v => Number.isSafeInteger(v) && v >= 0 && v < strings.length))
-          && string(cell(row,1),120) && string(cell(row,2),120) && string(cell(row,3),120) && string(cell(row,4),160), 'row');
-        const source = sources[row[0]], key = `${norm(source.year)}|${athleteName(cell(row,3))}`;
-        if (!index.has(key)) index.set(key, []);
-        index.get(key).push(row);
-      }
-      return { sources, index, cell };
+      const data = catalog ?? await (loadCatalog ?? bundledCatalog)();
+      return data?.schemaVersion === INDEX_REVISION ? shardIndex(data) : rowCatalog(data);
     })();
     try { return await loaded; } catch (error) { loaded = null; throw error; }
+  }
+  async function rowsFor(source) {
+    const key = source.shard.sha256;
+    const binding = canonical([source.metadata, source.shard]);
+    function bound(value) { check(value.binding === binding, 'shard source binding'); return value.rows; }
+    if (cache.has(key)) {
+      const value = cache.get(key); cache.delete(key); cache.set(key, value);
+      return bound(value);
+    }
+    if (!inFlight.has(key)) {
+      // At most one uncached decode at a time and two retained shards. Do not
+      // cancel a shared read when just one of its callers leaves the card.
+      const work = loading.then(async () => {
+        const bytes = await (loadShard ?? (descriptor => boundedFile(new URL(`../data/${descriptor.path}`, import.meta.url), SHARD_BYTES)))(source.shard);
+        check(bytes instanceof Uint8Array && bytes.byteLength === source.shard.compressedBytes && bytesHash(bytes) === key, 'shard compressed bytes/hash');
+        const decoded = gunzipSync(bytes, { maxOutputLength: DECODED_BYTES });
+        check(decoded.byteLength === source.shard.decodedBytes && bytesHash(decoded) === source.shard.decodedSha256, 'shard decoded bytes/hash');
+        const data = JSON.parse(decoded);
+        check(Array.isArray(data.sources) && data.sources.length === 1 && canonical(data.sources[0]) === canonical(source.metadata)
+          && Array.isArray(data.rows) && data.rows.length === source.shard.rowCount, 'shard source/row count');
+        const value = { binding, rows: rowCatalog(data, 100000) };
+        cache.set(key, value);
+        while (cache.size > 2) cache.delete(cache.keys().next().value);
+        return value;
+      });
+      inFlight.set(key, work);
+      loading = work.then(() => { inFlight.delete(key); }, () => { inFlight.delete(key); });
+    }
+    return bound(await inFlight.get(key));
   }
   return Object.freeze({
     id: 'manufacturer_checklist', revision: MANUFACTURER_CHECKLIST_REVISION,
@@ -74,27 +147,42 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       if (identity.category !== 'SPORTS') return empty;
       if (!identity.name || !identity.year || !identity.setName || !identity.cardNumber || !identity.manufacturer)
         return { ...empty, problems: ['IDENTITY_INCOMPLETE'] };
-      const { sources, index, cell } = await load(); signal?.throwIfAborted();
+      const archive = await load(); signal?.throwIfAborted();
+      const { sources, index, cell } = archive;
       const scope = productScope(identity.setName), athlete = athleteName(identity.name);
       const maker = norm(identity.manufacturer);
-      function matchingRows(year) {
-        return (index.get(`${norm(year)}|${athlete}`) ?? []).filter(row => {
-          const source = sources[row[0]], label = norm(cell(row,1));
-          // A composite's suffix constrains the literal checklist subset. It
-          // is never discarded to turn an unrelated insert into a candidate.
-          return [source.manufacturer, ...(source.manufacturerAliases ?? [])].some(v => norm(v) === maker)
-            && source.products.has(productName(scope.product, source.manufacturer))
-            && compareVariantCardNumber(identity.cardNumber, cell(row,2)) === 'match'
-            && (!scope.subset || label === scope.subset || label.startsWith(`${scope.subset} `));
-        });
+      function matchesSource(source, year, basketballOnly) {
+        return norm(source.year) === norm(year) && (!basketballOnly || source.sport === 'basketball')
+          && [source.manufacturer, ...(source.manufacturerAliases ?? [])].some(v => norm(v) === maker)
+          && source.products.has(productName(scope.product, source.manufacturer));
       }
-      let rows = matchingRows(identity.year), seasonFallback = false;
+      function matchesRow(row, readCell) {
+        const label = norm(readCell(row,1));
+        // A composite suffix constrains the literal checklist subset.
+        return compareVariantCardNumber(identity.cardNumber, readCell(row,2)) === 'match'
+          && (!scope.subset || label === scope.subset || label.startsWith(`${scope.subset} `));
+      }
+      async function matchingRows(year, basketballOnly = false) {
+        const key = `${norm(year)}|${athlete}`;
+        if (archive.kind === 'rows') return (index.get(key) ?? []).filter(row => matchesSource(sources[row[0]], year, basketballOnly) && matchesRow(row, cell));
+        const matching = [];
+        for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
+          const source = sources[sourceIndex];
+          if (!matchesSource(source, year, basketballOnly)) continue;
+          signal?.throwIfAborted();
+          const shard = await rowsFor(source); signal?.throwIfAborted();
+          for (const row of shard.index.get(key) ?? []) if (matchesRow(row, shard.cell))
+            matching.push([sourceIndex, ...row.slice(1).map((_, i) => shard.cell(row, i + 1))]);
+        }
+        return matching;
+      }
+      let rows = await matchingRows(identity.year), seasonFallback = false;
       // A bare starting year is a constrained lookup alias for basketball
       // only. An explicit season never falls back, and exact-year rows win.
       if (!rows.length && /^\d{4}$/.test(identity.year)) {
         const endYear = Number(identity.year) + 1;
-        rows = [...matchingRows(`${identity.year}-${String(endYear).slice(-2)}`),
-          ...matchingRows(`${identity.year}-${endYear}`)].filter(row => sources[row[0]].sport === 'basketball');
+        rows = [...await matchingRows(`${identity.year}-${String(endYear).slice(-2)}`, true),
+          ...await matchingRows(`${identity.year}-${endYear}`, true)];
         const scopes = new Set(rows.map(row => {
           const source = sources[row[0]];
           return `${norm(source.manufacturer)}|${productName(source.setName, source.manufacturer)}`;
