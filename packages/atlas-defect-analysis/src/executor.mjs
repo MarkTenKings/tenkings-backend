@@ -145,6 +145,68 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
     await repository.recordReply({ analysisId, requestHash, kind: 'RESPONSE', evidence: reply });
     return reply;
   }
+  async function reconcileAccepted({ analysisId, signal }, recovery = false) {
+    uuid(analysisId); signal?.throwIfAborted();
+    // This machine capability can read only already accepted, dispatched work
+    // under the same provider binding. It never borrows staff edit authority.
+    const accepted = await repository.findAccepted({ analysisId, providerBindingHash: provider.bindingHash });
+    if (!accepted) return { analysisId, state: 'SKIPPED' };
+    const { run, acceptance } = accepted;
+    const evidence = validateRequestEvidence(run.requestEvidence);
+    check(run.analysisId === analysisId && evidence.analysisId === analysisId && evidence.cardId === run.cardId
+      && evidence.version === BACKGROUND_VERSION && evidence.providerBindingHash === provider.bindingHash
+      && canonical(evidence.binding) === canonical(run.binding)
+      && run.evidenceHash === digest(canonical(evidence)), 'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
+    check(acceptance.model === MODEL && /^resp_[A-Za-z0-9_-]{1,180}$/.test(acceptance.responseId)
+      && Number.isFinite(Date.parse(acceptance.pollUntil)), 'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
+    const expired = Date.parse(acceptance.pollUntil) <= Date.now();
+    if (recovery) check(expired, 'DEFECT_ANALYSIS_RECOVERY_NOT_REQUIRED', 409);
+    if (expired && !recovery) {
+      await repository.recordReply({ analysisId, requestHash: run.requestHash, kind: 'OUTCOME', evidence: {
+        ...unknownResponse(), providerRequestId: acceptance.providerRequestId, responseId: acceptance.responseId,
+        httpStatus: acceptance.httpStatus, code: 'DEFECT_ANALYSIS_POLL_WINDOW_EXHAUSTED',
+      } });
+      return { analysisId, state: 'UNKNOWN' };
+    }
+    const loadPrepared = async () => {
+      const { bytes, manifest } = await readAnalysisRequest(run.requestRef,
+        { cardId: run.cardId, sourceHash: evidence.sourceBindingSha256 }, artifacts);
+      check(manifest.requestHash === run.requestHash
+        && digest(canonical({ ...manifest.evidence, providerBindingHash: provider.bindingHash })) === run.evidenceHash,
+      'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
+      return restorePreparedRequestAsync({ requestText: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+        requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash }, { signal });
+    };
+    // Explicit recovery verifies the retained original before its single GET.
+    // It does not change custody, the polling deadline or pending discovery.
+    let prepared = recovery ? await loadPrepared() : null;
+    let response;
+    try {
+      response = await provider.retrieve({ analysisId, requestHash: run.requestHash, responseId: acceptance.responseId },
+        { signal, deadlineMs: recovery ? Date.now() + BACKGROUND_POLICY.getTimeoutMs : Date.parse(acceptance.pollUntil) });
+      if (response.state !== 'RECEIVED' || response.httpStatus < 200 || response.httpStatus >= 300)
+        return { analysisId, state: 'PENDING' };
+      verifiedResponse(response, analysisId, run.requestHash);
+      const raw = backgroundBody(response);
+      check(raw.id === acceptance.responseId, 'DEFECT_ANALYSIS_RESPONSE_BINDING_MISMATCH');
+      if (['queued', 'in_progress'].includes(raw.status)) return { analysisId, state: 'PENDING' };
+    } catch {
+      // Failed/aborted GETs and invalid identities cannot terminate accepted
+      // work or authorize a paid retry. The bounded worker may GET again.
+      return { analysisId, state: 'PENDING' };
+    }
+    // Before adopting a terminal reply, independently verify all retained
+    // request chunks and exact reconstruction, including current V2 mode.
+    try {
+      prepared ??= await loadPrepared();
+      const reply = await retainTerminal(response, prepared.evidence, run.requestHash);
+      return { analysisId, state: 'SETTLED', outcome: reply.state };
+    } catch {
+      // Artifact/DB failures remain eligible for GET collection. No guessed
+      // terminal receipt can displace a later fully retained exact response.
+      return { analysisId, state: 'PENDING' };
+    }
+  }
   const executor = {
     async run({ staff, prepared, actionId, expiresAt, signal, dispatchSignal, admitDispatch = null, baseHash = null, replacement = null }) {
       validatePreparedRequest(prepared);
@@ -235,60 +297,10 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
     pending({ limit = BACKGROUND_POLICY.batchSize, cursor = null } = {}) {
       return repository.listAcceptedPending({ providerBindingHash: provider.bindingHash, limit, cursor });
     },
-    async reconcile({ analysisId, signal }) {
-      uuid(analysisId); signal?.throwIfAborted();
-      // This machine capability can read only already accepted, dispatched work
-      // under the same provider binding. It never borrows staff edit authority.
-      const accepted = await repository.findAccepted({ analysisId, providerBindingHash: provider.bindingHash });
-      if (!accepted) return { analysisId, state: 'SKIPPED' };
-      const { run, acceptance } = accepted;
-      const evidence = validateRequestEvidence(run.requestEvidence);
-      check(run.analysisId === analysisId && evidence.analysisId === analysisId && evidence.cardId === run.cardId
-        && evidence.version === BACKGROUND_VERSION && evidence.providerBindingHash === provider.bindingHash
-        && canonical(evidence.binding) === canonical(run.binding)
-        && run.evidenceHash === digest(canonical(evidence)), 'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
-      check(acceptance.model === MODEL && /^resp_[A-Za-z0-9_-]{1,180}$/.test(acceptance.responseId)
-        && Number.isFinite(Date.parse(acceptance.pollUntil)), 'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
-      if (Date.parse(acceptance.pollUntil) <= Date.now()) {
-        await repository.recordReply({ analysisId, requestHash: run.requestHash, kind: 'OUTCOME', evidence: {
-          ...unknownResponse(), providerRequestId: acceptance.providerRequestId, responseId: acceptance.responseId,
-          httpStatus: acceptance.httpStatus, code: 'DEFECT_ANALYSIS_POLL_WINDOW_EXHAUSTED',
-        } });
-        return { analysisId, state: 'UNKNOWN' };
-      }
-      let response;
-      try {
-        response = await provider.retrieve({ analysisId, requestHash: run.requestHash, responseId: acceptance.responseId },
-          { signal, deadlineMs: Date.parse(acceptance.pollUntil) });
-        if (response.state !== 'RECEIVED' || response.httpStatus < 200 || response.httpStatus >= 300)
-          return { analysisId, state: 'PENDING' };
-        verifiedResponse(response, analysisId, run.requestHash);
-        const raw = backgroundBody(response);
-        check(raw.id === acceptance.responseId, 'DEFECT_ANALYSIS_RESPONSE_BINDING_MISMATCH');
-        if (['queued', 'in_progress'].includes(raw.status)) return { analysisId, state: 'PENDING' };
-      } catch {
-        // Failed/aborted GETs and invalid identities cannot terminate accepted
-        // work or authorize a paid retry. The bounded worker may GET again.
-        return { analysisId, state: 'PENDING' };
-      }
-      // Before adopting a terminal reply, independently verify all retained
-      // request chunks and exact reconstruction, including current V2 mode.
-      try {
-        const { bytes, manifest } = await readAnalysisRequest(run.requestRef,
-          { cardId: run.cardId, sourceHash: evidence.sourceBindingSha256 }, artifacts);
-        check(manifest.requestHash === run.requestHash
-          && digest(canonical({ ...manifest.evidence, providerBindingHash: provider.bindingHash })) === run.evidenceHash,
-        'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
-        const prepared = await restorePreparedRequestAsync({ requestText: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-          requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash }, { signal });
-        const reply = await retainTerminal(response, prepared.evidence, run.requestHash);
-        return { analysisId, state: 'SETTLED', outcome: reply.state };
-      } catch {
-        // Artifact/DB failures remain eligible for GET collection. No guessed
-        // terminal receipt can displace a later fully retained exact response.
-        return { analysisId, state: 'PENDING' };
-      }
-    },
+    reconcile: input => reconcileAccepted(input),
+    // Operator-only exact-ID recovery: one bounded GET after ordinary polling
+    // has stopped. Not exposed to HTTP routes or automatic worker scans.
+    recoverAccepted: input => reconcileAccepted(input, true),
     ...createAnalysisResultReader({ repository, artifacts }),
   };
   return Object.freeze(executor);

@@ -8,6 +8,7 @@ import { createVariantCatalogService } from '../src/variant-catalog.mjs';
 import { createVariantListingProvider } from '../src/variant-listing-provider.mjs';
 import { createVariantPhotoProvider, projectVariantPhotoResponse } from '../src/variant-photo-provider.mjs';
 import { createVariantWorker } from '../src/variant-worker.mjs';
+import { createVariantWorkers } from './variant-workers.mjs';
 import { createVariantAdmission } from '../src/variant-admission.mjs';
 import { createVariantRecheck } from '../src/variant-recheck.mjs';
 import { createVariantReferenceContribution } from '../src/variant-reference-contribution.mjs';
@@ -53,13 +54,15 @@ async function backgroundMaintenance() {
 const worker = createVariantWorker({ store, catalog, loadPhotos: runtime.readVariantPhotos, provider,
   projectResponse: projectVariantPhotoResponse, concurrency: settings.concurrency, intervalMs: settings.intervalMs,
   onError, recheck: backgroundMaintenance, admitDispatch });
+const workers = createVariantWorkers({ worker, reconciler: runtime.analysisReconciler,
+  onEvent: event => console.log(JSON.stringify(event)) });
 let stopping = false;
 async function stop() {
   if (stopping) return; stopping = true;
-  await worker.stop(); await runtime.close();
+  await workers.stop(); await runtime.close();
 }
 process.once('SIGTERM', () => void stop()); process.once('SIGINT', () => void stop());
-worker.start();
+workers.start();
 // Worker timers are intentionally unref'ed for embedders. This process has a
 // single lifecycle keepalive and clears it only after durable jobs drain.
 const keepalive = setInterval(() => {}, 60000);

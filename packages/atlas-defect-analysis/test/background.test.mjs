@@ -319,3 +319,40 @@ test('aborting exact terminal-request reconstruction retains acceptance and resu
   assert.equal(c.activity.calls.filter(x => x.method === 'GET').length, 2);
   assert.equal(c.rows.get(prepared.evidence.analysisId).receipts[0].evidence.state, 'READY');
 });
+
+test('explicit expired acceptance recovery collects exactly one saved response without changing polling custody or redispatching', async t => {
+  const prepared = prepare(), c = context(async (_url, options) => json(options.method === 'POST' ? ack() : responseFixture(prepared.evidence)));
+  await run(c, prepared);
+  await assert.rejects(c.executor.recoverAccepted({ analysisId: prepared.evidence.analysisId }), { code: 'DEFECT_ANALYSIS_RECOVERY_NOT_REQUIRED' });
+  const acceptance = structuredClone(c.accepted.get(prepared.evidence.analysisId));
+  t.mock.method(Date, 'now', () => Date.parse(acceptance.pollUntil) + 1);
+  await c.executor.reconcile({ analysisId: prepared.evidence.analysisId });
+  const originalOutcome = structuredClone(c.rows.get(prepared.evidence.analysisId).receipts[0]);
+  const wrong = c.makeExecutor(c.makeProvider({ apiKey: 'sk-different_background_fixture_123456789' }));
+  assert.equal((await wrong.recoverAccepted({ analysisId: prepared.evidence.analysisId })).state, 'SKIPPED');
+  assert.equal((await c.executor.recoverAccepted({ analysisId: prepared.evidence.analysisId })).state, 'SETTLED');
+  assert.deepEqual(c.activity.calls.map(x => x.method), ['POST', 'GET']);
+  assert.equal(c.activity.calls[1].url, `${RESPONSE_ENDPOINT}/${acceptance.responseId}`);
+  assert.deepEqual(c.accepted.get(prepared.evidence.analysisId), acceptance);
+  assert.deepEqual(c.rows.get(prepared.evidence.analysisId).receipts[0], originalOutcome);
+  assert.equal((await c.executor.recoverAccepted({ analysisId: prepared.evidence.analysisId })).state, 'SKIPPED');
+  assert.equal(c.activity.calls.length, 2);
+  assert.equal((await c.executor.readResult(c.staff, { cardId: prepared.evidence.cardId, analysisId: prepared.evidence.analysisId })).run.state, 'READY');
+});
+
+test('explicit recovery verifies original artifacts before GET; queued and failed retention remain pending without replacement', async t => {
+  const prepared = prepare(); let terminal = false;
+  const c = context(async (_url, options) => json(options.method === 'POST' || !terminal ? ack() : responseFixture(prepared.evidence)));
+  await run(c, prepared); t.mock.method(Date, 'now', () => Date.parse(c.accepted.get(prepared.evidence.analysisId).pollUntil) + 1);
+  const object = [...c.objects.values()][0], original = Buffer.from(object.bytes); object.bytes[20] ^= 1;
+  await assert.rejects(c.executor.recoverAccepted({ analysisId: prepared.evidence.analysisId }));assert.equal(c.activity.calls.length, 1);object.bytes = original;
+  assert.equal((await c.executor.recoverAccepted({ analysisId: prepared.evidence.analysisId })).state, 'PENDING');
+  assert.equal(c.rows.get(prepared.evidence.analysisId).receipts.length, 0);
+  terminal = true; c.activity.failResult = true;
+  assert.equal((await c.executor.recoverAccepted({ analysisId: prepared.evidence.analysisId })).state, 'PENDING');
+  assert.equal(c.rows.get(prepared.evidence.analysisId).receipts.length, 0);
+  c.activity.failResult = false;
+  assert.equal((await c.executor.recoverAccepted({ analysisId: prepared.evidence.analysisId })).state, 'SETTLED');
+  assert.deepEqual(c.activity.calls.map(x => x.method), ['POST','GET','GET','GET']);
+  assert.equal(c.rows.size, 1);
+});
