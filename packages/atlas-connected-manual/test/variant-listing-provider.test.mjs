@@ -276,6 +276,33 @@ test('named searches attach explicit finish claims without inventing extra varia
  assert.throws(()=>compose({identity,candidates:choices,evidence,printing:{name:'Holofoil',language:'en'}}),/EVIDENCE/);
 });
 
+test('verified Scrydex expansion alias recovers Together photos from the same paid response without weakening other identity checks',async()=>{
+ const target={category:'POKEMON',name:'Pikachu',year:'2023',setName:'Scarlet & Violet—151',cardNumber:'025/165',manufacturer:null,language:null};
+ const choices=importScrydexVariantCandidates({identity:target,card:{id:'sv3pt5-25',name:'Pikachu',number:'25',printed_number:'025/165',language_code:'EN',
+  expansion:{id:'sv3pt5',name:'151',series:'Scarlet & Violet',release_date:'2023/09/22',is_online_only:false},
+  variants:[{name:'pokemonTogetherStamp',images:[]}],images:[]},source:{url:scrydexVariantSearchUrl(target),sha256:sha('retained Pikachu fixture')}});
+ const printing={name:'Pokémon Together Stamp',language:'en'},request=prepare(target,printing);
+ const valid='2023 Pokemon 151 Pikachu Pokemon Together Pop Up Exclusive 25/165 NM Card';
+ const saved=source(request,[item(1,valid),item(2,valid.replace('2023','2022')),item(3,valid.replace('Pikachu','Raichu')),
+  item(4,valid.replace('25/165','25/166')),item(5,valid+' French'),item(6,'2023 Pokemon 151 Pikachu Eevee Pokemon Together 25/165 133/165 2x'),
+  item(7,'2023 Pokemon 151 Pikachu Pokemon Together Choose Your Card 25/165')]);
+ assert.equal(project(request,saved).listings.length,0);
+ const before=structuredClone(request),bytes=await png(),calls=[];
+ const p=provider({cache:cacheFixture(),now,fetchImpl:async url=>{assert(url.startsWith('https://i.ebayimg.com/'));calls.push(url);return new Response(bytes,{headers:{'content-type':'image/png'}});}});
+ const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:choices,problems:[],truncated:false})}],listingProvider:p,now});
+ const result=await service.prepare({identity:target},{executeListingSource:async(actual,dispatch)=>{assert.deepEqual(actual,request);return {state:'REUSED',source:saved};}});
+ assert.deepEqual(request,before);assert.equal(result.candidates.length,1);
+ const photos=result.candidates[0].images.filter(i=>i.relationship==='listing_photo');
+ assert.equal(photos.length,1);assert.equal(photos[0].listing.id,item(1).itemId);assert(calls.length>=1);
+ for(const change of [{warnings:[...choices[0].warnings,'SET_NAME_REQUIRES_REVIEW']},
+  {identity:{...choices[0].identity,year:'2022'}},{identity:{...choices[0].identity,cardNumber:'025/166'}}]){
+  const altered={...choices[0],...change};
+  // Recompute only the candidate ID for these valid but unrelated metadata fixtures.
+  const {variantCandidateId}=await import('@tenkings/card-catalog-evidence');altered.candidateId=variantCandidateId(altered);
+  assert.equal(project(request,saved,{catalogCandidates:[altered]}).listings.length,0);
+ }
+});
+
 test('manufacturer printings receive only matching sports photos, preserving named rows and exact seller provenance',async()=>{
  const target={category:'SPORTS',name:'Drake Maye',year:'2024',setName:'Donruss Optic',cardNumber:'229',manufacturer:'Panini',language:null};
  const catalog={schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[{manufacturer:'Panini',year:'2024',setName:'Donruss Optic',sport:'football',aliases:[],url:'https://www.paniniamerica.net/checklist.html',sha256:sha('owned checklist fixture')}],

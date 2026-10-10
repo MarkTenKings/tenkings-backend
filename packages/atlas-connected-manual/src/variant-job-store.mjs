@@ -75,9 +75,15 @@ export function variantSelectedIdentity(card,action,result){
   requireThat(typeof candidate.parallel==='string'&&candidate.parallel.trim(),409,'VARIANT_FINISH_UNRESOLVED');
   const profile='playerName' in card.draft.identity?'SPORTS':'POKEMON',i=candidate.identity,old=card.draft.identity;
   requireThat(i.category===profile,409,'VARIANT_IDENTITY_STALE');
+  // Scrydex already checked the saved set against its expansion and series
+  // names before admitting this candidate. Keep that accepted spelling: e.g.
+  // Scarlet & Violet—151 -> 151 is not a new card requiring paid reanalysis.
+  // Unverified provider aliases still adopt the reviewed candidate identity.
+  const pokemonSet= candidate.source.provider==='scrydex' && old.productSet
+    && !candidate.warnings.includes('SET_NAME_REQUIRES_REVIEW') ? old.productSet : i.setName;
   return canonicalizeNewSpeedsterSessionIdentity(profile,profile==='SPORTS'
     ?{...old,playerName:i.name,year:i.year,manufacturer:i.manufacturer??old.manufacturer,productSet:i.setName,cardNumber:i.cardNumber,parallel:variantSelectionParallel(candidate)}
-    :{...old,cardName:i.name,year:i.year,productSet:i.setName,cardNumber:i.cardNumber,parallel:variantSelectionParallel(candidate)});
+    :{...old,cardName:i.name,year:i.year,productSet:pokemonSet,cardNumber:i.cardNumber,parallel:variantSelectionParallel(candidate)});
 }
 export function validateVariantReferencePermission(permission){
   object(permission,['basis','detail','consumers']);

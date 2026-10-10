@@ -51,6 +51,7 @@ export function manualMessage(error){
     DEFECT_ANALYSIS_PENDING:'An analysis is already pending for this card. Check its saved status before starting another.',
     DEFECT_ANALYSIS_REPLACEMENT_INVALID:'The previous analysis changed. Check its saved status before starting a new analysis.',
     MANUAL_ANALYSIS_RECONCILE_REQUIRED:'Check the saved analysis status before starting another request.',
+    VARIANT_REPROCESS_REQUIRED:'The confirmed variant is still being checked. Your saved findings are retained. Check its saved status, then review the fresh suggestions before approving findings.',
     MANUAL_ASTRA_REVIEW_REQUIRED:'Return to Findings, review both sides and confirm the corrected list. Remaining displayed ATLAS suggestions need that confirmation before report review.',
     MANUAL_ASTRA_REVIEW_STALE:'The saved suggestion list changed. Reload images and review the current list before confirming.',
     MANUAL_ASTRA_ANALYSIS_PENDING:'ATLAS analysis is still pending. Check its saved status before confirming findings.',

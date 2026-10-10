@@ -104,3 +104,25 @@ test('zero findings still require an explicit both-side confirmation',async()=>{
   assert.equal(f.view.defects.confirmation,null);assert.equal(rapidReviewStatus(f.view).findings,true);assert.equal(f.actions.length,0);
   await approveRapidStage('findings',f.view,f.execute);assert.deepEqual(f.actions.map(action=>action.type),['INSPECT_SIDE','INSPECT_SIDE','CONFIRM_FINDINGS']);
 });
+
+
+test('variant recheck gates both findings approval paths until its exact result is ready, preserving all prior decisions',async()=>{
+ const f=fixture();await approveRapidStage('geometry',f.view,f.execute);await approveRapidStage('findings',f.view,f.execute);f.actions=[];
+ const saved=structuredClone(f.view.defects),confirmation={decision:'SELECTED',reprocessRequired:true,analysisActionId:'new-variant-request'};
+ for(const recheckState of ['QUEUED','PREPARED','DISPATCHED','UNKNOWN','FAILED','REFUSED']){
+  f.view={...f.view,variantVerification:{enabled:true,confirmation:{...confirmation,recheckState}},astra:{enabled:false,status:'RUNNING',requestActionId:'new-variant-request',proposals:[]}};
+  assert.equal(rapidReviewStatus(f.view).findings,false,recheckState);
+  await assert.rejects(approveRapidStage('findings',f.view,f.execute),{code:'VARIANT_REPROCESS_REQUIRED'});
+  await assert.rejects(approveRapidFinding(f.view,f.view.defects.sides.FRONT.findings[0].id,f.execute),{code:'VARIANT_REPROCESS_REQUIRED'});
+  assert.equal(f.actions.length,0);assert.deepEqual(f.view.defects,saved);
+ }
+ f.view.variantVerification.confirmation={...confirmation,recheckState:'READY'};
+ f.view.astra={enabled:true,status:'READY',requestActionId:'old-request'};
+ assert.equal(rapidReviewStatus(f.view).findings,false,'old local analysis cannot unlock the new roster');
+ const proposal={id:'new-suggestion',side:'BACK',reviewStatus:'UNREVIEWED',canonicalContour:[{x:.2,y:.2},{x:.3,y:.2},{x:.3,y:.3}]};
+ f.view.astra={enabled:true,status:'READY',requestActionId:'new-variant-request',analysisId:'fresh-analysis',base:Object.fromEntries(['FRONT','BACK'].map(side=>[side,defectBase(f.view.defects,side)])),proposals:[proposal],proposalReview:{analysisId:'fresh-analysis',resultHash:'f'.repeat(64),proposalIds:[proposal.id]}};
+ assert.equal(rapidReviewStatus(f.view).findings,true);assert.equal(f.actions.length,0);
+ await approveRapidStage('findings',f.view,f.execute);
+ assert.deepEqual(f.actions.map(action=>action.type),['CONFIRM_FINDINGS']);assert.deepEqual(f.actions[0].proposalReview,f.view.astra.proposalReview);
+ f.view.variantVerification.confirmation.recheckReason='VARIANT_ANALYSIS_STALE';assert.equal(rapidReviewStatus(f.view).findings,false);
+});

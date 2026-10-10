@@ -12,6 +12,7 @@ import * as reviewFeedback from '../lib/review-feedback.mjs';
 import * as variantReview from '../lib/variant-review-client.mjs';
 import * as analysisClient from '../lib/manual-defect-analysis-client.mjs';
 import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
+import {variantFindingsBlocked} from '../../../packages/atlas-manual-workspace/src/rapid-review.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const compiled = babel.transformSync(readFileSync(new URL('../components/ManualCards.jsx', import.meta.url), 'utf8'), {
@@ -71,7 +72,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace', reviewImagePreview };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace',FindingsOverview:'FindingsOverview',reviewedMemoryState };
       if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview',CompletedReviewCard:'CompletedReviewCard',reportAwardedGrade };
-      if (name === '@atlas/manual-workspace/rapid-review') return {rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage}),approveRapidGeometrySide:async(view,input,execute)=>execute({type:'EXPLICIT_SIDE',side:input.side}),confirmRapidGeometryPair:async(view,approvals,execute)=>{assert.ok(approvals.FRONT);assert.ok(approvals.BACK);return execute({type:'EXPLICIT_STAGE',stage:'geometry'});},approveRapidFinding:async(view,id,execute)=>{if(id){const side=Object.keys(view.defects.sides).find(side=>view.defects.sides[side].findings.some(f=>f.id===id));view=await execute({type:'REVIEW_FINDING',side,findingId:id});}const next=Object.values(view.defects.sides??{}).flatMap(slot=>slot.findings??[]).find(f=>!Object.values(view.defects.sides).some(slot=>slot.findingReviews?.decisions.some(value=>value.findingId===f.id)));if(next)return {view,nextFindingId:next.id,complete:false};return {view:await execute({type:'EXPLICIT_STAGE',stage:'findings'}),complete:true};}};
+      if (name === '@atlas/manual-workspace/rapid-review') return {variantFindingsBlocked,rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage}),approveRapidGeometrySide:async(view,input,execute)=>execute({type:'EXPLICIT_SIDE',side:input.side}),confirmRapidGeometryPair:async(view,approvals,execute)=>{assert.ok(approvals.FRONT);assert.ok(approvals.BACK);return execute({type:'EXPLICIT_STAGE',stage:'geometry'});},approveRapidFinding:async(view,id,execute)=>{if(id){const side=Object.keys(view.defects.sides).find(side=>view.defects.sides[side].findings.some(f=>f.id===id));view=await execute({type:'REVIEW_FINDING',side,findingId:id});}const next=Object.values(view.defects.sides??{}).flatMap(slot=>slot.findings??[]).find(f=>!Object.values(view.defects.sides).some(slot=>slot.findingReviews?.decisions.some(value=>value.findingId===f.id)));if(next)return {view,nextFindingId:next.id,complete:false};return {view:await execute({type:'EXPLICIT_STAGE',stage:'findings'}),complete:true};}};
       if (name === '@atlas/manual-workspace/defect-actions') return {defectBase:(_value,side)=>base[side],reviewedDefectFindingIds:(value,side)=>value.sides?.[side]?.findingReviews?.decisions?.map(item=>item.findingId)??[]};
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value,geometryBase:(_geometry,side)=>({side}) };
       if (name.startsWith('@atlas/')) return {};
@@ -792,4 +793,22 @@ test('incomplete geometry can preview references and return without a report rea
  f.variant().onActivityChange(false);f.render();f.button('Back to grading review').props.onClick();f.render();
  assert.ok(f.focusedGeometry());assert.equal(f.current.geometry,geometry);assert.equal(previews,0);assert.deepEqual(f.actions,[]);
  assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
+});
+
+
+test('confirmed variant blocks findings approval while pending, then exposes its fresh roster without auto-approving',async()=>{
+ const f=harness({rapid:true,finalReview:true});await flush();f.render();
+ f.button('03Findings').props.onClick();await flush();f.render();f.overview().onReadyChange(true);f.render();
+ const prior=f.current.defects,staleApprove=f.button('Approve all findings on Front and Back').props.onClick;
+ const confirmation={decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED',analysisActionId:'variant-recheck'};
+ f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation},astra:{enabled:false,status:'RUNNING',requestActionId:'variant-recheck',proposals:[]}});
+ assert.equal(f.button('Approve all findings on Front and Back').props.disabled,true);assert.match(f.text(),/Checking the confirmed variant/);
+ await staleApprove();await flush();f.render();assert.equal(f.actions.length,0,'stale enabled handler cannot approve a pending recheck');
+ assert.equal(f.current.defects,prior);assert.equal(f.button('Back to geometry').props.disabled,false);
+ const proposals=[{id:'fresh-suggestion',reviewStatus:'UNREVIEWED',side:'BACK'}];
+ f.respond=async()=>({...f.current,variantVerification:{enabled:true,approvalReady:true,confirmation:{...confirmation,recheckState:'READY'}},astra:{enabled:true,status:'READY',requestActionId:'variant-recheck',analysisId:'fresh-analysis',proposals}});
+ await f.tick(5500);f.render();assert.equal(f.overview().astra.proposals[0].id,'fresh-suggestion');assert.equal(f.current.defects,prior);
+ assert.equal(f.actions.length,0,'READY polling cannot create any human decision');
+ assert.equal(f.button('Approve all findings on Front and Back').props.disabled,false);
+ f.dispose();
 });

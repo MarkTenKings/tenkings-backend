@@ -584,3 +584,18 @@ test('direct saved-card review mounts the bounded shell and carries its pending-
  f.workspaceProps().onBusyChange(true);f.render();assert.equal(f.directShell().busy,true,'pending saves/edits lock the direct exit');
  f.workspaceProps().onBusyChange(false);f.render();assert.equal(f.directShell().busy,false);f.dispose();
 });
+
+
+test('pending variant recheck explains its hold instead of suggesting a blind save retry',()=>{
+ const message=manualMessage({code:'VARIANT_REPROCESS_REQUIRED'});
+ assert.match(message,/confirmed variant is still being checked/);assert.match(message,/saved findings are retained/);
+ assert.doesNotMatch(message,/Retry the saved request/);
+});
+test('direct review title uses authoritative photo-bound identification instead of the intake slot label',async()=>{
+ const card=pokemonCard();card.card.label='Card 1';card.details.sourceHash=card.card.sourceHash;card.details.fields.name='Pikachu';card.manual={current:true,revision:1};
+ const f=harness(storage(null),async()=>assert.fail('no command'),{readCard:()=>structuredClone(card)});
+ f.render();await flush();f.render();assert.equal(f.directShell().title,'Pikachu');f.dispose();
+ card.details.sourceHash='older-photographs';
+ const stale=harness(storage(null),async()=>assert.fail('no command'),{readCard:()=>structuredClone(card)});
+ stale.render();await flush();stale.render();assert.equal(stale.directShell().title,'Card 1');stale.dispose();
+});

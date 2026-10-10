@@ -8,6 +8,7 @@ import {build} from 'esbuild';
 import {chromium} from 'playwright';
 import {createRapidPreviewAdapter} from './rapid-preview-adapter.mjs';
 import {geometryStatus} from '../src/geometry-actions.mjs';
+import {defectBase} from '../src/defect-actions.mjs';
 import {explainAtlasManualReport} from '@atlas/grading-core/manual-report';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),app=resolve(root,'frontend/atlas-app');
 const output=process.env.ATLAS_BROWSER_EVIDENCE;
@@ -15,6 +16,17 @@ if(!output)throw Error('ATLAS_BROWSER_EVIDENCE must name an isolated evidence di
 await mkdir(output,{recursive:true});
 const adapter=await createRapidPreviewAdapter({pythonExecutable:process.env.ATLAS_FIXTURE_PYTHON});
 let failNext=false;const actions=[];
+let variantState=null;
+const fixtureView=()=>{
+ const view=adapter.view();if(!variantState)return view;
+ const ready=variantState==='READY',analysisActionId='synthetic-variant-recheck',analysisId='synthetic-fresh-analysis';
+ view.variantVerification={enabled:true,approvalReady:ready,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:variantState,analysisActionId}};
+ view.astra={enabled:ready,status:ready?'READY':'RUNNING',requestActionId:analysisActionId,...(ready?{analysisId,
+  base:Object.fromEntries(['FRONT','BACK'].map(side=>[side,defectBase(view.defects,side)])),
+  proposals:[{id:'fresh-variant-suggestion',side:'BACK',defectType:'SURFACE_SCRATCH',reviewStatus:'UNREVIEWED',canonicalContour:[{x:.4,y:.4},{x:.5,y:.4},{x:.5,y:.5}]}],
+  proposalReview:{analysisId,resultHash:'f'.repeat(64),proposalIds:['fresh-variant-suggestion']}}:{proposals:[]})};
+ return view;
+};
 const direct=process.env.ATLAS_REVIEW_SHELL==='direct';
 const source=direct?`import React from'react';import{createRoot}from'react-dom/client';import ManualCards from'./components/ManualCards.jsx';import{VerifiedImageCacheBoundary}from'../../packages/atlas-manual-workspace/src/VerifiedImageCacheBoundary.jsx';createRoot(document.getElementById('app')).render(<VerifiedImageCacheBoundary scope="synthetic-direct"><ManualCards staff={{id:'synthetic',name:'Synthetic reviewer',role:'REVIEWER',mode:'PRODUCTION'}} cardId="focused-synthetic"/></VerifiedImageCacheBoundary>);`:`import React from'react';import{createRoot}from'react-dom/client';import{ManualWorkspace}from'./components/ManualCards.jsx';import{VerifiedImageCacheBoundary}from'../../packages/atlas-manual-workspace/src/VerifiedImageCacheBoundary.jsx';import styles from'./components/BatchGrading.module.css';createRoot(document.getElementById('app')).render(<VerifiedImageCacheBoundary scope="synthetic-rapid"><dialog open className={styles.rapidDialog}><header className={styles.rapidHeader}><h2>Synthetic rapid review</h2></header><div className={styles.rapidBody}><ManualWorkspace rapid staff={{id:'synthetic',role:'REVIEWER'}} csrf="fixture" cardId="focused-synthetic"/></div><footer id="atlas-rapid-actions" className="mc-rapid-actions"><div id="atlas-rapid-edits" className="mc-rapid-edit-dock"/></footer></dialog></VerifiedImageCacheBoundary>);`;
 const transport=`export function createManualClient(options){let pending=false;const load=async(path='/fixture',body)=>{const r=await fetch(path,body?{method:'POST',body:JSON.stringify(body)}:undefined);if(!r.ok){const failure=await r.json().catch(()=>({error:'LOCAL_PREVIEW_SAVE_FAILED'}));throw Object.assign(Error(failure.error),{code:failure.error});}const value=await r.json();options.onView(value);return value;};return {recover:()=>load(),hasPending:()=>pending,execute:async action=>{pending=true;options.onStatus('Saving…');try{const value=await load('/action',action);options.onStatus('Saved');return value;}catch(error){options.onStatus('Save failed');throw error;}finally{pending=false;}},previewReport:async()=>{const r=await fetch('/preview');if(!r.ok)throw Error('Preview unavailable');return r.json();}};}`;
@@ -33,7 +45,7 @@ const server=createServer(async(q,r)=>{try{
  if(imageMatch){const asset=adapter.asset(imageMatch[1]);if(!asset){r.writeHead(404);r.end();return;}r.setHeader('content-type',asset.mime);r.setHeader('Cache-Control','public, max-age=31536000, immutable');r.end(asset.bytes);return;}
  if(q.url==='/bundle.js'||q.url==='/style.css'){r.setHeader('content-type',q.url==='/bundle.js'?'text/javascript':'text/css');r.end(q.url==='/bundle.js'?js:css);return;}
  if(direct&&q.url?.endsWith('/api/staff/session')){r.setHeader('content-type','application/json');r.end(JSON.stringify({staff:{id:'synthetic'},csrf:'fixture'}));return;}
- if(direct&&q.url?.endsWith('/api/staff/manual-connected/cards/focused-synthetic')){const v=adapter.view();r.setHeader('content-type','application/json');r.end(JSON.stringify({revision:1,card:{cardId:'focused-synthetic',label:'Synthetic direct card',ready:true,sourceHash:v.card.contentHash,sides:{FRONT:{version:1},BACK:{version:1}}},manual:{current:true,revision:v.card.revision},identification:{state:'COMPLETE'},details:{profile:'POKEMON',layoutType:'POKEMON',fields:{}}}));return;}
+ if(direct&&q.url?.endsWith('/api/staff/manual-connected/cards/focused-synthetic')){const v=adapter.view();r.setHeader('content-type','application/json');r.end(JSON.stringify({revision:1,card:{cardId:'focused-synthetic',label:'Card 1',ready:true,sourceHash:v.card.contentHash,sides:{FRONT:{version:1},BACK:{version:1}}},manual:{current:true,revision:v.card.revision},identification:{state:'COMPLETE'},details:{sourceHash:v.card.contentHash,profile:'POKEMON',layoutType:'POKEMON',fields:{name:'Synthetic saved identity'}}}));return;}
  if(q.url==='/action'){
   let bytes='';for await(const chunk of q)bytes+=chunk;const action=JSON.parse(bytes);actions.push(action.type);
   if(failNext){failNext=false;r.writeHead(503);r.end();return;}
@@ -43,7 +55,7 @@ const server=createServer(async(q,r)=>{try{
   const preview=adapter.preview();
   r.setHeader('content-type','application/json');r.end(JSON.stringify({...preview,review:{report:preview.report,explanation:explainAtlasManualReport(preview.report)}}));return;
  }
- if(q.url==='/fixture'||q.url==='/action'||q.url?.includes('/view')){r.setHeader('content-type','application/json');r.end(JSON.stringify(adapter.view()));return;}
+ if(q.url==='/fixture'||q.url==='/action'||q.url?.includes('/view')){r.setHeader('content-type','application/json');r.end(JSON.stringify(fixtureView()));return;}
  if(q.url==='/'||direct&&q.url==='/admin/manual/focused-synthetic'){r.setHeader('content-type','text/html');r.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><div id="app"></div><script type="module" src="/bundle.js"></script>');return;}
  r.writeHead(404);r.end();
  }catch(error){r.writeHead(500,{'content-type':'application/json'});r.end(JSON.stringify({error:error.code??error.message??'LOCAL_PREVIEW_SAVE_FAILED'}));}});
@@ -100,5 +112,20 @@ try{
  assert.equal(actions.length,before,'inspection, editing cancellation and return never approve');
  await approve.click();await page.getByRole('button',{name:'Approve final grade and queue label',exact:true}).waitFor();
  assert.ok(adapter.view().defects.confirmation);assert.equal(actions.includes('APPROVE_REPORT'),false);assert.deepEqual(errors,[]);await page.screenshot({path:resolve(output,'rapid-final-grade.png')});
+ if(direct){
+  const prior=adapter.view().defects,priorActions=[...actions];variantState='QUEUED';await page.reload();
+  await page.getByRole('heading',{name:/Synthetic saved identity/}).waitFor();
+  await page.getByRole('button',{name:'03 Findings',exact:true}).click();await approve.waitFor();
+  assert.equal(await approve.isDisabled(),true);assert.match(await page.locator('#atlas-rapid-actions').innerText(),/Checking the confirmed variant/);
+  assert.equal(await page.getByRole('button',{name:'Back to geometry',exact:true}).isEnabled(),true);
+  assert.deepEqual(adapter.view().defects,prior);assert.deepEqual(actions,priorActions);
+  await page.screenshot({path:resolve(output,'rapid-variant-pending.png')});
+  variantState='READY';await page.locator('.ad-overview-proposal').waitFor({timeout:15000});
+  await page.waitForFunction(()=>!document.querySelector('.mc-rapid-approve')?.disabled);
+  assert.deepEqual(adapter.view().defects,prior,'read-only completion must retain all previously reviewed findings');
+  assert.deepEqual(actions,priorActions,'pending and READY polling must not save any human decision');assert.deepEqual(errors,[]);
+  checks.push({stage:'direct-variant-pending-ready',approvalDisabledWhilePending:true,freshSuggestions:await page.locator('.ad-overview-proposal').count(),savedFindingsPreserved:true,actionsAdded:0});
+  await page.screenshot({path:resolve(output,'rapid-variant-ready.png')});
+ }
  await writeFile(resolve(output,'rapid-workflow-proof.json'),JSON.stringify({passed:true,checks,actions,errors,limits:`Synthetic pixels, actual React ${direct?'ManualCards direct route and Shell':'ManualWorkspace and shared modal shell'}, isolated in-memory transport with real reducers. Real local CPU preparation and trace reprojection/measurement; no production authentication, paid inference or real report approval.`},null,2));console.log(JSON.stringify({passed:true,evidence:output,checks:checks.length}));
 }catch(error){await page.screenshot({path:resolve(output,'failure.png')}).catch(()=>{});console.error(JSON.stringify({error:String(error),errors,body:await page.locator('body').innerText().catch(()=>''),actions}));throw error;}finally{await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

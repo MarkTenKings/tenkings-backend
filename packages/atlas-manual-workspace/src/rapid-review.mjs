@@ -56,6 +56,7 @@ export async function confirmRapidGeometryPair(view, approvals, execute) {
 /** The final finding's explicit Approve also saves the side attestations and
  * findings confirmation; it never approves/publishes the final report. */
 export async function approveRapidFinding(view, findingId, execute) {
+  requireReview(!variantFindingsBlocked(view), 'VARIANT_REPROCESS_REQUIRED');
   requireReview(geometryStatus(view.geometry).confirmed && view.defects && defectStatus(view.defects).settled,'ATLAS_DEFECT_CONFIRMATION_REQUIRED');
   let current=view;
   const findings=()=>sides.flatMap(side=>current.defects.sides[side].findings.filter(f=>f.reviewResult!=='REMOVED').map(f=>({...f,side})));
@@ -69,12 +70,20 @@ export async function approveRapidFinding(view, findingId, execute) {
   current=await approveRapidStage('findings',current,execute);
   return {view:current,nextFindingId:null,complete:true};
 }
+/** A confirmed identity owns one exact recheck. Human inspection remains
+ * available while its result is pending; the current roster cannot be approved. */
+export function variantFindingsBlocked(view) {
+  const required = view?.variantVerification?.confirmation;
+  return Boolean(required?.reprocessRequired && required.decision !== 'UNRESOLVED'
+    && (required.recheckState !== 'READY' || required.recheckReason === 'VARIANT_ANALYSIS_STALE'
+      || required.analysisActionId && view.astra?.requestActionId !== required.analysisActionId));
+}
 export function rapidReviewStatus(view) {
   const geometry = geometryStatus(view.geometry);
   const unresolved = (view.finalReview?.report.unmeasurableProposals ?? []).filter(proposal =>
     !view.assistance?.reviews?.some(review => review.analysisId === view.finalReview.report.analysisId && review.proposalId === proposal.id));
   const proposals = view.defects ? collectiveProposalReview(view.defects, view.astra) : null;
-  return { geometry: geometry.canConfirmBoth, findings: Boolean(geometry.confirmed && view.defects && defectStatus(view.defects).settled && proposals?.ready && !unresolved.length), unresolved: unresolved.length };
+  return { geometry: geometry.canConfirmBoth, findings: Boolean(!variantFindingsBlocked(view) && geometry.confirmed && view.defects && defectStatus(view.defects).settled && proposals?.ready && !unresolved.length), unresolved: unresolved.length };
 }
 // Only an explicit Approve gesture calls this function. Navigation never does.
 // Every sequential save uses the returned current revision, including recovery.
@@ -85,6 +94,7 @@ export async function approveRapidStage(stage, view, execute) {
     if (geometryStatus(view.geometry).confirmed) return view;
     return execute({ type: 'CONFIRM_GEOMETRY', base: Object.fromEntries(sides.map(side => [side, geometryBase(view.geometry, side, 'REVIEW')])), reviewed: true });
   }
+  if (stage === 'findings' && variantFindingsBlocked(view)) throw { code: 'VARIANT_REPROCESS_REQUIRED' };
   if (stage !== 'findings' || !status.findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };
   const current = await inspectBothDefectSides(view, execute);
   if (!rapidReviewStatus(current).findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };

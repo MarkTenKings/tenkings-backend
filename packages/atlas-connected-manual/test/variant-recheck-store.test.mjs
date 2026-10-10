@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {canonical,digest} from '@atlas/manual-service/contract';
-import {createVariantJobStore,variantBinding,variantAnalysisActionId,validateVariantAction,validateVariantContributionPacket,variantCorrectionRequiresRecheck} from '../src/variant-job-store.mjs';
+import {createVariantJobStore,variantBinding,variantAnalysisActionId,validateVariantAction,validateVariantContributionPacket,variantCorrectionRequiresRecheck,variantSelectedIdentity} from '../src/variant-job-store.mjs';
+import {importScrydexVariantCandidates,scrydexVariantSearchUrl} from '@tenkings/card-catalog-evidence';
 
 function fixture({firstConfirmation=false}={}){
  const principal={id:randomUUID(),role:'REVIEWER'},card={cardId:randomUUID(),revision:4,draft:{source:{sourceHash:digest('pair')},identityRevision:2,identity:{cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:'Reverse Holo',layoutType:'POKEMON'}}};
@@ -34,6 +35,27 @@ test('first physical finish confirmation and exact collector aliases do not inve
  assert.equal(variantCorrectionRequiresRecheck(sports,{...sports,parallel:'Blue Hyper Prizm'}),false);
  assert.equal(variantCorrectionRequiresRecheck({...sports,parallel:'Blue Hyper Prizm'},{...sports,parallel:'Red Hyper Prizm'}),true);
  assert.equal(variantCorrectionRequiresRecheck(sports,{...sports,insert:'Different insert',parallel:'Blue Hyper Prizm'}),true);
+});
+test('Scrydex-verified series names preserve saved set identity during first printing confirmation',()=>{
+ const target={category:'POKEMON',name:'Pikachu',year:'2023',setName:'Scarlet & Violet—151',cardNumber:'025/165'};
+ const source={url:scrydexVariantSearchUrl(target),sha256:digest('retained Scrydex fixture')};
+ const record={id:'sv3pt5-25',name:'Pikachu',number:'25',printed_number:'025/165',language_code:'EN',
+  expansion:{id:'sv3pt5',name:'151',series:'Scarlet & Violet',release_date:'2023/09/22',is_online_only:false},
+  variants:[{name:'cosmosHolofoil',images:[]}],images:[]};
+ for(const productSet of ['Scarlet & Violet—151','Scarlet & Violet - 151','Scarlet & Violet 151','151']){
+  const original={cardName:'Pikachu',year:'2023',productSet,cardNumber:'025/165',parallel:null,layoutType:'POKEMON'};
+  const [candidate]=importScrydexVariantCandidates({identity:{category:'POKEMON',name:'Pikachu',year:'2023',setName:productSet,cardNumber:'025/165'},card:record,source});
+  assert(candidate);assert.equal(candidate.identity.setName,'151');assert(!candidate.warnings.includes('SET_NAME_REQUIRES_REVIEW'));
+  const selected=variantSelectedIdentity({draft:{identity:original}},{decision:'SELECTED',candidateId:candidate.candidateId},{catalog:{candidates:[candidate]}});
+  assert.deepEqual(selected,{...original,parallel:'English Cosmos Holofoil'});
+  assert.equal(variantCorrectionRequiresRecheck(original,selected),false);
+  for(const change of [{year:'2024'},{cardName:'Raichu'},{cardNumber:'026/165'}])
+   assert.equal(variantCorrectionRequiresRecheck(original,{...selected,...change}),true);
+  const disputed={...candidate,warnings:[...candidate.warnings,'SET_NAME_REQUIRES_REVIEW']};
+  const reviewed=variantSelectedIdentity({draft:{identity:original}},{decision:'SELECTED',candidateId:candidate.candidateId},{catalog:{candidates:[disputed]}});
+  assert.equal(reviewed.productSet,'151');
+  assert.equal(variantCorrectionRequiresRecheck(original,reviewed),productSet!=='151');
+ }
 });
 test('initial unknown finish persists explicit human confirmation without a recheck; known printing corrections remain gated',async()=>{
  for(const previous of [null,'Holo']){

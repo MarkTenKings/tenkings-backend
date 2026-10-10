@@ -150,7 +150,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
           if(saved.state==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
           else {
             if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
-            const evidence=await bounded(signal,timeoutMs,active=>listingProvider.acquireImages({request,source:saved.source},{signal:active}));
+            const evidence=await bounded(signal,timeoutMs,active=>listingProvider.acquireImages({request,source:saved.source,catalogCandidates:named},{signal:active}));
             const composed=composeVariantListingCandidates({identity,candidates,evidence,printing});
             candidates=composed.candidates;problems.push(...composed.problems);truncated||=composed.truncated;
           }

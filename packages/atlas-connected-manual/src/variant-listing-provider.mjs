@@ -112,13 +112,23 @@ function validateSource(request, source) {
     && payload.items.length <= VARIANT_LISTING_LIMITS.responseResults && payload.totalItems >= payload.items.length, 'VARIANT_LISTING_SOURCE_SHAPE');
   return payload;
 }
-function inspectIdentity(identity, candidate) {
+function inspectIdentity(identity, candidate, setAliases = []) {
   const { product, insert } = productParts(identity);
   const description = { category: identity.category === 'SPORTS' ? 'Sports cards' : 'Pokemon cards',
     name: identity.name, year: identity.year, set_name: product, manufacturer: identity.manufacturer,
     card_number: collector(identity.cardNumber), card_type: insert, variant: null };
   const normalizedCandidate = { title: collector(candidate.title) };
-  const evidence = inspectStaffInventoryResearchTitle(description, normalizedCandidate);
+  let evidence = inspectStaffInventoryResearchTitle(description, normalizedCandidate);
+  // The metadata provider admitted these exact expansion aliases for this
+  // saved identity. Seller titles often use only that shorter expansion name.
+  // Retain all other name/year/number/variant checks and the original paid key.
+  if (!evidence.product_anchored) for (const setName of setAliases) {
+    const aliasEvidence = inspectStaffInventoryResearchTitle({ ...description, set_name: setName }, normalizedCandidate);
+    if (aliasEvidence.research_anchored && aliasEvidence.product_anchored && aliasEvidence.number_anchored) {
+      evidence = { ...aliasEvidence, estimate_anchored: false,
+        reason_codes: [...aliasEvidence.reason_codes, 'provider_set_alias'] }; break;
+    }
+  }
   // A printed denominator can be absent; it cannot be contradicted. Keep the
   // missing denominator explicit and never turn a prefix (RC1) into plain 1.
   if (identity.category === 'POKEMON' && description.card_number.includes('/') && !evidence.number_anchored) {
@@ -250,8 +260,17 @@ export function composeVariantListingCandidates({ identity, candidates = [], evi
 }
 /** Pure projection; raw source retains prices but this visual-discovery result
  * deliberately contains none. A seller's title is a claim, never publication. */
-export function projectVariantListingSource(request, source) {
+export function projectVariantListingSource(request, source, { catalogCandidates = [] } = {}) {
   const payload = validateSource(request, source), input = engineInput(request.identity, request.printing), listings = [], excluded = [];
+  check(Array.isArray(catalogCandidates) && catalogCandidates.length <= VARIANT_REVIEW_LIMITS.candidates);
+  const setAliases = request.identity.category === 'POKEMON' && request.printing
+    ? [...new Set(catalogCandidates.map(validateVariantCandidate).filter(c => c.source.provider === 'scrydex'
+      && c.authority === 'provider_candidate' && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW')
+      && c.identity.category === 'POKEMON' && c.identity.year === request.identity.year
+      && claimText(c.identity.name ?? '') === claimText(request.identity.name)
+      && compareVariantCardNumber(c.identity.cardNumber, request.identity.cardNumber) === 'match'
+      && claimText(c.label) === claimText(request.printing.name) && c.identity.language === request.printing.language)
+      .map(c => c.identity.setName).filter(Boolean))] : [];
   const seen = new Map(), conflicts = new Set();
   // The provider can return its default 60-row page despite count=40. Retain
   // exact bytes, detect duplicate conflicts across that page, and project only
@@ -273,7 +292,7 @@ export function projectVariantListingSource(request, source) {
     if (explicitMultipleQuantity(candidate.title, request.identity)) { reject('UNSUPPORTED_SINGLE_CARD_LISTING'); continue; }
     if (researchSaleEvidence(raw).sale_evidence.status !== 'sold') { reject('SOLD_EVENT_UNVERIFIED'); continue; }
     if (!inspectStaffInventoryResearchSale(candidate).supported) { reject('UNSUPPORTED_SINGLE_CARD_LISTING'); continue; }
-    const identityEvidence = inspectIdentity(request.identity, candidate);
+    const identityEvidence = inspectIdentity(request.identity, candidate, setAliases);
     if (!identityEvidence.research_anchored || !identityEvidence.number_anchored
       || identityEvidence.reason_codes.includes('insert_anchor_missing') || candidate.variantEvidence?.status === 'CONTRADICTORY') {
       reject('IDENTITY_CONFLICT_OR_MISSING_ANCHOR'); continue;
@@ -358,9 +377,9 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
           httpStatus: response.status, contentType, bodyText, sha256: hash(bytes), capturedAt: new Date(now()).toISOString() };
       });
     },
-    async acquireImages({ request, source }, { signal } = {}) {
+    async acquireImages({ request, source, catalogCandidates = [] }, { signal } = {}) {
       requireCache();
-      const result = projectVariantListingSource(request, source), byUrl = new Map(), byHash = new Set();
+      const result = projectVariantListingSource(request, source, { catalogCandidates }), byUrl = new Map(), byHash = new Set();
       let requests = 0, totalBytes = 0, images = 0;
       return boundedProviderOperation(signal, timeoutMs, async active => {
         for (const listing of result.listings) {
