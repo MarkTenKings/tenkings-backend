@@ -97,6 +97,28 @@ test('reference library refresh is explicit and an uncertain request keeps choic
 
 test('retained reviewed and provider reference bytes use the authenticated staff route, including null catalog URLs',()=>{const f=fixture(),pick=f.exports.variantReference;for(const authority of ['reviewed_catalog','provider_candidate']){const result=pick({authority,images:[{url:null,sha256:hash('a'),relationship:'exact',publication:authority==='reviewed_catalog'?'publication':null,provenance:{usage:authority==='reviewed_catalog'?'reviewed_catalog':'provider_reference'}}]},f.props.cardId);assert.equal(result.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${hash('a')}`);}f.dispose();});
 
+test('an unsaved not-shown choice can be explicitly discarded for one durable reference refresh',async()=>{
+ const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await flush();f.render();
+ f.button('My card is not shown').props.onClick();f.render();f.remount();await flush();f.render();
+ const label='Discard unsaved choice and refresh reference library';assert.equal(f.button(label).props.disabled,false);
+ assert.match(f.text(),/discards only your unsaved variant choice/);assert.match(f.text(),/saved variant and grading work stay unchanged/);assert.equal(f.writes.length,0);
+ f.save=input=>{f.status={...f.status,state:'QUEUED',refreshable:false,refreshRequestId:input.requestId,jobId:hash('f'),result:null};return structuredClone(f.status);};
+ const click=f.button(label).props.onClick;click();click();await flush();f.render();
+ assert.equal(f.writes.length,1);assert.equal(f.writes[0].jobId,hash('e'));assert.ok(f.writes[0].requestId);assert.equal(f.writes[0].actionId,undefined);assert.equal(f.writes[0].decision,undefined);
+ assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);assert.equal(f.button(label),undefined);assert.equal(f.button('Save for identity review'),undefined);
+ f.remount();await flush();f.render();assert.equal(f.button('Save for identity review'),undefined,'the discarded local hold does not return after reload');f.dispose();
+});
+
+test('discard-and-refresh refuses stale binding and cannot replace an uncertain retained confirmation',async()=>{
+ const label='Discard unsaved choice and refresh reference library';
+ const stale=fixture();stale.status.jobId=hash('e');stale.status.refreshable=true;await flush();stale.render();stale.button('My card is not shown').props.onClick();stale.render();
+ stale.status.sourceHash=hash('f');stale.button(label).props.onClick();await flush();stale.render();assert.equal(stale.writes.length,0);assert.match(stale.text(),/photos, identity, grading evidence or available matches changed/);stale.dispose();
+ const pending=fixture();pending.status.jobId=hash('e');pending.status.refreshable=true;await flush();pending.render();pending.button('My card is not shown').props.onClick();pending.render();
+ const oldRefresh=pending.button(label).props.onClick;pending.save=()=>{throw Error('uncertain save');};pending.button('Save for identity review').props.onClick();await flush();pending.render();
+ assert.equal(pending.writes.length,1);assert.equal(pending.button(label).props.disabled,true);assert.ok(pending.button('Check retained decision'));
+ oldRefresh();await flush();pending.render();assert.equal(pending.writes.length,1,'even a stale click handler must not replace the pending request');assert.ok(pending.button('Check retained decision'));pending.dispose();
+});
+
 test('number padding preserves same-card grouping while explicit denominator and prefix conflicts stay separate',()=>{
  const f=fixture(),compare=f.exports.variantCardNumberComparison,group=f.exports.variantCandidateGroup;
  for(const [a,b,expected] of [['039/192','39/192','match'],['#025/0165','25/165','match'],['TG01/TG030','TG1/TG30','match'],['RC1','1','conflict'],['039/192','39/193','conflict'],['039/192','39','unknown'],['039','39/192','unknown'],[null,'39','unknown']])assert.equal(compare(a,b),expected,`${a} vs ${b}`);
