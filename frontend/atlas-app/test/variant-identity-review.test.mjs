@@ -19,6 +19,8 @@ function fixture({ component = 'default', props, beforeEffects } = {}) {
   const f = { reads:0, writes:[], saved:0, gates:[], images:true, props:{cardId:randomUUID(),staffId:randomUUID(),enabled:true,sourceHash:hash('a'),identityRevision:1,revision:9,identity:{cardName:'Pikachu',productSet:'151',cardNumber:'025'},geometry:{sides:{FRONT:{},BACK:{}}},images:{}},
     status:{enabled:true,state:'READY',revision:9,sourceHash:hash('a'),identityRevision:1,identityHash:hash('b'),jobId:randomUUID(),resultHash:hash('c'),confirmation:null,approvalReady:false,result:{catalog:{schemaVersion:'atlas-variant-catalog/v1',snapshotHash:hash('d'),candidates:[candidate('second'),candidate('suggested'),candidate('language',{identity:{name:'Pikachu',setName:'151',cardNumber:'025',language:'Japanese'}}),candidate('other',{identity:{name:'Raichu',setName:'151',cardNumber:'026'}})]},suggestion:{candidateId:'suggested',reason:'Name and number match.'}}} };
   f.props.onGateChange = value => f.gates.push(value);
+  f.activity = []; f.props.onActivityChange = value => f.activity.push(value);
+  f.retained = () => [...values.entries()];
   f.props.onSaved = async () => { f.saved++; await f.reload?.(); };
   const react = {createElement:(type,props,...children)=>({type,props:{...props,children}}),
     useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],value=>{const next=typeof value==='function'?value(slots[index]):value;if(!Object.is(slots[index],next)){slots[index]=next;dirty=true;}}];},
@@ -274,6 +276,31 @@ test('reference preview reads an uncertain confirmation without redispatching it
  f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.writes.length,1);
  f.props.previewOnly=true;f.remount();await flush();f.render();f.button('Check saved matches').props.onClick();await flush();f.render();
  assert.equal(f.writes.length,1);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);f.dispose();
+});
+test('preview releases the navigation lock for a retained confirmation without erasing or resending it',async()=>{
+ const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();f.save=()=>{throw Error('confirmation never acknowledged');};
+ f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.activity.at(-1),true);
+ const retained=f.retained();assert.equal(retained.length,1);
+ f.props.previewOnly=true;f.render();assert.equal(f.activity.at(-1),false,'changing to preview must unlock without requiring a remount');
+ f.remount();await flush();f.render();assert.equal(f.activity.at(-1),false);
+ f.button('Check saved matches').props.onClick();f.render();assert.equal(f.activity.at(-1),true,'an active read still locks navigation');
+ await flush();f.render();assert.equal(f.activity.at(-1),false);assert.deepEqual(f.retained(),retained);
+ assert.equal(f.writes.length,1);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);
+ f.props.previewOnly=false;f.remount();await flush();f.render();assert.equal(f.activity.at(-1),true);assert.ok(f.button('Check retained decision'));
+ assert.deepEqual(f.retained(),retained);assert.equal(f.writes.length,1);f.dispose();
+});
+test('preview keeps a retained reference refresh locked across remount without an automatic resend or erase',async()=>{
+ const f=fixture();f.props.previewOnly=true;f.status.jobId=hash('e');f.status.refreshable=true;await flush();f.render();
+ f.save=()=>{throw Error('refresh never acknowledged');};f.button('Refresh reference library').props.onClick();f.render();assert.equal(f.activity.at(-1),true);
+ await flush();f.render();assert.equal(f.activity.at(-1),true);assert.equal(f.writes.length,1);const retained=f.retained();assert.equal(retained.length,1);
+ f.remount();await flush();f.render();assert.equal(f.activity.at(-1),true);assert.deepEqual(f.retained(),retained);
+ assert.equal(f.writes.length,1);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);f.dispose();
+});
+test('switching an open panel to preview prevents its late initial read from reloading grading',async()=>{
+ const f=fixture();let finish;f.read=()=>new Promise(resolve=>{finish=resolve;});await flush();assert.equal(typeof finish,'function');
+ f.props.previewOnly=true;f.render();finish({...structuredClone(f.status),identityRevision:2});await flush();f.render();
+ assert.match(f.text(),/Compare variant references/);assert.match(f.text(),/earlier identity/);
+ assert.equal(f.saved,0);assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);assert.equal(f.activity.at(-1),false);f.dispose();
 });
 test('retained listing photograph takes priority over a provider exact image',()=>{
  const f=fixture(),exact={...artworkImage,relationship:'exact'},listing=listingImage();

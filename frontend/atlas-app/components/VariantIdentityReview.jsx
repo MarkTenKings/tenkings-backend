@@ -106,7 +106,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const comparisonOpener = useRef(null);
   const compare = (candidate, event) => { comparisonOpener.current = event.currentTarget; setComparison(candidate); };
   const client = useRef(null), generation = useRef(0), lock = useRef(false), callbacks = useRef({});
-  callbacks.current = { onGateChange, onSaved, onActivityChange };
+  callbacks.current = { onGateChange, onSaved, onActivityChange, previewOnly };
   const front = useVerifiedImage(geometry?.sides?.FRONT ? geometryImage(geometry, 'FRONT', 'PHYSICAL', images) : null);
   const back = useVerifiedImage(geometry?.sides?.BACK ? geometryImage(geometry, 'BACK', 'PHYSICAL', images) : null);
   const photograph = side === 'FRONT' ? front : back;
@@ -114,7 +114,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     && (revision === undefined || value.revision === revision);
   const current = matchesWorkspace(status);
   async function refreshWorkspace() {
-    if (previewOnly) return;
+    if (callbacks.current.previewOnly) return;
     const version = generation.current;
     try { await callbacks.current.onSaved?.(); if (version === generation.current) setReloadNeeded(false); }
     catch { if (version === generation.current) { setReloadNeeded(true); setError('The current review could not be reloaded. Your saved decision is retained; reload before final approval.'); } }
@@ -160,7 +160,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const confirmed = current && variantApprovalReady(status) && !drafted && !unresolved && !manual && (status?.confirmation?.decision === 'MANUAL' || choice === status?.confirmation?.selectedCandidateId);
   const gate = !enabled || Boolean(!previewOnly && confirmed && !pending && !busy && !reloadNeeded);
   useEffect(() => { callbacks.current.onGateChange?.(gate); }, [gate]);
-  useEffect(() => { callbacks.current.onActivityChange?.(Boolean(busy || pending)); return () => callbacks.current.onActivityChange?.(false); }, [busy, pending]);
+  useEffect(() => { callbacks.current.onActivityChange?.(Boolean(busy || pending && (!previewOnly || pending.operation === 'REFRESH'))); return () => callbacks.current.onActivityChange?.(false); }, [busy, pending, previewOnly]);
   async function check() {
     const owner = client.current, version = generation.current; if (!owner || lock.current) return;
     lock.current = true; setBusy(true); setError('');
