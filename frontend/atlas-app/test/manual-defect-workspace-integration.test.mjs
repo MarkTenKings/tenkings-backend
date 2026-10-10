@@ -617,6 +617,17 @@ test('final identity gate blocks approval until current card verification, and p
   f.dispose();
 });
 
+test('Rapid Grade keeps the exact current preview grade above empty variant matches and the approval gate stays closed',async()=>{
+ const f=harness({rapid:true,finalReview:true,initialView:{variantVerification:{enabled:true,state:'READY',result:{catalog:{candidates:[]}},approvalReady:false}}});await flush();f.render();
+ f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:f.current.card.revision,sourceHash:f.current.card.contentHash,canCertify:true,report:{},review:{report:{version:'atlas-manual-draft-report-v2',finalGradePolicy:'atlas-final-half-point-v1',finalGrade:9.5}}});
+ f.button('04Grade').props.onClick();await flush();f.render();assert.ok(f.report());
+ assert.match(f.text(),/Grade awaiting final approval: 9.5 \/ 10/);assert.match(f.text(),/Confirm the card variant before final approval/);
+ const sequence=all(f.tree(),node=>node.type==='VariantIdentityReview'||node.type==='FinalReportReview'||node.type==='p'&&text(node).includes('Grade awaiting final approval:'));
+ assert.deepEqual(sequence.map(node=>node.type),['p','VariantIdentityReview','FinalReportReview']);
+ f.report().onReadyChange(true);f.render();assert.equal(f.button('Approve final grade and queue label').props.disabled,true);assert.equal(f.actions.length,0);
+ f.publish({...f.current,card:{...f.current.card,revision:2,contentHash:'changed'}});assert.doesNotMatch(f.text(),/Grade awaiting final approval: 9.5/);f.dispose();
+});
+
 
 test('variant recheck polls saved status only, exposes fresh request-bound proposals, and leaves human findings unchanged',async()=>{
   const f=harness();await flush();f.render();
@@ -690,7 +701,7 @@ test('reloading a changed variant resumes required geometry review ahead of the 
 test('a refused variant check can open identity recovery without a report preview and pending saves lock exit',async()=>{
   const f=harness();await flush();f.render();let previews=0;f.preview=()=>{previews++;throw {code:'VARIANT_REPROCESS_REQUIRED'};};
   f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'REFUSED',recheckRetryable:true}}});
-  f.button('Review confirmed identity').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);assert.equal(previews,0);
+  f.button('Review confirmed variant').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);assert.equal(previews,0);
   assert.equal(all(f.tree(),value=>value.type==='DefectReviewWorkspace').length,0,'grading editor cannot submit beside identity recovery');
   f.variant().onActivityChange(true);f.render();assert.equal(f.button('Back to grading review').props.disabled,true);
   f.button('Back to grading review').props.onClick();f.render();assert.ok(f.variant(),'stale exit handlers respect retained saves');
@@ -706,7 +717,7 @@ test('stale geometry recheck recovery and unknown status remain accessible witho
     const f=harness({rapid:true,finalReview:true});await flush();f.render();f.preview=()=>{throw Error('must not preview');};
     f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation}});
     if(confirmation.recheckReason)assert.match(f.text(),/Border geometry changed after the saved variant check/);
-    f.button('Review confirmed identity').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.focusedGeometry(),undefined);
+    f.button('Review confirmed variant').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.focusedGeometry(),undefined);
     assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
   }
 });
@@ -721,7 +732,7 @@ test('an unresolved hold after an earlier variant check stays in identity review
 test('a retained unresolved hold reopens identity review on reload and remains reachable after returning to grading',async()=>{
  const f=harness({initialView:{variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'UNRESOLVED',reprocessRequired:true,recheckState:'UNKNOWN'}}}});
  await flush();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);f.button('Back to grading review').props.onClick();f.render();
- assert.ok(f.defects());assert.match(f.text(),/This card is held for identity review/);f.button('Review card identity').props.onClick();f.render();
+ assert.ok(f.defects());assert.match(f.text(),/The card variant is held for review/);f.button('Review card variant').props.onClick();f.render();
  assert.ok(f.variant());assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
 });
 
@@ -731,6 +742,6 @@ test('card correction exits the variant panel into its visible editor and retain
  f.variant().onActivityChange(true);f.render();edit();f.render();assert.ok(f.variant(),'a stale edit handler cannot leave pending variant recovery');
  f.variant().onActivityChange(false);f.render();f.button('Edit card details').props.onClick();await flush();f.render();
  assert.equal(f.variant(),undefined);assert.match(f.text(),/Correct card details/);assert.ok(f.button('Save card details'));assert.equal(f.actions.length,0);
- f.button('Discard changes').props.onClick();f.render();assert.ok(f.geometry());assert.ok(f.button('Review card identity'));
- f.button('Review card identity').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.actions.length,0);f.dispose();
+ f.button('Discard changes').props.onClick();f.render();assert.ok(f.geometry());assert.ok(f.button('Review card variant'));
+ f.button('Review card variant').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.actions.length,0);f.dispose();
 });
