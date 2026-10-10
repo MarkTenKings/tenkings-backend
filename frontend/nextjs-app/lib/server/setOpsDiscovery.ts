@@ -1022,20 +1022,21 @@ function extractChecklistRecordsFromTokens(tokens: string[]): ChecklistParsedRec
   return records;
 }
 
-function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>> {
+function parseChecklistRowsFromText(text: string, evidenceOnly = false): Array<Record<string, unknown>> {
   const lines = String(text || "")
     .split(/\r?\n/)
     .map((line) => normalizeChecklistLineForTokenization(line.replace(/\u00A0/g, " ")))
     .filter(Boolean);
 
-  type ChecklistSectionBlock = { section: string; lines: string[] };
+  type ChecklistSectionBlock = { section: string; explicit: boolean; lines: string[] };
   const blocks: ChecklistSectionBlock[] = [];
   let activeSection = "Base Set";
+  let explicitSection = false;
   let activeLines: string[] = [];
 
   const flushActive = () => {
     if (activeLines.length < 1) return;
-    blocks.push({ section: activeSection, lines: [...activeLines] });
+    blocks.push({ section: activeSection, explicit: explicitSection, lines: [...activeLines] });
     activeLines = [];
   };
 
@@ -1046,6 +1047,7 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
     if (compoundSplit) {
       flushActive();
       activeSection = normalizeChecklistSectionName(compoundSplit.header);
+      explicitSection = true;
       activeLines.push(compoundSplit.row);
       continue;
     }
@@ -1068,6 +1070,7 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
     if (isSectionHeader) {
       flushActive();
       activeSection = normalizeChecklistSectionName(line);
+      explicitSection = true;
       continue;
     }
     activeLines.push(line);
@@ -1075,7 +1078,7 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
   flushActive();
 
   if (blocks.length < 1) {
-    blocks.push({ section: "Base Set", lines: lines });
+    blocks.push({ section: "Base Set", explicit: false, lines: lines });
   }
 
   const rows: Array<Record<string, unknown>> = [];
@@ -1119,7 +1122,8 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
       dedupe.add(duplicateKey);
       rows.push({
         cardNumber,
-        parallel: resolvedParallel,
+        parallel: evidenceOnly ? (block.explicit ? blockSection : null) : resolvedParallel,
+        ...(evidenceOnly ? { evidenceSection: block.explicit ? blockSection : null, evidenceKind: block.explicit ? "literal_section" : "unclassified" } : {}),
         playerSeed,
         player: playerSeed,
       });
@@ -1867,7 +1871,7 @@ function decodeAscii85Stream(chunk: Buffer): Buffer | null {
   return Buffer.from(output);
 }
 
-function decodePdfStreamByFilters(chunk: Buffer, dictionary: string): Buffer | null {
+function decodePdfStreamByFilters(chunk: Buffer, dictionary: string, maxOutputLength?: number): Buffer | null {
   const filters = Array.from(String(dictionary || "").matchAll(/\/(FlateDecode|ASCII85Decode)/gi)).map(
     (match) => (match[1] || "").toLowerCase()
   );
@@ -1883,7 +1887,7 @@ function decodePdfStreamByFilters(chunk: Buffer, dictionary: string): Buffer | n
       if (filter === "ascii85decode") {
         current = decodeAscii85Stream(current);
       } else if (filter === "flatedecode") {
-        current = inflateSync(current);
+        current = inflateSync(current, maxOutputLength === undefined ? {} : { maxOutputLength });
       }
     } catch {
       return null;
@@ -1892,9 +1896,10 @@ function decodePdfStreamByFilters(chunk: Buffer, dictionary: string): Buffer | n
   return current;
 }
 
-function extractChecklistTextFromPdfBuffer(buffer: Buffer): string {
+function extractChecklistTextFromPdfBuffer(buffer: Buffer, maxDecodedBytes?: number): string {
   const pdf = buffer.toString("latin1");
   const decodedStreams: string[] = [];
+  let decodedBytes = 0;
   let cursor = 0;
 
   while (cursor < pdf.length) {
@@ -1923,9 +1928,11 @@ function extractChecklistTextFromPdfBuffer(buffer: Buffer): string {
       chunk = chunk.subarray(0, chunk.length - 1);
     }
 
-    const decoded = decodePdfStreamByFilters(chunk, dictionary);
+    const decoded = decodePdfStreamByFilters(chunk, dictionary, maxDecodedBytes);
 
     if (decoded && decoded.length > 0) {
+      decodedBytes += decoded.length;
+      if (maxDecodedBytes !== undefined && decodedBytes > maxDecodedBytes) throw new Error("Catalog PDF decompression budget exceeded.");
       decodedStreams.push(decoded.toString("latin1"));
     }
 
@@ -3293,4 +3300,24 @@ export async function importDiscoveredSource(params: {
       sampleRows: rowQuality.accepted.slice(0, 5),
     },
   };
+}
+
+/** Opt-in evidence parsing for isolated demand preparation. Legacy SetOps imports
+ * retain their behavior. This never promotes the parser's default Base Set or a
+ * collector-prefix inference to an observed printing. No persistence occurs. */
+export function parseCatalogDemandSourceFile(params: { fileName: string; fileBuffer: Buffer; contentType: string }) {
+  if (!params.fileBuffer.length || params.fileBuffer.length > 2 * 1024 * 1024) throw new Error('Catalog source size limit.');
+  const isPdf = params.contentType === 'application/pdf' || params.fileName.toLowerCase().endsWith('.pdf');
+  const raw = isPdf ? extractChecklistTextFromPdfBuffer(params.fileBuffer, 4 * 1024 * 1024) : params.fileBuffer.toString('utf8');
+  const text = isPdf ? raw : /<(?:html|body|table|article)\b/i.test(raw) ? extractChecklistTextFromHtml(raw) : raw;
+  if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('Catalog text size limit.');
+  let structured: Array<Record<string, unknown>> = [];
+  if (!isPdf) {
+    if (/^\s*[\[{]/.test(raw)) { try { structured = normalizeObjectRows(JSON.parse(raw)); } catch {} }
+    if (!structured.length && /csv/i.test(params.contentType)) structured = parseCsvRows(raw);
+    if (!structured.length && /<table\b/i.test(raw)) structured = parseHtmlTableRows(raw);
+  }
+  const rows = structured.length ? structured.map(row => ({ ...row, evidenceKind: 'literal_columns' })) : parseChecklistRowsFromText(text, true);
+  const context = parseParallelOddsRowsFromText(text);
+  return { text, rows: rows.slice(0, 5000), context: context.slice(0, 5000), truncated: rows.length > 5000 || context.length > 5000 };
 }

@@ -61,6 +61,8 @@ export interface UploadBufferOptions {
 }
 
 export interface PrivateChecksumUploadBufferOptions extends UploadBufferOptions {
+  /** Fail closed if the checksum object already exists; never overwrite a reference. */
+  ifAbsent?: boolean;
   checksumSha256: string;
   signal?: AbortSignal;
 }
@@ -860,6 +862,7 @@ export async function uploadBuffer(
 }
 
 export function privateChecksumPutObjectCommand(input: Readonly<{
+  ifAbsent?: boolean;
   bucket: string;
   storageKey: string;
   buffer: Buffer;
@@ -875,6 +878,7 @@ export function privateChecksumPutObjectCommand(input: Readonly<{
     CacheControl: input.cacheControl,
     ACL: "private",
     ChecksumSHA256: sha256HexToBase64(input.checksumSha256),
+    ...(input.ifAbsent ? { IfNoneMatch: "*" } : {}),
   });
 }
 
@@ -912,6 +916,7 @@ export async function uploadPrivateChecksumBuffer(
       contentType,
       cacheControl: options.cacheControl,
       checksumSha256: options.checksumSha256,
+      ifAbsent: options.ifAbsent,
     });
     await (dependencies.sendS3 ?? ((request, requestOptions) => getS3Client().send(request, requestOptions)))(command, { abortSignal: options.signal });
     if (options.signal?.aborted) throw new Error('Immutable storage upload was cancelled.');

@@ -92,3 +92,18 @@ test('service rejects oversized complete responses instead of truncating evidenc
   const imageResult = await invoke('media', { publication, imageId: 'fixture:image' }, { readPublishedSetCatalogImage: async () => ({ bytes: Buffer.alloc(4 * 1024 * 1024 + 1), sha256: 'a'.repeat(64), mimeType: 'image/jpeg', width: 100, height: 100 }) });
   assert.equal(imageResult.code, 503); assert.equal(imageResult.headers['Content-Length'], undefined);
 });
+
+test('demand and reference preparation require separate explicit scope and enabled controls', async () => {
+  const input = { demand: { category: 'SPORTS', year: '2024', manufacturer: 'Topps', setName: 'Chrome', language: null }, card: { name: 'Example Player', cardNumber: '25' } };
+  for (const settings of [env, { ...env, CATALOG_ATLAS_SERVICE_SCOPES: 'demand' }]) {
+    const out = response(); let calls = 0;
+    await createCardCatalogServiceHandler('demand', { env: settings, prepareDemand: async () => { calls++; throw Error(); } })(request(input), out.res);
+    assert.ok([403, 503].includes(out.result.code)); assert.equal(calls, 0);
+  }
+  const out = response(), expected = { pending: true };
+  await createCardCatalogServiceHandler('demand', { env: { ...env, CATALOG_ATLAS_SERVICE_SCOPES: 'demand', CATALOG_DEMAND_ENABLED: 'true' }, prepareDemand: async value => { assert.deepEqual(value, input); return expected as any; } })(request(input), out.res);
+  assert.equal(out.result.code, 200); assert.deepEqual(out.result.body.result, expected);
+  const photo = response(); let calls = 0;
+  await createCardCatalogServiceHandler('reference-proposals', { env: { ...env, CATALOG_ATLAS_SERVICE_SCOPES: 'reference-proposals' }, submitReference: async () => { calls++; throw Error(); } })(request({}), photo.res);
+  assert.equal(photo.result.code, 503); assert.equal(calls, 0);
+});

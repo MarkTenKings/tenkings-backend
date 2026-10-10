@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import type { CatalogManifest, PublicationPin } from '@tenkings/card-catalog-evidence';
 import SetCatalogProposalInbox from './SetCatalogProposalInbox';
+import SetCatalogDemandInbox from './SetCatalogDemandInbox';
 import SetCatalogSportsPreparation from './SetCatalogSportsPreparation';
 import SetCatalogPokemonPreparation from './SetCatalogPokemonPreparation';
 
@@ -70,7 +71,10 @@ export default function SetCatalogEvidenceReview({ token, setId, canReview, canA
     <summary className="cursor-pointer font-semibold text-white">Reviewed shared catalog evidence</summary>
     <p className="mt-3 text-sm text-slate-300">Catalog set: {setId || 'Choose an existing Set ID below or select an ingestion job.'}</p>
     <p className="my-3 text-sm text-slate-300">Prepare a clean, approved SetOps draft first. This separate review publishes the complete identity, applicability, source and image evidence. Private review artifacts stay internal. Missing image coverage stays unknown.</p>
-    <SetCatalogProposalInbox token={token} canReview={canReview} />
+    <SetCatalogDemandInbox token={token} canReview={canReview} />
+    <SetCatalogProposalInbox token={token} canReview={canReview} packet={packet} onPrepared={value => {
+      setPacket(value); setPreview(null); setReviewed(false); setMessage('Physical reference added to the loaded packet. Validate and inspect the complete sources, images, identity mappings and grants before publishing.');
+    }} />
     <div className="flex flex-wrap gap-3">
       <button className={button} disabled={busy || !setId || !canReview || !token} onClick={() => void run(async active => {
         const result = await api(`taxonomy?setId=${encodeURIComponent(setId)}`);

@@ -1414,6 +1414,7 @@ model SetCatalogEvidencePublication {
 }
 
 model SetCatalogObservationProposal {
+  referenceSubmission SetCatalogReferenceSubmission?
   id String @id @default(uuid())
   producer String
   observationId String
@@ -4875,4 +4876,54 @@ model StaffInventoryIntakeLeaseV2 {
   expiresAt DateTime @db.Timestamptz(3)
 
   @@index([expiresAt])
+}
+
+// Isolated, demand-led source preparation. These records do not mutate approved
+// drafts or grant canonical/reference authority. Source evidence is append-only.
+model SetCatalogDemandJob {
+  demandKey String @id
+  demandJson Json
+  state String
+  attempt Int @default(0)
+  leaseToken String?
+  leaseUntil DateTime?
+  nextAttemptAt DateTime @default(now())
+  resultHash String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+  results SetCatalogDemandResult[] @relation("DemandHistory")
+  currentResult SetCatalogDemandResult? @relation("DemandCurrent", fields: [demandKey, resultHash], references: [demandKey, snapshotHash], onDelete: Restrict, onUpdate: Restrict)
+  @@index([createdAt])
+}
+model SetCatalogDemandResult {
+  demandKey String
+  snapshotHash String
+  resultJson Json
+  requests Int
+  attempt Int
+  createdAt DateTime @default(now())
+  job SetCatalogDemandJob @relation("DemandHistory", fields: [demandKey], references: [demandKey], onDelete: Restrict, onUpdate: Restrict)
+  currentFor SetCatalogDemandJob[] @relation("DemandCurrent")
+  sources SetCatalogDemandSource[]
+  @@id([demandKey, snapshotHash])
+  @@unique([demandKey, attempt])
+}
+model SetCatalogDemandSource {
+  demandKey String
+  snapshotHash String
+  sourceId String
+  sha256 String
+  contentType String
+  bytes Bytes
+  createdAt DateTime @default(now())
+  result SetCatalogDemandResult @relation(fields: [demandKey, snapshotHash], references: [demandKey, snapshotHash], onDelete: Restrict, onUpdate: Restrict)
+  @@id([demandKey, snapshotHash, sourceId])
+}
+model SetCatalogReferenceSubmission {
+  proposalId String @id
+  proposalSha256 String
+  submissionSha256 String
+  submissionJson Json
+  createdAt DateTime @default(now())
+  proposal SetCatalogObservationProposal @relation(fields: [proposalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 }

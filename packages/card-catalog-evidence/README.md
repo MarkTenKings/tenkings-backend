@@ -21,6 +21,9 @@ The executable sports/Pokémon fixtures are **synthetic protocol examples**. The
 | `compareEvidenceLineage(manifest, left, right)` | Follows source and image ancestry, origin keys and byte hashes. Reports shared lineage or distinct declared roots; the latter does not prove independent real-world events. |
 | `prepareObservationProposal(value)` | Strict unreviewed proposal plus full payload hash and producer/observation/input-revision idempotency key. |
 | `observationRetryDisposition(existingReceipt, proposal)` | `new`, exact `replay`, or conflict. The host must enforce durable uniqueness atomically. |
+| `normalizeCatalogDemand(value)` / `catalogDemandKey(value)` | Public category/year/manufacturer/set/language demand and versioned shared set key. Physical card IDs and photos are excluded. |
+| `validateCatalogDemandResult(value)` / `validateCatalogDemandAcquisition(value)` | Strict unreviewed source preparation, respectively bounded to a consumer response or retained acquisition. No canonical IDs, image grants or publication authority. |
+| `filterCatalogDemandResult(result, card)` | Exact name and card-number family filtering with explicit leading-zero aliases; preserves prefixes and known denominator conflicts. |
 
 Types are provided in `src/index.d.ts`. Fixtures show complete wire values. Contract schema versions, not package semver alone, select parsers. Existing SetOps and research hashes retain their original meanings.
 
@@ -67,3 +70,7 @@ Images bind exact bytes/dimensions/side, source and parent images. `depicted` re
 Observation images are merely proposed evidence. The server binds `producer`, physical-card reference, observation ID and input revision to its authenticated app/record. Original inputs remain unchanged. A retry with the same key and different bytes is a conflict, not an update. A later input revision is a new observation; neither operation promotes images or updates grades, saved descriptions, costs, comps or market values.
 
 All operations are bounded: 4 MiB canonical manifest/proposal, 5,000 rows per ordinary collection, 20,000 explicit applicability rows, depth/lineage depth 48 and at most 100 returned candidates. Larger data requires explicit partitioning/versioning; silent truncation is prohibited. The package has no background job, crawler or cache.
+
+## Host demand preparation and pending photo references
+
+The SetOps host supplies the separately gated acquisition/store/reviewer adapters described in [the host preparation runbook](../../docs/runbooks/CATALOG_DEMAND_PREPARATION.md). Those adapters retain source bytes and unreviewed preparations in isolated tables; the package's demand helpers remain pure. A manufacturer checklist or a submitted physical photo does not acquire approved applicability, identity or media permissions by entering this store. Ten Kings ingestion and grading do not dispatch these new operations.

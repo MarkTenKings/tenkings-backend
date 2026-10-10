@@ -91,3 +91,23 @@ export function createPublishedCatalogReader(options: {
 }): { readonly lookup: (request: { publication: PublicationPin; query: CatalogQuery }) => Promise<DeepReadonly<LookupResult>> };
 export function prepareObservationProposal(input: unknown): DeepReadonly<PreparedProposal>;
 export function observationRetryDisposition(existingReceipt: ProposalReceipt | null, proposal: unknown): DeepReadonly<{ disposition: 'new' | 'replay'; prepared: PreparedProposal }>;
+
+export interface CatalogDemand { category: 'SPORTS' | 'POKEMON'; year: string; manufacturer: string | null; setName: string; language: string | null }
+export interface CatalogDemandSource { sourceId: string; url: string; sha256: string; kind: 'manufacturer' | 'secondary'; byteSize: number }
+export interface CatalogDemandChoice { rowId: string; identity: CatalogDemand & { name: string; cardNumber: string }; parallel: string; sourceId: string; locator: string; diagnostics: string[] }
+export interface CatalogDemandResult { schemaVersion: 'catalog-demand-result/v1'; demandKey: string; demand: CatalogDemand;
+  state: 'QUEUED' | 'RUNNING' | 'READY' | 'UNAVAILABLE'; attempt: number; coverage: 'partial' | 'unknown' | 'truncated';
+  sources: CatalogDemandSource[]; choices: CatalogDemandChoice[];
+  context: { parallel: string; program: string | null; serial: string | null; sourceId: string; locator: string }[];
+  problems: string[]; capturedAt: string; snapshotHash: string }
+export const CATALOG_DEMAND_VERSION: 'catalog-demand-result/v1';
+export const CATALOG_DEMAND_POLICY: string;
+export const CATALOG_DEMAND_LIMITS: Readonly<{ sources: number; rows: number; choices: number; context: number; resultBytes: number }>;
+export function normalizeCatalogDemand(input: unknown): CatalogDemand;
+export function catalogDemandKey(input: unknown): string;
+export function catalogDemandResultHash(input: unknown): string;
+export function validateCatalogDemandResult(input: unknown): CatalogDemandResult;
+export function validateCatalogDemandAcquisition(input: unknown): CatalogDemandResult;
+export function filterCatalogDemandResult(input: unknown, card?: { name: string; cardNumber: string } | null): CatalogDemandResult;
+export function isCatalogDemandSourceUrl(input: unknown): boolean;
+export function catalogDemandSourceKind(url: string): 'manufacturer' | 'secondary';

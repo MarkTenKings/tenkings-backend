@@ -432,3 +432,5 @@ export function observationRetryDisposition(existingReceipt, proposal) {
   check(existingReceipt.proposalSha256 === prepared.proposalSha256, 'IDEMPOTENCY_CONFLICT', 'existingReceipt');
   return freeze({ disposition: 'replay', prepared });
 }
+
+export { CATALOG_DEMAND_VERSION, CATALOG_DEMAND_POLICY, CATALOG_DEMAND_LIMITS, normalizeCatalogDemand, catalogDemandKey, catalogDemandResultHash, validateCatalogDemandResult, validateCatalogDemandAcquisition, filterCatalogDemandResult, isCatalogDemandSourceUrl, catalogDemandSourceKind } from './demand.mjs';

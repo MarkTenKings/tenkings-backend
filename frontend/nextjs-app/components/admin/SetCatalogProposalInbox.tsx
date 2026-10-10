@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CatalogProposalDetail, CatalogProposalList, CatalogProposalListItem } from '../../lib/server/staffInventoryCatalogObservations';
+import SetCatalogReferenceAttachment, { type CatalogReviewPacket } from './SetCatalogReferenceAttachment';
 
-type Props = { token?: string; canReview: boolean };
+type Props = { token?: string; canReview: boolean; packet?: CatalogReviewPacket | null; onPrepared?: (packet: CatalogReviewPacket) => void };
 const endpoint = '/api/admin/set-ops/catalog/proposals';
 const MAX_RESPONSE_BYTES = 1024 * 1024, MAX_EXPORT_BYTES = 3 * 1024 * 1024, MAX_SELECTED = 4;
 const buttonClass = 'rounded border border-white/20 px-3 py-2 text-sm disabled:opacity-40';
@@ -12,18 +13,19 @@ function downloadJson(bytes: string, filename: string) {
 
 /** Selection prepares an explicit review packet. It never supplies a source
  * classification, media reuse permission or publication acknowledgement. */
-export default function SetCatalogProposalInbox({ token, canReview }: Props) {
+export default function SetCatalogProposalInbox({ token, canReview, packet = null, onPrepared }: Props) {
   const [producer, setProducer] = useState('');
   const [page, setPage] = useState<CatalogProposalList | null>(null);
   const [selected, setSelected] = useState<CatalogProposalDetail[]>([]);
   const [detail, setDetail] = useState<CatalogProposalDetail | null>(null);
+  const [referenceReview, setReferenceReview] = useState<unknown>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const generation = useRef({ value: 0 });
   const authority = useRef({ token, canReview, producer });
   authority.current = { token, canReview, producer };
   useEffect(() => {
     const requests = generation.current;
-    requests.value++; setPage(null); setSelected([]); setDetail(null); setBusy(false); setError(null);
+    requests.value++; setPage(null); setSelected([]); setDetail(null); setReferenceReview(null); setBusy(false); setError(null);
     return () => { requests.value++; };
   }, [token, canReview, producer]);
   if (!canReview) return null;
@@ -58,9 +60,29 @@ export default function SetCatalogProposalInbox({ token, canReview }: Props) {
       || result.reviewLink.proposalId !== item.proposalId || result.reviewLink.proposalSha256 !== item.proposalSha256
       || result.disposition !== 'requires_authorized_review') throw new Error('The selected immutable proposal could not be verified.');
     if (current()) {
-      setDetail(result);
+      setDetail(result); setReferenceReview(null);
       setSelected(previous => previous.some(p => p.item.proposalId === item.proposalId) ? previous : previous.length < MAX_SELECTED ? [...previous, result] : previous);
     }
+  });
+  const loadReferenceReview = () => perform(async current => {
+    if (!detail || !token) return;
+    const response = await fetch(`/api/admin/set-ops/catalog/reference-proposals?${new URLSearchParams({ proposalId: detail.item.proposalId, proposalSha256: detail.item.proposalSha256 })}`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > 32768) throw new Error('Reference review exceeds its bound.');
+    const result = JSON.parse(text);
+    if (!response.ok || result.proposalId !== detail.item.proposalId || result.disposition !== 'requires_authorized_review') throw new Error('No verified pending photo submission is available for this proposal.');
+    if (current()) setReferenceReview(result);
+  });
+  const downloadReference = (image: { mediaRef: string; sha256: string; imageId: string }) => perform(async current => {
+    if (!token || !/^catalog:sha256:[a-f0-9]{64}$/.test(image.mediaRef) || image.mediaRef !== `catalog:sha256:${image.sha256}`) throw new Error('Invalid image artifact.');
+    const response = await fetch(`/api/admin/set-ops/catalog/media?${new URLSearchParams({ ref: image.mediaRef })}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    if (!response.ok || Number(response.headers.get('content-length')) > 4 * 1024 * 1024) throw new Error('Reference download unavailable.');
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > 4 * 1024 * 1024) throw new Error('Reference exceeds its bound.');
+    const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
+    if (digest !== image.sha256) throw new Error('Reference checksum mismatch.');
+    if (current()) { const url = URL.createObjectURL(new Blob([bytes])); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `catalog-reference-${image.sha256}.bin`; anchor.click(); URL.revokeObjectURL(url); }
   });
   function exportSelection() {
     try {
@@ -106,6 +128,15 @@ export default function SetCatalogProposalInbox({ token, canReview }: Props) {
     </div>}
     {detail && <details open className="space-y-2"><summary className="cursor-pointer text-sm">Exact immutable proposal</summary>
       <button type="button" className={buttonClass} onClick={() => downloadJson(detail.canonicalProposalJson, `proposal-${detail.item.proposalId}-${detail.item.proposalSha256}.json`)}>Download exact proposal JSON</button>
+      {detail.item.imageCount > 0 && <div className="space-y-2 rounded border border-white/15 p-3">
+        <p className="text-sm">Submitted photos remain private review material. Proposed permissions and identity require a separate catalog review before publication.</p>
+        <button type="button" className={buttonClass} disabled={busy} onClick={() => void loadReferenceReview()}>Inspect proposed photo permissions</button>
+        {referenceReview !== null && <><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(referenceReview, null, 2)}</pre>
+          <button type="button" className={buttonClass} onClick={() => downloadJson(JSON.stringify(referenceReview, null, 2), `pending-reference-${detail.item.proposalId}.json`)}>Download pending permission receipt</button>
+          {(JSON.parse(detail.canonicalProposalJson).images ?? []).map((image: { imageId: string; mediaRef: string; sha256: string }) => <button key={image.imageId} type="button" className={`${buttonClass} ml-2`} disabled={busy} onClick={() => void downloadReference(image)}>Download reference {image.imageId}</button>)}
+          {onPrepared && <SetCatalogReferenceAttachment token={token} detail={detail} referenceReview={referenceReview} packet={packet} onPrepared={onPrepared} />}
+        </>}
+      </div>}
       <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded bg-black/30 p-3 text-xs">{detail.canonicalProposalJson}</pre>
     </details>}
   </section>;

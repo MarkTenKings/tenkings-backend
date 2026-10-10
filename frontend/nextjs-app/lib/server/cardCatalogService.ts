@@ -6,7 +6,7 @@ import { HttpError } from './adminSessionAuthority';
 
 export const CARD_CATALOG_SERVICE_VERSION = 'card-catalog-service/v1' as const;
 export const CARD_CATALOG_SERVICE_LIMITS = { deadlineMs: 25_000, jsonResponseBytes: 1024 * 1024, imageBytes: 4 * 1024 * 1024 } as const;
-const operations = ['discover', 'lookup', 'media', 'proposals'] as const;
+const operations = ['discover', 'lookup', 'media', 'proposals', 'demand', 'reference-proposals'] as const;
 export type CatalogServiceOperation = typeof operations[number];
 const identifier = z.string().min(1).max(256).refine(v => v === v.trim() && !/[\u0000-\u001f\u007f]/.test(v));
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -21,6 +21,7 @@ const query = z.object({
 const discovery = z.object({ query }).strict().refine(v => Boolean(v.query.setId || (v.query.setLabel && v.query.year)), 'An exact set or label and year is required.');
 const lookup = z.object({ publication: pin, query }).strict();
 const media = z.object({ publication: pin, imageId: identifier }).strict();
+const demand = z.object({ demand: z.object({ category: z.enum(['SPORTS', 'POKEMON']), year: identifier, manufacturer: identifier.nullable(), setName: identifier, language: identifier.nullable() }).strict(), card: z.object({ name: identifier, cardNumber: identifier }).strict().optional() }).strict();
 const proposal = z.object({ proposal: z.unknown(), observation: z.object({
   physicalCardRef: identifier, observationId: identifier, inputRevision: identifier, evidenceSha256: digest,
 }).strict() }).strict();
@@ -51,7 +52,7 @@ function json(res: NextApiResponse, status: number, value: unknown) {
   if (Buffer.byteLength(body) > CARD_CATALOG_SERVICE_LIMITS.jsonResponseBytes) throw new HttpError(503, 'Catalog response exceeds its bound.');
   return res.status(status).json(value);
 }
-export function createCardCatalogServiceHandler(operation: CatalogServiceOperation, dependencies: { env?: Record<string, string | undefined>; service?: Service } = {}) {
+export function createCardCatalogServiceHandler(operation: CatalogServiceOperation, dependencies: { env?: Record<string, string | undefined>; service?: Service; prepareDemand?: typeof import('./setCatalogDemand')['prepareSetCatalogDemand']; submitReference?: typeof import('./setCatalogReferenceProposals')['setCatalogReferenceService']['submit'] } = {}) {
   return async (req: NextApiRequest, res: NextApiResponse) => {
     res.setHeader('Cache-Control', 'private, no-store, max-age=0');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -60,6 +61,19 @@ export function createCardCatalogServiceHandler(operation: CatalogServiceOperati
       if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); throw new HttpError(405, 'Use POST.'); }
       const actor = authorizeCatalogService(req, operation, dependencies.env);
       if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'JSON is required.');
+      if (operation === 'reference-proposals') {
+        if ((dependencies.env ?? process.env).CATALOG_REFERENCE_PROPOSALS_ENABLED !== 'true') throw new HttpError(503, 'Reference proposals unavailable.');
+        const submit = dependencies.submitReference ?? (await import('./setCatalogReferenceProposals')).setCatalogReferenceService.submit;
+        const receipt = await deadline(submit(req.body, actor));
+        return json(res, receipt.outcome === 'recorded' ? 201 : 200, { schemaVersion: CARD_CATALOG_SERVICE_VERSION, disposition: 'requires_authorized_review', receipt });
+      }
+      if (operation === 'demand') {
+        if ((dependencies.env ?? process.env).CATALOG_DEMAND_ENABLED !== 'true') throw new HttpError(503, 'Catalog demand preparation unavailable.');
+        const input = demand.parse(req.body);
+        const prepare = dependencies.prepareDemand ?? (await import('./setCatalogDemand')).prepareSetCatalogDemand;
+        const result = await deadline(prepare(input));
+        return json(res, 200, { schemaVersion: CARD_CATALOG_SERVICE_VERSION, result });
+      }
       const service = dependencies.service ?? await import('./setCatalogEvidence');
       if (operation === 'discover') {
         const input = discovery.parse(req.body);
