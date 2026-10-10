@@ -18,6 +18,26 @@ function exactProduct(text: string, demand: CatalogDemand) {
   const words = new Set(norm(text).split(' ')), product = norm(demand.setName).split(' '), year = norm(demand.year).split(' ');
   return product.length > 0 && [...product, ...year].every(word => words.has(word));
 }
+function sourceProduct(demand: CatalogDemand) {
+  // A spaced sports hierarchy separates product from insert. It changes only
+  // where we look for a checklist; the original demand/identity stays intact.
+  // Do not split Pokémon set names (for example HS — Triumphant), unspaced
+  // punctuation, or ambiguous multi-level labels.
+  const parts = demand.category === 'SPORTS' ? demand.setName.split(/\s+[—–]\s+/u) : [];
+  return parts.length === 2 && parts.every(part => part.trim())
+    ? { product: { ...demand, setName: parts[0].trim() }, program: parts[1].trim() }
+    : { product: demand, program: null };
+}
+function matchesProgram(row: Record<string, unknown>, program: string | null) {
+  if (program === null) return true;
+  const names = ['program', 'programname', 'programlabel', 'cardtype', 'insertset', 'insert', 'subset'];
+  const explicit = Object.entries(row).filter(([key]) => names.includes(norm(key).replace(/ /g, '')))
+    .map(([, value]) => clean(value)).filter((value): value is string => value !== null);
+  if (!explicit.length && row.evidenceKind === 'literal_section') {
+    const section = field(row, ['evidencesection']); if (section) explicit.push(section);
+  }
+  return explicit.length > 0 && explicit.every(value => norm(value) === norm(program));
+}
 function directLinks(html: string, demand: CatalogDemand) {
   const links: string[] = [];
   for (const m of html.matchAll(/<a\b[^>]{0,4096}href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
@@ -56,6 +76,7 @@ export async function acquireSetCatalogDemand(input: CatalogDemand, attempt: num
   discover?: typeof prepareRecoverySources; parse?: typeof parseCatalogDemandSourceFile;
 } = {}) {
   const demand = normalizeCatalogDemand(input), now = dependencies.now ?? (() => new Date());
+  const { product, program } = sourceProduct(demand);
   const signal = dependencies.signal ? AbortSignal.any([dependencies.signal, AbortSignal.timeout(CATALOG_DEMAND_ACQUISITION_LIMITS.timeoutMs)]) : AbortSignal.timeout(CATALOG_DEMAND_ACQUISITION_LIMITS.timeoutMs);
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   let requests = 0;
@@ -80,15 +101,19 @@ export async function acquireSetCatalogDemand(input: CatalogDemand, attempt: num
   const problems = new Set<string>(), artifacts: { sourceId: string; sha256: string; bytes: Buffer; contentType: string }[] = [];
   let urls: string[] = [];
   if (demand.category === 'SPORTS' && /\btopps\b/i.test(demand.manufacturer ?? '')) {
-    try { const index = await get('https://www.topps.com/pages/checklists'); urls = directLinks(index.bytes.toString('utf8'), demand); }
+    try { const index = await get('https://www.topps.com/pages/checklists'); urls = directLinks(index.bytes.toString('utf8'), product); }
     catch { problems.add('MANUFACTURER_INDEX_UNAVAILABLE'); }
   }
   if (!urls.length && !signal.aborted) {
-    const description = { category: demand.category, year: demand.year, manufacturer: demand.manufacturer ?? 'Pokemon', set_name: demand.setName, card_type: null } as StaffInventoryResearchDescription;
+    const description = { category: product.category, year: product.year, manufacturer: product.manufacturer ?? 'Pokemon', set_name: product.setName, card_type: null } as StaffInventoryResearchDescription;
     try {
       const found = await (dependencies.discover ?? prepareRecoverySources)(description, signal, { fetchImpl: fetchBounded });
       urls = found.candidates.map(c => c.url).filter(isCatalogDemandSourceUrl).slice(0, CATALOG_DEMAND_ACQUISITION_LIMITS.sources);
-      if (!urls.length) problems.add('SOURCE_DISCOVERY_UNAVAILABLE');
+      if (!urls.length) problems.add(found.candidates.length ? 'SOURCE_DISCOVERY_POLICY_REJECTED'
+        : found.status === 'not_found' ? 'SOURCE_DISCOVERY_NOT_FOUND' : 'SOURCE_DISCOVERY_UNAVAILABLE');
+      for (const request of found.requests ?? []) {
+        if (request.status !== 'completed') problems.add(`SOURCE_DISCOVERY_${request.provider.toUpperCase()}_${request.status.toUpperCase()}`);
+      }
     } catch { problems.add('SOURCE_DISCOVERY_UNAVAILABLE'); }
   }
   const sources: any[] = [], choices: any[] = [], context: any[] = [];
@@ -101,11 +126,14 @@ export async function acquireSetCatalogDemand(input: CatalogDemand, attempt: num
       const parsed = parse({ fileName: new URL(url).pathname.split('/').pop()!, fileBuffer: acquired.bytes, contentType: acquired.contentType });
       // A discovery hit alone is not card evidence. Its exact document must identify
       // the requested product before any row can be offered for human review.
-      if (!exactProduct(parsed.text.slice(0, 1500), demand)) { problems.add('SOURCE_PRODUCT_UNRESOLVED'); continue; }
+      if (!exactProduct(parsed.text.slice(0, 1500), product)) { problems.add('SOURCE_PRODUCT_UNRESOLVED'); continue; }
       sources.push({ sourceId, url, sha256, kind: catalogDemandSourceKind(url), byteSize: acquired.bytes.length });
       artifacts.push({ sourceId, sha256, bytes: acquired.bytes, contentType: acquired.contentType });
       truncated ||= parsed.truncated;
       for (const [index, row] of parsed.rows.entries()) {
+        // A parent checklist is not proof that one of its other inserts, or an
+        // unlabelled card row, belongs to the explicitly requested program.
+        if (!matchesProgram(row, program)) continue;
         const name = field(row, ['player', 'playerseed', 'name', 'cardname']), number = field(row, ['cardnumber', 'number', 'card', 'no']);
         const printing = field(row, ['parallel', 'variant', 'finish']);
         // Base Set denotes a checklist program; prefix guesses and section-only
@@ -118,6 +146,7 @@ export async function acquireSetCatalogDemand(input: CatalogDemand, attempt: num
         choices.push({ rowId, identity, parallel: printing, sourceId, locator, diagnostics: ['Unreviewed source row. Confirm the physical card and finish; source inclusion is not catalog approval.'] });
       }
       for (const [index, row] of parsed.context.entries()) {
+        if (!matchesProgram(row, program)) continue;
         const parallel = field(row, ['parallel', 'variant']); if (!parallel) continue;
         context.push({ parallel, program: field(row, ['program', 'programname']), serial: field(row, ['serial', 'serialnumber', 'printRun']), sourceId, locator: `program-parallel-row:${index + 1}` });
       }
