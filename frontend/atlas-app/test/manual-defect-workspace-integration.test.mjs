@@ -724,3 +724,13 @@ test('a retained unresolved hold reopens identity review on reload and remains r
  assert.ok(f.defects());assert.match(f.text(),/This card is held for identity review/);f.button('Review card identity').props.onClick();f.render();
  assert.ok(f.variant());assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
 });
+
+test('card correction exits the variant panel into its visible editor and retains pending-save navigation locks',async()=>{
+ const f=harness({initialView:{identity:{cardName:'Saved card',parallel:'Saved printing'},variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'UNRESOLVED'}}}});
+ await flush();f.render();assert.ok(f.variant());const edit=f.button('Edit card details').props.onClick;
+ f.variant().onActivityChange(true);f.render();edit();f.render();assert.ok(f.variant(),'a stale edit handler cannot leave pending variant recovery');
+ f.variant().onActivityChange(false);f.render();f.button('Edit card details').props.onClick();await flush();f.render();
+ assert.equal(f.variant(),undefined);assert.match(f.text(),/Correct card details/);assert.ok(f.button('Save card details'));assert.equal(f.actions.length,0);
+ f.button('Discard changes').props.onClick();f.render();assert.ok(f.geometry());assert.ok(f.button('Review card identity'));
+ f.button('Review card identity').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.actions.length,0);f.dispose();
+});
