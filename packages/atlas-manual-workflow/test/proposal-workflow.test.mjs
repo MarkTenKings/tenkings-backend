@@ -216,17 +216,21 @@ test('individual review is a durable idempotent action, rejects concurrent stale
   assert.equal(f.publications.length,0);
 });
 
-test('atomic variant resolver adopts identity once, preserves reusable geometry, and rejects machine confirmation',async()=>{
+test('variant confirmation preserves completed geometry/findings and permits exact final approval without repeating review',async()=>{
  let resolutions=0;const resolve=async({card})=>{resolutions++;return {...card.draft.identity,parallel:'Gold Refractor'};};
- const f=await fixture({resolveVariantConfirmation:resolve}),before=f.card(),prior=await f.state(),actionId=randomUUID(),command={actionId,expectedRevision:before.revision,action:{type:'VARIANT_CONFIRM'}};
- const changed=await f.workflow.service.execute(f.staff,f.cardId,command);assert.equal(changed.card.draft.identity.parallel,'Gold Refractor');assert.equal(changed.card.draft.identityRevision,before.draft.identityRevision+1);assert.notDeepEqual(changed.card.draft.geometry,before.draft.geometry);assert.deepEqual(changed.card.draft.defects,before.draft.defects);assert.deepEqual(changed.card.draft.source,before.draft.source);
+ const f=await fixture({resolveVariantConfirmation:resolve});
+ await f.review();await f.execute({type:'MEASURE_SIDE',side:'FRONT'});await f.inspect();await f.confirm();
+ const before=f.card(),prior=await f.state(),preview=await f.workflow.service.previewReport(f.staff,f.cardId),actionId=randomUUID(),command={actionId,expectedRevision:before.revision,action:{type:'VARIANT_CONFIRM'}};
+ const changed=await f.workflow.service.execute(f.staff,f.cardId,command);assert.equal(changed.card.draft.identity.parallel,'Gold Refractor');assert.equal(changed.card.draft.identityRevision,before.draft.identityRevision+1);assert.deepEqual(changed.card.draft.geometry,before.draft.geometry);assert.deepEqual(changed.card.draft.defects,before.draft.defects);assert.deepEqual(changed.card.draft.source,before.draft.source);assert.deepEqual(changed.card.draft.assistance,before.draft.assistance);
  const after=await f.state();
- for(const side of SIDES){assert.ok(prior.geometry.sides[side].confirmation);assert.equal(after.geometry.sides[side].confirmation,null);
-  assert.deepEqual(after.geometry.sides[side],{...prior.geometry.sides[side],reviewRevision:prior.geometry.sides[side].reviewRevision+1,confirmation:null});}
- await assert.rejects(f.workflow.service.previewReport(f.staff,f.cardId),{code:'MANUAL_GEOMETRY_REVIEW_REQUIRED'});
+ assert.ok(prior.defects.confirmation);assert.deepEqual(after.defects,prior.defects);
+ for(const side of SIDES){assert.ok(prior.geometry.sides[side].confirmation);assert.deepEqual(after.geometry.sides[side],prior.geometry.sides[side]);}
+ const currentPreview=await f.workflow.service.previewReport(f.staff,f.cardId);
+ assert.deepEqual(currentPreview.report.grade,preview.report.grade);assert.equal(currentPreview.report.identity.parallel,'Gold Refractor');assert.notEqual(currentPreview.reportHash,preview.reportHash);
+ await assert.rejects(f.execute({type:'APPROVE_REPORT',reportHash:preview.reportHash,reviewed:true}),{code:'MANUAL_REPORT_STALE'});
  assert.deepEqual(await f.workflow.service.execute(f.staff,f.cardId,command),changed);assert.equal(resolutions,1);
  const same=await f.execute({type:'VARIANT_CONFIRM'});assert.equal(same.card.draft.identityRevision,changed.card.draft.identityRevision);assert.deepEqual(same.card.draft.geometry,changed.card.draft.geometry);
- await f.execute({type:'CONFIRM_GEOMETRY',reviewed:true,base:Object.fromEntries(SIDES.map(side=>[side,geometryBase(after.geometry,side,'REVIEW')]))});
- const confirmed=f.card();await f.execute({type:'VARIANT_CONFIRM'});assert.deepEqual(f.card().draft.geometry,confirmed.draft.geometry);
- const machine=await fixture({resolveVariantConfirmation:resolve,actorKind:'MACHINE'});await assert.rejects(machine.execute({type:'VARIANT_CONFIRM'}),{code:'VARIANT_CONFIRMATION_UNAVAILABLE'});assert.equal(resolutions,3);
+ const approved=await f.execute({type:'APPROVE_REPORT',reportHash:(await f.workflow.service.previewReport(f.staff,f.cardId)).reportHash,reviewed:true});
+ assert.deepEqual(approved.card.draft.geometry,before.draft.geometry);assert.deepEqual(approved.card.draft.defects,before.draft.defects);assert.equal(f.commits.at(-1).approval.identity.parallel,'Gold Refractor');
+ const machine=await fixture({resolveVariantConfirmation:resolve,actorKind:'MACHINE'});await assert.rejects(machine.execute({type:'VARIANT_CONFIRM'}),{code:'VARIANT_CONFIRMATION_UNAVAILABLE'});assert.equal(resolutions,2);
 });

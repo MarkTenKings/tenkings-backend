@@ -70,6 +70,75 @@ function exactTraceShape(finding, trace) {
 function ExactFindingOverlay({shape,visible}) {
   return visible&&shape.path?<svg className="ad-exact-outline" viewBox="0 0 1270 1778" preserveAspectRatio="none" aria-hidden="true"><path d={shape.path}/></svg>:null;
 }
+
+function FindingsOverviewSide({ workspace, side, image, offset, astra, disabled, readOnly, onReady, onSelectFinding, onSelectSide, onAddFinding, onRestoreFinding, onRetry, renderObservations }) {
+  const slot = workspace.sides[side], descriptor = image?.inspection;
+  const binding = inspectionImageBinding(workspace, side, image);
+  const supplied = descriptor?.url && descriptor.sha256 === slot.frame.inspectionImageSha256;
+  const verified = useVerifiedImage(supplied ? descriptor : null);
+  const [loaded, setLoaded] = useState(null), [clean, setClean] = useState(false);
+  const ready = Boolean(supplied && verified.url && loaded === binding);
+  useEffect(() => { onReady(side, ready ? binding : null); }, [side, ready, binding, onReady]);
+  const findings = slot.findings.filter(finding => finding.reviewResult !== 'REMOVED');
+  const removed = slot.findings.filter(finding => finding.reviewResult === 'REMOVED');
+  const shapes = useMemo(() => slot.findings.filter(finding => finding.reviewResult !== 'REMOVED')
+    .map((finding, index) => ({ finding, number: offset + index + 1, ...exactTraceShape(finding) })), [slot.findings, offset]);
+  const proposals = astra?.status === 'READY' && proposalFrameMatches(workspace, astra, side)
+    ? (astra.proposals ?? []).filter(proposal => proposal.side === side && proposal.reviewStatus === 'UNREVIEWED') : [];
+  const reviewed = new Set(reviewedDefectFindingIds(workspace, side));
+  const select = finding => { if (ready && !disabled) onSelectFinding?.({ ...finding, side }); };
+  const add = () => { if (ready && !disabled && !readOnly && !slot.pending) onAddFinding?.({ side, imageSha256: slot.frame.inspectionImageSha256, findingId: null, intent: 'ADD' }); };
+  return <section className="ad-overview-side" aria-label={`${name(side)} findings overview`}>
+    <header><h2>{name(side)}</h2><span>{findings.length} {findings.length === 1 ? 'finding' : 'findings'}{proposals.length ? ` · ${proposals.length} new suggestions` : ''}</span></header>
+    <div className="ad-overview-photo-controls"><button type="button" disabled={!ready} aria-pressed={clean} onClick={() => setClean(value => !value)}>{clean ? 'Show all markings' : 'View clean photo'}</button>
+      <button type="button" disabled={!ready || disabled || readOnly || Boolean(slot.pending)} onClick={add}>Add {name(side).toLowerCase()} finding</button></div>
+    <div className="ad-overview-photo">
+      {verified.url ? <img key={binding} src={verified.url} alt={`${name(side)} full inspection photograph`} draggable="false"
+        onLoad={event => setLoaded(event.currentTarget.naturalWidth === 1350 && event.currentTarget.naturalHeight === 1858 ? binding : null)} onError={() => setLoaded(null)} />
+        : <div className="ad-overview-photo-placeholder" role={verified.error ? 'alert' : 'status'}>{verified.error ? 'This photograph could not be verified.' : supplied ? 'Verifying photograph…' : 'Inspection photograph unavailable.'}</div>}
+      {ready && !clean && <svg className="ad-overview-traces" viewBox="0 0 1350 1858" role="group" aria-label={`${name(side)} all finding markings`}>
+        <g transform="translate(40 40)">{shapes.filter(shape => shape.path).map(({ finding, number, path, anchor }) => {
+          const marker = anchor && { x: Math.max(48, Math.min(1222, anchor.x + 68)), y: Math.max(48, Math.min(1730, anchor.y - 52)) };
+          return <g key={finding.id} role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined} aria-label={`Inspect ${name(side)} finding ${number}: ${TYPES[finding.defectType]}`} data-finding-id={finding.id}
+            onClick={() => select(finding)} onKeyDown={event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); select(finding); } }}>
+            <path className="ad-overview-trace-hit" d={path}/><path className="ad-overview-trace" d={path}/>
+            {marker && <g className="ad-overview-marker"><path d={`M${anchor.x} ${anchor.y}L${marker.x} ${marker.y}`}/><circle cx={marker.x} cy={marker.y} r="38"/><text x={marker.x} y={marker.y}>{number}</text></g>}
+          </g>;
+        })}{proposals.filter(validProposalContour).map((proposal, index) => <g key={proposal.id} role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined}
+          aria-label={`Review ${name(side)} suggestion ${index + 1}: ${TYPES[proposal.defectType] ?? 'Finding'}`} onClick={() => !disabled && onSelectSide?.(side)} onKeyDown={event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); if (!disabled) onSelectSide?.(side); } }}>
+          <polygon className="ad-overview-proposal" points={proposal.canonicalContour.map(point => `${point.x * 1269},${point.y * 1777}`).join(' ')}/>
+        </g>)}</g>
+      </svg>}
+    </div>
+    {!ready && verified.url && <p role="status">Verifying the complete saved photograph before review.</p>}
+    {verified.error && <button type="button" disabled={disabled} onClick={verified.retry}>Retry {name(side).toLowerCase()} photograph</button>}
+    {slot.pending && <p className="ad-overview-pending" role="status">Your change is saved. Measurement must finish before approval. <button type="button" disabled={disabled || readOnly || !onRetry} onClick={() => onRetry?.(side)}>Retry measurement</button><button type="button" disabled={disabled} onClick={() => onSelectSide?.(side)}>Review pending change</button></p>}
+    <ol className="ad-overview-index" start={offset + 1} aria-label={`${name(side)} complete finding list`}>
+      {shapes.map(({ finding, number }) => <li key={finding.id}><button type="button" disabled={!ready || disabled} onClick={() => select(finding)} aria-label={`Inspect ${name(side)} finding ${number}`}>
+        <b>{number}</b><span><strong>{TYPES[finding.defectType]}</strong><small>{areaOf(finding).toLocaleString('en-US', { maximumFractionDigits: 6 })} mm² · {regionsOf(finding).map(region => region.zone.toLowerCase()).join(', ')}{reviewed.has(finding.id) || workspace.confirmation ? ' · Reviewed' : ''}</small></span><span aria-hidden="true">↗</span>
+      </button></li>)}
+    </ol>
+    {!findings.length && !proposals.length && <p className="ad-overview-empty">No findings recorded on {name(side).toLowerCase()}. Check the full photo and add any visible damage.</p>}
+    {proposals.length > 0 && <section className="ad-overview-suggestions" aria-label={`${name(side)} new suggestions`}><h3>New suggestions</h3><p>Dashed outlines · measurements follow confirmation.</p>{proposals.map((proposal, index) => <button key={proposal.id} type="button" disabled={!ready || disabled} onClick={() => onSelectSide?.(side)}>{index + 1}. {TYPES[proposal.defectType] ?? 'Finding'} · Review suggestion</button>)}</section>}
+    {removed.length > 0 && <details className="ad-overview-rejected"><summary>Rejected findings ({removed.length})</summary><ul>{removed.map(finding => <li key={finding.id}><span>{TYPES[finding.defectType]}{finding.geometryExclusion ? ' · Retained in previous image frame' : ''}</span><button type="button" disabled={!ready || disabled || readOnly || Boolean(slot.pending) || Boolean(finding.geometryExclusion) || !onRestoreFinding} onClick={() => onRestoreFinding?.({ ...finding, side })}>Restore finding</button></li>)}</ul></details>}
+    {renderObservations?.({ side, onTrace: add, onlySide: true, disabled: disabled || !ready || readOnly || Boolean(slot.pending) })}
+  </section>;
+}
+
+/** Display-only paired entry. The host owns the one deliberate, durable
+ * both-side confirmation and the separate final report approval. */
+export function FindingsOverview({ workspace, images, astra, disabled = false, readOnly = false, onReadyChange, onSelectFinding, onSelectSide, onAddFinding, onRestoreFinding, onRetry, renderObservations }) {
+  const [ready, setReady] = useState({});
+  const onReady = useCallback((side, value) => setReady(previous => previous[side] === value ? previous : { ...previous, [side]: value }), []);
+  const bothReady = SIDES.every(side => images?.[side]?.inspection?.sha256 === workspace.sides[side].frame.inspectionImageSha256
+    && ready[side] === inspectionImageBinding(workspace, side, images?.[side]));
+  useEffect(() => { onReadyChange?.(bothReady); }, [bothReady, onReadyChange]);
+  const frontCount = workspace.sides.FRONT.findings.filter(finding => finding.reviewResult !== 'REMOVED').length;
+  return <div className="ad-findings-overview" aria-label="All findings on Front and Back"><p className="ad-overview-intro">Review both full photographs. Select a marked finding to inspect or correct it, or add anything that was missed.</p>
+    <div className="ad-overview-pair">{SIDES.map(side => <FindingsOverviewSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]} offset={side === 'FRONT' ? 0 : frontCount} astra={astra}
+      disabled={disabled} readOnly={readOnly} onReady={onReady} onSelectFinding={onSelectFinding} onSelectSide={onSelectSide} onAddFinding={onAddFinding} onRestoreFinding={onRestoreFinding} onRetry={onRetry} renderObservations={renderObservations}/>)}</div>
+  </div>;
+}
 function SelectedFindingCallout({anchor,view,size,scale,label,number}) {
   if(!anchor)return null;
   const x=size.width/2+view.pan.x+(40+anchor.x-INSPECTION_SIZE.width/2)*scale*view.zoom;
@@ -346,7 +415,7 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
   },[focusedReview?.findingId,ready,Boolean(editor)]);
   const reviewTaskStatus=busy?'Saving & checking':error||stale?'Needs attention':!ready||!focusedReview?.imagesReady?'Verifying photographs':pending?'Measurement required':editor?'Unsaved trace':observationBlock?'Observation review required':'Human review required';
   const reviewTaskTitle=editor?(editor.findingId===null?'Trace visible damage':'Correct this finding'):observationBlock?'Resolve original observations':finding?'Review this finding':`Inspect ${name(side)} findings`;
-  const reviewTaskCopy=busy?'Your decision is being saved and the measurements checked.':error?error:stale?'This side changed while you were drawing. Your trace is retained; cancel it to use the current saved version.':!ready||!focusedReview?.imagesReady?'Both full photographs must be verified before approval.':pending?'Finish the pending measurement before reviewing another finding. Your saved change is retained.':editor?'Mark only visible damage. Approve saves and measures your trace before recording your review.':observationBlock?'Inspect each original observation below. Add a trace for visible damage. The original observation stays pending until a supported review decision is recorded; reject only a false observation.':finding?'Compare the red trace with the photograph. Adjust or reject it if needed, then approve your decision.':'Inspect this side for damage, then check the other side. Add a finding for anything you can see before approving.';
+  const reviewTaskCopy=busy?'Your decision is being saved and the measurements checked.':error?error:stale?'This side changed while you were drawing. Your trace is retained; cancel it to use the current saved version.':!ready||!focusedReview?.imagesReady?'Both full photographs must be verified before approval.':pending?'Finish the pending measurement before reviewing another finding. Your saved change is retained.':editor?focusedReview?.returnToOverview?'Mark only visible damage. Save finding measures this trace and returns to both photographs.':'Mark only visible damage. Approve saves and measures your trace before recording your review.':observationBlock?'Inspect each original observation below. Add a trace for visible damage. The original observation stays pending until a supported review decision is recorded; reject only a false observation.':finding?'Compare the red trace with the photograph. Adjust or reject it if needed, then approve your decision.':'Inspect this side for damage, then check the other side. Add a finding for anything you can see before approving.';
   const findingTypeControl=finding&&<label>Defect type <select aria-label={`${name(side)} finding type`} disabled={disabled || Boolean(editor) || finding.reviewResult === 'REMOVED' || !onEdit} value={finding.defectType}
     onChange={event => edit({ type: 'CHANGE_TYPE', defectId: finding.id, defectType: event.target.value })}>
     {Object.entries(TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -500,7 +569,7 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
       })}</ul>
     </section>}
     {error && <p role="alert">{error}</p>}
-    {focusedReview && !hidden && focusedReview.renderActions({approve:approveFocused,disabled:focusedDisabled,busy, message:resumeSavedTrace?'Trace saved · Approve retries measurement, then reviews the finding.':editor?'Approve saves this trace and reviews the finding.':focusedReview.message})}
+    {focusedReview && !hidden && focusedReview.renderActions({approve:approveFocused,disabled:focusedDisabled,busy, message:resumeSavedTrace?focusedReview.returnToOverview?'Trace saved · Save finding retries measurement before returning.':'Trace saved · Approve retries measurement, then reviews the finding.':editor?focusedReview.returnToOverview?'Save finding measures this trace, then returns to all findings.':'Approve saves this trace and reviews the finding.':focusedReview.message})}
     </div>
   </section>;
 }

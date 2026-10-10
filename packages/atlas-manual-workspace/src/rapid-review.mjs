@@ -88,8 +88,11 @@ export async function approveRapidStage(stage, view, execute) {
   if (stage !== 'findings' || !status.findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };
   const current = await inspectBothDefectSides(view, execute);
   if (!rapidReviewStatus(current).findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };
-  if (defectStatus(current.defects).confirmed) return current;
   const { proposalReview } = collectiveProposalReview(current.defects, current.astra);
+  // A later identity review can supply fresh suggestions while the unchanged
+  // image-bound findings remain confirmed. The explicit gesture must still
+  // submit that exact offered roster; a read never accepts it.
+  if (defectStatus(current.defects).confirmed && !proposalReview) return current;
   return execute({ type: 'CONFIRM_FINDINGS', base: Object.fromEntries(sides.map(side => [side, defectBase(current.defects, side)])), reviewed: true, ...(proposalReview ? { proposalReview } : {}) });
 }
 

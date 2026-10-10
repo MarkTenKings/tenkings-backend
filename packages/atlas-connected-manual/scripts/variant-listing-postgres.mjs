@@ -62,6 +62,10 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   // A fresh active claim must also stop when its original owner's access
   // version changes, even though the server process retains its own role.
   await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_job SET lease_until=clock_timestamp()-interval '1 second' WHERE key=$1",stale.key);
+  // Discovery may enqueue this card's new identity as well. Settle that
+  // independent generation before the access-revocation assertion below.
+  await store.discover();const current=await store.claim(1);assert.equal(current.card_id,staleCard);
+  assert(await store.finish(current,{state:'FAILED',code:'SYNTHETIC_CASE_FINISHED'}));
   const revokedCard=await seed();await store.discover();const revoked=await store.claim(1);assert.equal(revoked.card_id,revokedCard);
   await fixture.admin.$executeRawUnsafe('UPDATE atlas_staff."StaffIdentity" SET "accessVersion"="accessVersion"+1 WHERE id=$1::uuid',revoked.actor_id);
   await assert.rejects(store.reserveListingSource(revoked,prepareVariantListingRequest(revoked.input.identity)),{code:'VARIANT_LEASE_LOST'});

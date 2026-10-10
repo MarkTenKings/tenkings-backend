@@ -48,3 +48,47 @@
 .ad-focused .atlas-review-task{order:-3;margin:0 0 14px;flex:none}
 .ad-focused .ad-inspector-precision{order:-2;flex:none;border:1px solid #e2e6e8;border-radius:10px;padding:12px;margin:0 0 14px;font-size:11px;color:#5c6970}.ad-focused .ad-inspector-precision strong{font-weight:600}.ad-focused .ad-inspector-precision p{margin:8px 0 0;line-height:1.5}.ad-focused .ad-inspector-precision .ad-magnifier{position:relative;inset:auto;margin:10px auto 0;border-radius:9px;box-shadow:none;outline:1px solid #d6dfe1}
 .ad-focused .ad-review-panel>.ad-trace-tools,.ad-focused .ad-review-panel>.ad-finding-tools,.ad-focused .ad-review-panel>.am-side-actions{order:0}
+
+/* Rapid findings starts with both complete, unfiltered inspection photos. */
+.ad-findings-overview{flex:1;min-height:0;min-width:0;overflow:auto;padding:0 2px 20px;background:#fff;color:#232a2e;font:13px/1.45 Arial,Helvetica,sans-serif;color-scheme:light}
+.ad-findings-overview *{box-sizing:border-box}
+.ad-overview-intro{margin:4px 0 12px;color:#57616a;font-size:12px}
+.ad-overview-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px;max-width:1180px;margin:auto;align-items:start}
+.ad-overview-side{min-width:0}
+.ad-overview-side>header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-bottom:7px}
+.ad-overview-side h2{margin:0;color:#20282d;font-size:17px;font-weight:650}
+.ad-overview-side>header>span{font-size:11px;color:#57616a}
+.ad-overview-photo-controls{display:flex;justify-content:space-between;gap:8px;margin:0 0 9px}
+.ad-findings-overview button,.mc-findings-mode button{font:inherit;line-height:1.35;min-height:36px;padding:8px 11px;border:1px solid #d8dee2;border-radius:6px;background:#fff;color:#24333c;cursor:pointer}
+.ad-findings-overview button:disabled,.mc-findings-mode button:disabled{opacity:.45;cursor:default}
+.ad-findings-overview button:focus-visible,.ad-overview-traces g[role=button]:focus-visible,.mc-findings-mode button:focus-visible{outline:2px solid #b42338;outline-offset:3px}
+.ad-overview-photo-controls button{font-size:11px;min-height:40px}
+.ad-overview-photo{position:relative;width:min(100%,calc((100dvh - 305px) * 1350 / 1858));min-width:min(100%,245px);aspect-ratio:1350/1858;margin:auto;background:#10171d;border:1px solid #d8dee2;border-radius:5px;overflow:hidden}
+.ad-overview-photo>img{display:block;width:100%;height:100%;object-fit:contain;filter:none}
+.ad-overview-photo-placeholder{position:absolute;inset:0;display:grid;place-content:center;color:#fff;text-align:center;padding:24px;font-size:12px}
+.ad-overview-traces{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
+.ad-overview-traces g[role=button]{cursor:pointer}
+.ad-overview-trace{fill:none;stroke:#ff244b;stroke-width:1.6;vector-effect:non-scaling-stroke;pointer-events:none}
+.ad-overview-trace-hit{fill:none;stroke:transparent;stroke-width:20;vector-effect:non-scaling-stroke;pointer-events:stroke}
+.ad-overview-marker path{fill:none;stroke:#ff244b;stroke-width:1;vector-effect:non-scaling-stroke}
+.ad-overview-marker circle{fill:#b91738;stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke}
+.ad-overview-marker text{fill:#fff;font:600 37px Arial,Helvetica,sans-serif;text-anchor:middle;dominant-baseline:central}
+.ad-overview-proposal{fill:#ad1e3c12;stroke:#c12445;stroke-width:1.5;stroke-dasharray:5 4;vector-effect:non-scaling-stroke}
+.ad-overview-index{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:4px}
+.ad-overview-index li{margin:0;min-width:0}
+.ad-overview-index button{display:flex;gap:10px;align-items:center;text-align:left;width:100%;min-height:48px;border-color:transparent;border-bottom-color:#e8ebed;border-radius:0;padding:9px 4px}
+.ad-overview-index button>b{display:grid;place-content:center;width:24px;height:24px;flex:none;border:1px solid #f0c8d1;border-radius:50%;color:#b91738;font-size:11px}
+.ad-overview-index button>span:nth-child(2){min-width:0;flex:1}
+.ad-overview-index strong{display:block;font-size:12px;font-weight:600;color:#26343c;overflow-wrap:anywhere}
+.ad-overview-index small{display:block;font-size:10px;line-height:1.5;color:#60707b;margin-top:3px;overflow-wrap:anywhere}
+.ad-overview-index button>span:last-child{color:#7b8790}
+.ad-overview-empty,.ad-overview-pending{color:#596772;font-size:12px;margin:12px 0}
+.ad-overview-pending button{display:inline-block;font-size:11px;margin:6px 6px 0 0}
+.ad-overview-suggestions{margin:12px 0;padding:12px;border:1px dashed #dbb6be;border-radius:6px}
+.ad-overview-suggestions h3{font-size:12px;color:#26343c;margin:0}.ad-overview-suggestions p{font-size:11px;color:#65707a;margin:5px 0}
+.ad-overview-suggestions button{display:block;width:100%;font-size:12px;margin-top:5px;text-align:left}
+.ad-overview-rejected{margin:12px 0;font-size:11px;color:#5d6872}.ad-overview-rejected summary{padding:9px 0;cursor:pointer}.ad-overview-rejected ul{list-style:none;padding:0;margin:0}.ad-overview-rejected li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0}.ad-overview-rejected button{font-size:11px;flex:none}
+.mc-findings-mode{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;flex:none;border-bottom:1px solid #e5e9eb;margin-bottom:10px;font:13px/1.4 Arial,Helvetica,sans-serif;color:#26343c}
+.mc-findings-mode strong{font-size:15px;font-weight:600}.mc-findings-mode button{font-size:12px;min-height:40px}
+@media(max-width:700px){.ad-overview-pair{gap:16px}.ad-overview-photo{width:100%;min-width:0}.ad-overview-photo-controls{flex-direction:column;gap:4px}.ad-overview-side h2{font-size:15px}.ad-overview-side>header>span{font-size:10px}.mc-findings-mode{gap:8px}.mc-findings-mode button{font-size:11px}.ad-overview-index button{gap:6px}.ad-overview-index strong{font-size:11px}.ad-overview-index button>span:last-child{display:none}}
+@media(max-width:440px){.ad-overview-pair{grid-template-columns:minmax(0,1fr);gap:24px}.ad-overview-photo{width:min(100%,330px)}.ad-overview-photo-controls{flex-direction:row}.ad-overview-index strong{font-size:12px}.ad-overview-side>header>span{font-size:11px}.mc-findings-mode strong{font-size:13px}.mc-findings-mode button{max-width:155px}.ad-overview-rejected li{flex-wrap:wrap}}

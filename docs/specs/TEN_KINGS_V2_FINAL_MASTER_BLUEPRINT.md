@@ -1,3 +1,11 @@
+### October 10, 2026 owner-approved Rapid Review correction and test-card reset
+
+After reviewing geometry, Rapid Review defaults to full Front and Back photographs with every finding marked. One explicit **Approve all findings** approves the displayed reviewed findings on both sides and advances toward the grade; one-at-a-time review remains available at any time. Staff can correct traces or add missed findings from this review. Final grade/report approval remains a separate explicit human action bound to the exact saved report. Browsing alone never approves a finding.
+
+Move variant confirmation above the saved identity and reference choices. Confirming an initially unknown printing or an equivalent collector-number/finish label must preserve saved human geometry and findings rather than restarting their review. Genuine identity corrections retain their appropriate analysis and exact-report checks. Saved photographs, measured evidence, scoring policy and human decisions remain authoritative.
+
+Mark explicitly identifies every current ATLAS card as his own disposable test card and requests clearing the entire active workspace for a fresh start, including current approved test reports. Prepare a fresh fixed-scope inventory and retire those records through the existing immutable deletion receipts/tombstones; preserve original photos, historical grades, provider accounting and unrelated Ten Kings/customer/account/configuration data. A retry must not capture newly created cards. This is authority for the scoped cleanup and review repair; release, reset outcome and browser qualification are recorded separately.
+
 # Ten Kings V2 — Final Master Product and Architecture Blueprint
 
 ### Owner-approved ATLAS damage scoring calibration — September 30, 2026

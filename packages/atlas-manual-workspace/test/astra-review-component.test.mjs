@@ -33,7 +33,7 @@ function astraFor(state, status = 'READY') {
       canonicalContour: [{ x: .2, y: .2 }, { x: .22, y: .2 }, { x: .22, y: .22 }, { x: .2, y: .22 }],
       observation: 'Possible short scratch.', uncertainty: 'May be a printed line.' }] };
 }
-function harness(initial = {}, browser) {
+function harness(initial = {}, browser, component = 'DefectReviewWorkspace') {
   const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree;
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((value, n) => !Object.is(value, old.deps[n]))) current[i] = { deps, value: make() }; return current[i].value; };
   const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
@@ -85,10 +85,10 @@ function harness(initial = {}, browser) {
     onEdit: async request => f.calls.push({ kind: 'edit', request }), onInspectBoth: async () => {}, onConfirm: async () => {},
     onReviewProposal: async request => f.calls.push({ kind: 'proposal', request }), onAnalyzeDefects: async request => f.calls.push({ kind: 'analyze', request }),
     ...initial } };
-  f.render = () => { let count = 0; do { dirty = false; tree = expand({ type: exports.DefectReviewWorkspace, props: f.props }); const pending = effects; effects = []; pending.forEach(run => run());
+  f.render = () => { let count = 0; do { dirty = false; tree = expand({ type: exports[component], props: f.props }); const pending = effects; effects = []; pending.forEach(run => run());
     assert.ok(++count < 20, 'effects settled'); } while (dirty); return tree; };
   f.nodes = (predicate, side) => all(side ? f.side(side) : tree, predicate);
-  f.side = side => all(tree, node => node.type === 'section' && node.props['aria-label'] === `${side} defects`)[0];
+  f.side = side => all(tree, node => node.type === 'section' && node.props['aria-label'] === `${side} ${component==='FindingsOverview'?'findings overview':'defects'}`)[0];
   f.button = (label, side) => { const hit = f.nodes(node => node.type === 'button' && text(node) === label, side)[0]; assert.ok(hit, label); return hit; };
   f.click = async (label, side) => { const hit = f.button(label, side); assert.equal(Boolean(hit.props.disabled), false, `${label} enabled`); await hit.props.onClick(); f.render(); };
   f.control = (label, side) => { const hit = f.nodes(node => node.props?.['aria-label'] === label, side)[0]; assert.ok(hit, label); return hit; };
@@ -656,4 +656,43 @@ test('unmeasured observations block empty finding approval and direct tracing ac
   assert.equal(f.calls.length,0);f.draw();assert.equal(f.button('Approve','Front').props.disabled,false);
   assert.ok(f.has('Original observation remains unresolved'),'drawing does not silently reject the observation');
   await f.click('Cancel trace','Front');assert.ok(f.button('Approve','Front').props.disabled);assert.equal(approvals,0);assert.equal(f.calls.length,0);
+});
+
+test('paired overview verifies both full photographs, marks every exact trace, and browsing never approves',async()=>{
+  const state=workspace(),events=[],readiness=[];
+  const f=harness({workspace:state,onReadyChange:value=>readiness.push(value),onSelectFinding:value=>events.push(['select',value]),onAddFinding:value=>events.push(['add',value])},undefined,'FindingsOverview');
+  assert.equal(f.nodes(node=>node.type==='img').length,2);assert.equal(readiness.at(-1),false);
+  assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,0,'unverified photos cannot present evidence');
+  f.ready();assert.equal(readiness.at(-1),true);
+  assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,2);
+  assert.equal(f.nodes(node=>node.props?.className==='ad-overview-traces')[0].props.viewBox,'0 0 1350 1858');
+  await f.clickControl('Inspect Back finding 2');assert.equal(events[0][0],'select');assert.equal(events[0][1].id,state.sides.BACK.findings[0].id);
+  assert.deepEqual(events[0][1].finalTrace,state.sides.BACK.findings[0].finalTrace);
+  await f.click('Add front finding');assert.deepEqual(JSON.parse(JSON.stringify(events[1])),['add',{side:'FRONT',imageSha256:state.sides.FRONT.frame.inspectionImageSha256,findingId:null,intent:'ADD'}]);
+  await f.click('View clean photo','Front');assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,1);
+  await f.click('Show all markings','Front');assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,2);
+  assert.deepEqual(f.calls,[]);assert.equal(state.confirmation,null);assert.equal(state.sides.FRONT.inspection,null);
+});
+
+test('overview keeps zero, many, rejected and pending findings available without inventing measurements',async()=>{
+  const empty=harness({},undefined,'FindingsOverview');empty.ready();assert.ok(empty.has('No findings recorded on front.'));assert.ok(empty.has('No findings recorded on back.'));assert.equal(empty.calls.length,0);
+  const state=structuredClone(workspace());const retained=state.sides.FRONT.findings[0];
+  state.sides.FRONT.findings=Array.from({length:41},(_,index)=>({...retained,id:`front-${index}`}));
+  state.sides.FRONT.findings.push({...retained,id:'removed',reviewResult:'REMOVED',reviewResultBeforeRemoval:retained.reviewResult});
+  const restored=[],f=harness({workspace:state,onRestoreFinding:value=>restored.push(value)},undefined,'FindingsOverview');f.ready();
+  assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,42,'no finding cap or grouping');
+  assert.ok(f.control('Inspect Back finding 42'));assert.ok(f.has('Rejected findings (1)'));
+  await f.click('Restore finding');assert.equal(restored[0].id,'removed');assert.equal(f.calls.length,0);
+  f.props.disabled=true;f.render();assert.equal(f.button('Add front finding').props.disabled,true);assert.equal(f.control('Inspect Back finding 42').props.disabled,true);
+  f.props.disabled=false;f.props.workspace=actions.beginDefectEdit(workspace(),{side:'FRONT',base:actions.defectBase(workspace(),'FRONT'),actor:'HUMAN',action:{type:'CHANGE_TYPE',defectId:retained.id,defectType:'VISIBLE_WHITENING'}}).state;f.render();f.ready();
+  assert.ok(f.has('Measurement must finish before approval.'));assert.equal(f.button('Add front finding').props.disabled,true);
+});
+
+test('overview image changes revoke readiness and pending suggestions remain distinct from measured findings',()=>{
+  const state=workspace(),readiness=[];
+  const f=harness({workspace:state,astra:astraFor(state),onReadyChange:value=>readiness.push(value)},undefined,'FindingsOverview');f.ready();
+  assert.equal(f.nodes(node=>node.props?.className==='ad-overview-proposal').length,1);assert.ok(f.has('measurements follow confirmation'));
+  assert.equal(f.nodes(node=>node.props?.className==='ad-overview-trace').length,2);
+  f.props.images={...f.props.images,BACK:{inspection:{url:'blob:wrong',sha256:'f'.repeat(64)}}};f.render();
+  assert.equal(readiness.at(-1),false);assert.equal(f.button('Add back finding').props.disabled,true);assert.equal(f.calls.length,0);
 });

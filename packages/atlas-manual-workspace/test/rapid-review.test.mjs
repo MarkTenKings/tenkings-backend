@@ -76,3 +76,31 @@ test('unmeasurable observations prevent bulk confirmation and a failed side save
  assert.equal(calls,2);assert.equal(f.view.defects.confirmation,null);assert.equal(f.actions.at(-1).side,'FRONT');
  await approveRapidStage('findings',f.view,f.execute);assert.ok(f.view.defects.confirmation);
 });
+
+test('one bulk gesture confirms both sides, keeps a rejection and a corrected type, and resumes a failed save without duplicate side review',async()=>{
+  const f=fixture();await approveRapidStage('geometry',f.view,f.execute);f.actions=[];
+  const defects=structuredClone(f.view.defects);
+  defects.sides.FRONT.findings[0].defectType='VISIBLE_WHITENING';defects.sides.BACK.findings[0].reviewResultBeforeRemoval=defects.sides.BACK.findings[0].reviewResult;defects.sides.BACK.findings[0].reviewResult='REMOVED';
+  f.view={...f.view,defects};let fail=true;
+  await assert.rejects(approveRapidStage('findings',f.view,async action=>{if(action.type==='CONFIRM_FINDINGS'&&fail){fail=false;throw Error('reply unavailable');}return f.execute(action);}));
+  assert.deepEqual(f.actions.map(action=>action.type),['INSPECT_SIDE','INSPECT_SIDE']);assert.equal(f.view.defects.confirmation,null);
+  await approveRapidStage('findings',f.view,f.execute);
+  assert.deepEqual(f.actions.map(action=>action.type),['INSPECT_SIDE','INSPECT_SIDE','CONFIRM_FINDINGS']);
+  assert.equal(f.view.defects.sides.FRONT.findings[0].defectType,'VISIBLE_WHITENING');assert.equal(f.view.defects.sides.BACK.findings[0].reviewResult,'REMOVED');
+  assert.ok(f.view.defects.confirmation);assert.equal(f.actions.some(action=>action.type==='APPROVE_REPORT'),false);
+});
+
+test('confirmed findings still submit a fresh exact proposal roster after a genuine identity recheck',async()=>{
+  const f=fixture();await approveRapidStage('geometry',f.view,f.execute);await approveRapidStage('findings',f.view,f.execute);f.actions=[];
+  const proposal={id:'fresh-proposal',side:'BACK',reviewStatus:'UNREVIEWED',canonicalContour:[{x:.2,y:.2},{x:.3,y:.2},{x:.3,y:.3}]};
+  f.view={...f.view,astra:{enabled:true,status:'READY',analysisId:'fresh-analysis',base:Object.fromEntries(['FRONT','BACK'].map(side=>[side,defectBase(f.view.defects,side)])),proposals:[proposal],proposalReview:{analysisId:'fresh-analysis',resultHash:'f'.repeat(64),proposalIds:[proposal.id]}}};
+  const offered=structuredClone(f.view.astra.proposalReview);assert.ok(f.view.defects.confirmation);assert.equal(rapidReviewStatus(f.view).findings,true);
+  await approveRapidStage('findings',f.view,f.execute);
+  assert.deepEqual(f.actions.map(action=>action.type),['CONFIRM_FINDINGS']);assert.deepEqual(f.actions[0].proposalReview,offered);
+});
+
+test('zero findings still require an explicit both-side confirmation',async()=>{
+  const f=fixture();f.view.defects=workspace(false);await approveRapidStage('geometry',f.view,f.execute);f.actions=[];
+  assert.equal(f.view.defects.confirmation,null);assert.equal(rapidReviewStatus(f.view).findings,true);assert.equal(f.actions.length,0);
+  await approveRapidStage('findings',f.view,f.execute);assert.deepEqual(f.actions.map(action=>action.type),['INSPECT_SIDE','INSPECT_SIDE','CONFIRM_FINDINGS']);
+});

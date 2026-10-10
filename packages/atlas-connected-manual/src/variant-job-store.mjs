@@ -1,4 +1,4 @@
-import {variantSelectionParallel,validateVariantReviewSnapshot} from '@tenkings/card-catalog-evidence';
+import {variantSelectionParallel,validateVariantReviewSnapshot,compareVariantCardNumber} from '@tenkings/card-catalog-evidence';
 import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
@@ -26,6 +26,28 @@ function evidenceText(value,field,bodyLimit){
  requireThat(Buffer.byteLength(text)<=8388608,413,'VARIANT_EVIDENCE_TOO_LARGE');return text;
 }
 export const variantIdentityHash=identity=>digest(canonical(identity));
+const identityText=value=>typeof value==='string'?value.normalize('NFC').trim().replace(/\s+/gu,' ').toLowerCase():value??null;
+const printingParts=value=>{
+ const text=identityText(value),match=/^(traditional chinese|simplified chinese|english|french|german|spanish|italian|portuguese|japanese|korean|chinese) (.+)$/.exec(text??'');
+ const finish=match?match[2]:text;
+ return {language:match?.[1]??null,finish:({'holofoil':'holo','reverse holofoil':'reverse holo'})[finish]??finish};
+};
+/** First specifying an unknown finish does not contradict the grading already
+ * reviewed from these photos. Only exact formatting/collector aliases and
+ * documented Pokémon foil synonyms are equivalent; other changes still recheck. */
+export function variantCorrectionRequiresRecheck(previous,next){
+ for(const key of new Set([...Object.keys(previous),...Object.keys(next)])){
+  if(key==='parallel')continue;
+  if(identityText(previous[key])===identityText(next[key]))continue;
+  if(key==='cardNumber'&&compareVariantCardNumber(previous[key]??null,next[key]??null)==='match')continue;
+  return true;
+ }
+ if(identityText(previous.parallel)===null)return false;
+ if(identityText(previous.parallel)===identityText(next.parallel))return false;
+ if(!Object.hasOwn(previous,'cardName')||!Object.hasOwn(next,'cardName'))return true;
+ const a=printingParts(previous.parallel),b=printingParts(next.parallel);
+ return a.finish!==b.finish||Boolean(a.language&&a.language!==b.language);
+}
 export const variantJobKey=input=>digest(canonical([VARIANT_POLICY,input.cardId,input.sourceHash,input.identityRevision,input.identityHash,input.generation??null]));
 export const variantRefreshable=job=>Boolean(job&&(job.state==='READY'||['FAILED','STALE'].includes(job.state)&&!job.dispatch_id));
 const unpack=row=>{
@@ -180,7 +202,11 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const card=await authorized(tx,principal,cardId,true),{job,identity}=await checkAction(tx,card,input.action),changed=variantIdentityHash(identity)!==variantIdentityHash(card.draft.identity),revision=card.draft.identityRevision+(changed?1:0),previous=await confirmation(tx,card);
       const staleReady=commitGuard?.version==='atlas-variant-recheck-fence-v1';
       if(staleReady)requireThat(previous?.recheck_state==='READY'&&canonical(commitGuard)===canonical(recheckFence(card,previous)),409,'VARIANT_RECHECK_STALE');
-      const needsRecheck=changed||previous?.reprocess_required===true,analysisActionId=changed||previous?.recheck_retryable===true||staleReady?variantAnalysisActionId(input.actionId):previous?.analysis_action_id??variantAnalysisActionId(input.actionId);
+      const correction=variantCorrectionRequiresRecheck(card.draft.identity,identity);
+      // Keep any genuine outstanding recheck bound to its original request.
+      // An alias edit during that check still needs a newly bound result, while
+      // ordinary first-time clarification alone creates no paid grading work.
+      const needsRecheck=correction||previous?.reprocess_required===true,analysisActionId=needsRecheck&&(changed||previous?.recheck_retryable===true||staleReady)?variantAnalysisActionId(input.actionId):previous?.analysis_action_id??variantAnalysisActionId(input.actionId);
       requireThat(variantIdentityHash(draft.identity)===variantIdentityHash(identity)&&draft.identityRevision===revision,409,'VARIANT_IDENTITY_STALE');
       await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,job_key,result_hash,catalog_hash,candidate_id,decision,reprocess_required,analysis_action_id,observed_features) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::uuid,$14)`,cardId,input.actionId,principal.id,input.action.sourceHash,revision,variantIdentityHash(identity),job?.key??null,job?.result_hash??null,job?.catalog_hash??null,input.action.candidateId,input.action.decision,needsRecheck,analysisActionId,input.action.observedFeatures??null);
       if(['SELECTED','MANUAL'].includes(input.action.decision)){const candidate=job?.result?.catalog?.candidates.find(c=>c.candidateId===input.action.candidateId);const observedAt=new Date().toISOString(),payload={decision:input.action.decision,cardId,actionId:input.actionId,sourceHash:input.action.sourceHash,identityRevision:revision,identityHash:variantIdentityHash(identity),identity:{...variantCatalogIdentity('playerName'in identity?'SPORTS':'POKEMON',identity),language:candidate?.identity.language??null},parallel:identity.parallel,observedFeatures:input.action.observedFeatures??null,catalog:job?.catalog??null,candidateId:input.action.candidateId,observedAt,referencePermission:input.action.referencePermission??null},text=canonical(payload,{maxBytes:2097152});

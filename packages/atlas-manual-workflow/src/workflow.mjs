@@ -203,14 +203,10 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       const identity=canonicalizeNewSpeedsterSessionIdentity(geometry.profile,await resolveVariantConfirmation({staff,card,action}));
       const identityChanged=!equal(identity,draft.identity);
       draft={...draft,identity,identityRevision:draft.identityRevision+(identityChanged?1:0)};
-      // A different printing can have a different border or card layout. Keep
-      // the actual photos, transforms and human findings, but require a new
-      // physical/printed-border review before those coordinates can be used
-      // to approve the corrected identity. The defect recheck alone does not
-      // re-run or approve the original card-type map.
-      if(identityChanged) geometry=parseGeometryWorkspace({...geometry,reportRevision:geometry.reportRevision+1,
-        sides:Object.fromEntries(SIDES.map(side=>[side,{...geometry.sides[side],
-          reviewRevision:geometry.sides[side].reviewRevision+1,confirmation:null}]))});
+      // The confirmation changes identity metadata, not either photograph or
+      // its measured outlines. Preserve the exact saved human geometry and
+      // findings. Actual photo/geometry edits still invalidate their own
+      // confirmations; meaningful identity corrections have a separate recheck.
     } else if (action.type === 'IDENTITY_EDIT') {
       object(action, ['type', 'identity']);
       draft = { ...draft, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, action.identity), identityRevision: draft.identityRevision + 1 };
