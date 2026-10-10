@@ -29,7 +29,7 @@ export function frameFromGeometry(geometry, side) {
  * immutable artifacts. No photo, mask or model call occurs in a DB transaction.
  */
 export function createManualWorkflow({ repository, artifacts, pythonExecutable, measurementLimits, prepare = null, replaceSources = null, assertCurrent = null, measure = measureDefectWorkspaceEdit, resolveProposal = null, afterConfirm = null,
-  resolveConfirmation = null, assertReviewComplete = null, confirmationTimeoutMs = 180000, afterApprove = null, resolveFinalReview = null }) {
+  resolveConfirmation = null, assertReviewComplete = null, confirmationTimeoutMs = 180000, afterApprove = null, resolveFinalReview = null, resolveVariantConfirmation = null, prepareVariantConfirmation = null }) {
   requireThat(Number.isSafeInteger(confirmationTimeoutMs) && confirmationTimeoutMs > 0 && confirmationTimeoutMs <= 180000);
   const domain = work => async (...args) => {
     try { return await work(...args); }
@@ -198,6 +198,19 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
     } else if (action.type === 'CONFIRM_GEOMETRY') {
       object(action, ['type', 'base', 'reviewed']);
       geometry = confirmBothGeometry(geometry, { base: action.base, reviewed: action.reviewed, actor: 'HUMAN' }).state;
+    } else if (action.type === 'VARIANT_CONFIRM') {
+      requireThat(typeof resolveVariantConfirmation==='function'&&principal.actorKind!=='MACHINE',403,'VARIANT_CONFIRMATION_UNAVAILABLE');
+      const identity=canonicalizeNewSpeedsterSessionIdentity(geometry.profile,await resolveVariantConfirmation({staff,card,action}));
+      const identityChanged=!equal(identity,draft.identity);
+      draft={...draft,identity,identityRevision:draft.identityRevision+(identityChanged?1:0)};
+      // A different printing can have a different border or card layout. Keep
+      // the actual photos, transforms and human findings, but require a new
+      // physical/printed-border review before those coordinates can be used
+      // to approve the corrected identity. The defect recheck alone does not
+      // re-run or approve the original card-type map.
+      if(identityChanged) geometry=parseGeometryWorkspace({...geometry,reportRevision:geometry.reportRevision+1,
+        sides:Object.fromEntries(SIDES.map(side=>[side,{...geometry.sides[side],
+          reviewRevision:geometry.sides[side].reviewRevision+1,confirmation:null}]))});
     } else if (action.type === 'IDENTITY_EDIT') {
       object(action, ['type', 'identity']);
       draft = { ...draft, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, action.identity), identityRevision: draft.identityRevision + 1 };
@@ -296,6 +309,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
   const ordinaryService = createManualService({ repository, reduce: domain((context, staff) => context.action.type === 'CONFIRM_FINDINGS'
     ? confirmationBudget(context.startedAt, confirmationTimeoutMs).run(() => reduce(context, staff)) : reduce(context, staff)), buildReport: domain(buildReport),
     beforeCommit: async ({ card, draft, action, startedAt }, staff) => {
+      if(action.type==='VARIANT_CONFIRM'&&prepareVariantConfirmation)return prepareVariantConfirmation({staff,card,action});
       if (!assertReviewComplete || !['CONFIRM_FINDINGS', 'APPROVE_REPORT'].includes(action.type)) return null;
       const budget = confirmationBudget(startedAt, confirmationTimeoutMs); budget.check();
       const analysis = await budget.run(() => assertReviewComplete({ staff, card: { ...card, draft }, selection: action.proposalReview ?? null }));

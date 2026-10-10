@@ -1,0 +1,42 @@
+// Matched local A/B only. Owns its cluster, roles, child and synthetic cards.
+import assert from 'node:assert/strict';
+import {randomUUID,randomBytes} from 'node:crypto';
+import {fork} from 'node:child_process';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {resolve,join} from 'node:path';
+import {createOwnedManualFixture} from '../../atlas-manual-service/scripts/owned-fixture.mjs';
+import {intakeGrantSQL} from '@atlas/manual-intake/repository';
+import {connectedGrantSQL} from '../src/details.mjs';
+import {variantWorkerRoleSQL,variantWorkerGrantSQL} from '../src/variant-worker-grants.mjs';
+import {createManualRepository} from '@atlas/manual-service/repository';
+import {createManualService} from '@atlas/manual-service';
+import {digest} from '@atlas/manual-service/contract';
+const output=process.env.ATLAS_VARIANT_PERFORMANCE_EVIDENCE;assert(output&&resolve(output)===output);await mkdir(output,{recursive:true,mode:0o700});
+const fixture=await createOwnedManualFixture(process.argv.slice(2)),connection=fixture.connect({manualConnectionLimit:4});let child=null;
+const quantile=(values,q)=>[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.ceil(values.length*q)-1)];
+const summary=values=>({count:values.length,p50Ms:quantile(values,.5),p95Ms:quantile(values,.95),maxMs:Math.max(...values)});
+try{
+ await fixture.cluster.sql('ALTER ROLE atlas_fixture_manual CONNECTION LIMIT 4',[],fixture.database.name);
+ for(const grant of[intakeGrantSQL,connectedGrantSQL])await fixture.cluster.sql(grant('atlas_fixture_manual'),[],fixture.database.name);
+ const role='atlas_fixture_variant_performance',password=randomBytes(24).toString('hex');await fixture.cluster.sql(variantWorkerRoleSQL(role));await fixture.cluster.sql(`ALTER ROLE ${role} LOGIN PASSWORD '${password}'`);
+ await fixture.cluster.sql(variantWorkerGrantSQL(role),[],fixture.database.name);
+ const workerUrl=new URL(fixture.database.adminUrl);workerUrl.username=role;workerUrl.password=password;workerUrl.searchParams.set('schema','atlas_manual');workerUrl.searchParams.set('connection_limit','1');
+ const {auth,boundary}=connection;const boot=await auth.bootstrap(''),browser=`${fixture.config.cookies.browser}=${boot.browserToken}`,challenge=await auth.send(browser,boot.csrf,{phone:'+12025550141',requestId:randomUUID()},'variantperf'),verify=await auth.verify(browser,boot.csrf,{challengeId:challenge.challengeId,code:'424242'},'variantperf'),staff=await auth.authenticate(`${browser}; ${fixture.config.cookies.session}=${verify.token}`,verify.csrf),principal=await boundary.transaction(staff,async({principal})=>principal);
+ const repository=createManualRepository({boundary}),service=createManualService({repository,reduce:async({card,action})=>({...card.draft,identity:action.identity}),buildReport:async()=>({fixture:true})});
+ async function seed(identified){const cardId=randomUUID(),sourceHash=digest(cardId),request=randomUUID();await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual_intake.card(id,pair_id,owner_id,create_request_id,create_request_hash,label) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)',cardId,randomUUID(),principal.id,request,digest(request),'Owned performance fixture');await repository.provision(staff,{cardId,draft:{source:{sourceHash},identityRevision:1,identity:{cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:null,layoutType:'POKEMON'}}});if(identified)await fixture.admin.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input,finished_at) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'COMPLETE','{}',clock_timestamp())",randomUUID(),cardId,sourceHash,principal.id);return cardId;}
+ const mains=[];for(let i=0;i<4;i++)mains.push(await seed(false));
+ async function measure(iterations=30,minimumMs=3000){const reads=[],commits=[],operations=[],started=performance.now();await Promise.all(mains.map(async cardId=>{for(let i=0;i<iterations||performance.now()-started<minimumMs;i++){const t=performance.now(),card=await service.read(staff,cardId),read=performance.now();await service.execute(staff,cardId,{actionId:randomUUID(),expectedRevision:card.revision,action:{type:'IDENTITY_EDIT',identity:card.draft.identity}});const done=performance.now();reads.push(read-t);commits.push(done-read);operations.push(done-t);await new Promise(r=>setTimeout(r,10));}}));return {reads:summary(reads),commits:summary(commits),operations:summary(operations),durationMs:performance.now()-started};}
+ await measure(5,0);const phases=[];
+ for(const scenario of['cold','warm','failure']){
+  const baseline=await measure();await seed(true);
+  child=fork(new URL('./variant-performance-child.mjs',import.meta.url),[],{stdio:['ignore','ignore','pipe','ipc'],env:{PATH:process.env.PATH,HOME:process.env.HOME}});
+  let doneResolve,busyResolve,errorReject,startupCategory='LOCAL_PERFORMANCE_CHILD_EXIT';const done=new Promise((r,j)=>{doneResolve=r;errorReject=j;}),busy=new Promise(r=>{busyResolve=r;});const timeout=setTimeout(()=>{child?.kill('SIGTERM');errorReject(Error('LOCAL_PERFORMANCE_TIMEOUT'));},30000);
+  child.stderr.on('data',bytes=>{const value=bytes.toString('utf8');if(/Cannot find module|ERR_MODULE_NOT_FOUND|Cannot find package/.test(value))startupCategory='LOCAL_PERFORMANCE_DEPENDENCY_MISSING';else if(/No space|ENOSPC/.test(value))startupCategory='LOCAL_PERFORMANCE_DISK_FULL';});
+  child.on('message',message=>{if(message.type==='diagnostic')console.log(JSON.stringify({stage:scenario,workerCode:message.code}));if(message.type==='busy')busyResolve();if(message.type==='done')doneResolve(message.metrics);if(message.type==='error')errorReject(Error(message.code));});child.on('error',errorReject);child.on('exit',code=>{if(code!==0)errorReject(Error(startupCategory));});
+  child.send({scenario,manualUrl:workerUrl.href,staffUrl:fixture.database.staffUrl,sessionKey:fixture.config.sessionKey.toString('hex'),phoneKey:fixture.config.phoneKey.toString('hex'),phones:[...fixture.config.phoneByHash.values()]});
+  await Promise.race([busy,done.then(()=>{throw Error('NO_ACTIVE_VARIANT_WORK');})]);const variant=await measure();child.send({type:'stop'});const metrics=await done;clearTimeout(timeout);if(child.exitCode===null)await new Promise(r=>child.once('exit',r));child=null;
+  const comparison={p95DeltaMs:variant.operations.p95Ms-baseline.operations.p95Ms,p95Ratio:variant.operations.p95Ms/baseline.operations.p95Ms};
+  phases.push({scenario,baseline,variant,comparison,worker:metrics});assert(metrics.providerCalls>0&&metrics.decodes>0);assert.equal(metrics.pid===process.pid,false);
+ }
+ const result={status:'MEASURED',node:process.version,mainProcess:process.pid,mainConnectionLimit:4,workerConnectionLimit:1,workerConcurrency:1,actualImageDecode:'sharp JPEG1800x2500 to raw1270x1778, front/back',workerIntervalMs:5000,provider:'synthetic2500ms success/failure, no network',sharpConcurrency:1,sharpCacheMemoryMiB:16,mainWorkload:'four concurrent cards; authenticated manual read and repository commit per operation, identical identity/no grading model',productionCalls:0,phases,limitations:['Local-host timing is evidence of bounded coexistence, not production capacity proof.','Main grading model and optical grading CPU are excluded; actual photo decode runs only in the child process.']};await writeFile(join(output,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({status:result.status,phases:phases.map(p=>({scenario:p.scenario,baselineP95:p.baseline.operations.p95Ms,variantP95:p.variant.operations.p95Ms,...p.comparison,providerCalls:p.worker.providerCalls}))}));
+}finally{if(child&&child.exitCode===null){child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));}await connection.close();await fixture.stop();}

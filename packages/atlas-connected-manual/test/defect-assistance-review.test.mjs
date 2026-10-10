@@ -207,6 +207,22 @@ async function savedAnalysisFixture({ background=false, contextLayout=false, rec
   return f;
 }
 
+test('variant correction requires the exact compatible reviewed analysis, not another READY result', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true });
+  await assert.rejects(f.assistance.assertVariantAnalysis({ staff: f.staff, card: f.card(), analysisActionId: randomUUID() }), { code: 'VARIANT_REPROCESS_REQUIRED' });
+  await assert.rejects(f.assistance.assertVariantAnalysis({ staff: f.staff, card: f.card(), analysisActionId: f.analysisId }), { code: 'MANUAL_ASTRA_REVIEW_REQUIRED' });
+  const proposal = f.parsed.result.proposals[0], state = await f.state();
+  await f.execute({ type: 'ASTRA_PROPOSAL_REVIEW', side: proposal.side, base: defectBase(state.defects, proposal.side),
+    analysisId: f.analysisId, proposalId: proposal.id, action: 'REJECT' });
+  const fence = await f.assistance.assertVariantAnalysis({ staff: f.staff, card: f.card(), analysisActionId: f.analysisId });
+  assert.equal(fence.analysisId, f.analysisId);
+  const changed = f.card(); changed.draft.identityRevision++;
+  await assert.rejects(f.assistance.assertVariantAnalysis({ staff: f.staff, card: changed, analysisActionId: f.analysisId }), { code: 'VARIANT_REPROCESS_REQUIRED' });
+  f.hydrateOverride = clone(await f.state()); f.hydrateOverride.geometry.profile = 'POKEMON';
+  await assert.rejects(f.assistance.assertVariantAnalysis({ staff: f.staff, card: f.card(), analysisActionId: f.analysisId }), { code: 'VARIANT_REPROCESS_REQUIRED' });
+  assert.equal(f.calls.provider, 0);
+});
+
 test('legacy V1/V2 and context V2 saved suggestions remain reviewable without new images, memory or provider dispatch', async () => {
   for (const options of [{}, { background: true }, { contextLayout: true }]) {
     const f = await savedAnalysisFixture(options), before = clone(f.row);

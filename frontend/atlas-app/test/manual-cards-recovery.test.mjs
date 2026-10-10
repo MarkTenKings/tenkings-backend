@@ -12,6 +12,7 @@ import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 import { manualMessage } from '../lib/manual-client.mjs';
 import * as discard from '../lib/card-discard.mjs';
 import * as reviewFeedback from '../lib/review-feedback.mjs';
+import * as variantReview from '../lib/variant-review-client.mjs';
 
 const require = createRequire(import.meta.url);
 const babel = require('next/dist/compiled/babel/core');
@@ -41,6 +42,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
     window: { addEventListener(name,action) {listeners.set(name,action);}, removeEventListener(name) {listeners.delete(name);} },
     require(name) {
       if (name === 'react') return react;
+      if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};
@@ -52,6 +54,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
+      if (name === './VariantIdentityReview') return {__esModule:true,default:'VariantIdentityReview'};
       if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
       if (name === './ReportResearchPicker') return {__esModule:true,default:'ReportResearchPicker'};
       if (name === './DealerOfferPicker') return {__esModule:true,default:'DealerOfferPicker'};

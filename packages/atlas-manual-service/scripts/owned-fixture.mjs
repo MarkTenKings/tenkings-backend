@@ -32,8 +32,11 @@ export async function createOwnedManualFixture(args) {
     const objectDirectory = join(cluster.directory, 'manual-artifacts');
     await mkdir(objectDirectory, { mode: 0o700 });
     const artifacts = createManualArtifactStore({ transport: await createFileArtifactTransport(objectDirectory) });
-    function connect() {
-      const staffClient = open(database.staffUrl), manualClient = open(manualUrl.href);
+    function connect({ manualConnectionLimit = null } = {}) {
+      if (manualConnectionLimit !== null && (!Number.isInteger(manualConnectionLimit) || manualConnectionLimit < 1 || manualConnectionLimit > 4)) throw Error('FIXTURE_POOL_INVALID');
+      const url = new URL(manualUrl.href);
+      if (manualConnectionLimit !== null) url.searchParams.set('connection_limit', String(manualConnectionLimit));
+      const staffClient = open(database.staffUrl), manualClient = open(url.href);
       const auth = new DurableStaffAuth({ database: new StaffDatabase(staffClient, config), config, provider: fixtureVerifyProvider(config) });
       const boundary = createDurableStaffBoundary({ auth, manualClient });
       return { auth, boundary, repository: createManualRepository({ boundary }), manualClient,

@@ -16,6 +16,8 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const finishingRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/finishing/(${id})$`);
   const presentationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation(?:/(uploads|remove)(?:/(${id})/(sign|complete))?)?$`);
   const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market(?:/(search|select))?$`);
+  const variantImageRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants/images/([a-f0-9]{64})$`);
+  const variantRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants(?:/(confirm|refresh))?$`);
   const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search|contribute)$`);
   const dealerRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/dealer-offers$`);
   const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image|thumbnail|display-retry)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
@@ -72,6 +74,13 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       }
       if(await intake(req,res))return true;
       if(await workflow(req,res))return true;
+      const variantImage=variantImageRoute.exec(url.pathname);
+      if(variantImage){requireThat(!url.search&&req.method==='GET',405,'METHOD_NOT_ALLOWED');requireThat(connected.variantReview,503,'VARIANT_DISABLED');const staff=await boundary.authenticate(req.headers.cookie??'');const result=await connected.variantReview.image(staff,variantImage[1],variantImage[2]);res.setHeader('Cache-Control','private, no-store');res.setHeader('Content-Type',result.contentType);res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");res.status(200).send(result.bytes);return true;}
+      const variantFound=variantRoute.exec(url.pathname);
+      if(variantFound){const write=Boolean(variantFound[2]);requireThat(!url.search&&req.method===(write?'POST':'GET'),405,'METHOD_NOT_ALLOWED');requireThat(connected.variantReview,503,'VARIANT_DISABLED');
+        if(write)requireThat(req.headers.origin===origin&&/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')&&typeof req.headers['x-atlas-csrf']==='string'&&req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);const result=write?await connected.variantReview[variantFound[2]](staff,variantFound[1],req.body):await connected.variantReview.status(staff,variantFound[1]);
+        res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;}
       const researchFound=researchRoute.exec(url.pathname);
       if(researchFound){
         requireThat(!url.search && req.method==='POST',405,'METHOD_NOT_ALLOWED');

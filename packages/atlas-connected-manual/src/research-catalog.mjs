@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonicalJson, prepareObservationProposal } from '@tenkings/card-catalog-evidence';
+import { canonicalJson, prepareObservationProposal, normalizeCatalogDemand, catalogDemandKey, validateCatalogDemandResult } from '@tenkings/card-catalog-evidence';
 import { requireThat } from '@atlas/manual-service/contract';
 
 export const CATALOG_ORIGIN = 'https://collect.tenkings.co';
@@ -44,6 +44,14 @@ export function createAtlasCatalogClient({token,fetchImpl=globalThis.fetch}={}) 
     requireThat(value?.schemaVersion===CATALOG_SERVICE_VERSION,502,'RESEARCH_CATALOG_INVALID');return value;
   }
   return Object.freeze({
+    async prepareSetDemand({demand,card},signal){
+      const normalized=normalizeCatalogDemand(demand);
+      requireThat(card&&opaque(card.name)&&opaque(card.cardNumber),400,'RESEARCH_CATALOG_INVALID');
+      const response=await send('demand',{demand:normalized,card:{name:card.name,cardNumber:card.cardNumber}},signal);
+      const result=validateCatalogDemandResult(response.result);
+      requireThat(result.demandKey===catalogDemandKey(normalized),502,'RESEARCH_CATALOG_INVALID');
+      return result;
+    },
     async findCurrentSetCatalogPublications({query}, signal) {
       const result=await send('discover',{query},signal);
       requireThat(Array.isArray(result.publications)&&result.publications.length<=8,502,'RESEARCH_CATALOG_INVALID');
@@ -93,6 +101,43 @@ export function createAtlasCatalogClient({token,fetchImpl=globalThis.fetch}={}) 
       const receipt=result.receipt;
       requireThat(result.disposition==='requires_authorized_review'&&opaque(receipt?.proposalId)&&receipt.proposalSha256===prepared.proposalSha256
         &&receipt.idempotencyKey===prepared.idempotencyKey&&['recorded','replay'].includes(receipt.outcome),502,'RESEARCH_PROPOSAL_RECEIPT_INVALID');
+      return {state:'RECORDED',disposition:'requires_authorized_review',receipt};
+    },
+    async submitReference(request,signal){
+      const prepared=prepareObservationProposal(request?.proposal);
+      requireThat(prepared.proposal.producer==='atlas'&&prepared.proposal.images.length>=1&&prepared.proposal.images.length<=2
+        && request.observation?.evidenceSha256===prepared.proposalSha256
+        && Array.isArray(request.images)&&request.images.length===prepared.proposal.images.length
+        && new Set(request.images.map(i=>i.imageId)).size===request.images.length,400,'RESEARCH_PROPOSAL_INVALID');
+      const p=prepared.proposal,observation={physicalCardRef:p.physicalCardRef,observationId:p.observationId,
+        inputRevision:p.inputRevision,evidenceSha256:prepared.proposalSha256};
+      requireThat(canonicalJson(request.observation)===canonicalJson(observation),400,'RESEARCH_PROPOSAL_INVALID');
+      const images=p.images.map(image=>{
+        const permission=request.images.find(i=>i.imageId===image.imageId)?.permission;
+        requireThat(permission&&['owned_original','licensed','permission'].includes(permission.basis)
+          &&typeof permission.detail==='string'&&permission.detail.trim()===permission.detail&&permission.detail.length>=1&&permission.detail.length<=1000
+          &&canonicalJson(permission.consumers)===canonicalJson(['inventory','atlas']),400,'RESEARCH_PROPOSAL_INVALID');
+        return {imageId:image.imageId,sha256:image.sha256,proposedPermission:permission};
+      });
+      const roots=p.sources.filter(source=>source.kind==='PHYSICAL_OBSERVATION');
+      requireThat(roots.length===1&&Array.isArray(request.sourceArtifacts)&&request.sourceArtifacts.length===1,400,'RESEARCH_PROPOSAL_INVALID');
+      const sourceArtifacts=roots.map(source=>{
+        const supplied=request.sourceArtifacts.find(artifact=>artifact.sourceId===source.sourceId);
+        requireThat(typeof supplied?.bytesBase64==='string'&&supplied.bytesBase64.length<=21848,400,'RESEARCH_PROPOSAL_INVALID');
+        const bytes=Buffer.from(supplied.bytesBase64,'base64');
+        requireThat(bytes.length>0&&bytes.length<=16384&&bytes.toString('base64')===supplied.bytesBase64
+          &&hash(bytes)===source.sha256&&source.sourceRef===`catalog:sha256:${source.sha256}`,400,'RESEARCH_PROPOSAL_INVALID');
+        return {sourceId:source.sourceId,sha256:source.sha256};
+      });
+      // This is the fixed atlas service principal authenticated by the host,
+      // independent of token rotation. Pin the pending permission receipt too.
+      const authority={producer:'atlas',actorKind:'service',actorRef:'atlas:card-catalog:v1',userId:null,binding:observation};
+      const submissionSha256=hash(canonicalJson({schemaVersion:'catalog-reference-proposal/v1',disposition:'requires_authorized_review',
+        proposalSha256:prepared.proposalSha256,authoritySha256:hash(canonicalJson(authority)),images,sourceArtifacts}));
+      const result=await send('reference-proposals',request,signal),receipt=result.receipt;
+      requireThat(result.disposition==='requires_authorized_review'&&opaque(receipt?.proposalId)
+        && receipt.proposalSha256===prepared.proposalSha256&&receipt.idempotencyKey===prepared.idempotencyKey
+        && ['recorded','replay'].includes(receipt.outcome)&&receipt.submissionSha256===submissionSha256,502,'RESEARCH_PROPOSAL_RECEIPT_INVALID');
       return {state:'RECORDED',disposition:'requires_authorized_review',receipt};
     },
   });

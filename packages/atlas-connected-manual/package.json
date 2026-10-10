@@ -26,7 +26,11 @@
     "./report-image-store": "./src/report-image-store.mjs",
     "./report-images": "./src/report-images.mjs",
     "./market-job-store": "./src/market-job-store.mjs",
-    "./market-worker": "./src/market-worker.mjs"
+    "./market-worker": "./src/market-worker.mjs",
+    "./variant-job-store": "./src/variant-job-store.mjs",
+    "./variant-worker": "./src/variant-worker.mjs",
+    "./variant-service": "./src/variant-service.mjs",
+    "./variant-worker-grants": "./src/variant-worker-grants.mjs"
   },
   "scripts": {
     "test": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node --test test/*.test.mjs"

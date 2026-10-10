@@ -47,7 +47,7 @@ function baseFromRun(run, side) {
   return { schemaVersion: 1, cardId: run.cardId, profile: evidence.profile, side, frame: slot.frame,
     cornerShape: evidence.cornerShapes[side], findingRevision: slot.findingRevision, reviewRevision: slot.reviewRevision };
 }
-function compatible(run, card, state) {
+export function compatibleDefectAnalysis(run, card, state) {
   return Boolean(state.defects && run.binding.sourceHash === card.draft.source.sourceHash
     && run.binding.identityRevision === card.draft.identityRevision
     && run.requestEvidence.profile === state.geometry.profile && SIDES.every(side => {
@@ -55,6 +55,7 @@ function compatible(run, card, state) {
       return canonical(base.frame) === canonical(current.frame) && base.cornerShape === current.cornerShape;
     }));
 }
+const compatible = compatibleDefectAnalysis;
 
 /** Memory and model state are independently durable. Neither changes a manual
  * draft; only an authenticated, journaled human proposal action can do that. */
@@ -163,7 +164,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     if (!run) return analysisId ? { state: 'NOT_FOUND' } : { astra: { enabled: true, requestAvailable: Boolean(provider), status: 'IDLE' } };
     if (run.retired) return { state: 'REFUSED',
       ...(['DEFECT_ANALYSIS_PENDING', 'DEFECT_ANALYSIS_REPLACEMENT_INVALID'].includes(run.code) ? { followLatest: true } : {}),
-      astra: { enabled: true, requestAvailable: Boolean(provider), status: 'REFUSED', analysisId: run.analysisId,
+      astra: { enabled: true, requestAvailable: Boolean(provider), status: 'REFUSED', analysisId: run.analysisId, requestActionId: run.actionId,
       proposals: [], limitations: [run.code === 'DEFECT_ANALYSIS_PENDING'
         ? 'Another analysis is still pending. Check the saved analysis before starting another.'
         : run.code === 'DEFECT_ANALYSIS_REPLACEMENT_INVALID'
@@ -196,7 +197,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     const rateLimited = run.state === 'REFUSED' && !run.backgroundAccepted && run.receipts.some(receipt => receipt.kind === 'RESPONSE'
       && receipt.evidence.state === 'REFUSED' && receipt.evidence.httpStatus === 429 && receipt.evidence.responseId === null
       && receipt.evidence.code === 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR');
-    return { state: run.state, astra: { enabled: !state.finalReview || proposals.length > 0, requestAvailable: !state.finalReview && Boolean(provider), status, analysisId: run.analysisId,
+    return { state: run.state, astra: { enabled: !state.finalReview || proposals.length > 0, requestAvailable: !state.finalReview && Boolean(provider), status, analysisId: run.analysisId, requestActionId: run.actionId,
       base: Object.fromEntries(SIDES.map(side => [side, baseFromRun(run, side)])), proposals,
       ...(status === 'READY' && loaded?.result ? { proposalReview: confirmationOffer(run, loaded.result, state) } : {}),
       limitations: loaded?.result?.limitations ?? [],
@@ -207,6 +208,17 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
   }
   const api = Object.freeze({
     memory, repository, executor,
+    async assertVariantAnalysis({ staff, card, analysisActionId }) {
+      requireThat(repository && reader, 503, 'DEFECT_ANALYSIS_DISABLED');
+      const found = await repository.find(staff, { cardId: card.cardId, actionId: analysisActionId });
+      const run = found && await repository.status(staff, { cardId: card.cardId, analysisId: found.analysisId });
+      const state = await workflow.hydrate(card);
+      requireThat(run && !run.retired && run.state === 'READY' && compatible(run, card, state), 409, 'VARIANT_REPROCESS_REQUIRED');
+      const context = await reviewContext(staff, card, state);
+      requireThat(context.fence?.analysisId === run.analysisId, 409, 'VARIANT_REPROCESS_REQUIRED');
+      requireThat(!context.entries.length, 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
+      return context.fence;
+    },
     async resolveConfirmation({ staff, card, selection = null }) {
       const context = await reviewContext(staff, card);
       if (selection) {

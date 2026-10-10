@@ -117,7 +117,7 @@ export function createManualRepository({ boundary, validateAccess = null, valida
         const previous = replay(found, principal, requestHash); if (previous) return previous;
         requireThat(row.revision === command.expectedRevision && row.content_hash === baseHash, 409, 'MANUAL_DRAFT_STALE');
         if (validateSource) await validateSource({ tx, principal, cardId, draft: document.draft });
-        if (validateCommit) await validateCommit({ tx, principal, cardId, input: command, commitGuard });
+        if (validateCommit) await validateCommit({ tx, principal, cardId, input: command, draft: document.draft, commitGuard });
         const nextRevision = revision(row.revision + 1);
         const receipt = { actionId: command.actionId, actorId: principal.id, actorKind: 'HUMAN',
           expectedRevision: row.revision, revision: nextRevision, requestHash, recordedAt: now.toISOString(),

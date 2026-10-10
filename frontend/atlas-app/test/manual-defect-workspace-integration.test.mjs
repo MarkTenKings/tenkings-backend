@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import * as reviewFeedback from '../lib/review-feedback.mjs';
+import * as variantReview from '../lib/variant-review-client.mjs';
 import * as analysisClient from '../lib/manual-defect-analysis-client.mjs';
 import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 
@@ -21,7 +22,7 @@ const base = Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { cardId: '
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
 const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(child => all(child, predicate, out));
   else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
-function harness({ journal, finalReview = false, rapid = false, initialGeometrySide = null } = {}) {
+function harness({ journal, finalReview = false, rapid = false, initialGeometrySide = null, initialView = {} } = {}) {
   const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [], timers = new Map(), cleanups = [];
   let cursor = 0, tree, viewCallback;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
@@ -35,6 +36,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
     defects: { marker: 'saved-original-defects' }, images: { marker: 'original-grants' }, identity: {}, astra: { enabled: true, status: 'IDLE', proposals: [] }, reviewedMemory: { enabled: true, status: 'UNSAVED' } } };
   if (finalReview) Object.assign(f.current, { finalReview: { report: { proposedGrade: 9.5, findings: [] } },
     provisional: { state: 'READY', report: { proposedGrade: 9.5 }, reportHash: 'first-current' } });
+  Object.assign(f.current,initialView);
   f.respond = async (path, options) => path.endsWith('/view') ? f.current : { astra: f.current.astra };
   f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
     sourceHash: f.current.card.contentHash, canCertify: true, report: {}, review: {} });
@@ -47,6 +49,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
     setInterval: (callback, ms) => { timers.set(ms, callback); return ms; }, clearInterval: id => timers.delete(id),
     window: { addEventListener() {}, removeEventListener() {} }, require(name) {
       if (name === 'react') return react;
+      if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};
@@ -58,6 +61,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
+      if (name === './VariantIdentityReview') return {__esModule:true,default:'VariantIdentityReview'};
       if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
       if (name === './ReportResearchPicker') return {__esModule:true,default:'ReportResearchPicker'};
       if (name === './DealerOfferPicker') return {__esModule:true,default:'DealerOfferPicker'};
@@ -87,6 +91,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   f.completion = () => all(tree, node => node.type === 'CompletionNextSteps')[0]?.props;
   f.geometry = () => all(tree, node => node.type === 'PairedGeometryWorkspace')[0]?.props;
   f.finishing = () => all(tree, node => node.type === 'ManualFinishing')[0]?.props;
+  f.variant = () => all(tree, node => node.type === 'VariantIdentityReview')[0]?.props;
   f.report = () => all(tree, node => node.type === 'FinalReportReview')[0]?.props;
   f.machine = () => all(tree,node=>node.type==='MachineReportReview')[0]?.props;
   f.text = () => text(tree);
@@ -426,6 +431,7 @@ test('approved review opens a calm completion screen with saved award, lazy extr
   assert.match(f.text(),/Completed.*Abomasnow.*APPROVED GRADE10/);assert.match(f.text(),/Review next card/);
   assert.doesNotMatch(f.text(),/Final human review|Current provisional|View current provisional|Approved. Preserved|Optional report tools/);
   assert.equal(f.report(),undefined);assert.equal(f.button('Geometry'),undefined);assert.equal(f.finishing().compact,true);
+  f.publish({...f.current,variantVerification:{enabled:true,legacyApproved:true,approvalReady:true,confirmation:null}});assert.equal(f.variant(),undefined);assert.ok(f.completion());
   const calls=f.calls.length;await f.tick(240000);assert.equal(f.calls.length,calls,'completed review does not keep refreshing image grants');
   f.button('More options +').props.onClick();f.render();assert.match(f.text(),/Optional report tools/);
   f.button('Correct findings').props.onClick();await flush();f.render();assert.ok(f.defects());assert.equal(f.actions.length,0);
@@ -592,4 +598,129 @@ test('rapid original observations live in the inspector and retain exact reject 
   f.focusedGeometry().onEditingChange(true);f.render();
   assert.ok(all(f.focusedGeometry().reviewObservations,n=>n.type==='button').every(n=>n.props.disabled),'draft geometry blocks observation navigation and decisions');
   f.dispose();
+});
+
+
+test('final identity gate blocks approval until current card verification, and pending recovery blocks stage navigation', async () => {
+  const f = harness(); await flush(); f.render();
+  f.publish({...f.current,card:{...f.current.card,draft:{source:{sourceHash:'photos'},identityRevision:1}},variantVerification:{enabled:true}});
+  await f.defects().onContinue(); f.render();
+  f.report().onReadyChange(true); f.render();
+  assert.equal(f.variant().revision,1); assert.equal(f.button('Approve & print label').props.disabled,true);
+  await f.button('Approve & print label').props.onClick(); await flush(); assert.equal(f.actions.length,0); assert.equal(f.popups.length,0);
+  f.variant().onGateChange(true); f.render(); assert.equal(f.button('Approve & print label').props.disabled,false);
+  f.variant().onActivityChange(true); f.render(); assert.equal(f.button('Approve & print label').props.disabled,true);
+  f.button('Findings').props.onClick(); await flush(); f.render(); assert.ok(f.report(),'pending exact decision prevents leaving final review');
+  f.variant().onActivityChange(false); f.render();
+  f.publish({...f.current,card:{...f.current.card,revision:2,draft:{source:{sourceHash:'photos'},identityRevision:2}}});
+  assert.equal(f.button('Approve & print label').props.disabled,true,'old identity gate cannot approve revised identity');
+  f.dispose();
+});
+
+
+test('variant recheck polls saved status only, exposes fresh request-bound proposals, and leaves human findings unchanged',async()=>{
+  const f=harness();await flush();f.render();
+  const confirmation={reprocessRequired:true,recheckState:'QUEUED',analysisActionId:'variant-request'};
+  f.publish({...f.current,variantVerification:{enabled:true,confirmation,approvalReady:false}});
+  assert.match(f.text(),/Checking the confirmed variant/);const before=f.current.defects;
+  f.respond=async()=>({...f.current,variantVerification:{enabled:true,confirmation:{...confirmation,recheckState:'READY'},approvalReady:true},astra:{enabled:true,status:'READY',analysisId:'result-id',requestActionId:'variant-request',proposals:[{id:'fresh',reviewStatus:'PENDING'}]}});
+  await f.tick(5500);assert.equal(f.defects().astra.requestActionId,'variant-request');assert.equal(f.defects().astra.proposals[0].id,'fresh');assert.equal(f.defects().workspace,before);
+  assert.match(f.text(),/Review the new proposals before final approval/);assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));
+  f.publish({...f.current,variantVerification:{enabled:true,confirmation:{...confirmation,recheckState:'UNKNOWN'},approvalReady:false}});
+  const count=f.calls.length;await f.tick(5500);assert.equal(f.calls.length,count);assert.match(f.text(),/check needs attention/);f.dispose();
+});
+
+test('a previous settled browser analysis cannot hide the exact saved variant recheck projection',async()=>{
+  const actionId=randomUUID(),journal={version:1,phase:'SETTLED',canResume:false,body:{actionId,base}};
+  const f=harness({journal});f.respond=async path=>path.endsWith('/view')?f.current:{state:'READY',astra:{enabled:true,status:'READY',analysisId:actionId,proposals:[{id:'old'}]}};await flush();f.render();
+  f.publish({...f.current,variantVerification:{enabled:true,confirmation:{reprocessRequired:true,recheckState:'READY',analysisActionId:'fresh-request'}},astra:{enabled:true,status:'READY',analysisId:'fresh-result',requestActionId:'fresh-request',proposals:[{id:'fresh'}]}});
+  assert.equal(f.defects().astra.analysisId,'fresh-result');await f.defects().onRefreshAnalysis();f.render();assert.equal(f.defects().astra.analysisId,'fresh-result','late exact old-journal status cannot overwrite fresh recheck');assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('changed variant opens retained geometry, then the fresh defect proposal workspace without automatic decisions',async()=>{
+  const f=harness();await flush();f.render();await f.defects().onContinue();f.render();
+  const saved=f.variant().onSaved,prepared=preparedReview(f.current);
+  f.current={...prepared,card:{...f.current.card,revision:2,contentHash:'variant'},finalReview:{report:{proposedGrade:9.5,findings:[]}},
+    variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED'}}};
+  await saved();await flush();f.render();
+  assert.equal(f.geometry().workspace,prepared.geometry);assert.equal(f.report(),undefined);assert.equal(f.machine(),undefined);
+  assert.match(f.text(),/Recheck border placement for the confirmed variant/);assert.match(f.text(),/Front and Back, then review the fresh defect proposals/);
+  assert.equal(f.actions.length,0,'routing does not change saved borders or findings');
+  f.onExecute=()=>f.publish({...f.current,geometry:{...f.current.geometry,confirmed:true}});
+  await f.geometry().onConfirm({base:{},reviewed:true});f.render();
+  assert.equal(f.defects().workspace,prepared.defects);assert.equal(f.machine(),undefined);assert.doesNotMatch(f.text(),/Recheck border placement/);
+  assert.deepEqual(f.actions.map(value=>value.type),['CONFIRM_GEOMETRY']);f.dispose();
+});
+
+test('rapid variant change discards only old browser review checkpoints and requires both borders again',async()=>{
+  const f=harness({rapid:true,finalReview:true});await flush();f.render();await approveGeometry(f);
+  f.button('04Grade').props.onClick();await flush();f.render();const saved=f.variant().onSaved;
+  const count=f.actions.length;f.current={...preparedReview(f.current),card:{...f.current.card,revision:2,contentHash:'variant'},
+    variantVerification:{enabled:true,confirmation:{decision:'MANUAL',reprocessRequired:true,recheckState:'QUEUED'},approvalReady:false}};
+  await saved();await flush();f.render();assert.equal(f.focusedGeometry().side,'FRONT');assert.equal(f.actions.length,count);
+  await f.focusedGeometry().onApproveSide({side:'FRONT'});f.render();
+  assert.equal(f.focusedGeometry().side,'BACK','previous Back checkpoint cannot confirm the changed identity');
+  assert.equal(f.actions.filter(value=>value.type==='EXPLICIT_STAGE').length,1);
+  await f.focusedGeometry().onApproveSide({side:'BACK'});f.render();assert.ok(f.defects().focusedReview);
+  assert.equal(f.actions.filter(value=>value.type==='EXPLICIT_STAGE').length,2);f.dispose();
+});
+
+test('same identity confirmation keeps confirmed borders and returns to its report',async()=>{
+  const f=harness();await flush();f.render();await f.defects().onContinue();f.render();
+  const saved=f.variant().onSaved,geometry=f.current.geometry;
+  f.current={...f.current,variantVerification:{enabled:true,confirmation:{decision:'SELECTED',reprocessRequired:false},approvalReady:true}};
+  await saved();await flush();f.render();assert.ok(f.report());assert.equal(f.report().geometry,geometry);
+  assert.doesNotMatch(f.text(),/Recheck border placement/);assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('same identity retry with already reviewed borders opens fresh findings without another geometry review',async()=>{
+  const f=harness();await flush();f.render();await f.defects().onContinue();f.render();const saved=f.variant().onSaved;
+  f.current={...f.current,variantVerification:{enabled:true,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED'},approvalReady:false}};
+  await saved();await flush();f.render();assert.ok(f.defects());assert.equal(f.geometry(),undefined);
+  assert.doesNotMatch(f.text(),/Recheck border placement/);assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('reloading a changed variant resumes required geometry review ahead of the retained machine report',async()=>{
+  const f=harness({finalReview:true,initialView:{geometry:{confirmed:false},variantVerification:{enabled:true,
+    confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'READY'},approvalReady:true}}});
+  await flush();f.render();assert.ok(f.geometry());assert.equal(f.machine(),undefined);assert.equal(f.report(),undefined);
+  assert.match(f.text(),/Recheck border placement/);assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('a refused variant check can open identity recovery without a report preview and pending saves lock exit',async()=>{
+  const f=harness();await flush();f.render();let previews=0;f.preview=()=>{previews++;throw {code:'VARIANT_REPROCESS_REQUIRED'};};
+  f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'REFUSED',recheckRetryable:true}}});
+  f.button('Review confirmed identity').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);assert.equal(previews,0);
+  assert.equal(all(f.tree(),value=>value.type==='DefectReviewWorkspace').length,0,'grading editor cannot submit beside identity recovery');
+  f.variant().onActivityChange(true);f.render();assert.equal(f.button('Back to grading review').props.disabled,true);
+  f.button('Back to grading review').props.onClick();f.render();assert.ok(f.variant(),'stale exit handlers respect retained saves');
+  f.variant().onActivityChange(false);f.render();f.button('Back to grading review').props.onClick();f.render();assert.ok(f.defects());
+  assert.equal(previews,0);assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('stale geometry recheck recovery and unknown status remain accessible without preview or automatic dispatch',async()=>{
+  for(const confirmation of [
+    {decision:'MANUAL',reprocessRequired:true,recheckState:'READY',recheckReason:'VARIANT_ANALYSIS_STALE',recheckRetryable:true},
+    {decision:'SELECTED',reprocessRequired:true,recheckState:'UNKNOWN',recheckRetryable:false},
+  ]){
+    const f=harness({rapid:true,finalReview:true});await flush();f.render();f.preview=()=>{throw Error('must not preview');};
+    f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation}});
+    if(confirmation.recheckReason)assert.match(f.text(),/Border geometry changed after the saved variant check/);
+    f.button('Review confirmed identity').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.focusedGeometry(),undefined);
+    assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
+  }
+});
+test('an unresolved hold after an earlier variant check stays in identity review without attempting report preview',async()=>{
+ const f=harness();await flush();f.render();await f.defects().onContinue();f.render();const saved=f.variant().onSaved;
+ f.preview=()=>{throw Error('held identity must not request a report');};
+ f.current={...f.current,geometry:{confirmed:false},variantVerification:{enabled:true,approvalReady:false,
+  confirmation:{decision:'UNRESOLVED',reprocessRequired:true,recheckState:'REFUSED',recheckRetryable:true}}};
+ await saved();await flush();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);assert.equal(f.geometry(),undefined);
+ assert.doesNotMatch(f.text(),/Recheck border placement|Checking the confirmed variant/);assert.equal(f.actions.length,0);f.dispose();
+});
+test('a retained unresolved hold reopens identity review on reload and remains reachable after returning to grading',async()=>{
+ const f=harness({initialView:{variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'UNRESOLVED',reprocessRequired:true,recheckState:'UNKNOWN'}}}});
+ await flush();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);f.button('Back to grading review').props.onClick();f.render();
+ assert.ok(f.defects());assert.match(f.text(),/This card is held for identity review/);f.button('Review card identity').props.onClick();f.render();
+ assert.ok(f.variant());assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
 });

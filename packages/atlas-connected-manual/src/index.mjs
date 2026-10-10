@@ -1,3 +1,5 @@
+import {createVariantJobStore} from './variant-job-store.mjs';
+import {createVariantReviewService} from './variant-service.mjs';
 import { createMarketJobStore, recordApprovalMarket } from './market-job-store.mjs';
 import { createMarketWorker } from './market-worker.mjs';
 import { createReportImageStore } from './report-image-store.mjs';
@@ -17,7 +19,7 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createDetailsStore, gradingIdentity, geometrySideSettings } from './details.mjs';
 import { createIdentification } from './identification.mjs';
 import { createDefectImageEffects } from './defect-images.mjs';
-import { createDefectAssistance } from './defect-assistance.mjs';
+import { createDefectAssistance, compatibleDefectAnalysis } from './defect-assistance.mjs';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 import { validateConfirmationCommit } from './confirmation-fence.mjs';
 import { createImageDescriptors } from './image-descriptors.mjs';
@@ -59,9 +61,9 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
     try{return await work();}finally{const next=waiting.shift();if(next)next();else active--;}
   };
 }
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,displayEnabled=false,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketAutomaticEnabled=false,marketConcurrency=2,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,reportImageProvider=null,reportImageConcurrency=2,
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,displayEnabled=false,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketAutomaticEnabled=false,marketConcurrency=2,variantReviewEnabled=false,variantReadReferenceImage=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,reportImageProvider=null,reportImageConcurrency=2,
   processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
-  let earlyGeometry,batch=null;
+  let earlyGeometry,batch=null,variantReview=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const autonomous=batchEnabled&&typeof boundary.machineTransaction==='function';
   const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent,
@@ -82,6 +84,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     geometryLearning:learningEnabled?createNativeGeometryLearning({boundary,intakeRepository}):null,
     geometryConcurrency:processing.geometryConcurrency,geometryDiscoveryPageSize:processing.geometryDiscoveryPageSize});
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient,limited});
+  const variantJobs=variantReviewEnabled?createVariantJobStore({boundary,intakeRepository,analysisCompatible:async({card,run})=>compatibleDefectAnalysis(run,card,await workflow.hydrate(card))}):null;
   const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
   const publicationRepository=createPublicationRepository({boundary,validateAccess});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
@@ -101,7 +104,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
   }
-  const repository=createManualRepository({boundary,validateAccess,validateCommit: memoryEnabled ? validateConfirmationCommit : null,approvalCommitted:async context=>{
+  const repository=createManualRepository({boundary,validateAccess,validateCommit: async context=>{if(memoryEnabled)await validateConfirmationCommit(context);if(variantJobs)await variantJobs.validateCommit(context);},approvalCommitted:async context=>{
     await publicationRepository.approvalCommitted(context);
     if(marketJobs)await recordApprovalMarket(context);
   },
@@ -158,9 +161,15 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   let assistance, batchReview;
   const workflow=createManualWorkflow({repository,artifacts,pythonExecutable,measurementLimits:limits.measurement,
     resolveProposal: input => assistance.resolveProposal(input),
+    resolveVariantConfirmation: input=>{requireThat(variantReview,503,'VARIANT_DISABLED');return variantReview.resolve(input);},
+    prepareVariantConfirmation: input=>variantJobs?.prepareConfirmation(input)??null,
     resolveFinalReview: input => { requireThat(batchReview,503,'BATCH_DISABLED'); return batchReview.resolveCorrections(input); },
     resolveConfirmation: input => assistance.resolveConfirmation(input),
-    assertReviewComplete: input => assistance.assertReviewComplete(input),
+    assertReviewComplete: async input => {
+      const confirmation = variantJobs ? await variantJobs.currentConfirmation(input.staff, input.card) : null;
+      if (confirmation?.reprocess_required) await assistance.assertVariantAnalysis({ ...input, analysisActionId: confirmation.analysis_action_id });
+      return assistance.assertReviewComplete(input);
+    },
     afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
     afterApprove: async (staff,cardId,actionId)=>{
       try { return await publication.publish(staff,cardId,actionId); }
@@ -199,13 +208,14 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,learningEnabled,provider:defectProvider,receiptClient,onWorkerError});
-  const connected={dealerOperations,marketWorker,marketJobs,reportImages,reviewDisplay,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  variantReview=variantJobs?createVariantReviewService({store:variantJobs,workflow,readReferenceImage:variantReadReferenceImage}):null;
+  const connected={variantReview,variantJobs,dealerOperations,marketWorker,marketJobs,reportImages,reviewDisplay,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status,geometryLearning]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
         learningEnabled?readNativeGeometryAdvice({boundary,earlyGeometry,staff:input.staff,cardId:input.card.cardId}).catch(error=>{
           if([401,403].includes(error?.status))throw error;onWorkerError({code:'GEOMETRY_LEARNING_UNAVAILABLE'});return null;
         }):null]);
-      return {...extras,...(geometryLearning?{geometryLearning}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),marketAutomaticEnabled:Boolean(marketJobs),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
+      return {...extras,...(variantReview?{variantVerification:await variantReview.status(input.staff,input.card.cardId)}:{}),...(geometryLearning?{geometryLearning}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),marketAutomaticEnabled:Boolean(marketJobs),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
     },
     thumbnails:createThumbnailReader({intake,workflow,readManifest:manifest,imageReadUrl,reviewDisplay}),
     open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl}),

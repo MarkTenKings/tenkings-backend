@@ -10,7 +10,7 @@ import { boundReportPresentation } from './report-presentation-ui.mjs';
 import { reportAwardedGrade, reportImagesMatch, reportFindingEntries, filterReportFindings,
   reportGeometryUnresolved, reportFindingRegions, reportGradeReason, reportFindingFragment, reportFindingFromFragment, reportFindingLink, reportDisplayGeometry } from './report-review-ui.mjs';
 
-export { reportAwardedGrade };
+export { reportAwardedGrade, useVerifiedImage };
 
 const SIDES = ['FRONT', 'BACK'];
 const CATEGORIES = ['centering', 'corners', 'edges', 'surface'];

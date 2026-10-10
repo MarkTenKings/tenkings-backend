@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createPublishedCatalogReader,prepareObservationProposal} from '@tenkings/card-catalog-evidence';
+import {createPublishedCatalogReader,prepareObservationProposal,canonicalJson} from '@tenkings/card-catalog-evidence';
 import {createAtlasCatalogClient,CATALOG_SERVICE_VERSION} from '../src/research-catalog.mjs';
 import {fixture,hostFixture,queryFor,observationFixture,sha} from '../../card-catalog-evidence/tests/fixtures.mjs';
 const token='s'.repeat(43),envelope=value=>Response.json({schemaVersion:CATALOG_SERVICE_VERSION,...value});
@@ -31,4 +31,30 @@ test('only exact atlas metadata proposals can produce an unreviewed host receipt
  assert.equal((await client.submit(proposal)).state,'RECORDED');await assert.rejects(client.submit(observationFixture('atlas')),{code:'RESEARCH_PROPOSAL_INVALID'});assert.equal(count,1);
  const wrong=createAtlasCatalogClient({token,fetchImpl:async()=>envelope({disposition:'published',receipt:{proposalId:'synthetic',proposalSha256:prepared.proposalSha256,idempotencyKey:prepared.idempotencyKey,outcome:'recorded'}})});
  await assert.rejects(wrong.submit(proposal),{code:'RESEARCH_PROPOSAL_RECEIPT_INVALID'});
+});
+
+test('private reference receipt binds exact images, physical observation and proposed permissions',async()=>{
+ const sourceBytes=Buffer.from(canonicalJson({fixture:'synthetic capture descriptor bytes'})),sourceHash=sha(sourceBytes),raw=observationFixture('atlas');
+ raw.sources[0].sha256=sourceHash;raw.sources[0].sourceRef=`catalog:sha256:${sourceHash}`;
+ const prepared=prepareObservationProposal(raw),p=prepared.proposal;
+ const observation={physicalCardRef:p.physicalCardRef,observationId:p.observationId,inputRevision:p.inputRevision,evidenceSha256:prepared.proposalSha256};
+ const permission={basis:'owned_original',detail:'Synthetic original photo rights assertion.',consumers:['inventory','atlas']};
+ const request={proposal:p,observation,images:p.images.map(image=>({imageId:image.imageId,bytesBase64:Buffer.from('fixture bytes').toString('base64'),permission})),
+   sourceArtifacts:[{sourceId:p.sources[0].sourceId,bytesBase64:sourceBytes.toString('base64')}]};
+ const authority={producer:'atlas',actorKind:'service',actorRef:'atlas:card-catalog:v1',userId:null,binding:observation};
+ const submission={schemaVersion:'catalog-reference-proposal/v1',disposition:'requires_authorized_review',proposalSha256:prepared.proposalSha256,
+   authoritySha256:sha(canonicalJson(authority)),images:p.images.map(image=>({imageId:image.imageId,sha256:image.sha256,proposedPermission:permission})),
+   sourceArtifacts:[{sourceId:p.sources[0].sourceId,sha256:sourceHash}]};
+ let altered=false,calls=0;
+ const client=createAtlasCatalogClient({token,fetchImpl:async(url,init)=>{calls++;assert(url.endsWith('/reference-proposals'));assert.deepEqual(JSON.parse(init.body),request);
+   return envelope({disposition:'requires_authorized_review',receipt:{proposalId:'fixture-reference',proposalSha256:prepared.proposalSha256,
+     idempotencyKey:prepared.idempotencyKey,outcome:'recorded',submissionSha256:altered?sha('another permission roster'):sha(canonicalJson(submission))}});}});
+ assert.equal((await client.submitReference(request)).state,'RECORDED');altered=true;
+ await assert.rejects(client.submitReference(request),{code:'RESEARCH_PROPOSAL_RECEIPT_INVALID'});
+ for(const changed of [{...request,observation:{...observation,physicalCardRef:'another-card'}},{...request,images:[]},{...request,sourceArtifacts:[]},
+   {...request,sourceArtifacts:[{sourceId:p.sources[0].sourceId,bytesBase64:Buffer.from('wrong source').toString('base64')}]},
+   {...request,images:request.images.map(i=>({...i,permission:{...permission,consumers:['atlas']}}))}]){
+   await assert.rejects(client.submitReference(changed),{code:'RESEARCH_PROPOSAL_INVALID'});
+ }
+ assert.equal(calls,2);
 });

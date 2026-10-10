@@ -30,8 +30,8 @@ function geometry(cardId) {
   }
   return confirmBothGeometry(state, { actor: 'HUMAN', reviewed: true, base: Object.fromEntries(SIDES.map(side => [side, geometryBase(state, side, 'REVIEW')])) }).state;
 }
-async function fixture() {
-  const cardId = randomUUID(), staff = { id: randomUUID() }, principal = { id: staff.id, canCertify: true };
+async function fixture({resolveVariantConfirmation=null,actorKind=null}={}) {
+  const cardId = randomUUID(), staff = { id: randomUUID() }, principal = { id: staff.id, canCertify: true, ...(actorKind?{actorKind}:{}) };
   let card;
   const commands = new Map(), objects = new Map(), proposals = new Map(), f = { commits: [], measured: [], publications: [], publisher: async () => {}, resolve: null,
     artifactPuts: [], artifactGets: [], corruptNextWrite: false, corruptKey: null };
@@ -55,7 +55,7 @@ async function fixture() {
       objects.set(key, { bytes: Buffer.from(bytes), contentType, lineageSha256 }); if (f.corruptNextWrite) f.corruptKey = key; },
     async read({ key }) { f.artifactGets.push(key); return key === f.corruptKey ? { ...objects.get(key), bytes: Buffer.from('corrupt') } : objects.get(key); },
   } });
-  const workflow = createManualWorkflow({ repository, artifacts,
+  const workflow = createManualWorkflow({ repository, artifacts, resolveVariantConfirmation,
     resolveProposal: async ({ staff: actor, card: current, analysisId, proposalId }) => { authorize(actor, current.cardId); const found = proposals.get(`${analysisId}:${proposalId}`);
       requireThat(found, 404, 'MANUAL_PROPOSAL_NOT_FOUND'); return f.resolve ? f.resolve(clone(found)) : clone(found); },
     // A synthetic measured-result adapter isolates action/persistence behavior.
@@ -214,4 +214,19 @@ test('individual review is a durable idempotent action, rejects concurrent stale
   assert.deepEqual(reviewedDefectFindingIds(changed.defects,'FRONT'),[]);
   assert.deepEqual(changed.defects.sides.FRONT.findings,state.defects.sides.FRONT.findings);
   assert.equal(f.publications.length,0);
+});
+
+test('atomic variant resolver adopts identity once, preserves reusable geometry, and rejects machine confirmation',async()=>{
+ let resolutions=0;const resolve=async({card})=>{resolutions++;return {...card.draft.identity,parallel:'Gold Refractor'};};
+ const f=await fixture({resolveVariantConfirmation:resolve}),before=f.card(),prior=await f.state(),actionId=randomUUID(),command={actionId,expectedRevision:before.revision,action:{type:'VARIANT_CONFIRM'}};
+ const changed=await f.workflow.service.execute(f.staff,f.cardId,command);assert.equal(changed.card.draft.identity.parallel,'Gold Refractor');assert.equal(changed.card.draft.identityRevision,before.draft.identityRevision+1);assert.notDeepEqual(changed.card.draft.geometry,before.draft.geometry);assert.deepEqual(changed.card.draft.defects,before.draft.defects);assert.deepEqual(changed.card.draft.source,before.draft.source);
+ const after=await f.state();
+ for(const side of SIDES){assert.ok(prior.geometry.sides[side].confirmation);assert.equal(after.geometry.sides[side].confirmation,null);
+  assert.deepEqual(after.geometry.sides[side],{...prior.geometry.sides[side],reviewRevision:prior.geometry.sides[side].reviewRevision+1,confirmation:null});}
+ await assert.rejects(f.workflow.service.previewReport(f.staff,f.cardId),{code:'MANUAL_GEOMETRY_REVIEW_REQUIRED'});
+ assert.deepEqual(await f.workflow.service.execute(f.staff,f.cardId,command),changed);assert.equal(resolutions,1);
+ const same=await f.execute({type:'VARIANT_CONFIRM'});assert.equal(same.card.draft.identityRevision,changed.card.draft.identityRevision);assert.deepEqual(same.card.draft.geometry,changed.card.draft.geometry);
+ await f.execute({type:'CONFIRM_GEOMETRY',reviewed:true,base:Object.fromEntries(SIDES.map(side=>[side,geometryBase(after.geometry,side,'REVIEW')]))});
+ const confirmed=f.card();await f.execute({type:'VARIANT_CONFIRM'});assert.deepEqual(f.card().draft.geometry,confirmed.draft.geometry);
+ const machine=await fixture({resolveVariantConfirmation:resolve,actorKind:'MACHINE'});await assert.rejects(machine.execute({type:'VARIANT_CONFIRM'}),{code:'VARIANT_CONFIRMATION_UNAVAILABLE'});assert.equal(resolutions,3);
 });
