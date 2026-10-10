@@ -55,10 +55,10 @@ function ReferencePhoto({ image, label, enlarged = false }) {
     return () => observer.disconnect();
   }, [enlarged]);
   const verified = useVerifiedImage(visible && image?.sha256 ? { ...image, mime: image.mimeType } : null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [image?.url]);
+  const [failedUrl, setFailedUrl] = useState(null);
   const url = image?.sha256 ? verified.url : image?.url;
-  return <span className={styles.referenceViewport} ref={frame}>{url && !failed ? <img src={url} alt={label} loading={enlarged ? 'eager' : 'lazy'} referrerPolicy="no-referrer" onError={() => setFailed(true)}/>
+  const failed = Boolean(url && failedUrl === url);
+  return <span className={styles.referenceViewport} ref={frame}>{url && !failed ? <img src={url} alt={label} loading={enlarged ? 'eager' : 'lazy'} referrerPolicy="no-referrer" onError={() => setFailedUrl(url)}/>
     : <span className={styles.missing}>{image && !failed && !verified.error ? 'Loading reference…' : 'Reference photo unavailable'}</span>}</span>;
 }
 function Comparison({ photo, reference, candidate, side, onClose }) {

@@ -13,7 +13,7 @@ const code = babel.transformSync(readFileSync(new URL('../components/VariantIden
 const hash = c => c.repeat(64), all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
 const flush = () => new Promise(resolve => setImmediate(resolve));
-function fixture() {
+function fixture({ component = 'default', props, beforeEffects } = {}) {
   const slots = [], effects = [], values = new Map(), timers = new Map(); let cursor = 0, dirty, tree;
   const candidate = (candidateId, extra = {}) => ({candidateId,label:candidateId,identity:{name:'Pikachu',setName:'151',cardNumber:'025',language:'English'},parallel:'Reverse holo',applicability:'unknown',diagnostics:[{id:'foil',description:'Check the foil outside the artwork.'}],images:[],...extra});
   const f = { reads:0, writes:[], saved:0, gates:[], images:true, props:{cardId:randomUUID(),staffId:randomUUID(),enabled:true,sourceHash:hash('a'),identityRevision:1,revision:9,identity:{cardName:'Pikachu',productSet:'151',cardNumber:'025'},geometry:{sides:{FRONT:{},BACK:{}}},images:{}},
@@ -25,7 +25,8 @@ function fixture() {
     useRef(initial){const index=cursor++;if(!(index in slots))slots[index]={current:initial};return slots[index];},
     useEffect(callback,deps){const index=cursor++,previous=slots[index];if(!previous||deps.some((value,i)=>value!==previous.deps[i])){slots[index]={deps,cleanup:previous?.cleanup};effects.push(()=>{slots[index].cleanup?.();slots[index].cleanup=callback();});}},
   };
-  const exports={};vm.runInNewContext(code,{exports,URL,Promise,window:{localStorage:{getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}},setTimeout:(fn,ms)=>{timers.set(ms,fn);return ms;},clearTimeout:ms=>timers.delete(ms),require(name){
+  if (props) f.props = props;
+  const exports={};vm.runInNewContext(`${code}\nexports.ReferencePhoto = ReferencePhoto;`,{exports,URL,Promise,window:{localStorage:{getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}},setTimeout:(fn,ms)=>{timers.set(ms,fn);return ms;},clearTimeout:ms=>timers.delete(ms),require(name){
     if(name==='react')return react;
     if(name.endsWith('routes.mjs'))return routes;
     if(name==='@atlas/manual-workspace')return{geometryImage:()=>({url:'verified'})};
@@ -34,7 +35,7 @@ function fixture() {
     if(name.endsWith('manual-client.mjs'))return{manualRequest:async(path,options)=>{if(!options.method){f.reads++;return f.read?f.read():structuredClone(f.status);}f.writes.push(options.body);if(f.save)return f.save(options.body);const input=options.body;f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:input.decision!=='UNRESOLVED'};return structuredClone(f.status);}};
     if(name.endsWith('.css'))return new Proxy({},{get:(_,key)=>key});return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);
   }});
-  f.exports=exports;f.render=()=>{let loops=0;do{dirty=false;cursor=0;tree=exports.default(f.props);effects.splice(0).forEach(fn=>fn());assert.ok(++loops<20);}while(dirty);return tree;};
+  f.exports=exports;f.render=()=>{let loops=0;do{dirty=false;cursor=0;tree=exports[component](f.props);beforeEffects?.(tree);effects.splice(0).forEach(fn=>fn());assert.ok(++loops<20);}while(dirty);return tree;};
   f.find=predicate=>all(tree,predicate);f.text=()=>text(tree);f.button=label=>f.find(node=>node.type==='button'&&text(node)===label)[0];f.radios=()=>f.find(node=>node.type==='input'&&node.props.type==='radio');f.remount=()=>{slots.forEach(value=>value?.cleanup?.());slots.length=0;f.render();};f.dispose=()=>slots.forEach(value=>value?.cleanup?.());f.render();return f;
 }
 test('saved suggestions are ordered but never selected; foreign language and other cards remain separate',async()=>{const f=fixture();await flush();f.render();assert.equal(f.reads,1);assert.equal(f.writes.length,0);assert.ok(f.radios().every(node=>!node.props.checked));assert.equal(f.gates.at(-1),false);assert.match(f.text(),/AI suggestion · not a confirmation/);assert.equal(f.button('Confirm selected identity').props.disabled,true);const labels=f.find(node=>node.type==='strong').map(text);assert.ok(labels.indexOf('suggested')<labels.indexOf('second'));assert.match(f.text(),/Other languages/);assert.match(f.text(),/Other card matches/);assert.match(f.text(),/Reference photo unavailable/);f.dispose();});
@@ -45,6 +46,17 @@ test('saved decision with failed workspace reload stays gated and offers read-on
 test('reloading after changed identity acknowledgement refreshes old workspace and refuses stale gate',async()=>{const f=fixture();f.status.identityRevision=2;f.status.approvalReady=true;f.status.confirmation={decision:'MANUAL',sourceHash:f.status.sourceHash,identityRevision:2,identityHash:f.status.identityHash};await flush();f.render();assert.equal(f.saved,1);assert.equal(f.gates.at(-1),false);assert.ok(f.radios().every(node=>node.props.disabled));f.dispose();});
 test('late status from another card is discarded; queued polling does no writes and ends on unmount',async()=>{const f=fixture();let finish;f.read=()=>new Promise(resolve=>{finish=resolve;});await flush();f.props.cardId=randomUUID();f.status.state='QUEUED';f.read=null;f.render();await flush();f.render();const latest=f.text();finish({...f.status,state:'FAILED'});await flush();f.render();assert.equal(f.text(),latest);assert.match(f.text(),/queued/);assert.equal(f.writes.length,0);f.dispose();});
 test('reference selection refuses unlicensed and unsafe images without promoting artwork to exact',()=>{const f=fixture(),pick=f.exports.variantReference;assert.equal(pick({images:[{url:'https://example.com/a',relationship:'exact',provenance:{usage:'permission_required'}}]}),null);assert.equal(pick({images:[{url:'javascript:alert(1)',relationship:'exact',provenance:{usage:'reviewed_catalog'}}]}),null);const image={url:'https://example.com/art',relationship:'card_art_only',provenance:{usage:'provider_reference'}};assert.equal(pick({images:[image]}).relationship,'card_art_only');f.dispose();});
+
+test('an immediate image refusal stays unavailable after effects; another source can load',()=>{
+ let refused = false;
+ const f = fixture({ component:'ReferencePhoto', props:{image:{url:'https://images.scrydex.com/pokemon/xy12-51/large'},label:'Mewtwo artwork'},
+  beforeEffects(tree){ const img=all(tree,node=>node.type==='img')[0]; if(img&&!refused){refused=true;img.props.onError();} } });
+ assert.equal(refused,true);assert.equal(f.find(node=>node.type==='img').length,0);assert.match(f.text(),/Reference photo unavailable/);
+ f.render();assert.equal(f.find(node=>node.type==='img').length,0,'a later render must not erase a known failure');
+ f.props.image={url:'https://assets.tcgdex.net/en/xy/xy12/51/high.webp'};f.render();
+ const img=f.find(node=>node.type==='img')[0];assert.equal(img.props.src,f.props.image.url);assert.equal(img.props.referrerPolicy,'no-referrer');
+ img.props.onError();f.render();assert.match(f.text(),/Reference photo unavailable/);f.dispose();
+});
 
 
 test('manual draft after an unresolved hold restores as manual, and a new choice cannot reuse previous manual confirmation',async()=>{const f=fixture();await flush();f.render();f.button('I cannot tell').props.onClick();f.render();f.button('Save for identity review').props.onClick();await flush();f.render();f.button('I can identify it from the physical card').props.onClick();f.render();f.find(node=>node.type==='input'&&node.props.maxLength===120)[0].props.onChange({target:{value:'English reverse holo'}});f.render();f.find(node=>node.type==='textarea')[0].props.onChange({target:{value:'Foil outside artwork.'}});f.render();f.remount();await flush();f.render();assert.equal(f.button('Save for identity review'),undefined);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.gates.at(-1),true);f.radios()[0].props.onChange();f.render();assert.equal(f.gates.at(-1),false);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.dispose();});
