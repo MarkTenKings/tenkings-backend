@@ -8,19 +8,29 @@ as parser gaps. A blank color cell never produces a candidate.
 import argparse, csv, json, re, warnings
 from collections import Counter
 from pathlib import Path
-from catalog import clean, norm, now, sha, write_json, database, export
+from catalog import clean, norm, now, sha, write_json, database, export, MAX_BYTES
 
-PARSER='leaf-explicit-cells/v1'
+PARSER='leaf-explicit-cells/v2'
 ALIASES={'card set':'set','player name':'name','checklist #':'checklist','name oscar':'name','name temp':'name'}
-META={'set','subset','name','checklist','foil','mem','base','note','notes','note card','redemption','redemption status','city','city designation','most recent mlb team','plates','short print','short print info','kp asset id'}
-COLORS=re.compile(r'\b(?:silver|gold|platinum|bronze|white|black|blue|red|green|orange|purple|pink|yellow|rainbow|holo|foil|gray|grey|navy|emerald|sparkle|prismatic|crystal|lava|mojo|kaleidoscope|shimmer|pewter|copper|aqua|teal|rose)\b',re.I)
+META={'set','subset','name','checklist','foil','mem','base','note','notes','note card','redemption','redemption status','city','city designation','city state designation','team','most recent mlb team','plates','short print','short print info','kp asset id'}
+COLORS=re.compile(r'\b(?:silver|gold|platinum|platium|bronze|white|black|blue|red|green|orange|purple|pink|yellow|rainbow|holo|foil|gray|grey|navy|emerald|sparkle|prismatic|crystal|lava|mojo|kaleidoscope|shimmer|pewter|copper|aqua|teal|rose|magenta|charcoal|lavender|lavendar)\b',re.I)
+# Literal headers observed in retained manufacturer files. Preserve their text;
+# do not translate abbreviations into an inferred physical printing.
+PRINTINGS={'super','wave','rwb','r w b','galaxy','fire','earth','air','water','sky','oil slick','zebra','tiger stripe','tiger','oil spill','clown fish','cow','turtle','elephant','snake','leopard','parrot','peacock','pro set border'}
+# These ancillary columns cannot establish a named plate variant. They no
+# longer suppress independently explicit color cells, but remain a gap.
+UNINTERPRETED={'c','m','y','k'}
+NON_PRINTING_NOTES={'redemption','sp','ssp','short print','autograph redemption','stated print runs','hobby only','jumbo only','jumbo only only 1 of each color'}
+
+def printing(field):
+    return bool(COLORS.search(field) or field in PRINTINGS)
 
 def field(s):
     n=norm(s);return ALIASES.get(n,n)
 
 def present(value):
     v=clean(value)
-    return bool(re.fullmatch(r'[1-9]\d*(?:\.0)?',v) or v.lower() in {'yes','unnumbered','not numbered','unlimited'})
+    return bool(re.fullmatch(r'[1-9]\d*(?:\.0)?',v) or v.lower() in {'yes','unnumbered','not numbered','unlimited',"not #'d"})
 
 def parse_sheet(values,sheet):
     output=[];gaps=[];headers=None;fields=[];colorcols=[];blocked=False
@@ -29,10 +39,12 @@ def parse_sheet(values,sheet):
         if 'subset' in fs and 'name' in fs and 'checklist' in fs:
             headers=vals;fields=fs;counts=Counter(f for f in fs if f);blocked=any(n>1 for f,n in counts.items() if f not in {'name'})
             # Two different name columns cannot silently disagree.
-            unknown=[i for i,f in enumerate(fs) if f and f not in META and not COLORS.search(f)]
+            unknown=[i for i,f in enumerate(fs) if f and f not in META and f not in UNINTERPRETED and not printing(f)]
             blocked=blocked or bool(unknown)
-            colorcols=[i for i,f in enumerate(fs) if f and f not in META and COLORS.search(f)]
+            colorcols=[i for i,f in enumerate(fs) if f and f not in META and printing(f)]
+            blocked=blocked or (any(f in UNINTERPRETED for f in fs) and not colorcols)
             if blocked:gaps.append({'sheet':sheet,'row':rownum,'reason':'ambiguous_or_unknown_headers','headers':headers})
+            elif any(f in UNINTERPRETED for f in fs):gaps.append({'sheet':sheet,'row':rownum,'reason':'uninterpreted_ancillary_columns','headers':[headers[i] for i,f in enumerate(fs) if f in UNINTERPRETED]})
             continue
         if not headers or blocked:continue
         vals+=['']*max(0,len(fields)-len(vals));get=lambda k:vals[fields.index(k)] if k in fields else ''
@@ -43,7 +55,7 @@ def parse_sheet(values,sheet):
         # Notes can describe a different printing. Do not silently collapse a
         # row with freeform notes into a similarly named parallel.
         notes=' '.join(vals[i] for i,f in enumerate(fields) if f in {'note','notes','note card'} and vals[i])
-        if notes and norm(notes) not in {'redemption','sp','ssp','short print','autograph redemption'}:
+        if notes and norm(notes) not in NON_PRINTING_NOTES and not (norm(notes)=='no parallels exist' and not colorcols):
             gaps.append({'sheet':sheet,'row':rownum,'reason':'freeform_printing_note','note':notes});continue
         foil=get('foil');labels=[]
         if colorcols:
@@ -53,14 +65,15 @@ def parse_sheet(values,sheet):
                     gaps.append({'sheet':sheet,'row':rownum,'column':i+1,'reason':'unsupported_print_run','value':vals[i]})
         else:labels=[clean(' '.join([subset,foil]))]
         for label in labels:
-            output.append({'subset':label,'card_number':number,'player_name':name,'team':get('city designation') or get('city') or get('most recent mlb team'),'rookie':None,'page':None,'source_row':rownum,
+            output.append({'subset':label,'card_number':number,'player_name':name,'team':get('city designation') or get('city state designation') or get('city') or get('team') or get('most recent mlb team'),'rookie':None,'page':None,'source_row':rownum,
               'raw_text':json.dumps({'sheet':sheet,'row':rownum,'headers':headers,'values':vals,'set':get('set'),'printing':label},ensure_ascii=False,separators=(',',':')),'applicability':'explicit_card_row'})
     if not headers:gaps.append({'sheet':sheet,'reason':'unsupported_header'})
     return output,gaps
 
 def parse_leaf(path):
     path=Path(path);allrows=[];gaps=[]
-    if path.suffix=='.csv':sheets=[('CSV',list(csv.reader(path.open(encoding='utf-8-sig'))))]
+    if path.suffix=='.csv':
+        with path.open(encoding='utf-8-sig',newline='') as source:sheets=[('CSV',list(csv.reader(source)))]
     elif path.suffix=='.xlsx':
         import openpyxl
         with warnings.catch_warnings():
@@ -69,6 +82,22 @@ def parse_leaf(path):
     for sheet,values in sheets:
         rows,rejected=parse_sheet(values,sheet);allrows.extend(rows);gaps.extend(rejected)
     return allrows,gaps
+
+def retained_gap_supplement(root):
+    """Reparse retained zero-row gaps without modifying the archival database."""
+    root=Path(root).resolve();sources=[];reviewed=[]
+    manifest=json.loads((root/'source-manifest.json').read_text())
+    for source in manifest['sources']:
+        if source.get('manufacturer')!='Leaf' or source.get('state')!='needs_parser' or source.get('row_count')!=0:continue
+        path=(root/source.get('local_path','')).resolve()
+        if path.suffix not in {'.xlsx','.csv'}:continue
+        if not path.is_relative_to(root/'raw') or path.stat().st_size>MAX_BYTES:raise ValueError('SOURCE_PATH_OR_SIZE_INVALID')
+        if sha(path.read_bytes())!=source.get('sha256'):raise ValueError('SOURCE_HASH_MISMATCH')
+        rows,gaps=parse_leaf(path)
+        reviewed.append({'id':source['id'],'sha256':source['sha256'],'rows':len(rows),'gaps':gaps})
+        if rows:sources.append({'source':{**source,'state':'normalized','parser':PARSER,'row_count':len(rows),
+          'problem':f'{len(gaps)} row/sheet gaps' if gaps else None},'rows':rows,'gaps':gaps})
+    return {'schemaVersion':'leaf-explicit-supplement/v1','complete':False,'parser':PARSER,'sources':sources,'reviewed':reviewed}
 
 def ingest(root,db):
     products=json.loads((root/'leaf-products.json').read_text());counts=Counter()
@@ -94,4 +123,9 @@ def ingest(root,db):
     return dict(counts)
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);a=p.parse_args();db=database(a.root);print(json.dumps(ingest(a.root,db)));export(a.root,db)
+    p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--supplement',type=Path);a=p.parse_args()
+    if a.supplement:
+        value=retained_gap_supplement(a.root);write_json(a.supplement,value)
+        print(json.dumps({'supplement':str(a.supplement),'sources':len(value['sources']),'rows':sum(len(s['rows']) for s in value['sources']),'reviewed':len(value['reviewed'])}))
+    else:
+        db=database(a.root);print(json.dumps(ingest(a.root,db)));export(a.root,db)
