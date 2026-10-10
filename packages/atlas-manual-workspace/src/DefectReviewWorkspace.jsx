@@ -129,12 +129,32 @@ function FindingsOverviewSide({ workspace, side, image, offset, astra, disabled,
  * both-side confirmation and the separate final report approval. */
 export function FindingsOverview({ workspace, images, astra, disabled = false, readOnly = false, onReadyChange, onSelectFinding, onSelectSide, onAddFinding, onRestoreFinding, onRetry, renderObservations }) {
   const [ready, setReady] = useState({});
+  const overview = useRef(null);
+  useEffect(() => {
+    const element = overview.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    // Measure the real remaining review surface after the host's header, notices,
+    // mode controls and footer. Scrolling the index must not enlarge the photos.
+    const fit = () => {
+      if (window.innerWidth <= 700) return;
+      const bottom = element.getBoundingClientRect().bottom;
+      const tops = [...element.querySelectorAll('.ad-overview-photo')].map(photo => photo.getBoundingClientRect().top + element.scrollTop);
+      const height = Math.max(0, Math.floor(bottom - Math.max(...tops) - 12));
+      element.style.setProperty('--ad-overview-photo-height', `${height}px`);
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(element);
+    element.querySelectorAll('.ad-overview-intro,.ad-overview-side>header,.ad-overview-photo-controls').forEach(node => observer.observe(node));
+    window.addEventListener('resize', fit);
+    fit();
+    return () => { observer.disconnect(); window.removeEventListener('resize', fit); };
+  }, []);
   const onReady = useCallback((side, value) => setReady(previous => previous[side] === value ? previous : { ...previous, [side]: value }), []);
   const bothReady = SIDES.every(side => images?.[side]?.inspection?.sha256 === workspace.sides[side].frame.inspectionImageSha256
     && ready[side] === inspectionImageBinding(workspace, side, images?.[side]));
   useEffect(() => { onReadyChange?.(bothReady); }, [bothReady, onReadyChange]);
   const frontCount = workspace.sides.FRONT.findings.filter(finding => finding.reviewResult !== 'REMOVED').length;
-  return <div className="ad-findings-overview" aria-label="All findings on Front and Back"><p className="ad-overview-intro">Review both full photographs. Select a marked finding to inspect or correct it, or add anything that was missed.</p>
+  return <div ref={overview} className="ad-findings-overview" aria-label="All findings on Front and Back"><p className="ad-overview-intro">Review both full photographs. Select a marked finding to inspect or correct it, or add anything that was missed.</p>
     <div className="ad-overview-pair">{SIDES.map(side => <FindingsOverviewSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]} offset={side === 'FRONT' ? 0 : frontCount} astra={astra}
       disabled={disabled} readOnly={readOnly} onReady={onReady} onSelectFinding={onSelectFinding} onSelectSide={onSelectSide} onAddFinding={onAddFinding} onRestoreFinding={onRestoreFinding} onRetry={onRetry} renderObservations={renderObservations}/>)}</div>
   </div>;

@@ -63,7 +63,7 @@
 .ad-findings-overview button:disabled,.mc-findings-mode button:disabled{opacity:.45;cursor:default}
 .ad-findings-overview button:focus-visible,.ad-overview-traces g[role=button]:focus-visible,.mc-findings-mode button:focus-visible{outline:2px solid #b42338;outline-offset:3px}
 .ad-overview-photo-controls button{font-size:11px;min-height:40px}
-.ad-overview-photo{position:relative;width:min(100%,calc((100dvh - 305px) * 1350 / 1858));min-width:min(100%,245px);aspect-ratio:1350/1858;margin:auto;background:#10171d;border:1px solid #d8dee2;border-radius:5px;overflow:hidden}
+.ad-overview-photo{position:relative;width:min(100%,calc(var(--ad-overview-photo-height,300px) * 1350 / 1858));min-width:0;aspect-ratio:1350/1858;margin:auto;background:#10171d;border:1px solid #d8dee2;border-radius:5px;overflow:hidden}
 .ad-overview-photo>img{display:block;width:100%;height:100%;object-fit:contain;filter:none}
 .ad-overview-photo-placeholder{position:absolute;inset:0;display:grid;place-content:center;color:#fff;text-align:center;padding:24px;font-size:12px}
 .ad-overview-traces{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
