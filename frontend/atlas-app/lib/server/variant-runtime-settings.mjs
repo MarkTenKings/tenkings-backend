@@ -27,9 +27,14 @@ export function variantWorkerSettings(env) {
   const apiKey = env.ATLAS_VARIANT_OPENAI_KEY;
   requireThat(typeof apiKey === 'string' && apiKey !== env.ATLAS_MANUAL_OPENAI_KEY && apiKey.length >= 16 && apiKey.length <= 4096 && !/[\s\x00-\x1f\x7f]/.test(apiKey),
     503, 'VARIANT_PROVIDER_NOT_CONFIGURED');
+  const listingsEnabled = env.ATLAS_VARIANT_LISTINGS_ENABLED === 'true';
+  const listingApiKey = listingsEnabled ? env.ATLAS_VARIANT_SOLD_COMPS_API_KEY : null;
+  requireThat(!listingsEnabled || typeof listingApiKey === 'string' && listingApiKey.length >= 12
+    && listingApiKey.length <= 4096 && !/[\s\x00-\x1f\x7f]/.test(listingApiKey),
+    503, 'VARIANT_LISTING_PROVIDER_NOT_CONFIGURED');
   // Deployment fixes one worker, one DB connection and one in-flight comparison.
   // Extra parallelism requires a new capacity qualification, not an env tweak.
-  return Object.freeze({ ...review, databaseUrl: database.href, apiKey, concurrency: 1, intervalMs: 5000 });
+  return Object.freeze({ ...review, databaseUrl: database.href, apiKey, listingApiKey, concurrency: 1, intervalMs: 5000 });
 }
 
 /** Reuse cold storage/analysis composition without granting this process the

@@ -5,6 +5,8 @@ import {createMachineStaffBoundary} from '@atlas/manual-service/machine-auth';
 import {createVariantJobStore} from '../src/variant-job-store.mjs';
 import {createVariantWorker} from '../src/variant-worker.mjs';
 import {createVariantAdmission} from '../src/variant-admission.mjs';
+import {prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
+import {createVariantReviewSnapshot} from '@tenkings/card-catalog-evidence';
 import {variantCatalog} from '../test/variant-fixture.mjs';
 import {digest} from '@atlas/manual-service/contract';
 import {createRequire} from 'node:module';
@@ -20,10 +22,25 @@ process.once('message',async config=>{
   const image=await sharp({create:{width:1800,height:2500,channels:3,background:'#927fa1'}}).jpeg({quality:85}).toBuffer();
   const cacheKey='variant-source:v1:'+digest('performance-public-metadata'),entry={schemaVersion:'variant-source-cache/v1',key:cacheKey,url:'https://example.invalid/local-fixture',body:JSON.stringify({metadata:'x'.repeat(32000)}),sha256:digest(JSON.stringify({metadata:'x'.repeat(32000)})),capturedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()};
   if(config.scenario==='warm')await store.cache.put(cacheKey,entry);
-  const catalog={async prepare(){process.send?.({type:'busy'});metrics.cacheReads++;const saved=await store.cache.get(cacheKey);if(saved)metrics.cacheHits++;else{await store.cache.put(cacheKey,entry);metrics.cacheWrites++;}return variantCatalog;}};
+  const listingMode=config.scenario.startsWith('listing-');
+  async function decode(){const t=performance.now(),startedAt=Date.now();await Promise.all([sharp(image).resize(1270,1778).raw().toBuffer(),sharp(image).resize(1270,1778).raw().toBuffer()]);metrics.decodes+=2;metrics.decodeMs.push(performance.now()-t);metrics.decodeIntervals.push({startedAt,finishedAt:Date.now()});return {};}
+  const catalog={async prepare(input,{executeListingSource}={}){
+   process.send?.({type:'busy'});metrics.cacheReads++;const saved=await store.cache.get(cacheKey);if(saved)metrics.cacheHits++;else{await store.cache.put(cacheKey,entry);metrics.cacheWrites++;}
+   if(!listingMode)return variantCatalog;
+   const request=prepareVariantListingRequest(input.identity),outcome=await executeListingSource(request,async()=>{
+    metrics.providerCalls++;const interval={startedAt:Date.now(),finishedAt:null,outcome:config.scenario==='listing-failure'?'UNKNOWN':'RESPONSE'};metrics.providerIntervals.push(interval);
+    try{await new Promise(r=>setTimeout(r,2500));if(config.scenario==='listing-failure')throw Object.assign(Error('Synthetic source failure'),{code:'SYNTHETIC_PROVIDER_UNKNOWN'});
+     const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[],metadata:'x'.repeat(32000)});
+     return {schemaVersion:'variant-listing-response/v1',requestKey:request.requestKey,url:request.url,httpStatus:200,contentType:'application/json',bodyText,sha256:digest(bodyText),capturedAt:new Date().toISOString()};
+    }finally{interval.finishedAt=Date.now();}
+   });
+   if(outcome.state==='REUSED')metrics.cacheHits++;
+   if(outcome.source){await decode();const imageKey='variant-provider-image-evidence:v1:'+digest(image);await store.cache.put(imageKey,{...entry,schemaVersion:'variant-provider-image/v1',key:imageKey,body:image.toString('base64'),sha256:digest(image),mimeType:'image/jpeg',width:1800,height:2500});metrics.cacheWrites++;}
+   return createVariantReviewSnapshot({identity:input.identity,candidates:[],problems:outcome.state==='UNKNOWN'?['LISTING_SOURCE_OUTCOME_UNKNOWN']:[],capturedAt:new Date().toISOString()});
+  }};
   const provider=async()=>{metrics.providerCalls++;const interval={startedAt:Date.now(),finishedAt:null,outcome:config.scenario==='failure'?'UNKNOWN':'RESPONSE'};metrics.providerIntervals.push(interval);try{await new Promise(r=>setTimeout(r,2500));if(config.scenario==='failure')throw Object.assign(Error('Synthetic provider failure'),{code:'SYNTHETIC_PROVIDER_UNKNOWN'});return {ok:true};}finally{interval.finishedAt=Date.now();}};
   provider.prepare=async()=>({evidence:{requestSha256:digest('synthetic-performance')}});
-  worker=createVariantWorker({store,catalog,admitDispatch:createVariantAdmission({boundary}),loadPhotos:async()=>{process.send?.({type:'busy'});const t=performance.now(),startedAt=Date.now();await Promise.all([sharp(image).resize(1270,1778).raw().toBuffer(),sharp(image).resize(1270,1778).raw().toBuffer()]);metrics.decodes+=2;metrics.decodeMs.push(performance.now()-t);metrics.decodeIntervals.push({startedAt,finishedAt:Date.now()});return {};},provider,projectResponse:()=>({candidateId:null,confidence:null,reason:'Synthetic performance fixture',evidence:[]}),intervalMs:5000,heartbeatMs:30000,concurrency:1,onError:e=>{metrics.errors.push(e.code);process.send?.({type:'diagnostic',code:e.code});}});
+  worker=createVariantWorker({store,catalog,admitDispatch:createVariantAdmission({boundary}),loadPhotos:async()=>{if(listingMode)throw Error('LISTING_MUST_NOT_LOAD_PRIVATE_PHOTOS');process.send?.({type:'busy'});return decode();},provider,projectResponse:()=>({candidateId:null,confidence:null,reason:'Synthetic performance fixture',evidence:[]}),intervalMs:5000,heartbeatMs:30000,concurrency:1,onError:e=>{metrics.errors.push(e.code);process.send?.({type:'diagnostic',code:e.code});}});
   process.on('message',async message=>{if(message?.type!=='stop')return;await worker.stop();await client.$disconnect();process.send?.({type:'done',metrics});process.disconnect();});
   worker.start();
  }catch(e){try{await worker?.stop();await client?.$disconnect();}catch{}process.send?.({type:'error',code:/^[A-Z][A-Z0-9_]+$/.test(e.code??'')?e.code:'LOCAL_PERFORMANCE_CHILD_FAILED'});process.exitCode=1;process.disconnect();}

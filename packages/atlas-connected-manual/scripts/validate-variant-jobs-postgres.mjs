@@ -1,4 +1,5 @@
 import {variantUpgradePreservation} from './variant-upgrade-preservation.mjs';
+import {validateListingSourceJournal} from './variant-listing-postgres.mjs';
 import {createVariantAdmission} from '../src/variant-admission.mjs';
 import {variantCatalog as catalog,variantCandidate as candidate} from '../test/variant-fixture.mjs';
 // Owned local fixture only: never accepts an existing database or provider.
@@ -102,5 +103,6 @@ try{
  await workerClient.$transaction(async tx=>{assert.equal((await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid FOR UPDATE',a))[0].id,a);assert.equal((await tx.$queryRawUnsafe('SELECT id FROM atlas_manual_intake.card WHERE id=$1::uuid FOR SHARE',a))[0].id,a);});
  for(const table of ['atlas_manual.card','atlas_manual_intake.card'])await assert.rejects(workerClient.$executeRawUnsafe(`UPDATE ${table} SET id=id WHERE id=$1::uuid`,a),e=>e.meta?.code==='P0001');
  await assert.rejects(workerClient.$executeRawUnsafe('UPDATE atlas_manual.card SET revision=revision+1 WHERE id=$1::uuid',a),e=>e.meta?.code==='42501');checks.push('dedicated role cap1 performs full worker queue/cache/recheck reads; all human/public/market INSERT denied; row-lock-only id grant cannot mutate cards');
+ checks.push(...await validateListingSourceJournal({fixture,connection,store,staff,seed,review,catalog}));
  await writeFile(join(output,'result.json'),JSON.stringify({status:'PASS',checks,providerCalls:calls,productionCalls:0,fixtureDirectory:fixture.cluster.directory},null,2));console.log(JSON.stringify({status:'PASS',groups:checks.length,providerCalls:calls}));
 }finally{await workerClient?.$disconnect();await connection.close();await fixture.stop();}

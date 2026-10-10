@@ -19,6 +19,7 @@ import { createDealerStaffService } from '../../../../packages/atlas-connected-m
 import { variantReviewSettings, validateVariantRuntimeConfiguration } from './variant-runtime-settings.mjs';
 import { createAtlasCatalogClient } from '../../../../packages/atlas-connected-manual/src/research-catalog.mjs';
 import { createVariantCatalogService } from '../../../../packages/atlas-connected-manual/src/variant-catalog.mjs';
+import { createVariantListingProvider } from '../../../../packages/atlas-connected-manual/src/variant-listing-provider.mjs';
 import { createVariantSourcePhotoReader } from '../../../../packages/atlas-connected-manual/src/variant-source-photos.mjs';
 import { createOrderDeskService } from '../../../../packages/atlas-connected-manual/src/order-desk.mjs';
 import { createOrderDeskInboxService } from '../../../../packages/atlas-connected-manual/src/order-desk-inbox.mjs';
@@ -136,7 +137,14 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const stationConfig=manualStationSettings(env,staffConfig.origin);
   const researchConfig=manualResearchSettings(env),dealerConfiguration=manualDealerConfigurationLoader(env);
   const variantConfig=variantReviewSettings(env);
-  const variantCatalog=variantConfig?createVariantCatalogService({catalogClient:variantConfig.catalogToken?createAtlasCatalogClient({token:variantConfig.catalogToken}):null,scrydex:variantConfig.scrydex,cache:{get:key=>connected.variantJobs.cache.get(key),getRetained:(key,sha)=>connected.variantJobs.cache.getRetained(key,sha),put:()=>{throw new Error('Serving reads cannot write variant source cache');}}}):null;
+  const variantCache={get:key=>connected.variantJobs.cache.get(key),getRetained:(key,sha)=>connected.variantJobs.cache.getRetained(key,sha),
+    put:()=>{throw new Error('Serving reads cannot write variant source cache');}};
+  // This provider has no credential or network capability. Saved references
+  // remain readable after a cache TTL without acquiring or purchasing anything.
+  const variantListings=variantConfig?createVariantListingProvider({cache:variantCache,
+    fetchImpl:()=>{throw new Error('Serving reads cannot fetch variant listings');}}):null;
+  const variantCatalog=variantConfig?createVariantCatalogService({catalogClient:variantConfig.catalogToken?createAtlasCatalogClient({token:variantConfig.catalogToken}):null,
+    scrydex:variantConfig.scrydex,cache:variantCache,listingProvider:variantListings}):null;
   const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
   const orderPhotoSettings=orderDeskPhotoSettings(env);
   const orderPhotoClient=orderPhotoSettings?new S3Client({region:orderPhotoSettings.region,endpoint:orderPhotoSettings.endpoint,maxAttempts:1,

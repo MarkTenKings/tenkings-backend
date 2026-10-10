@@ -99,10 +99,12 @@ export const VARIANT_WARNING_CODES: readonly string[];
 export const VARIANT_PROBLEM_CODES: readonly string[];
 export type VariantIdentity = { category: Category; name: string | null; year: string | null; setName: string | null;
   cardNumber: string | null; manufacturer: string | null; language: string | null };
-export type VariantImage = { imageId: string; relationship: 'exact' | 'representative' | 'card_art_only'; url: string | null;
+export type VariantImage = { imageId: string; url: string | null;
   sha256: string | null; mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | null; width: number | null; height: number | null;
   publication: PublicationPin | null; provenance: { provider: string; sourceUrl: string | null; sourceSha256: string;
-    usage: 'reviewed_catalog' | 'provider_reference' | 'permission_required' }; visibleDiagnosticIds: string[] };
+    usage: 'reviewed_catalog' | 'provider_reference' | 'permission_required' }; visibleDiagnosticIds: string[] } &
+  ({ relationship: 'exact' | 'representative' | 'card_art_only' } | { relationship: 'listing_photo'; sourceResponseSha256: string;
+    listing: { id: string; title: string; url: string } });
 export type VariantCandidate = { candidateId: string; authority: 'reviewed_catalog' | 'provider_candidate'; label: string;
   identity: VariantIdentity; parallel: string | null; canonical: { publication: PublicationPin; cardId: string; printingId: string } | null;
   applicability: 'supported' | 'unknown'; diagnostics: { id: string; description: string }[]; images: VariantImage[];

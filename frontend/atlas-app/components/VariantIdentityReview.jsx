@@ -31,18 +31,33 @@ function safeUrl(value) {
   if (value.startsWith('/') && !value.startsWith('//')) return value;
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? value : null; } catch { return null; }
 }
-export function variantReference(candidate, cardId) {
+function listingSource(image) {
+  if (image?.relationship !== 'listing_photo' || image.provenance?.provider !== 'ebay_sold_comps_v2') return null;
+  const listing = image.listing, url = safeUrl(listing?.url);
+  return typeof listing?.id === 'string' && listing.id.trim() && typeof listing.title === 'string' && listing.title.trim()
+    && url?.startsWith('https://') ? { title: listing.title, url } : null;
+}
+export function variantReference(candidate, cardId, { artwork = true } = {}) {
   const images = (candidate?.images ?? []).map(image => {
-    const retained = image.publication || candidate.authority === 'provider_candidate' && image.provenance?.usage === 'provider_reference';
+    // Listing photographs always use saved, hash-verified bytes. The enclosing
+    // candidate may retain Scrydex's label and provider, so use image provenance.
+    const listing = image.relationship === 'listing_photo';
+    const retained = image.publication || (listing || candidate.authority === 'provider_candidate') && image.provenance?.usage === 'provider_reference';
+    if (listing && (!listingSource(image) || image.provenance?.usage !== 'provider_reference' || !cardId || !retained || !/^[a-f0-9]{64}$/.test(image.sha256 ?? ''))) return null;
     return cardId && retained && /^[a-f0-9]{64}$/.test(image.sha256 ?? '')
       ? { ...image, url: staffApiPath(`manual-connected/cards/${cardId}/variants/images/${image.sha256}`) } : image;
-  });
-  const image = ['exact','representative','card_art_only'].flatMap(kind => images.filter(item => item.relationship === kind))
+  }).filter(Boolean);
+  const image = ['exact','listing_photo','representative',...(artwork ? ['card_art_only'] : [])].flatMap(kind => images.filter(item => item.relationship === kind))
     .find(item => safeUrl(item.url) && ['reviewed_catalog','provider_reference'].includes(item.provenance?.usage));
   return image ? { ...image, url: safeUrl(image.url) } : null;
 }
 function referenceLabel(image) {
-  return ({ exact: 'Exact printing reference', representative: 'Representative printing · different card may be pictured', card_art_only: 'Card artwork only · finish is not shown' })[image?.relationship] ?? 'Reference photo unavailable';
+  return ({ exact: 'Exact printing reference', listing_photo: 'eBay listing photo', representative: 'Representative printing · different card may be pictured', card_art_only: 'Card artwork · finish is not shown' })[image?.relationship] ?? 'Reference photo unavailable';
+}
+function referenceSource(image, candidate, className = styles.source) {
+  const listing = listingSource(image);
+  const url = listing?.url ?? safeUrl(image?.provenance?.sourceUrl ?? candidate?.source?.url);
+  return url ? <p className={className}><a href={url} target="_blank" rel="noopener noreferrer">{listing?.title ?? 'Reference source ↗'}</a></p> : null;
 }
 function ReferencePhoto({ image, label, enlarged = false }) {
   const frame = useRef(null), [visible, setVisible] = useState(enlarged);
@@ -70,7 +85,7 @@ function Comparison({ photo, reference, candidate, side, onClose }) {
     <p>Check the printed number, language, stamp and foil pattern against your physical card. Artwork alone does not confirm a finish.</p>
     <button type="button" aria-pressed={zoom} onClick={() => setZoom(!zoom)}>{zoom ? 'Fit both photos' : 'Enlarge both photos'}</button>
     <div className={styles.compare} data-zoom={zoom}><figure><figcaption>Your saved photograph</figcaption><div>{photo ? <img src={photo} alt="Your unchanged uploaded photograph"/> : <span>Photograph unavailable</span>}</div></figure>
-      <figure><figcaption>{referenceLabel(reference)}</figcaption><div><ReferencePhoto image={reference} label={candidate?.label ?? 'Reference'} enlarged/></div></figure></div>
+      <figure><figcaption>{referenceLabel(reference)}</figcaption><div><ReferencePhoto image={reference} label={candidate?.label ?? 'Reference'} enlarged/></div>{referenceSource(reference, candidate, styles.comparisonSource)}</figure></div>
     {candidate?.diagnostics?.length > 0 && <ul>{candidate.diagnostics.map(cue => <li key={cue.id}>{cue.description}</li>)}</ul>}
   </dialog>;
 }
@@ -192,6 +207,9 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const unavailable = disabled || busy || Boolean(pending) || !current;
   const suggestedCandidate = candidates.find(candidate => candidate.candidateId === suggested?.candidateId);
   const groupingIdentity = { ...identity, language: identity?.language ?? suggestedCandidate?.identity.language };
+  const artwork = ordered.filter(candidate => variantCandidateGroup(candidate, groupingIdentity) === 'same')
+    .map(candidate => ({ candidate, image: variantReference({ ...candidate, images: (candidate.images ?? []).filter(image => image.relationship === 'card_art_only') }, cardId) }))
+    .find(reference => reference.image);
   const manualComplete = manual?.parallel.trim() && manual?.features.trim();
   const permissionComplete = !referencePermission || ['owned_original','licensed','permission'].includes(referencePermission.basis)
     && referencePermission.detail?.trim().length > 0 && referencePermission.detail.trim().length <= 1000;
@@ -211,18 +229,20 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
       {variantRecheckMessage(status) && <p role="status" className={styles.notice}>{variantRecheckMessage(status)}</p>}
       {suggested?.candidateId && candidates.some(candidate => candidate.candidateId === suggested.candidateId) && <p className={styles.suggestion}><strong>AI suggestion · not a confirmation</strong>{suggested.reason && <span>{suggested.reason}</span>}</p>}
       {status?.state === 'READY' && !candidates.length && <p>The reference library has no usable variant matches for this card. Your saved identification and grading work are retained. Verify the variant from the physical card if you can, or keep it unresolved.</p>}
+      {candidates.length > 0 && <p className={styles.coverage}>These reference photos may not show every variant. Compare the visible details with your card; listing titles are unconfirmed seller descriptions.</p>}
+      {artwork && <figure className={styles.cardArtwork}><div><ReferencePhoto image={artwork.image} label={referenceLabel(artwork.image)}/></div><figcaption><strong>{referenceLabel(artwork.image)}</strong><span>Shared artwork for this card.</span>{referenceSource(artwork.image, artwork.candidate)}</figcaption></figure>}
       {groups.map(group => {
         const entries = ordered.filter(candidate => variantCandidateGroup(candidate, groupingIdentity) === group.key); if (!entries.length) return null;
         const contents = <div className={styles.tiles}>{entries.map(candidate => {
-          const ref = variantReference(candidate, cardId), chosen = choice === candidate.candidateId && !unresolved;
-          return <article className={styles.tile} data-selected={chosen} key={candidate.candidateId}>
+          const ref = variantReference(candidate, cardId, { artwork: false }), chosen = choice === candidate.candidateId && !unresolved;
+          return <article className={styles.tile} data-selected={chosen} data-has-photo={Boolean(ref)} key={candidate.candidateId}>
             <label className={styles.tileChoice}><input type="radio" name={`variant-${cardId}`} checked={chosen} disabled={unavailable || status.state !== 'READY' || !candidate.parallel?.trim()} onChange={() => choose(candidate.candidateId)}/>
-              <div className={styles.referencePhoto}><ReferencePhoto image={ref} label={`${candidate.label} · ${referenceLabel(ref)}`}/></div>
-              <div className={styles.tileText}>{candidate.candidateId === suggested?.candidateId && <span className={styles.suggestedBadge}>Suggested</span>}<strong>{candidate.label}</strong><span>{[candidate.identity.setName, candidate.identity.cardNumber && `#${candidate.identity.cardNumber}`, candidate.identity.year].filter(Boolean).join(' · ')}</span><span>{candidate.identity.language || 'Language unconfirmed'}{candidate.parallel ? ` · ${candidate.parallel}` : ' · Printing unconfirmed'}</span>{variantCardNumberComparison(identity?.cardNumber, candidate.identity.cardNumber) === 'unknown' && <small>Full collector number unconfirmed · check the number and set total on your card</small>}<small>{referenceLabel(ref)}</small><small>{candidate.authority === 'reviewed_catalog' ? 'Reviewed catalog' : 'Provider candidate · verify against your card'}</small>{candidate.applicability !== 'supported' && <small>Printing applicability needs review</small>}</div>
+              {ref && <div className={styles.referencePhoto}><ReferencePhoto image={ref} label={`${candidate.label} · ${referenceLabel(ref)}`}/></div>}
+              <div className={styles.tileText}>{candidate.candidateId === suggested?.candidateId && <span className={styles.suggestedBadge}>Suggested</span>}<strong>{candidate.label}</strong><span>{[candidate.identity.setName, candidate.identity.cardNumber && `#${candidate.identity.cardNumber}`, candidate.identity.year].filter(Boolean).join(' · ')}</span><span>{candidate.identity.language || 'Language unconfirmed'}{candidate.parallel ? ` · ${candidate.parallel}` : ' · Printing unconfirmed'}</span>{variantCardNumberComparison(identity?.cardNumber, candidate.identity.cardNumber) === 'unknown' && <small>Full collector number unconfirmed · check the number and set total on your card</small>}<small>{referenceLabel(ref)}</small>{candidate.authority === 'reviewed_catalog' && <small>Reviewed catalog</small>}</div>
             </label>
-            {safeUrl(ref?.provenance?.sourceUrl ?? candidate.source?.url) && <p className={styles.source}><a href={safeUrl(ref?.provenance?.sourceUrl ?? candidate.source?.url)} target="_blank" rel="noopener noreferrer">Reference source ↗</a></p>}
+            {referenceSource(ref, candidate)}
             {candidate.diagnostics.length > 0 && <ul className={styles.cues}>{candidate.diagnostics.map(cue => <li key={cue.id}>{cue.description}</li>)}</ul>}
-            <button type="button" className={styles.compareButton} onClick={event => compare(candidate, event)} disabled={!photograph.url}>Compare details<span className={styles.srOnly}>: {candidate.label}</span></button>
+            {ref && <button type="button" className={styles.compareButton} onClick={event => compare(candidate, event)} disabled={!photograph.url}>Compare details<span className={styles.srOnly}>: {candidate.label}</span></button>}
           </article>;
         })}</div>;
         return group.key === 'same' ? <fieldset className={styles.group} key={group.key}><legend>{group.label} <span>{entries.length}</span></legend>{contents}</fieldset>
@@ -243,6 +263,6 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     </footer>
     {status?.refreshable === true && <div><p><button type="button" disabled={unavailable} onClick={() => void refresh()}>{drafted ? 'Discard unsaved choice and refresh reference library' : 'Refresh reference library'}</button></p>{drafted && <p className={styles.photoHelp}>This discards only your unsaved variant choice. Your saved variant and grading work stay unchanged.</p>}</div>}
     {error && <p className={styles.error} role="alert">{error}</p>}{(!status || stateText || error || reloadNeeded || status.confirmation?.reprocessRequired && !status.approvalReady) && <button type="button" disabled={busy} onClick={() => void check()}>Check saved matches</button>}
-    {comparison && <Comparison photo={photograph.url} reference={variantReference(comparison, cardId)} candidate={comparison} side={side} onClose={() => { setComparison(null); comparisonOpener.current?.focus(); }}/>}
+    {comparison && <Comparison photo={photograph.url} reference={variantReference(comparison, cardId, { artwork: false })} candidate={comparison} side={side} onClose={() => { setComparison(null); comparisonOpener.current?.focus(); }}/>}
   </section>;
 }

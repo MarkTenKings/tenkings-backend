@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createPublishedCatalogReader, variantChoicesFromPublishedLookup, normalizeVariantIdentity, variantDemandKey,
   compareVariantCardNumber, createVariantReviewSnapshot, validateVariantReviewSnapshot, validateVariantCandidate,
   variantSelectionParallel, importTcgdexVariantCandidates, createTcgdexVariantProvider, createVariantSourceReader,
-  variantSourceCacheKey, VARIANT_SOURCE_LIMITS } from '../src/index.mjs';
+  variantSourceCacheKey, VARIANT_SOURCE_LIMITS, variantCandidateId, canonicalJson, isVariantPhotoComparable } from '../src/index.mjs';
 import { fixture, hostFixture, queryFor, sha, copy } from './fixtures.mjs';
 
 const identity = { category: 'POKEMON', name: 'Magikarp', year: '2020', setName: 'Rebel Clash', cardNumber: '039/192', manufacturer: null, language: null };
@@ -52,6 +52,36 @@ test('real Rebel Clash assertions are unreviewed; shared artwork cannot prove ei
   }
   const forged = copy(choices[0]); forged.images[0].relationship = 'exact'; assert.throws(() => validateVariantCandidate(forged));
   const wrongRights = copy(choices[0]); wrongRights.images[0].provenance.usage = 'reviewed_catalog'; assert.throws(() => validateVariantCandidate(wrongRights));
+});
+
+test('listing photos have a strict separate metadata and provenance branch, including Scrydex attachments', () => {
+  const listing = { id: '123456789123', title: '2020 Rebel Clash Magikarp #39/192 Reverse Holo English', url: 'https://www.ebay.com/itm/123456789123' };
+  const sourceUrl = 'https://api.sold-comps.com/v1/scrape?keyword=magikarp', sourceSha256 = sha('source');
+  const image = { imageId: `listing-image:${sha(canonicalJson({ listing, sha256: sha('photo'), sourceResponseSha256: sourceSha256 }))}`,
+    relationship: 'listing_photo', url: 'https://i.ebayimg.com/images/g/example/s-l1600.jpg', sha256: sha('photo'),
+    mimeType: 'image/jpeg', width: 900, height: 1200, publication: null, sourceResponseSha256: sourceSha256, listing,
+    provenance: { provider: 'ebay_sold_comps_v2', sourceUrl, sourceSha256, usage: 'provider_reference' }, visibleDiagnosticIds: [] };
+  const c = { ...copy(imported()[1]), images: [image], source: { provider: 'ebay_sold_comps_v2', recordId: listing.id,
+    url: sourceUrl, sha256: sourceSha256, references: [{ url: sourceUrl, sha256: sourceSha256 }] },
+    warnings: ['LISTING_CLAIMS_UNREVIEWED', 'REFERENCE_USAGE_NOT_REVIEWED'] };
+  c.candidateId = variantCandidateId(c); validateVariantCandidate(c);
+  assert.equal(isVariantPhotoComparable(c, image), false);
+  const cross = { ...copy(c), source: { provider: 'scrydex', recordId: 'swsh2-39:variant:reverseHolofoil',
+    url: 'https://api.scrydex.com/pokemon/v1/cards?q=Magikarp', sha256: sha('scrydex'),
+    references: [{ url: sourceUrl, sha256: sourceSha256 }] } };
+  cross.candidateId = variantCandidateId(cross); validateVariantCandidate(cross);
+  assert.equal(cross.label, c.label); assert.equal(isVariantPhotoComparable(cross, cross.images[0]), false);
+  for (const mutate of [v => { v.images[0].listingId = listing.id; }, v => { delete v.images[0].listing; },
+    v => { v.images[0].publication = { publicationId: 'fake' }; }, v => { v.images[0].sha256 = null; },
+    v => { v.images[0].width = 9000; }, v => { v.images[0].url = 'https://attacker.test/photo'; },
+    v => { v.images[0].url += '?redirect=other'; }, v => { v.images[0].provenance.usage = 'permission_required'; },
+    v => { v.images[0].provenance.sourceSha256 = sha('other'); }, v => { v.warnings = []; },
+    v => { v.source.provider = 'tcgdex'; v.candidateId = variantCandidateId(v); }]) {
+    const changed = copy(cross); mutate(changed); assert.throws(() => validateVariantCandidate(changed));
+  }
+  const snapshot = createVariantReviewSnapshot({ identity, candidates: [c, cross], capturedAt: now,
+    problems: ['LISTING_SOURCE_OUTCOME_UNKNOWN', 'LISTING_SOURCE_UNAVAILABLE', 'LISTING_SOURCE_NOT_CONFIGURED'] });
+  assert.equal(snapshot.coverage.images, 'partial'); assert.ok(snapshot.problems.includes('NO_DIAGNOSTIC_PHOTOS'));
 });
 
 test('actual Snivy RC1 normal flag does not invent Non-Holo or silently replace the RC denominator', () => {

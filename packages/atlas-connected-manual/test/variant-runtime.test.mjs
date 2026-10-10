@@ -33,6 +33,20 @@ test('startup refuses absent schema and incomplete grants; disabled runtime perf
   await assert.rejects(validateVariantRuntimeConfiguration({ enabled: true, client: partial }), { code: 'VARIANT_QUEUE_GRANTS_REQUIRED' });
 });
 
+test('listing acquisition is explicitly enabled only with its worker credential', () => {
+  assert.equal(variantWorkerSettings({ ...env, ATLAS_VARIANT_SOLD_COMPS_API_KEY: 'ambient-credential-ignored' }).listingApiKey, null);
+  const enabled = { ...env, ATLAS_VARIANT_LISTINGS_ENABLED: 'true', ATLAS_VARIANT_SOLD_COMPS_API_KEY: 'synthetic-listing-worker-key' };
+  assert.equal(variantWorkerSettings(enabled).listingApiKey, enabled.ATLAS_VARIANT_SOLD_COMPS_API_KEY);
+  assert.equal(variantReviewSettings(enabled).listingApiKey, undefined, 'serving configuration does not expose the acquisition credential');
+  for (const key of [undefined, '', 'too-short', 'credential\nwith-line-break']) {
+    assert.throws(() => variantWorkerSettings({ ...enabled, ATLAS_VARIANT_SOLD_COMPS_API_KEY: key }),
+      { code: 'VARIANT_LISTING_PROVIDER_NOT_CONFIGURED' });
+  }
+  const isolated = variantWorkerEnvironment(enabled, variantWorkerSettings(enabled));
+  assert.equal(isolated.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED, 'false');
+  assert.equal(isolated.ATLAS_MANUAL_BATCH_ENABLED, 'false');
+});
+
 function cardFixture() { return { cardId: 'physical-card', revision: 4, draft: { identityRevision: 2,
   identity: { cardName: 'Synthetic', year: '2026', productSet: 'Fixture', cardNumber: '1', parallel: 'Reverse Holo' }, source: { sourceHash: digest('pair') } } }; }
 test('worker downsizes copies of both current photos; replacing a source during read prevents use', async () => {

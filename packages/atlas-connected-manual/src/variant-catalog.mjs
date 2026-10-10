@@ -4,6 +4,7 @@ import { canonicalJson, normalizeVariantIdentity, compareVariantCardNumber, vari
   createTcgdexVariantProvider, createScrydexVariantProvider, createScrydexMetadataReader, createVariantProviderImageReader } from '@tenkings/card-catalog-evidence';
 import { prepareVariantCatalogObservation } from './variant-catalog-proposal.mjs';
 import { variantChoicesFromDemand } from './variant-demand.mjs';
+import {prepareVariantListingRequest,composeVariantListingCandidates} from './variant-listing-provider.mjs';
 
 const abort = signal => signal?.throwIfAborted();
 const fail = code => Object.assign(new Error(code), { code });
@@ -36,7 +37,7 @@ function scopedQuery(identity, publication, candidate) {
 /** Server-owned composition. The existing collect client authenticates current
  * SetOps publication authority. Providers only add explicit review candidates.
  * No physical photos, model requests or saved identities are changed here. */
-export function createVariantCatalogService({ catalogClient = null, providers, cache = null, scrydex = null, inspectProviderImage = null,
+export function createVariantCatalogService({ catalogClient = null, providers, cache = null, scrydex = null, listingProvider = null, inspectProviderImage = null,
   fetchImpl = globalThis.fetch, now = () => Date.now(), timeoutMs = 45000 } = {}) {
   if (providers === undefined) {
     providers = [createTcgdexVariantProvider({ reader: createVariantSourceReader({ cache, fetchImpl, now }) })];
@@ -96,8 +97,8 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       const prepared = prepareVariantCatalogObservation(payload);
       return bounded(signal, timeoutMs, active => catalogClient.submit(prepared.proposal, active));
     },
-    async prepare(input, { signal } = {}) {
-      return bounded(signal, timeoutMs, async signal => {
+    async prepare(input, { signal, executeListingSource } = {}) {
+      const base = await bounded(signal, timeoutMs, async signal => {
       abort(signal);
       const identity = normalizeVariantIdentity(input.identity), candidates = [], problems = [];
       if (!identity.name || !identity.setName || !identity.cardNumber || !identity.year) {
@@ -120,7 +121,10 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         } catch { abort(signal); problems.push('CATALOG_UNAVAILABLE'); }
         // A sibling request may still be preparing this set. Retry before
         // saving immutable comparison inputs; do not pin an empty READY job.
-        if(demand&&['QUEUED','RUNNING'].includes(demand.state)) throw fail('VARIANT_CATALOG_PENDING');
+        if(demand&&['QUEUED','RUNNING'].includes(demand.state)){
+          if(!listingProvider)throw fail('VARIANT_CATALOG_PENDING');
+          problems.push('CATALOG_UNAVAILABLE');
+        }
       }
       for (const provider of providers) {
         abort(signal);
@@ -132,6 +136,25 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       abort(signal);
       return createVariantReviewSnapshot({ identity, candidates, problems, truncated, capturedAt: new Date(now()).toISOString() });
       });
+      if(!listingProvider||base.problems.includes('IDENTITY_INCOMPLETE'))return base;
+      const identity=normalizeVariantIdentity(input.identity),problems=base.problems.filter(p=>!['NO_VARIANTS_FOUND','NO_DIAGNOSTIC_PHOTOS'].includes(p));
+      let candidates=base.candidates,truncated=base.coverage.metadata==='truncated';
+      // Metadata discovery, billed source retrieval and photo downloads have
+      // separate bounded windows. Discovery cannot consume the paid send's
+      // deadline. Only the worker can supply this durable dispatch capability.
+      if(typeof executeListingSource!=='function')problems.push('LISTING_SOURCE_NOT_CONFIGURED');
+      else try{
+        const request=prepareVariantListingRequest(identity);
+        const saved=await bounded(signal,timeoutMs,active=>executeListingSource(request,()=>listingProvider.fetchSource(request,{signal:active})));
+        if(saved.state==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
+        else{
+          if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
+          const evidence=await bounded(signal,timeoutMs,active=>listingProvider.acquireImages({request,source:saved.source},{signal:active}));
+          const composed=composeVariantListingCandidates({identity,candidates,evidence});
+          candidates=composed.candidates;problems.push(...composed.problems);truncated||=composed.truncated;
+        }
+      }catch(error){abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;problems.push('LISTING_SOURCE_UNAVAILABLE');}
+      abort(signal);return createVariantReviewSnapshot({identity,candidates,problems,truncated,capturedAt:new Date(now()).toISOString()});
     },
     /** Reauthorize publication and resolve images again after a process restart.
      * The saved descriptor is a hash pin, never a raw storage capability. */
@@ -139,6 +162,13 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       return bounded(signal, Math.min(timeoutMs, 15000), async signal => {
       const valid = validateVariantReviewSnapshot(snapshot), candidate = valid.candidates.find(c => c.candidateId === candidateId), image = candidate?.images.find(i => i.imageId === imageId);
       if (!candidate || !image) throw fail('VARIANT_REFERENCE_UNAVAILABLE');
+      if(image.relationship==='listing_photo'){
+        if(!listingProvider||typeof listingProvider.readImage!=='function')throw fail('VARIANT_REFERENCE_UNAVAILABLE');
+        const acquired=await listingProvider.readImage(image,{signal});
+        if(!Buffer.isBuffer(acquired.bytes)||acquired.bytes.length>2097152||createHash('sha256').update(acquired.bytes).digest('hex')!==image.sha256
+          ||acquired.sha256!==image.sha256||acquired.mimeType!==image.mimeType||acquired.width!==image.width||acquired.height!==image.height)throw fail('VARIANT_REFERENCE_CHANGED');
+        return acquired;
+      }
       if (candidate.authority === 'provider_candidate') {
         const provider = providers.find(p => p.id === candidate.source.provider && typeof p.readImage === 'function');
         if (!provider) throw fail('VARIANT_REFERENCE_UNAVAILABLE');

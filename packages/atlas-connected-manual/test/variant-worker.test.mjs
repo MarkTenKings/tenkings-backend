@@ -26,3 +26,21 @@ test('maintenance and recheck never overlap an active comparison, including repe
  const worker=createVariantWorker({store,catalog:{prepare:async()=>catalog},loadPhotos:async()=>({}),provider:async()=>{providerActive=true;await responseGate;providerActive=false;return {};},projectResponse:()=>({candidateId:null}),recheck:async()=>{assert.equal(providerActive,false);maintenance++;},concurrency:1});
  worker.start();for(let i=0;i<20&&!providerActive;i++)await new Promise(r=>setImmediate(r));assert.equal(providerActive,true);assert.equal(maintenance,1);await Promise.all([worker.wake(),worker.wake(),worker.wake()]);assert.equal(maintenance,1);finish();await worker.stop();assert.equal(providerActive,false);
 });
+
+for(const scenario of ['success','uncertain','saved_acknowledgement_lost','retained','priority'])test(`listing source ${scenario}: durable capability remains separate from photo-model dispatch`,async()=>{
+ const events=[],row={key:'source-job',claim_id:'source-claim',input:{identity:{}}};let claimed=false,sourceCalls=0,finished;
+ const source={bodyText:'retained raw provider body'},reservation={dispatchId:'source-dispatch'};
+ const store={discover:async()=>{},claim:async()=>{if(claimed)return null;claimed=true;return row;},renew:async()=>true,
+  reserveListingSource:async()=>{events.push('reserve committed');return scenario==='retained'?{state:'REUSED',source}:{state:'RESERVED',reservation};},
+  saveListingSource:async(r,s)=>{assert.equal(r,reservation);assert.equal(s,source);events.push('response committed');if(scenario==='saved_acknowledgement_lost')throw Error('acknowledgement lost');return true;},
+  saveCatalog:async()=>true,finish:async(_job,result)=>{finished=result;return true;},defer:async()=>{events.push('deferred');return true;},
+  dispatch:async()=>assert.fail('No photo-model dispatch for an empty reference snapshot')};
+ let outcome,admissions=0;const worker=createVariantWorker({store,catalog:{prepare:async(_input,{executeListingSource})=>{
+  outcome=await executeListingSource({requestKey:'public-identity'},async()=>{assert.equal(events[0],'reserve committed');events.push('HTTP');sourceCalls++;if(scenario==='uncertain')throw Error('transport lost');return source;});
+  return {...catalog,candidates:[]};}},loadPhotos:async()=>assert.fail('No private photos loaded'),provider:async()=>assert.fail('No model call'),projectResponse:()=>assert.fail('No model projection'),
+  admitDispatch:async()=>scenario!=='priority'||++admissions<2});
+ await worker.drainOnce();
+ assert.equal(sourceCalls,['retained','priority'].includes(scenario)?0:1);
+ if(scenario==='priority'){assert.deepEqual(events,['deferred']);assert.equal(finished,undefined);}
+ else{assert.equal(outcome.state,{success:'SAVED',uncertain:'UNKNOWN',saved_acknowledgement_lost:'UNKNOWN',retained:'REUSED'}[scenario]);assert(finished.result);}
+});

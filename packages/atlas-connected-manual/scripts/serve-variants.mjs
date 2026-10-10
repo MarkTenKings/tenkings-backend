@@ -5,6 +5,7 @@ import { variantWorkerSettings, variantWorkerEnvironment } from '../../../fronte
 import sharp from 'sharp';
 import { createAtlasCatalogClient } from '../src/research-catalog.mjs';
 import { createVariantCatalogService } from '../src/variant-catalog.mjs';
+import { createVariantListingProvider } from '../src/variant-listing-provider.mjs';
 import { createVariantPhotoProvider, projectVariantPhotoResponse } from '../src/variant-photo-provider.mjs';
 import { createVariantWorker } from '../src/variant-worker.mjs';
 import { createVariantAdmission } from '../src/variant-admission.mjs';
@@ -26,7 +27,9 @@ const runtime = createServingConnectedManual({ env: variantWorkerEnvironment(env
   staffConfig: config, Client: PrismaClient, assertRequest() { throw Error('Variant worker has no HTTP authority'); }, onWorkerError: onError });
 await runtime.validateConfiguration();
 const connected = runtime.connected, store = connected.variantJobs;
-const catalog = createVariantCatalogService({ catalogClient: settings.catalogToken ? createAtlasCatalogClient({ token: settings.catalogToken }) : null, cache: store.cache, scrydex: settings.scrydex });
+const listingProvider = settings.listingApiKey ? createVariantListingProvider({ apiKey: settings.listingApiKey, cache: store.cache }) : null;
+const catalog = createVariantCatalogService({ catalogClient: settings.catalogToken ? createAtlasCatalogClient({ token: settings.catalogToken }) : null,
+  cache: store.cache, scrydex: settings.scrydex, listingProvider });
 const provider = createVariantPhotoProvider({ apiKey: settings.apiKey, readReferenceImage: catalog.readImage });
 const admitDispatch = createVariantAdmission({ boundary: runtime.boundary });
 const recheck = createVariantRecheck({ store, boundary: runtime.boundary, workflow: connected.workflow, assistance: connected.assistance, onError, admitDispatch });

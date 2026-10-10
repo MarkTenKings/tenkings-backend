@@ -3,10 +3,14 @@ import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
+import {prepareVariantListingRequest} from './variant-listing-provider.mjs';
 
 export const variantAnalysisActionId=actionId=>{const h=digest(`atlas-variant-recheck-v1:${actionId}`);return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`;};
 export const VARIANT_POLICY='atlas-visual-variant-v1';
 const table='atlas_manual_connected.variant_job';
+const listingDispatchKey=key=>`variant-listing-dispatch:v1:${key}`;
+const listingResponseKey=key=>`variant-listing-response:v1:${key}`;
+const listingJournalKey=key=>/^variant-listing-(?:dispatch|response):v1:/.test(key);
 // Provider-owned bodies are evidence, not manual form fields. Keep the manual
 // envelope serializer unchanged and permit one explicitly bounded string only.
 // Its exact characters are retained; all metadata retains ordinary restrictions.
@@ -82,6 +86,16 @@ export function validateVariantAction(action){
 export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=180000,analysisCompatible=null}){
   requireThat(typeof boundary.machineTransaction==='function'&&Number.isInteger(leaseMs)&&leaseMs>=1000&&leaseMs<=300000,500,'VARIANT_CONFIG_INVALID');
   const machine=work=>boundary.machineTransaction(null,work);
+  // The retained cache is append-only. A transaction-scoped lock and a strict
+  // one-record read make these names a permanent request journal, not a TTL
+  // acquisition cache. All source writers take the same public-identity lock.
+  async function listingLock(tx,key){await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1,721930))',`atlas-listing-source:${key}`);}
+  async function listingRead(tx,key){const rows=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 ORDER BY created_at LIMIT 2',key);
+    requireThat(rows.length<=1,503,'VARIANT_LISTING_JOURNAL_CONFLICT');if(!rows.length)return null;
+    requireThat(digest(rows[0].snapshot)===rows[0].snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(rows[0].snapshot);}
+  async function listingWrite(tx,key,value){await tx.$executeRawUnsafe('INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz)',key,value,digest(value),'2000-01-01T00:00:00.000Z');}
+  function listingResponse(saved,reservation){requireThat(saved?.schemaVersion==='variant-listing-source-journal/v1'&&saved.requestKey===reservation.request.requestKey&&saved.dispatchId===reservation.dispatchId&&saved.reservationHash===digest(canonical(reservation)),503,'VARIANT_LISTING_JOURNAL_CONFLICT');
+    const {schemaVersion,dispatchId,reservationHash,sourceSchemaVersion,...source}=saved;requireThat(typeof source.bodyText==='string'&&Buffer.byteLength(source.bodyText)<=1048576&&digest(source.bodyText)===source.sha256,503,'VARIANT_LISTING_SOURCE_INVALID');return {schemaVersion:sourceSchemaVersion,...source};}
   async function authorized(tx,principal,cardId,edit=false){const card=await authorizeManualCard(tx,principal,cardId,{edit});if(intakeRepository)await intakeRepository.assertActiveInTransaction(tx,cardId);return card;}
   async function recheck(tx,cardId,actionId){
     const [refused]=await tx.$queryRawUnsafe('SELECT analysis_id FROM atlas_defect_analysis.request_refusal WHERE card_id=$1::uuid AND action_id=$2::uuid',cardId,actionId);
@@ -172,6 +186,31 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       if(['SELECTED','MANUAL'].includes(input.action.decision)){const candidate=job?.result?.catalog?.candidates.find(c=>c.candidateId===input.action.candidateId);const observedAt=new Date().toISOString(),payload={decision:input.action.decision,cardId,actionId:input.actionId,sourceHash:input.action.sourceHash,identityRevision:revision,identityHash:variantIdentityHash(identity),identity:{...variantCatalogIdentity('playerName'in identity?'SPORTS':'POKEMON',identity),language:candidate?.identity.language??null},parallel:identity.parallel,observedFeatures:input.action.observedFeatures??null,catalog:job?.catalog??null,candidateId:input.action.candidateId,observedAt,referencePermission:input.action.referencePermission??null},text=canonical(payload,{maxBytes:2097152});
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_contribution(action_id,card_id,actor_id,access_version,payload,payload_hash) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6)`,input.actionId,cardId,principal.id,principal.accessVersion,text,digest(text));}
     },
+    async reserveListingSource(job,request){requireThat(canonical(request)===canonical(prepareVariantListingRequest(job.input.identity)),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
+      await listingLock(tx,request.requestKey);
+      const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} AND j.state='RUNNING' FOR UPDATE`,job.key,job.claim_id);
+      requireThat(live,409,'VARIANT_LEASE_LOST');
+      requireThat(canonical(request)===canonical(prepareVariantListingRequest(unpack(live).input.identity)),409,'VARIANT_LISTING_REQUEST_CHANGED');
+      const retained=await listingRead(tx,listingDispatchKey(request.requestKey)),response=await listingRead(tx,listingResponseKey(request.requestKey));
+      requireThat(!response||retained,503,'VARIANT_LISTING_JOURNAL_CONFLICT');
+      if(retained){requireThat(retained.schemaVersion==='variant-listing-dispatch/v1'&&canonical(retained.request)===canonical(request),503,'VARIANT_LISTING_JOURNAL_CONFLICT');
+        const source=response?listingResponse(response,retained):null;
+        await tx.$executeRawUnsafe(`UPDATE ${table} j SET audit=audit||jsonb_build_array(jsonb_build_object('event',$3::text,'requestKey',$4::text,'dispatchId',$5::text)),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,source?'LISTING_REUSE':'LISTING_UNKNOWN',request.requestKey,retained.dispatchId);
+        return source?{state:'REUSED',source}:{state:'UNKNOWN',code:'LISTING_SOURCE_OUTCOME_UNKNOWN'};}
+      const reservation={schemaVersion:'variant-listing-dispatch/v1',request,dispatchId:randomUUID(),jobKey:job.key,claimId:job.claim_id,reservedAt:new Date().toISOString()};
+      await listingWrite(tx,listingDispatchKey(request.requestKey),canonical(reservation));
+      requireThat(await tx.$executeRawUnsafe(`UPDATE ${table} j SET audit=audit||jsonb_build_array(jsonb_build_object('event','LISTING_DISPATCH','requestKey',$3::text,'dispatchId',$4::text)),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,request.requestKey,reservation.dispatchId)===1,409,'VARIANT_LEASE_LOST');
+      return {state:'RESERVED',reservation};});},
+    async saveListingSource(reservation,source){object(source,['schemaVersion','requestKey','url','httpStatus','contentType','bodyText','sha256','capturedAt']);
+      requireThat(source.schemaVersion==='variant-listing-response/v1'&&source.requestKey===reservation.request.requestKey&&source.url===reservation.request.url&&Number.isInteger(source.httpStatus)&&source.httpStatus>=100&&source.httpStatus<=599&&typeof source.contentType==='string'&&source.contentType.length<=200&&typeof source.bodyText==='string'&&digest(source.bodyText)===source.sha256&&typeof source.capturedAt==='string'&&Number.isFinite(Date.parse(source.capturedAt)),400,'VARIANT_LISTING_SOURCE_INVALID');
+      const value=evidenceText({...source,schemaVersion:'variant-listing-source-journal/v1',sourceSchemaVersion:source.schemaVersion,dispatchId:reservation.dispatchId,reservationHash:digest(canonical(reservation))},'bodyText',1048576);
+      return machine(async({tx})=>{await listingLock(tx,source.requestKey);const retained=await listingRead(tx,listingDispatchKey(source.requestKey));
+        requireThat(retained&&canonical(retained)===canonical(reservation),409,'VARIANT_LISTING_RESERVATION_CHANGED');
+        const existing=await listingRead(tx,listingResponseKey(source.requestKey));if(existing){requireThat(evidenceText(existing,'bodyText',1048576)===value,409,'VARIANT_LISTING_RESPONSE_CONFLICT');return true;}
+        // Evidence may arrive after a lease/source change. Retain it for replay,
+        // but the worker's separate current-binding fence still gates a result.
+        await listingWrite(tx,listingResponseKey(source.requestKey),value);
+        await tx.$executeRawUnsafe(`UPDATE ${table} SET audit=audit||jsonb_build_array(jsonb_build_object('event','LISTING_RESPONSE','requestKey',$2::text,'dispatchId',$3::text,'hash',$4::text)),updated_at=clock_timestamp() WHERE key=$1`,reservation.jobKey,source.requestKey,reservation.dispatchId,source.sha256);return true;});},
     async claim(concurrency=1){requireThat(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,500,'VARIANT_CONFIG_INVALID');return machine(async({tx})=>{
       await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(721930,77)');
       await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='STALE',claim_id=NULL,lease_until=NULL,code='VARIANT_SOURCE_STALE',updated_at=clock_timestamp() WHERE state IN('QUEUED','RUNNING','REQUESTED') AND (lease_until IS NULL OR lease_until<=clock_timestamp()) AND NOT(${current})`);
@@ -192,7 +231,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     cache:{
       get:key=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1',key);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
       getRetained:(key,sha256=null)=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe("SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND ($2::text IS NULL OR snapshot::jsonb->>'sha256'=$2) ORDER BY created_at DESC LIMIT 1",key,sha256);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
-      put:(key,snapshot)=>machine(async({tx})=>{const image=snapshot?.schemaVersion==='variant-provider-image/v1',value=evidenceText(snapshot,'body',image?Math.ceil(4194304/3)*4:1048576);if(image){const bytes=Buffer.from(snapshot.body,'base64');requireThat(bytes.length>0&&bytes.length<=4194304&&bytes.toString('base64')===snapshot.body&&digest(bytes)===snapshot.sha256,400,'VARIANT_IMAGE_CACHE_INVALID');}await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz) ON CONFLICT DO NOTHING`,key,value,digest(value),snapshot.expiresAt);})},
+      put:(key,snapshot)=>machine(async({tx})=>{requireThat(!listingJournalKey(key),400,'VARIANT_LISTING_JOURNAL_RESERVED');const image=snapshot?.schemaVersion==='variant-provider-image/v1',value=evidenceText(snapshot,'body',image?Math.ceil(4194304/3)*4:1048576);if(image){const bytes=Buffer.from(snapshot.body,'base64');requireThat(bytes.length>0&&bytes.length<=4194304&&bytes.toString('base64')===snapshot.body&&digest(bytes)===snapshot.sha256,400,'VARIANT_IMAGE_CACHE_INVALID');}await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz) ON CONFLICT DO NOTHING`,key,value,digest(value),snapshot.expiresAt);})},
 
   });
 }

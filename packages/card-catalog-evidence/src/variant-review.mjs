@@ -5,10 +5,12 @@ export const VARIANT_REVIEW_VERSION = 'atlas-variant-catalog/v1';
 export const VARIANT_CATALOG_REVISION = 'variant-catalog-2026-10-09-v1';
 export const VARIANT_REVIEW_LIMITS = Object.freeze({ candidates: 48, imagesPerCandidate: 4, diagnostics: 16, bytes: 768 * 1024 });
 export const VARIANT_WARNING_CODES = Object.freeze(['LANGUAGE_UNCONFIRMED', 'DENOMINATOR_UNVERIFIED', 'FINISH_UNVERIFIED',
-  'SET_NAME_REQUIRES_REVIEW', 'REFERENCE_IMAGE_MISSING', 'CARD_ART_ONLY', 'APPLICABILITY_UNCONFIRMED', 'SCOPE_UNCONFIRMED']);
+  'SET_NAME_REQUIRES_REVIEW', 'REFERENCE_IMAGE_MISSING', 'CARD_ART_ONLY', 'APPLICABILITY_UNCONFIRMED', 'SCOPE_UNCONFIRMED',
+  'LISTING_CLAIMS_UNREVIEWED', 'REFERENCE_USAGE_NOT_REVIEWED']);
 export const VARIANT_PROBLEM_CODES = Object.freeze(['IDENTITY_INCOMPLETE', 'CATALOG_NOT_CONFIGURED', 'CATALOG_UNAVAILABLE',
   'CATALOG_TRUNCATED', 'PROVIDER_UNAVAILABLE', 'PROVIDER_TRUNCATED', 'PROVIDER_NOT_SUPPORTED', 'NO_VARIANTS_FOUND',
-  'LANGUAGE_UNCONFIRMED', 'NO_DIAGNOSTIC_PHOTOS', 'REFERENCE_PERMISSION_REQUIRED']);
+  'LANGUAGE_UNCONFIRMED', 'NO_DIAGNOSTIC_PHOTOS', 'REFERENCE_PERMISSION_REQUIRED',
+  'LISTING_SOURCE_OUTCOME_UNKNOWN', 'LISTING_SOURCE_UNAVAILABLE', 'LISTING_SOURCE_NOT_CONFIGURED']);
 const HASH = /^[a-f0-9]{64}$/;
 const fields = ['category', 'name', 'year', 'setName', 'cardNumber', 'manufacturer', 'language'];
 const digest = value => createHash('sha256').update(canonicalJson(value)).digest('hex');
@@ -75,7 +77,9 @@ export function isVariantProviderImageUrl(value, provider) {
   if (!url(value)) return false;
   const u = new URL(value);
   if (u.search || u.port) return false;
-  return provider === 'tcgdex' && u.hostname === 'assets.tcgdex.net'
+  return provider === 'ebay_sold_comps_v2' && /^(?:[a-z0-9-]+\.)*(?:ebayimg|ebaystatic)\.com$/.test(u.hostname)
+    && !/%(?:2e|2f|5c)/i.test(u.pathname) && !u.pathname.includes('..') && !u.pathname.includes('\\')
+    || provider === 'tcgdex' && u.hostname === 'assets.tcgdex.net'
     && /^\/[a-z]{2}(?:-[a-z]{2,8})?\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/(?:high|low)\.(?:webp|png|jpg)$/.test(u.pathname)
     || provider === 'scrydex' && u.hostname === 'images.scrydex.com'
       && /^\/(?:pokemon|cards)\/[A-Za-z0-9._/-]+$/.test(u.pathname) && !u.pathname.includes('..');
@@ -134,13 +138,37 @@ export function validateVariantCandidate(input) {
     && c.diagnostics.every(d => keys(d, ['id', 'description']) && text(d.id, 240) && text(d.description, 500)), 'candidate.diagnostics');
   fail(list(c.images, VARIANT_REVIEW_LIMITS.imagesPerCandidate) && unique(c.images.map(i => i.imageId)), 'candidate.images');
   for (const i of c.images) {
-    fail(keys(i, ['imageId', 'relationship', 'url', 'sha256', 'mimeType', 'width', 'height', 'publication', 'provenance', 'visibleDiagnosticIds']), 'image.fields');
-    fail(text(i.imageId, 256) && ['exact', 'representative', 'card_art_only'].includes(i.relationship), 'image.relationship');
+    const listingPhoto = i.relationship === 'listing_photo';
+    fail(keys(i, ['imageId', 'relationship', 'url', 'sha256', 'mimeType', 'width', 'height', 'publication', 'provenance', 'visibleDiagnosticIds',
+      ...(listingPhoto ? ['sourceResponseSha256', 'listing'] : [])]), 'image.fields');
+    fail(text(i.imageId, 256) && ['exact', 'representative', 'card_art_only', 'listing_photo'].includes(i.relationship), 'image.relationship');
     fail(keys(i.provenance, ['provider', 'sourceUrl', 'sourceSha256', 'usage']) && text(i.provenance.provider, 80)
       && (i.provenance.sourceUrl === null || url(i.provenance.sourceUrl)) && HASH.test(i.provenance.sourceSha256)
       && ['reviewed_catalog', 'provider_reference', 'permission_required'].includes(i.provenance.usage), 'image.provenance');
     fail(list(i.visibleDiagnosticIds, 16) && unique(i.visibleDiagnosticIds) && i.visibleDiagnosticIds.every(id => c.diagnostics.some(d => d.id === id)), 'image.diagnostics');
-    if (i.publication !== null) {
+    if (listingPhoto) {
+      // This is the only permitted cross-provider image attachment. Scrydex
+      // owns the choice name; the seller still owns an unreviewed photo claim.
+      fail(c.authority === 'provider_candidate' && c.applicability === 'unknown' && c.canonical === null
+        && ['scrydex', 'ebay_sold_comps_v2'].includes(c.source.provider)
+        && i.publication === null && i.visibleDiagnosticIds.length === 0
+        && i.provenance.provider === 'ebay_sold_comps_v2' && i.provenance.usage === 'provider_reference'
+        && HASH.test(i.sourceResponseSha256) && i.sourceResponseSha256 === i.provenance.sourceSha256
+        && c.source.references.some(r => r.sha256 === i.sourceResponseSha256 && r.url === i.provenance.sourceUrl)
+        && isVariantProviderImageUrl(i.url, 'ebay_sold_comps_v2')
+        && HASH.test(i.sha256) && ['image/jpeg', 'image/png', 'image/webp'].includes(i.mimeType)
+        && Number.isSafeInteger(i.width) && i.width > 0 && i.width <= 8000
+        && Number.isSafeInteger(i.height) && i.height > 0 && i.height <= 8000 && i.width * i.height <= 16000000
+        && keys(i.listing, ['id', 'title', 'url']) && /^\d{6,20}$/.test(i.listing.id)
+        && text(i.listing.title, 500) && i.listing.url === `https://www.ebay.com/itm/${i.listing.id}`
+        && i.imageId === `listing-image:${digest({ listing: i.listing, sha256: i.sha256, sourceResponseSha256: i.sourceResponseSha256 })}`
+        && c.warnings.includes('LISTING_CLAIMS_UNREVIEWED') && c.warnings.includes('REFERENCE_USAGE_NOT_REVIEWED'), 'image.listing.binding');
+      if (c.source.provider === 'ebay_sold_comps_v2') fail(c.source.sha256 === i.sourceResponseSha256
+        && c.source.url === i.provenance.sourceUrl && c.source.recordId === i.listing.id, 'image.listing.source');
+      let sourceUrl; try { sourceUrl = new URL(i.provenance.sourceUrl); } catch {}
+      fail(sourceUrl?.origin === 'https://api.sold-comps.com' && sourceUrl.pathname === '/v1/scrape'
+        && !sourceUrl.username && !sourceUrl.password && !sourceUrl.hash, 'image.listing.provider');
+    } else if (i.publication !== null) {
       validatePin(i.publication);
       fail(c.authority === 'reviewed_catalog' && c.applicability === 'supported' && i.url === null && HASH.test(i.sha256)
         && canonicalJson(i.publication) === canonicalJson(c.canonical.publication)

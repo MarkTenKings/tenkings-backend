@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as client from '../lib/variant-review-client.mjs';
 import * as routes from '../lib/routes.mjs';
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
@@ -26,7 +26,7 @@ function fixture({ component = 'default', props, beforeEffects } = {}) {
     useEffect(callback,deps){const index=cursor++,previous=slots[index];if(!previous||deps.some((value,i)=>value!==previous.deps[i])){slots[index]={deps,cleanup:previous?.cleanup};effects.push(()=>{slots[index].cleanup?.();slots[index].cleanup=callback();});}},
   };
   if (props) f.props = props;
-  const exports={};vm.runInNewContext(`${code}\nexports.ReferencePhoto = ReferencePhoto;`,{exports,URL,Promise,window:{localStorage:{getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}},setTimeout:(fn,ms)=>{timers.set(ms,fn);return ms;},clearTimeout:ms=>timers.delete(ms),require(name){
+  const exports={};vm.runInNewContext(`${code}\nexports.ReferencePhoto = ReferencePhoto; exports.Comparison = Comparison;`,{exports,URL,Promise,window:{localStorage:{getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}},setTimeout:(fn,ms)=>{timers.set(ms,fn);return ms;},clearTimeout:ms=>timers.delete(ms),require(name){
     if(name==='react')return react;
     if(name.endsWith('routes.mjs'))return routes;
     if(name==='@atlas/manual-workspace')return{geometryImage:()=>({url:'verified'})};
@@ -96,6 +96,70 @@ test('reference library refresh is explicit and an uncertain request keeps choic
 
 
 test('retained reviewed and provider reference bytes use the authenticated staff route, including null catalog URLs',()=>{const f=fixture(),pick=f.exports.variantReference;for(const authority of ['reviewed_catalog','provider_candidate']){const result=pick({authority,images:[{url:null,sha256:hash('a'),relationship:'exact',publication:authority==='reviewed_catalog'?'publication':null,provenance:{usage:authority==='reviewed_catalog'?'reviewed_catalog':'provider_reference'}}]},f.props.cardId);assert.equal(result.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${hash('a')}`);}f.dispose();});
+
+const listingImage = (extra = {}) => ({imageId:'listing-photo',url:'https://i.ebayimg.com/images/synthetic.jpg',sha256:hash('e'),mimeType:'image/jpeg',relationship:'listing_photo',
+ listing:{id:'123456789012',title:'Synthetic Pikachu 025/165 English Reverse Holo — exact seller title for the reference photograph',url:'https://www.ebay.com/itm/123456789012'},
+ provenance:{provider:'ebay_sold_comps_v2',usage:'provider_reference',sourceUrl:'https://i.ebayimg.com/images/synthetic.jpg'},...extra});
+const artworkImage = {imageId:'shared-art',url:'https://images.scrydex.com/pokemon/fixture/large',relationship:'card_art_only',provenance:{provider:'scrydex',usage:'provider_reference'}};
+test('cross-provider listing photo beats generic artwork and only loads through saved authenticated bytes',()=>{
+ const f=fixture(),pick=f.exports.variantReference,image=listingImage(),candidate={authority:'provider_candidate',source:{provider:'scrydex'},images:[artworkImage,image]};
+ const selected=pick(candidate,f.props.cardId);assert.equal(selected.relationship,'listing_photo');assert.equal(selected.listing.title,image.listing.title);
+ assert.equal(selected.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${image.sha256}`);
+ for(const invalid of [{sha256:null},{provenance:{provider:'scrydex',usage:'provider_reference'}},{provenance:{provider:'ebay_sold_comps_v2',usage:'reviewed_catalog'}},
+  {listing:{listingId:'123456789012',title:image.listing.title,listingUrl:image.listing.url}},{listing:{...image.listing,url:'javascript:alert(1)'}},{listing:{...image.listing,url:'//www.ebay.com/itm/123456789012'}}]){
+  assert.equal(pick({...candidate,images:[listingImage(invalid)]},f.props.cardId),null);
+ }
+ assert.equal(pick({...candidate,images:[image]}),null,'a raw eBay image URL is never rendered without retained card binding');
+ assert.equal(pick({...candidate,images:[artworkImage]},f.props.cardId,{artwork:false}),null);f.dispose();
+});
+test('listing tile and comparison retain catalog label, exact image listing title and link with no price or automatic choice',async()=>{
+ const f=fixture(),image=listingImage();f.status.result.suggestion=null;
+ const candidate={...f.status.result.catalog.candidates[0],label:'Scrydex · Reverse Holo',authority:'provider_candidate',source:{provider:'scrydex',url:'https://scrydex.com/cards/fixture'},images:[artworkImage,image],soldPrice:99999};
+ f.status.result.catalog.candidates=[candidate];await flush();f.render();
+ assert.match(f.text(),/Scrydex · Reverse Holo/);assert.match(f.text(),/eBay listing photo/);assert.ok(f.text().includes(image.listing.title));assert.doesNotMatch(f.text(),/99999|Sold price/);
+ const listingLink=f.find(node=>node.type==='a'&&text(node)===image.listing.title);assert.equal(listingLink.length,1);assert.equal(listingLink[0].props.href,image.listing.url);
+ assert.equal(listingLink[0].props.rel,'noopener noreferrer');assert.equal(f.find(node=>node.type==='a'&&node.props.href===image.provenance.sourceUrl).length,0);
+ assert.equal(f.radios()[0].props.checked,false);assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);
+ f.find(node=>node.type==='button'&&text(node).startsWith('Compare details'))[0].props.onClick({currentTarget:{focus(){}}});f.render();
+ const comparison=f.find(node=>node.type?.name==='Comparison')[0];assert.equal(comparison.props.reference.relationship,'listing_photo');
+ const dialog=fixture({component:'Comparison',props:comparison.props});assert.ok(dialog.text().includes(image.listing.title));assert.match(dialog.text(),/eBay listing photo/);
+ assert.equal(dialog.find(node=>node.type==='a'&&text(node)===image.listing.title)[0].props.href,image.listing.url);assert.equal(dialog.button('Enlarge both photos').props['aria-pressed'],false);
+ dialog.button('Enlarge both photos').props.onClick();dialog.render();assert.equal(dialog.button('Fit both photos').props['aria-pressed'],true);
+ dialog.dispose();f.dispose();
+});
+test('repeated artwork appears once as shared context while named printings without photos remain compact choices',async()=>{
+ const f=fixture(),base=f.status.result.catalog.candidates[0];f.status.result.suggestion=null;
+ f.status.result.catalog.candidates=['Normal','Holo','Reverse Holo','Stamped','Other finish'].map((label,index)=>({...base,candidateId:`art-${index}`,label,parallel:label,images:[artworkImage]}));
+ await flush();f.render();assert.equal(f.radios().length,5);assert.ok(f.radios().every(radio=>!radio.props.checked&&!radio.props.disabled));
+ assert.equal(f.find(node=>node.type?.name==='ReferencePhoto').length,1);assert.equal((f.text().match(/Card artwork · finish is not shown/g)??[]).length,1);
+ assert.equal(f.find(node=>node.type==='article'&&node.props['data-has-photo']===false).length,5);assert.equal(f.find(node=>node.type==='button'&&text(node).startsWith('Compare details')).length,0);
+ assert.equal((f.text().match(/Reference photo unavailable/g)??[]).length,5);assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);f.dispose();
+});
+test('unknown seller variant remains visibly unconfirmed and separate from an explicitly supported catalog variant',async()=>{
+ const f=fixture(),base=f.status.result.catalog.candidates[0];f.status.result.suggestion=null;
+ f.status.result.catalog.candidates=[{...base,candidateId:'known',label:'Reverse Holo',images:[]},{...base,candidateId:'unknown',label:'Listing · printing unconfirmed',parallel:null,images:[listingImage()]}];
+ await flush();f.render();assert.equal(f.radios().length,2);assert.equal(f.radios()[0].props.disabled,false);assert.equal(f.radios()[1].props.disabled,true);
+ assert.match(f.text(),/Printing unconfirmed/);assert.ok(f.radios().every(radio=>!radio.props.checked));assert.equal(f.writes.length,0);f.dispose();
+});
+test('actual listing adapter and Scrydex composition produce a displayable retained photo with exact listing attribution',async()=>{
+ const {prepareVariantListingRequest,createVariantListingProvider,composeVariantListingCandidates}=await import('../../../packages/atlas-connected-manual/src/variant-listing-provider.mjs');
+ const {importScrydexVariantCandidates,scrydexVariantSearchUrl}=await import('../../../packages/card-catalog-evidence/src/index.mjs');
+ const digest=value=>createHash('sha256').update(value).digest('hex'),capturedAt='2026-10-10T10:00:00.000Z';
+ const identity={category:'POKEMON',name:'Mewtwo',year:'2016',setName:'Evolutions',cardNumber:'051/108',manufacturer:null,language:null};
+ const title='2016 Pokemon Evolutions Mewtwo #51/108 English Reverse Holo',id='123456780001',request=prepareVariantListingRequest(identity);
+ const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:1,hasNextPage:false,items:[{itemId:id,title,url:`https://www.ebay.com/itm/${id}`,thumbnailUrl:'https://i.ebayimg.com/images/g/fixture/s-l300.jpg',listingType:'sold',condition:'Ungraded',endedAt:'2026-10-09',soldPrice:'99.95',soldCurrency:'USD',bestOfferAccepted:false}]});
+ const source={schemaVersion:'variant-listing-response/v1',requestKey:request.requestKey,url:request.url,httpStatus:200,contentType:'application/json',bodyText,sha256:digest(bodyText),capturedAt};
+ const bytes=readFileSync(new URL('../../../docs/atlas/design/first-look/reports/abomasnow-front.webp',import.meta.url)),entries=new Map();let imageReads=0;
+ const provider=createVariantListingProvider({now:()=>Date.parse(capturedAt),cache:{get:async key=>entries.get(key),getRetained:async key=>entries.get(key),put:async(key,value)=>entries.set(key,structuredClone(value))},fetchImpl:async url=>{assert.equal(url,'https://i.ebayimg.com/images/g/fixture/s-l300.jpg');imageReads++;return new Response(bytes,{headers:{'content-type':'image/webp'}});}});
+ const evidence=await provider.acquireImages({request,source});assert.equal(imageReads,1);
+ const choices=importScrydexVariantCandidates({identity,card:{id:'xy12-51',name:'Mewtwo',number:'51',printed_number:'51/108',language_code:'en',expansion:{id:'xy12',name:'Evolutions',release_date:'2016/11/02',is_online_only:false,printed_total:108},images:[{type:'front',large:'https://images.scrydex.com/pokemon/xy12-51/large'}],variants:[{name:'normal',images:[]},{name:'reverseHolofoil',images:[]}]},source:{url:scrydexVariantSearchUrl(identity),sha256:digest('scrydex fixture'),capturedAt}});
+ const composed=composeVariantListingCandidates({identity,candidates:choices,evidence}),attached=composed.candidates.find(candidate=>candidate.images.some(image=>image.relationship==='listing_photo'));
+ assert.ok(attached);assert.equal(attached.source.provider,'scrydex');assert.ok(choices.some(candidate=>candidate.label===attached.label));
+ const f=fixture();f.props.identity={cardName:identity.name,productSet:identity.setName,cardNumber:identity.cardNumber};f.status.result.catalog.candidates=composed.candidates;f.status.result.suggestion=null;await flush();f.render();
+ const reference=f.exports.variantReference(attached,f.props.cardId,{artwork:false});assert.equal(reference.relationship,'listing_photo');assert.equal(reference.provenance.provider,'ebay_sold_comps_v2');assert.equal(reference.provenance.usage,'provider_reference');assert.equal(reference.sha256,digest(bytes));
+ assert.equal(reference.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${digest(bytes)}`);assert.ok(f.text().includes(attached.label));assert.match(f.text(),/eBay listing photo/);
+ assert.equal(f.find(node=>node.type==='a'&&text(node)===title)[0].props.href,`https://www.ebay.com/itm/${id}`);assert.doesNotMatch(f.text(),/99\.95|USD/);assert.equal(f.writes.length,0);assert.ok(f.radios().every(node=>!node.props.checked));f.dispose();
+});
 
 test('an unsaved not-shown choice can be explicitly discarded for one durable reference refresh',async()=>{
  const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await flush();f.render();
