@@ -11,7 +11,7 @@ import { boundedProviderOperation, readBoundedProviderBody } from '../../card-ca
 // The caller MUST durably journal fetchSource before dispatch. Seller photos
 // never establish catalog authority or select the physical card's variant.
 export const VARIANT_LISTING_REVISION = 'variant-listing-2026-10-10-v2';
-export const VARIANT_LISTING_LIMITS = Object.freeze({ results: 40, sourceBytes: 1024 * 1024,
+export const VARIANT_LISTING_LIMITS = Object.freeze({ results: 40, responseResults: 60, sourceBytes: 1024 * 1024,
   imageBytes: 2 * 1024 * 1024, imagePixels: 16000000, imageRequests: 8, images: 8,
   totalImageBytes: 12 * 1024 * 1024, timeoutMs: 45000, imageTimeoutMs: 10000, ttlMs: 86400000 });
 const endpoint = 'https://api.sold-comps.com/v1/scrape';
@@ -28,6 +28,12 @@ const canonicalNumber = v => v.toLowerCase().replace(/^#\s*/, '').split('/').map
 const collector = text => String(text).replace(/\b([A-Za-z]*)0+(\d+)\b/g, '$1$2');
 const languageNames = { en: 'english', ja: 'japanese', fr: 'french', de: 'german', es: 'spanish', it: 'italian',
   pt: 'portuguese', ko: 'korean', zh: 'chinese' };
+function explicitMultipleQuantity(title, identity) {
+  const collectorParts = new Set(canonicalNumber(identity.cardNumber).split('/'));
+  const quantity = /(?:^|[\s(,])([x×]\s*(?:[2-9]\d*|1\d+)|(?:[2-9]\d*|1\d+)\s*[x×])(?=$|[\s),.!])/gi;
+  // A printed X2 or 2X identifier remains an identity token, not a quantity.
+  return [...title.matchAll(quantity)].some(match => !collectorParts.has(match[1].toLowerCase().replace(/\s+/g, '')));
+}
 function productParts(identity) {
   const parts = identity.category === 'SPORTS' ? identity.setName.split(/\s+[—–]\s+/u) : [];
   return parts.length === 2 && parts.every(Boolean) ? { product: parts[0], insert: parts[1] }
@@ -77,7 +83,7 @@ function validateSource(request, source) {
   let payload; try { payload = JSON.parse(source.bodyText); } catch { throw fail('VARIANT_LISTING_SOURCE_JSON'); }
   check(payload && payload.keyword === request.query && payload.page === 1 && Number.isSafeInteger(payload.totalItems)
     && payload.totalItems >= 0 && typeof payload.hasNextPage === 'boolean' && Array.isArray(payload.items)
-    && payload.items.length <= VARIANT_LISTING_LIMITS.results && payload.totalItems >= payload.items.length, 'VARIANT_LISTING_SOURCE_SHAPE');
+    && payload.items.length <= VARIANT_LISTING_LIMITS.responseResults && payload.totalItems >= payload.items.length, 'VARIANT_LISTING_SOURCE_SHAPE');
   return payload;
 }
 function inspectIdentity(identity, candidate) {
@@ -204,13 +210,16 @@ export function composeVariantListingCandidates({ identity, candidates = [], evi
 export function projectVariantListingSource(request, source) {
   const payload = validateSource(request, source), input = engineInput(request.identity), listings = [], excluded = [];
   const seen = new Map(), conflicts = new Set();
+  // The provider can return its default 60-row page despite count=40. Retain
+  // exact bytes, detect duplicate conflicts across that page, and project only
+  // the requested first 40 rows. This does not change the paid request key.
   for (const raw of payload.items) {
     const id = typeof raw?.itemId === 'string' && /^\d{6,20}$/.test(raw.itemId) ? raw.itemId : null;
     if (id && seen.has(id) && JSON.stringify(seen.get(id)) !== JSON.stringify(raw)) conflicts.add(id);
     if (id) seen.set(id, raw);
   }
   const processed = new Set();
-  for (const raw of payload.items) {
+  for (const raw of payload.items.slice(0, VARIANT_LISTING_LIMITS.results)) {
     const id = typeof raw?.itemId === 'string' && /^\d{6,20}$/.test(raw.itemId) ? raw.itemId : null;
     if (id && processed.has(id)) continue;
     if (id) processed.add(id);
@@ -218,6 +227,7 @@ export function projectVariantListingSource(request, source) {
     if (id && conflicts.has(id)) { reject('CONFLICTING_LISTING_EVIDENCE'); continue; }
     const candidate = parseEbaySoldCompsV2Candidate(raw, input);
     if (!candidate) { reject('INVALID_OR_UNANCHORED_LISTING'); continue; }
+    if (explicitMultipleQuantity(candidate.title, request.identity)) { reject('UNSUPPORTED_SINGLE_CARD_LISTING'); continue; }
     if (researchSaleEvidence(raw).sale_evidence.status !== 'sold') { reject('SOLD_EVENT_UNVERIFIED'); continue; }
     if (!inspectStaffInventoryResearchSale(candidate).supported) { reject('UNSUPPORTED_SINGLE_CARD_LISTING'); continue; }
     const identityEvidence = inspectIdentity(request.identity, candidate);
@@ -241,7 +251,7 @@ export function projectVariantListingSource(request, source) {
     identity: request.identity, query: request.query, source: { url: source.url, sha256: source.sha256, capturedAt: source.capturedAt },
     authority: 'provider_candidate', coverage: 'partial', requiresReview: true, listings, excluded,
     warnings: ['LISTING_CLAIMS_UNREVIEWED', 'REFERENCE_USAGE_NOT_REVIEWED', ...(request.identity.language === null ? ['LANGUAGE_UNCONFIRMED'] : []),
-      ...(payload.hasNextPage || payload.totalItems > payload.items.length ? ['SOURCE_TRUNCATED'] : [])] };
+      ...(payload.hasNextPage || payload.totalItems > payload.items.length || payload.items.length > VARIANT_LISTING_LIMITS.results ? ['SOURCE_TRUNCATED'] : [])] };
 }
 const imageKey = url => `variant-listing-image:v1:${hash(url)}`;
 const retainedImageKey = (url, sha256) => `variant-listing-image-evidence:v1:${hash(url)}:${sha256}`;

@@ -208,10 +208,40 @@ test('source/request tampering, mismatched query, malformed envelope and unsafe 
   for (const mutated of [{ ...saved, sha256: '0'.repeat(64) }, { ...saved, url: 'https://attacker.invalid/' },
     { ...saved, requestKey: 'other' }, { ...saved, contentType: 'text/html' }, { ...saved, extra: true },
     source(request, [], { keyword: 'other' }), source(request, [], { page: 2 }), source(request, [], { hasNextPage: 'false' }),
-    source(request, Array.from({ length: 41 }, (_, n) => item(n)))]) assert.throws(() => project(request, mutated), /VARIANT_LISTING/);
+    source(request, Array.from({ length: 61 }, (_, n) => item(n)))]) assert.throws(() => project(request, mutated), /VARIANT_LISTING/);
   assert.throws(() => project({ ...request, query: 'other' }, saved), /REQUEST_CHANGED/);
   const p = provider({ apiKey: 'secret-test-key', fetchImpl: async () => new Response('secret-test-key', { headers: { 'content-type': 'application/json' } }) });
   await assert.rejects(p.fetchSource(request), /SOURCE_UNSAFE/);
+});
+
+test('observed 60-row provider overdelivery reuses the exact request and projects only the first40 with explicit truncation', () => {
+  const request = prepare({ ...identity, cardNumber: '51/108' });
+  assert.equal(request.requestKey, 'variant-listing-source:v1:5ae0815cc53bdd59dda0150d42fc62997e696ef6bf2a93df4a7f89c904fc82dc');
+  assert.equal(new URL(request.url).searchParams.get('count'), '40');
+  for (const count of [41, 60]) {
+    const retained = source(request, Array.from({ length: count }, (_, n) => item(n)), { hasNextPage: false });
+    const before = JSON.stringify(retained), result = project(request, retained);
+    assert.equal(result.listings.length, 40); assert.equal(result.excluded.length, 0);
+    assert.deepEqual(result.listings.map(row => row.listing.id), Array.from({ length: 40 }, (_, n) => item(n).itemId));
+    assert.ok(result.warnings.includes('SOURCE_TRUNCATED')); assert.equal(JSON.stringify(retained), before);
+  }
+  const rows = Array.from({ length: 60 }, (_, n) => item(n)); rows[59] = item(0, '2016 Evolutions Mewtwo #51/108 Non Holo');
+  const conflicting = project(request, source(request, rows));
+  assert.equal(conflicting.listings.length, 39); assert.ok(conflicting.excluded.some(row => row.listingId === item(0).itemId && row.reason === 'CONFLICTING_LISTING_EVIDENCE'));
+  assert.throws(() => project(request, source(request, Array.from({ length: 61 }, (_, n) => item(n)))), /SOURCE_SHAPE/);
+});
+
+test('explicit xN and Nx quantities reject multi-card photos without reinterpreting collector identifiers', () => {
+  const request = prepare(identity), base = '2016 Pokemon Evolutions Mewtwo 51/108';
+  for (const quantity of ['x2', '2x', 'x 2', '2 x', '×2', '2×', 'x10', '20x', '(x3)']) {
+    const result = project(request, source(request, [item(1, `${base} & Mew 53/108 Holo English ${quantity}`)]));
+    assert.equal(result.listings.length, 0, quantity);
+  }
+  for (const quantity of ['x1', '1x']) assert.equal(project(request, source(request, [item(1, `${base} Reverse Holo ${quantity}`)])).listings.length, 1);
+  for (const cardNumber of ['X2/108', '2X/108']) {
+    const numbered = prepare({ ...identity, cardNumber });
+    assert.equal(project(numbered, source(numbered, [item(1, `2016 Pokemon Evolutions Mewtwo ${cardNumber} Reverse Holo`)])).listings.length, 1, cardNumber);
+  }
 });
 
 test('actual image decode verifies bytes; repeated source URL fetched once with distinct listing attribution', async () => {
