@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
+import { createVariantCatalogService } from '../src/variant-catalog.mjs';
 import { prepareVariantListingRequest as prepare, projectVariantListingSource as project,
   createVariantListingProvider as provider, composeVariantListingCandidates as compose, VARIANT_LISTING_LIMITS as limits } from '../src/variant-listing-provider.mjs';
 import { importScrydexVariantCandidates, validateVariantCandidate, createVariantReviewSnapshot,
-  isVariantPhotoComparable, scrydexVariantSearchUrl, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
+  canonicalJson, isVariantPhotoComparable, scrydexVariantSearchUrl, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
 
 const sha = v => createHash('sha256').update(v).digest('hex');
 const capturedAt = '2026-10-10T10:00:00.000Z', now = () => Date.parse(capturedAt);
@@ -312,4 +313,36 @@ test('partial insert checklists do not label an explicit Refractor photo as the 
  assert.deepEqual(result.candidates[0].images.map(image=>image.listing.id),['123456780001']);
  assert.equal(result.candidates[0].identity.year,'2025');
  assert.equal(result.candidates[0].applicability,'unknown');
+});
+
+test('concise named Pokemon search preserves strict full identity filtering and retained legacy decoding',()=>{
+ const printing={name:'Reverse Holofoil',language:'en'},request=prepare(identity,printing);
+ assert.equal(request.query,'pokemon mewtwo 51/108 reverse Holo');
+ const good='2016 Pokemon Evolutions Mewtwo #51/108 Reverse Holo';
+ const result=project(request,source(request,[item(1,good),item(2,good.replace('2016','2017')),item(3,good.replace('Evolutions','Base Set')),
+  item(4,good.replace('51/108','51/109')),item(5,`${good} Japanese`),item(6,'Pokemon Evolutions Reverse Holo Choose your card')]));
+ assert.deepEqual(result.listings.map(v=>v.listing.id),['123456780001']);
+ const legacy={...request,revision:'variant-listing-2026-10-10-v2',query:'2016 evolutions mewtwo reverse Holo #51/108'};
+ const url=new URL(legacy.url);url.searchParams.set('keyword',legacy.query);legacy.url=url.href;delete legacy.requestKey;
+ legacy.requestKey=`variant-listing-source:v1:${sha(canonicalJson(legacy))}`;
+ assert.notEqual(legacy.requestKey,request.requestKey);assert.equal(project(legacy,source(legacy,[item(1,good)])).listings.length,1);
+ assert.throws(()=>project({...request,query:'tampered'},source(request,[])),/REQUEST_CHANGED/);
+ assert.throws(()=>project({...request,revision:'unknown'},source(request,[])),/REQUEST_CHANGED/);
+});
+test('a Scrydex exact image does not suppress the durable listing search for its named variant',async()=>{
+ const choice=structuredClone(scrydexChoices().find(c=>c.label==='Snowflake Stamp'));
+ choice.images[0].relationship='exact';choice.images[0].imageId=`scrydex:variant-image:v1:${sha('synthetic exact image')}`;validateVariantCandidate(choice);let dispatched=0;
+ const service=createVariantCatalogService({now,providers:[{prepare:async()=>({candidates:[choice],problems:[],truncated:false})}],
+  listingProvider:{fetchSource:async()=>{throw Error('should use journal');}}});
+ const result=await service.prepare({identity},{executeListingSource:async request=>{dispatched++;assert.equal(request.printing.name,'snowflake stamp');return{state:'UNKNOWN'};}});
+ assert.equal(dispatched,1);assert.equal(result.candidates[0].label,'Snowflake Stamp');assert.ok(result.problems.includes('LISTING_SOURCE_OUTCOME_UNKNOWN'));
+});
+
+test('production-style 151 identity accepts a single matching reverse-holo title and rejects a generic selection',()=>{
+ const pikachu={category:'POKEMON',name:'Pikachu',year:'2023',setName:'Scarlet & Violet—151',cardNumber:'025/165',manufacturer:null,language:null};
+ const request=prepare(pikachu,{name:'Reverse Holofoil',language:'en'});
+ assert.equal(request.query,'pokemon pikachu 25/165 reverse Holo');
+ const result=project(request,source(request,[item(1,'Pikachu 025/165 Reverse Holo Pokemon Scarlet & Violet 151'),
+  item(2,'Pokemon TCG Scarlet & Violet 151 ENGLISH REVERSE HOLO - Choose your card!')]));
+ assert.deepEqual(result.listings.map(v=>v.listing.id),['123456780001']);
 });

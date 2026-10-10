@@ -46,7 +46,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};
-      if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock'};
+      if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock',DirectCardReviewShell:'DirectCardReviewShell'};
       if (name === '../lib/review-feedback.mjs') return {...reviewFeedback,primeReviewAudio(){},playReviewCompletion(){},playAtlasVoice(){}};
       if (name === '../lib/card-discard.mjs') return {...discard,createWorkspaceDiscarder:()=>({pending:()=>false,reconcile:async()=>null})};
       if (name === '../lib/batch-import.mjs') return {createBrowserBatchImportJournal:()=>({close(){}})};
@@ -84,6 +84,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: activeCardId }); for (const effect of effects.splice(0)) effect(); };
   return { render, submit,navigations,event(name,value){listeners.get(name)?.(value);},async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
     workspaceProps:()=>find(tree,node=>node.type?.name==='ManualWorkspace')?.props,
+    directShell:()=>find(tree,node=>node.type==='DirectCardReviewShell')?.props,
     previewSettings:side=>find(tree,node=>node.props?.side===side&&typeof node.props?.src==='string')?.props.settingsChanged,
     previewSrc:side=>find(tree,node=>node.props?.side===side&&typeof node.props?.src==='string')?.props.src,
     attention:key=>find(tree,node=>node.props?.['data-review-target']===key)?.props?.['data-review-attention'],reviewIssues:()=>find(tree,node=>node.type==='ReviewAttention')?.props?.issues??[],has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
@@ -572,4 +573,14 @@ test('manual entry for a replaced photo uses the existing replacement action and
  f.render();await flush();f.render();f.click('Edit Front geometry');await flush();f.render();
  assert.equal(posts.length,1);assert.equal(posts[0].body.expectedRevision,9);assert.deepEqual(posts[0].body.action,{type:'REPLACE_SOURCES',sourceHash:'sports-source'});
  assert.equal(f.workspaceProps().initialGeometrySide,'FRONT');
+});
+
+test('direct saved-card review mounts the bounded shell and carries its pending-work exit lock',async()=>{
+ const card={...pokemonCard(),manual:{current:true,revision:7}};
+ const f=harness(storage(null),async()=>{throw Error('Unexpected write');},{readCard:()=>card});
+ f.render();await flush();f.render();
+ assert.ok(f.workspace());assert.equal(f.workspaceProps().rapid,true);assert.ok(f.directShell(),'actual direct route owns the shared bounded shell');
+ assert.equal(f.directShell().busy,false);
+ f.workspaceProps().onBusyChange(true);f.render();assert.equal(f.directShell().busy,true,'pending saves/edits lock the direct exit');
+ f.workspaceProps().onBusyChange(false);f.render();assert.equal(f.directShell().busy,false);f.dispose();
 });

@@ -11,6 +11,7 @@ import { boundedProviderOperation, readBoundedProviderBody } from '../../card-ca
 // The caller MUST durably journal fetchSource before dispatch. Seller photos
 // never establish catalog authority or select the physical card's variant.
 export const VARIANT_LISTING_REVISION = 'variant-listing-2026-10-10-v2';
+const concisePokemonRequestRevision = 'variant-listing-pokemon-query-2026-10-10-v1';
 export const VARIANT_LISTING_LIMITS = Object.freeze({ results: 40, responseResults: 60, sourceBytes: 1024 * 1024,
   imageBytes: 2 * 1024 * 1024, imagePixels: 16000000, imageRequests: 8, images: 8,
   totalImageBytes: 12 * 1024 * 1024, timeoutMs: 45000, imageTimeoutMs: 10000, ttlMs: 86400000 });
@@ -57,7 +58,7 @@ function engineInput(identity, printing = null) {
 }
 /** One public identity => one request key. No physical photo, grade, approval,
  * generation or time bucket changes its billing identity. */
-export function prepareVariantListingRequest(input, printing = null) {
+function prepareListingRequest(input, printing = null, legacy = false) {
   const fields = ['category', 'name', 'year', 'setName', 'cardNumber', 'manufacturer', 'language'];
   check(input && Object.keys(input).every(k => fields.includes(k)), 'VARIANT_LISTING_IDENTITY');
   const normalized = normalizeVariantIdentity(Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === 'string' ? normalize(v) : v])));
@@ -71,16 +72,27 @@ export function prepareVariantListingRequest(input, printing = null) {
     printing = { name: normalize(printing.name).toLowerCase(), language: normalizeVariantIdentity({ category: identity.category, language: printing.language }).language };
     check(!identity.language || !printing.language || identity.language === printing.language, 'VARIANT_LISTING_PRINTING_LANGUAGE');
   }
-  const query = [buildEbaySoldCompsV2Query(engineInput(identity, printing)), printing?.language && printing.language !== 'en' ? languageNames[printing.language] ?? printing.language : null].filter(Boolean).join(' ');
+  // Marketplace titles often omit the series prefix and punctuation used in
+  // official set names. Search with the card's strong public anchors; projection
+  // still checks the full saved set/year/number identity before using a photo.
+  const concisePokemon = !legacy && identity.category === 'POKEMON' && printing;
+  const query = [concisePokemon
+    ? ['pokemon', identity.name, identity.cardNumber, listingSearchLabel(identity, printing.name)].join(' ')
+    : buildEbaySoldCompsV2Query(engineInput(identity, printing)), printing?.language && printing.language !== 'en' ? languageNames[printing.language] ?? printing.language : null].filter(Boolean).join(' ');
   const url = new URL(endpoint);
   url.search = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(VARIANT_LISTING_LIMITS.results),
     page: '1', sold: 'true', includeCompleteListing: 'true', exactMatch: 'true', hydrateBoa: 'false' }).toString();
-  const request = { schemaVersion: 'variant-listing-request/v1', revision: VARIANT_LISTING_REVISION,
+  const request = { schemaVersion: 'variant-listing-request/v1', revision: concisePokemon ? concisePokemonRequestRevision : VARIANT_LISTING_REVISION,
     parserRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, identity, ...(printing ? { printing } : {}), query, url: url.href };
   return { ...request, requestKey: `variant-listing-source:v1:${hash(canonicalJson(request))}` };
 }
+export function prepareVariantListingRequest(input, printing = null) {
+  return prepareListingRequest(input, printing);
+}
 function validateRequest(request) {
-  check(same(prepareVariantListingRequest(request?.identity, request?.printing ?? null), request), 'VARIANT_LISTING_REQUEST_CHANGED');
+  // Retained paid responses remain readable under their original request key.
+  check([VARIANT_LISTING_REVISION, concisePokemonRequestRevision].includes(request?.revision)
+    && same(prepareListingRequest(request?.identity, request?.printing ?? null, request.revision === VARIANT_LISTING_REVISION), request), 'VARIANT_LISTING_REQUEST_CHANGED');
   return request;
 }
 function validateSource(request, source) {

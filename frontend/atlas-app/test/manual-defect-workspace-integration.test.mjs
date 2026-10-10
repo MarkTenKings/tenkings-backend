@@ -54,7 +54,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};
       if (name === '@atlas/manual-workspace/focused-geometry') return {FocusedGeometryWorkspace:'FocusedGeometryWorkspace',sourceQuadToPrepared:(_g,_s,quad)=>quad};
-      if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock'};
+      if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock',DirectCardReviewShell:'DirectCardReviewShell'};
       if (name === '../lib/review-feedback.mjs') return {...reviewFeedback,primeReviewAudio(){},playReviewCompletion(){},playAtlasVoice(){}};
       if (name === '../lib/card-discard.mjs' || name === '../lib/batch-import.mjs') return {};
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
@@ -778,4 +778,18 @@ test('adding a missed Back finding returns to the paired overview without confir
  f.overview().onAddFinding(context);f.render();assert.equal(f.defects().initialInspection,context);assert.equal(f.defects().focusedReview.side,'BACK');assert.equal(f.defects().focusedReview.returnToOverview,true);
  await f.defects().focusedReview.onApprove({side:'BACK',findingId:'back-added',inspectionHashes:Object.fromEntries(['FRONT','BACK'].map(side=>[side,frames[side].inspectionImageSha256]))});f.render();
  assert.ok(f.overview());assert.equal(f.actions.at(-1).type,'REVIEW_FINDING');assert.equal(f.actions.at(-1).side,'BACK');assert.equal(f.actions.some(action=>action.stage==='findings'||action.type==='APPROVE_REPORT'),false);assert.equal(f.report(),undefined);f.dispose();
+});
+
+test('incomplete geometry can preview references and return without a report read or human decision',async()=>{
+ const geometry={confirmed:false};
+ const f=harness({rapid:true,initialView:{geometry,variantVerification:{enabled:true,approvalReady:false}}});
+ let previews=0;f.preview=async()=>{previews++;throw Error('Incomplete geometry cannot preview a report');};
+ await flush();f.render();assert.ok(f.focusedGeometry());
+ f.button('View references').props.onClick();f.render();
+ assert.equal(f.variant().previewOnly,true);assert.equal(f.report(),undefined);assert.equal(f.focusedGeometry(),undefined);
+ f.variant().onGateChange(true);f.render();assert.equal(f.report(),undefined,'reference readiness cannot create a final grade');
+ f.variant().onActivityChange(true);f.render();assert.equal(f.button('Back to grading review').props.disabled,true,'explicit reference refresh keeps navigation locked until settled');
+ f.variant().onActivityChange(false);f.render();f.button('Back to grading review').props.onClick();f.render();
+ assert.ok(f.focusedGeometry());assert.equal(f.current.geometry,geometry);assert.equal(previews,0);assert.deepEqual(f.actions,[]);
+ assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
 });

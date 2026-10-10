@@ -221,10 +221,14 @@ export function FindingsOverview({ workspace, images, astra, disabled = false, r
     // mode controls and footer. Scrolling the index must not enlarge the photos.
     const fit = () => {
       if (window.innerWidth <= 700) return;
-      const bottom = element.getBoundingClientRect().bottom;
+      // An unbounded host must never feed its own growing content height back
+      // into the photo size. The viewport is an independent upper bound.
+      const bottom = Math.min(element.getBoundingClientRect().bottom, window.innerHeight);
       const tops = [...element.querySelectorAll('.ad-overview-side:not([hidden]) .ad-overview-photo')].map(photo => photo.getBoundingClientRect().top + element.scrollTop);
-      const height = Math.max(0, Math.floor(bottom - Math.max(...tops) - 12));
-      element.style.setProperty('--ad-overview-photo-height', `${height}px`);
+      if (!tops.length) return;
+      const height = Math.max(0, Math.floor(Math.min(window.innerHeight, bottom - Math.max(...tops) - 12)));
+      const value = `${height}px`;
+      if (element.style.getPropertyValue('--ad-overview-photo-height') !== value) element.style.setProperty('--ad-overview-photo-height', value);
     };
     const observer = new ResizeObserver(fit);
     observer.observe(element);

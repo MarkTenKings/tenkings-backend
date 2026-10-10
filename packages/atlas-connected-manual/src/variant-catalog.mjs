@@ -140,7 +140,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         const searches = [...new Map(named.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language}),
           {name:c.label,language:c.identity.language}])).values()];
         const pending = searches.filter(printing => !named.some(c => c.label === printing.name && c.identity.language === printing.language
-          && c.images.some(i => i.relationship === 'listing_photo' || i.relationship === 'exact' && i.sha256)));
+          && c.images.some(i => i.relationship === 'listing_photo')));
         // Snapshot validation already caps this at 48 known choices. Every
         // printing gets one journaled search; repeated cards and refreshes reuse it.
         for (const printing of pending) try {

@@ -246,3 +246,36 @@ test('saved manufacturer fallback is bound to the current photograph source and 
  assert.match(f.text(),/ManufacturerPokémon/);assert.equal(f.props.identity.manufacturer,undefined);assert.equal(f.writes.length,0);
  f.props.savedIdentification.sourceHash=hash('e');f.render();assert.match(f.text(),/ManufacturerNot recorded/);f.dispose();
 });
+
+test('reference preview changes only the viewed reference and never drafts or confirms a decision',async()=>{
+ const f=fixture();f.props.previewOnly=true;await flush();f.render();
+ assert.match(f.text(),/Compare variant references/);
+ for(const label of ['Confirm selected identity','My card is not shown','I cannot tell'])assert.equal(f.button(label),undefined);
+ assert.equal(contributionToggle(f),undefined);f.radios()[1].props.onChange();f.render();assert.equal(f.radios()[1].props.checked,true);
+ assert.equal(f.writes.length,0);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);
+ f.props.previewOnly=false;f.remount();await flush();f.render();assert.ok(f.radios().every(r=>!r.props.checked));
+ assert.equal(f.button('Confirm selected identity').props.disabled,true);f.dispose();
+});
+test('reference preview preserves an existing draft and cannot discard it for refresh',async()=>{
+ const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await flush();f.render();
+ f.radios()[0].props.onChange();f.render();f.props.previewOnly=true;f.remount();await flush();f.render();
+ assert.equal(f.button('Refresh reference library'),undefined);assert.equal(f.button('Discard unsaved choice and refresh reference library'),undefined);
+ f.radios()[1].props.onChange();f.render();f.props.previewOnly=false;f.remount();await flush();f.render();
+ assert.equal(f.radios()[0].props.checked,true);assert.equal(f.radios()[1].props.checked,false);assert.equal(f.writes.length,0);f.dispose();
+});
+test('reference preview permits one explicit reference refresh without refreshing or approving the grade',async()=>{
+ const f=fixture();f.props.previewOnly=true;f.status.jobId=hash('e');f.status.refreshable=true;await flush();f.render();
+ f.save=input=>{f.status={...f.status,state:'QUEUED',refreshable:false,refreshRequestId:input.requestId,jobId:hash('f'),result:null};return structuredClone(f.status);};
+ const refresh=f.button('Refresh reference library').props.onClick;refresh();refresh();await flush();f.render();
+ assert.equal(f.writes.length,1);assert.equal(f.writes[0].decision,undefined);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);f.dispose();
+});
+test('reference preview reads an uncertain confirmation without redispatching it or reloading grading',async()=>{
+ const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();f.save=()=>{throw Error('uncertain save');};
+ f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.writes.length,1);
+ f.props.previewOnly=true;f.remount();await flush();f.render();f.button('Check saved matches').props.onClick();await flush();f.render();
+ assert.equal(f.writes.length,1);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);f.dispose();
+});
+test('retained listing photograph takes priority over a provider exact image',()=>{
+ const f=fixture(),exact={...artworkImage,relationship:'exact'},listing=listingImage();
+ assert.equal(f.exports.variantReference({authority:'provider_candidate',images:[exact,listing]},f.props.cardId).relationship,'listing_photo');f.dispose();
+});
