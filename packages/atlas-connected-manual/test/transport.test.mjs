@@ -270,3 +270,36 @@ test('return preparation JSON crosses signed private host once and remains separ
   const noCsrf=response();await proxy(request({url:route,body:{requestId},headers:{...request().headers,'x-atlas-csrf':''}}),noCsrf);assert.equal(noCsrf.statusCode,403);assert.equal(preparations,1);
   const tampered=response();await proxy(request({url:route,body:{requestId,shipDate:'2050-01-01'}}),tampered);assert.equal(tampered.statusCode,400);assert.equal(preparations,1);
 });
+
+test('inbound order desk PDF crosses signed host and browser with exact saved hash and order binding', async t => {
+  const { staffClientRequest } = await import('../../../frontend/atlas-app/lib/client-request.mjs');
+  const { orderLabelBytes } = await import('../../../frontend/atlas-app/lib/order-desk-client.mjs');
+  const { webcrypto } = await import('node:crypto');
+  const route = `/api/staff/manual-connected/order-desk/orders/${card}/labels/INBOUND`, principal = {};
+  const pdf = Buffer.from('%PDF-1.7\nfixture saved inbound label'), sha256 = createHash('sha256').update(pdf).digest('hex');
+  let reads = 0;
+  const server = createPrivateManualServer({ origin, key,
+    boundary: { async authenticate(cookie, csrf) {
+      assert.equal(csrf, undefined);
+      if (cookie !== request().headers.cookie) throw Object.assign(Error(), { status: 401, code: 'SIGN_IN_REQUIRED' });
+      return principal;
+    } }, connected: { workflow: {}, intake: {}, orderDesk: { async label(actor, input) {
+      assert.equal(actor, principal); assert.deepEqual(input, { orderId: card, leg: 'INBOUND' }); reads++;
+      return { bytes: pdf, contentType: 'application/pdf', sha256 };
+    } } } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const host = `http://127.0.0.1:${server.address().port}`;
+  const proxy = createManualServiceProxy({ origin: 'https://private.test', key, fetchImpl: (url, init) => fetch(host + new URL(url).pathname, init) });
+  const accepted = response(); await proxy(request({ method: 'GET', url: route, body: undefined }), accepted);
+  assert.equal(accepted.statusCode, 200); assert.equal(accepted.headers['x-atlas-label-sha256'], sha256);
+  const browser = await staffClientRequest(route.slice('/api/staff/'.length), {}, { fetchImpl: async () => new Response(accepted.bytes, { status: accepted.statusCode, headers: accepted.headers }) });
+  assert.deepEqual(Buffer.from(await orderLabelBytes(browser.data, card, 'INBOUND', webcrypto.subtle)), pdf);
+  await assert.rejects(orderLabelBytes(browser.data, card, 'RETURN', webcrypto.subtle));
+  const unsigned = await fetch(host + route); assert.equal(unsigned.status, 401);
+  const denied = response(); await proxy(request({ method: 'GET', url: route, body: undefined, headers: { ...request().headers, cookie: 'forged' } }), denied);
+  assert.equal(denied.statusCode, 401); assert.equal(reads, 1);
+  for (const path of [route.replace('INBOUND', 'RETURN'), '/api/staff/manual-connected/order-desk']) {
+    await assert.rejects(staffClientRequest(path.slice('/api/staff/'.length), {}, { fetchImpl: async () => new Response(pdf, { headers: { 'Content-Type': 'application/pdf', 'X-ATLAS-Label-SHA256': sha256 } }) }), { code: 'REQUEST_OUTCOME_UNCONFIRMED' });
+  }
+});

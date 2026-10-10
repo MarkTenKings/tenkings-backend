@@ -4,7 +4,7 @@ import { createPhotoStorage } from '@atlas/photo-storage';
 import { createManualArtifactStore,createS3ManualArtifactTransport } from '@atlas/manual-service/artifacts';
 import { createDurableStaffBoundary } from '@atlas/manual-service/staff-auth';
 import { createMachineStaffBoundary } from '@atlas/manual-service/machine-auth';
-import { createConnectedManual } from '@atlas/connected-manual';
+import { createConnectedManual, createWorkLimiter } from '@atlas/connected-manual';
 import { geometryProcessingEnvironment } from '@atlas/connected-manual/geometry-processing';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { identificationEffects } from '@atlas/connected-manual/identification';
@@ -20,6 +20,10 @@ import { variantReviewSettings, validateVariantRuntimeConfiguration } from './va
 import { createAtlasCatalogClient } from '../../../../packages/atlas-connected-manual/src/research-catalog.mjs';
 import { createVariantCatalogService } from '../../../../packages/atlas-connected-manual/src/variant-catalog.mjs';
 import { createVariantSourcePhotoReader } from '../../../../packages/atlas-connected-manual/src/variant-source-photos.mjs';
+import { createOrderDeskService } from '../../../../packages/atlas-connected-manual/src/order-desk.mjs';
+import { createOrderDeskInboxService } from '../../../../packages/atlas-connected-manual/src/order-desk-inbox.mjs';
+import { createOrderDeskPhotoReader } from '../../../../packages/atlas-connected-manual/src/order-desk-photos.mjs';
+import { orderDeskPhotoSettings, validateOrderDeskConfiguration } from './order-desk-runtime-settings.mjs';
 
 export function manualStationSettings(env,origin) {
   if(env.ATLAS_MANUAL_STATION_ENABLED!=='true')return null;
@@ -134,10 +138,17 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const variantConfig=variantReviewSettings(env);
   const variantCatalog=variantConfig?createVariantCatalogService({catalogClient:variantConfig.catalogToken?createAtlasCatalogClient({token:variantConfig.catalogToken}):null,scrydex:variantConfig.scrydex,cache:{get:key=>connected.variantJobs.cache.get(key),getRetained:(key,sha)=>connected.variantJobs.cache.getRetained(key,sha),put:()=>{throw new Error('Serving reads cannot write variant source cache');}}}):null;
   const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
+  const orderPhotoSettings=orderDeskPhotoSettings(env);
+  const orderPhotoClient=orderPhotoSettings?new S3Client({region:orderPhotoSettings.region,endpoint:orderPhotoSettings.endpoint,maxAttempts:1,
+    credentials:{accessKeyId:env.ATLAS_CUSTOMER_STORAGE_ACCESS_KEY,secretAccessKey:env.ATLAS_CUSTOMER_STORAGE_SECRET_KEY}}):null;
+  const orderPhotos=orderPhotoClient?createOrderDeskPhotoReader({storage:createPhotoStorage({client:orderPhotoClient,bucket:orderPhotoSettings.bucket,keyPrefix:'atlas-customer',
+    limits:{maxObjectBytes:256*1024*1024,timeoutMs:90000}}),limited:createWorkLimiter(1,{maxQueue:24})}):null;
+  const orderDesk=dealerOperations?createOrderDeskService({auth,boundary,photos:orderPhotos}):null;
+  const orderDeskInbox=dealerOperations?createOrderDeskInboxService({auth,boundary}):null;
   const marketAutomaticEnabled=env.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED==='true';
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
   requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
-  const connected=createConnectedManual({variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
+  const connected=createConnectedManual({orderDesk,orderDeskInbox,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
     processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
@@ -148,11 +159,12 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   }):null;
   const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers,reviewDisplay:connected.reviewDisplay});
   const validateConfiguration=async()=>{
+    await validateOrderDeskConfiguration({enabled:Boolean(orderDesk),client:manualClient});
     await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
     await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient});
     await validateVariantRuntimeConfiguration({enabled:Boolean(variantConfig),client:manualClient,worker:env.ATLAS_VARIANT_WORKER_ENABLED==='true'});
   };
-  return {connected,boundary,variantArtifacts:variantConfig?artifacts:null,readVariantPhotos:variantConfig?createVariantSourcePhotoReader({boundary,intake:connected.intake,workflow:connected.workflow,storage}):null,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();}};
+  return {connected,boundary,variantArtifacts:variantConfig?artifacts:null,readVariantPhotos:variantConfig?createVariantSourcePhotoReader({boundary,intake:connected.intake,workflow:connected.workflow,storage}):null,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();orderPhotoClient?.destroy();}};
 }
 
 export function manualReportImageSettings(env) {

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Shell from './Shell';
+import OrderDesk from './OrderDesk';
+import { orderDetailPath } from '../lib/order-desk-client.mjs';
+import deskStyles from './OrderDesk.module.css';
 import { api, useStaffResource } from '../lib/client';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { availableCustody, browserJournal, custodyInput, custodyNames, journalLock, locationForm, locationInput, newLocation, operationRecorded, operationsMessage, returnLabelBytes, weekdays } from '../lib/customer-operations.mjs';
@@ -14,7 +17,7 @@ function Field({ label, children }) { return <label className={styles.field}><sp
 function Entry({ label, value, onChange, ...props }) { return <Field label={label}><input value={value ?? ''} onChange={event => onChange(event.target.value)} {...props}/></Field>; }
 
 export default function CustomerOperations({ staff }) {
-  if (staff?.role !== 'REVIEWER') return <Shell staff={staff} manual title="Customer operations"><main className={styles.main}><h1>Customer operations</h1><p>A reviewer staff account is required.</p></main></Shell>;
+  if (staff?.role !== 'REVIEWER') return <Shell staff={staff} manual title="Order desk"><main className={styles.main}><h1>Order desk</h1><p>A reviewer staff account is required.</p></main></Shell>;
   return <Operations staff={staff}/>;
 }
 
@@ -35,13 +38,23 @@ export function Operations({ staff }) {
   }
   async function reconcile(store, saved) {
     const data = await api(base);
-    if (operationRecorded(data, saved)) { store.clear(); setPending(null); setMessage('The exact operation is confirmed in the saved record.'); }
+    const orderId = saved.orderId;
+    if (orderId) {
+      const detail = await api(orderDetailPath(orderId));
+      if (detail.order?.id !== orderId) throw new Error('The saved order reply did not match this operation.');
+      const order = { ...detail.order, returnShipping: detail.order.shipping?.return ?? detail.order.returnShipping };
+      data.orders = [...(data.orders ?? []).filter(row => row.id !== orderId), order];
+    }
+    const confirmed = operationRecorded(data, saved);
+    if (confirmed) { store.clear(); setPending(null); setMessage('The exact operation is confirmed in the saved record.'); }
     else { setPending(saved); setMessage(saved.acknowledged ? 'The server accepted the action. The current roster has not confirmed its saved details; refresh saved status.' : 'The current roster has not confirmed this operation. Its exact content is retained.'); }
     resource.reload();
+    return confirmed;
   }
   async function runAction(action, input, metadata = {}, retry = false) {
     if (running.current || !ready || resource.loading || !resource.session || (!retry && pending)) return;
     running.current = true; setBusy(true); setError(''); setMessage('');
+    let confirmed = false;
     try {
       const store = journal.current;
       await journalLock(navigator, store.key, async () => {
@@ -56,7 +69,7 @@ export function Operations({ staff }) {
           const body=saved.action==='prepare-return-label'?{requestId:saved.input.requestId}:saved.input;
           await api(path, { body, csrf: session.csrf });
           accepted = true; saved = { ...saved, acknowledged: true }; store.save(saved); setPending(saved);
-          await reconcile(store, saved);
+          confirmed = await reconcile(store, saved);
         } catch (e) {
           if (isNew && !accepted && (!attempted || e.status >= 400 && e.status < 500)) { store.clear(); setPending(null); }
           else if (saved) setPending(saved);
@@ -65,6 +78,7 @@ export function Operations({ staff }) {
       });
     } catch (e) { setError(operationsMessage(e)); }
     finally { running.current = false; setBusy(false); }
+    return confirmed;
   }
   async function checkSaved() {
     if (running.current || !journal.current) return;
@@ -74,8 +88,8 @@ export function Operations({ staff }) {
     finally { running.current = false; setBusy(false); }
   }
   const disabled = busy || !!pending || !ready || resource.loading || !resource.session;
-  return <Shell staff={staff} title="Customer operations" manual><main className={styles.main}>
-    <header className={styles.heading}><div><p className={styles.eyebrow}>Customer submissions</p><h1>Customer operations</h1><p>Record custody, connect received cards to grading, and manage kiosk access.</p></div><button type="button" disabled={busy} onClick={() => pending ? checkSaved() : resource.reload()}>Refresh records</button></header>
+  return <Shell staff={staff} title="Order desk" manual className={tab === 'orders' ? deskStyles.shell : undefined}><main className={tab === 'orders' ? deskStyles.page : styles.main}>
+    {tab !== 'orders' && <header className={styles.heading}><div><p className={styles.eyebrow}>Customer submissions</p><h1>Order desk</h1><p>Record custody, connect received cards to grading, and manage kiosk access.</p></div><button type="button" disabled={busy} onClick={() => pending ? checkSaved() : resource.reload()}>Refresh records</button></header>}
     {error && <p className={styles.error} role="alert">{error}</p>}{message && <p className={styles.notice} role="status">{message}</p>}
     {pending && <section className={styles.pending} aria-label="Retained operation"><h2>{pending.acknowledged ? 'Action accepted · checking saved record' : 'An operation needs reconciliation'}</h2><p>This browser retains the exact {pending.action.replaceAll('-', ' ')} request. New actions are locked until it is reconciled.</p>
       {pending.input.orderId && <p>Paid order <code>{pending.input.orderId}</code></p>}{pending.input.cardId && <p>Customer card <code>{pending.input.cardId}</code></p>}{pending.input.requestId && <p>Request <code>{pending.input.requestId}</code></p>}
@@ -83,12 +97,15 @@ export function Operations({ staff }) {
       <div className={styles.actions}><button type="button" disabled={busy} onClick={checkSaved}>Check saved status</button>{!pending.acknowledged && ['custody', 'bind-manual', 'prepare-return-label'].includes(pending.action) && <button type="button" disabled={busy || resource.loading || !resource.session} onClick={() => runAction(null, null, {}, true)}>Retry exact saved request</button>}<a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in again in another tab</a></div>
       {!['custody', 'bind-manual', 'prepare-return-label'].includes(pending.action) && <p>Setup changes are not resubmitted automatically. If a fresh read cannot resolve this record, keep the journal and contact an administrator.</p>}
     </section>}
-    <nav className={styles.tabs} aria-label="Customer operations sections">{[['orders', 'Paid submissions'], ['locations', 'Kiosk setup'], ['memberships', 'Dealer access']].map(([key, label]) => <button type="button" key={key} aria-current={tab === key ? 'page' : undefined} onClick={() => setTab(key)}>{label}</button>)}</nav>
-    {resource.loading ? <p role="status">Loading current staff records…</p> : resource.error ? <div className={styles.panel}><p role="alert">{resource.error}</p><button type="button" onClick={resource.reload}>Try reading again</button>{resource.signedOut && <p><a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a></p>}</div> : !resource.data ? <p>No verified staff roster is available.</p> : <>
-      {tab === 'orders' && <OrderRoster data={resource.data} disabled={disabled} readDisabled={busy || resource.loading || !resource.session} onAction={runAction}/>}
+    <nav className={styles.tabs} aria-label="Customer operations sections">{[['orders', 'Order desk'], ['locations', 'Kiosk setup'], ['memberships', 'Dealer access']].map(([key, label]) => <button type="button" key={key} aria-current={tab === key ? 'page' : undefined} onClick={() => setTab(key)}>{label}</button>)}</nav>
+    {tab === 'orders' && resource.error && <div className={deskStyles.notice} role="alert"><p>Physical operations access could not be checked. Custody and return-label actions stay unavailable until the saved records can be read.</p><button type="button" onClick={resource.reload}>Check operations access</button>{resource.signedOut && <a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a>}</div>}
+    <div hidden={tab !== 'orders'}><OrderDesk staff={staff} active={tab === 'orders'} disabled={disabled} readDisabled={busy || !resource.session} onAction={runAction}
+      renderCardActions={props => <div className={deskStyles.legacyActions}><CustodyCard {...props}/></div>}
+      renderReturnShipping={props => <div className={deskStyles.legacyActions}><ReturnShippingLabel {...props}/></div>}/></div>
+    {tab !== 'orders' && (resource.loading ? <p role="status">Loading current staff records…</p> : resource.error ? <div className={styles.panel}><p role="alert">{resource.error}</p><button type="button" onClick={resource.reload}>Try reading again</button>{resource.signedOut && <p><a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a></p>}</div> : !resource.data ? <p>No verified staff roster is available.</p> : <>
       {tab === 'locations' && <LocationEditor locations={resource.data.locations ?? []} disabled={disabled} onAction={runAction}/>}
       {tab === 'memberships' && <MembershipEditor data={resource.data} disabled={disabled} onAction={runAction}/>}
-    </>}
+    </>)}
   </main></Shell>;
 }
 
@@ -125,7 +142,7 @@ export function CustodyCard({ card, manualCards, disabled, onAction }) {
   const received = card.events?.some(event => event.kind === 'ATLAS_RECEIVED');
   async function submit(event) {
     event.preventDefault(); if (disabled) return; setError('');
-    try { const input = custodyInput(card, form, () => crypto.randomUUID()); await onAction('custody', input); setForm(blankCustody()); }
+    try { const input = custodyInput(card, form, () => crypto.randomUUID()); const confirmed = await onAction('custody', input); if (confirmed === true) setForm(blankCustody()); }
     catch (e) { setError(e.message); }
   }
   async function bind(event) {
