@@ -134,13 +134,29 @@ test('exact grade tabs keep raw, special designation, language and variant disti
 });
 
 
-test('confirmed expired saved evidence offers an explicit fresh search; other saved failures retry locally and unknown only checks', async () => {
+test('saved label failures retry locally and unknown search outcomes only check', async () => {
   const f = fixture(); f.props.automatic = true; let checks = 0; f.props.onCheck = () => checks++;
   f.props.savedSource = { state: 'FAILED', reason: 'LOCAL_PROJECTION_FAILED', refreshable: true, refreshAction: 'RETRY_SAVED_RESPONSE' }; f.render();
   assert.ok(f.button('Retry saved results')); assert.equal(f.searches, 0);
-  f.props.savedSource = { state: 'FAILED', reason: 'MARKET_PREVIEW_EXPIRED', refreshable: true, refreshAction: 'SEARCH_AGAIN' }; f.render();
-  assert.match(f.text(), /saved provider result is too old/); assert.ok(f.button('Start fresh search')); assert.equal(f.searches, 0);
-  f.button('Start fresh search').props.onClick(); await flush(); f.render(); assert.equal(f.searches, 1);
+  f.props.savedSource = { state: 'FAILED', reason: 'MARKET_LABEL_RESPONSE_INVALID', refreshable: true, refreshAction: 'RETRY_SAVED_RESPONSE' }; f.render();
+  assert.match(f.text(), /label-reading response could not be used/); assert.ok(f.button('Retry saved results')); assert.equal(f.searches, 0);
+  f.button('Retry saved results').props.onClick(); await flush(); f.render(); assert.equal(f.searches, 1);
   f.props.savedSource = { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN', refreshable: false }; f.render();
   f.button('Check saved search').props.onClick(); assert.equal(checks, 1); assert.equal(f.searches, 1); assert.equal(f.button('Start fresh search'), undefined);
+});
+
+test('partial label processing reports returned, checked, unavailable and displayed counts without hiding completed comps',()=>{
+ const f=fixture(),source=ready();source.preview.version='atlas-market-preview-v2';source.preview.counts={returned:5};
+ source.preview.labelProcessing={state:'PARTIAL',completed:2,failed:1,unknown:1,unavailable:1};
+ f.props.savedSource=source;f.render();assert.match(f.text(),/5 listings returned/);assert.match(f.text(),/2 photos checked/);
+ assert.match(f.text(),/1 without a photo/);assert.match(f.text(),/1 failed · 1 unconfirmed/);assert.equal(f.find(node=>node.type==='input').length,1);
+});
+
+
+test('unknown provider count is never inferred from normalized or displayed counts', () => {
+  const f = fixture(), source = ready(); source.preview.version = 'atlas-market-preview-v2';
+  source.preview.counts = { received: 0, total: 0 }; source.preview.candidates = [];
+  f.props.savedSource = source; f.render();
+  assert.match(f.text(), /Returned listing count unavailable/);
+  assert.doesNotMatch(f.text(), /0 listings returned/);
 });

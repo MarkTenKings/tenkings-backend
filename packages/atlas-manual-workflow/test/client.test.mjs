@@ -52,3 +52,51 @@ test('unresolved replay loads saved pending candidate before surfacing a retry f
   const c = client(store, async url => url.endsWith('/view') ? response(current(2)) : response({ error: 'unavailable' }, 503));
   await assert.rejects(c.recover()); assert.equal(c.current().card.revision, 2); assert.equal(c.hasPending(), true);
 });
+
+test('startup settles a definitely refused stale command and resumes the authoritative card without another click', async () => {
+  const store=storage(), command={actionId:'old-id',expectedRevision:2,action:{type:'MEASURE_SIDE',side:'FRONT'}};
+  const key='atlas-manual-pending:v1:staff:card';store.setItem(key,JSON.stringify(command));let reads=0,posts=[];
+  const c=client(store,async(url,options)=>{
+    if(url.endsWith('/view'))return response(current(++reads===1?7:8));
+    if(!options.method)return response({state:'NOT_FOUND'});
+    posts.push(JSON.parse(options.body));return response({error:'MANUAL_REVISION_CONFLICT'},409);
+  });
+  const view=await c.recover();assert.equal(view.card.revision,8);assert.equal(c.hasPending(),false);assert.deepEqual(posts,[command]);
+});
+test('refused startup recovery never clears a later command and does not hide failed authoritative reads', async () => {
+  const store=storage(), key='atlas-manual-pending:v1:staff:card';const old={actionId:'old-id',expectedRevision:2,action:{type:'MEASURE_SIDE'}};
+  const later={...old,actionId:'later-id',expectedRevision:4};store.setItem(key,JSON.stringify(old));let reads=0;
+  const c=client(store,async(url,options)=>{
+    if(url.endsWith('/view'))return ++reads===1?response(current(4)):response({error:'MANUAL_SESSION_REQUIRED'},401);
+    if(!options.method)return response({state:'NOT_FOUND'});
+    store.setItem(key,JSON.stringify(later));return response({error:'MANUAL_REVISION_CONFLICT'},409);
+  });
+  await assert.rejects(c.recover(),error=>error.code==='MANUAL_SESSION_REQUIRED');assert.deepEqual(JSON.parse(store.getItem(key)),later);
+});
+
+
+test('observation redraw journals its exact proposal binding through unknown save and client recreation', async () => {
+  const store = storage(), posted = [], staged = [];
+  const finalObservation = { reportHash: 'a'.repeat(64), proposalId: 'off-frame-original' };
+  const action = { type: 'TRACE_SAVE', side: 'FRONT', base: {}, findingId: null,
+    traceRef: { fixture: true }, traceSourceHash: 'b'.repeat(64), finalObservation };
+  const c = client(store, async (url, options) => {
+    if (url.endsWith('/view')) return response(current(1));
+    if (url.endsWith('/trace')) { staged.push(JSON.parse(options.body)); return response(action); }
+    if (options.method === 'POST') posted.push(JSON.parse(options.body));
+    throw Error('offline after trace command');
+  });
+  await c.load();
+  await assert.rejects(c.editDefect({ side: 'FRONT', base: {}, finalObservation,
+    action: { type: 'TRACE_SAVE', findingId: null, trace: { fixture: true } } }));
+  assert.deepEqual(staged[0].finalObservation, finalObservation);
+  assert.deepEqual(posted[0].action.finalObservation, finalObservation);
+  let revision = 1;
+  const resumed = client(store, async (url, options) => {
+    if (url.endsWith('/view')) return response(current(revision));
+    if (!options.method) return response({ state: 'NOT_FOUND' });
+    assert.equal(url.endsWith('/trace'), false, 'recovery reuses the staged artifact');
+    posted.push(JSON.parse(options.body)); revision++; return response({ card: { revision } });
+  });
+  await resumed.recover(); assert.deepEqual(posted[1], posted[0]); assert.equal(store.values.size, 0);
+});

@@ -1,17 +1,18 @@
-import {isVariantPhotoComparable} from '@tenkings/card-catalog-evidence';
 import {requireThat} from '@atlas/manual-service/contract';
 import {VARIANT_PHOTO_POLICY} from './variant-photo-provider.mjs';
 /** Separate-process only: no grading limiter, grading reservation, browser or approval capability. */
-export function createVariantWorker({store,catalog,loadPhotos,provider,projectResponse,concurrency=1,intervalMs=5000,heartbeatMs=30000,timers=globalThis,onError=()=>{},recheck=null,admitDispatch=null}){
- requireThat(store&&catalog&&typeof loadPhotos==='function'&&typeof provider==='function'&&typeof projectResponse==='function'&&Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,500,'VARIANT_CONFIG_INVALID');
+export function createVariantWorker({store,catalog,provider,projectResponse,concurrency=1,intervalMs=5000,heartbeatMs=30000,timers=globalThis,onError=()=>{},recheck=null,admitDispatch=null}){
+ requireThat(store&&catalog&&typeof provider==='function'&&typeof projectResponse==='function'&&Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,500,'VARIANT_CONFIG_INVALID');
  const tasks=new Set();let stopped=true,cycling=null,timer=null;const emit=e=>{try{onError({code:/^[A-Z][A-Z0-9_]{0,100}$/.test(e?.code??'')?e.code:'VARIANT_WORKER_INTERRUPTED'});}catch{}};
  async function execute(job){let dispatched=Boolean(job.dispatch_id),saved=Boolean(job.response),lost=false,renewing=Promise.resolve();const controller=new AbortController();
   const heartbeat=timers.setInterval(()=>{renewing=renewing.then(async()=>{if(!await store.renew(job)){lost=true;controller.abort();}}).catch(e=>{lost=true;controller.abort();emit(e);});},heartbeatMs);heartbeat.unref?.();
-  const executeListingSource=async(request,dispatch)=>{
+  const executeListingSource=async(request,dispatch,{retainedOnly=false}={})=>{
    requireThat(typeof store.reserveListingSource==='function'&&typeof store.saveListingSource==='function'&&typeof dispatch==='function',503,'VARIANT_LISTING_JOURNAL_UNAVAILABLE');
    requireThat(!lost&&!controller.signal.aborted,409,'VARIANT_LEASE_LOST');
-   if(admitDispatch&&!await admitDispatch())throw Object.assign(new Error('VARIANT_GRADING_PRIORITY_DEFERRED'),{code:'VARIANT_GRADING_PRIORITY_DEFERRED'});
-   const reserved=await store.reserveListingSource(job,request);if(reserved.state!=='RESERVED')return reserved;
+   if(!retainedOnly&&admitDispatch&&!await admitDispatch())throw Object.assign(new Error('VARIANT_GRADING_PRIORITY_DEFERRED'),{code:'VARIANT_GRADING_PRIORITY_DEFERRED'});
+   const reserved=await store.reserveListingSource(job,request,{retainedOnly});
+   requireThat(!retainedOnly||reserved.state!=='RESERVED',503,'VARIANT_LISTING_READ_ONLY');
+   if(reserved.state!=='RESERVED')return reserved;
    // A committed source reservation is permanent even when the transport or
    // response acknowledgement is lost. Never reuse the photo-model fields.
    try{requireThat(!lost&&!controller.signal.aborted,409,'VARIANT_LEASE_LOST');const source=await dispatch();
@@ -51,13 +52,11 @@ export function createVariantWorker({store,catalog,loadPhotos,provider,projectRe
     await store.finish(job,{result:{catalog:snapshot,referenceLabels,suggestion:{candidateId:null,confidence:null,
       reason:'Compare the saved reference labels and choose the variant you can verify on your card.',evidence:[]}}});return;
    }
-   let response=job.response;let suggestion={candidateId:null,confidence:null,reason:'No verified reference images are available for visual comparison.',evidence:[]};
-   const comparable=snapshot.candidates.some(c=>c.images.some(i=>isVariantPhotoComparable(c,i)));
-   if(comparable){if(!response){requireThat(!dispatched,409,'VARIANT_PROVIDER_OUTCOME_UNKNOWN');const photos=await loadPhotos(job,{signal:controller.signal});
-     const prepared=typeof provider.prepare==='function'?await provider.prepare({input:job.input,catalog:snapshot,photos,signal:controller.signal}):null;
-     if(admitDispatch&&!await admitDispatch()){requireThat(await store.defer(job),409,'VARIANT_LEASE_LOST');return;}
-     dispatched=true;requireThat(!lost&&await store.dispatch(job,prepared?.evidence??null),409,'VARIANT_LEASE_LOST');response=await provider(prepared?{prepared,signal:controller.signal}:{input:job.input,catalog:snapshot,photos,signal:controller.signal});requireThat(await store.response(job,response),503,'VARIANT_RESPONSE_NOT_SAVED');saved=true;}
-    suggestion=await projectResponse(response,snapshot,job.input);}
+   // Old physical-card comparisons are retained evidence only. Never start
+   // that retired workflow because a label provider or catalog is unavailable.
+   if(job.dispatch_id&&!job.response){await store.finish(job,{state:'UNKNOWN',code:'VARIANT_PROVIDER_OUTCOME_UNKNOWN'});return;}
+   const suggestion=job.response?await projectResponse(job.response,snapshot,job.input)
+    :{candidateId:null,confidence:null,reason:'Choose the catalog variant you can verify on your card.',evidence:[]};
    requireThat(!lost,409,'VARIANT_LEASE_LOST');await store.finish(job,{result:{catalog:snapshot,suggestion}});
   }catch(e){emit(e);try{if(e.code==='VARIANT_GRADING_PRIORITY_DEFERRED'&&!dispatched&&!saved){requireThat(await store.defer(job),409,'VARIANT_LEASE_LOST');return;}await store.finish(job,{state:saved?'RETRY':dispatched?'UNKNOWN':'RETRY',code:saved?'VARIANT_PROJECTION_INTERRUPTED':dispatched?'VARIANT_PROVIDER_OUTCOME_UNKNOWN':'VARIANT_PREPARATION_INTERRUPTED'});}catch(error){emit(error);}}
   finally{timers.clearInterval(heartbeat);await renewing;}

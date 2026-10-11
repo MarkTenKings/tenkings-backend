@@ -167,3 +167,19 @@ test('publication persists retained-not-learned audit separately and returns the
   await assert.rejects(repository.publish({}, confirmation, invalid), { code: 'MEMORY_PUBLICATION_INVALID' });
   assert.equal(inserts, 1);
 });
+
+
+test('a rejected off-frame model observation keeps review evidence without manufacturing a negative crop', async () => {
+  const f = fixtures({ empty: true }), hydrated = await f.hydrate();
+  const review = { analysisId: randomUUID(), proposalId: 'off-frame-original', side: 'FRONT',
+    action: 'REJECT', findingId: null, base: { frame: hydrated.defects.sides.FRONT.frame },
+    measurementHold: 'OUTSIDE_CARD_FRAME', proposal: { defectType: 'LIGHT_SCRATCH_SCUFF',
+      measurementHold: 'OUTSIDE_CARD_FRAME', canonicalContour: [{ x: .2, y: 1.01 }, { x: .3, y: 1.01 }, { x: .3, y: 1.02 }] },
+    reviewerId: randomUUID(), reviewedAt: new Date().toISOString() };
+  const bundle = await buildReviewedLessons({ confirmation: f.confirmation,
+    hydrate: async () => ({ ...hydrated, assistance: { reviews: [review] } }),
+    createExemplar: async () => assert.fail('off-frame coordinates cannot produce a verified crop'),
+    proposalTrace: async () => assert.fail('off-frame coordinates cannot produce an in-card trace') });
+  assert.equal(bundle.lessons.length, 0);
+  assert.equal(review.action, 'REJECT'); assert.equal(review.proposal.canonicalContour[0].y, 1.01);
+});

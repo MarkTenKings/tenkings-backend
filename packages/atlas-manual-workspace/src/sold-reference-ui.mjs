@@ -38,10 +38,14 @@ export function saleDateLabel(value) {
   return value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(value)) : 'Date unavailable';
 }
 export function marketSearchMessage(value) {
-  if (value?.state === 'FAILED' && value.reason === 'MARKET_PREVIEW_EXPIRED' && value.refreshable === true && value.refreshAction === 'SEARCH_AGAIN') {
-    return 'The saved provider result is too old for a new reference selection. Start a fresh search to fetch current sold listings.';
-  }
-  const reason = ({ PROVIDER_QUOTA_REACHED: 'The sold-sales provider quota is exhausted. Ask an administrator to check the account.',
+  const reason = ({ MARKET_LABEL_OUTCOME_UNKNOWN: 'Sold listings were saved, but some label-reading outcomes are unconfirmed. Check the saved results.',
+    MARKET_LABEL_RESPONSE_REJECTED: 'Sold listings were saved, but the label-reading service refused the request.',
+    MARKET_LABEL_RESPONSE_INVALID: 'Sold listings were saved, but the label-reading response could not be used.',
+    MARKET_LABEL_RESPONSE_INCOMPLETE: 'Sold listings were saved, but the label-reading response was incomplete.',
+    MARKET_LABEL_READING_INVALID: 'A saved label reading could not be used. Retry processing the saved results.',
+    MARKET_LABEL_READING_MISSING: 'A saved label reading is missing. Retry processing the saved results.',
+    MARKET_PHOTO_UNAVAILABLE: 'The sold-listing photos could not be read. Retry processing the saved results.',
+    PROVIDER_QUOTA_REACHED: 'The sold-sales provider quota is exhausted. Ask an administrator to check the account.',
     PROVIDER_REQUEST_LIMITED: 'The provider has limited requests. The saved search will show its next available state here.',
     PROVIDER_CONFIGURATION_ERROR: 'The sold-sales provider credential needs attention from an administrator.',
     PROVIDER_NOT_CONFIGURED: 'The sold-sales provider is not configured.',

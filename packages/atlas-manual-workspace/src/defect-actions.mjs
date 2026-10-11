@@ -66,7 +66,7 @@ function findings(value, side) {
       object(retained, ['version', 'reason', 'sourceImage', 'sourceQuad', 'sourceFrame', 'sourceTraceSha256']);
       requireThat(retained.version === 'atlas-geometry-exclusion-v1'
         && ['TRACE_OUTSIDE_CORRECTED_CARD', 'TRACE_COMPONENT_LOST'].includes(retained.reason)
-        && finding.reviewResult === 'REMOVED' && finding.finalTrace?.sha256 === retained.sourceTraceSha256
+        && ['REMOVED', 'UNREVIEWED'].includes(finding.reviewResult) && finding.finalTrace?.sha256 === retained.sourceTraceSha256
         && finding.measurementRegions?.length === 0, 'ATLAS_DEFECT_GEOMETRY_EXCLUSION_INVALID');
       validatePreparedPhotoFrame(retained.sourceFrame, retained.sourceImage, retained.sourceQuad);
     }
@@ -91,6 +91,7 @@ function parseAction(value, slot, side) {
     requireThat(target, 'ATLAS_DEFECT_NOT_FOUND'); return target;
   });
   for (const target of targets) {
+    if (target.geometryExclusion) requireThat(['REMOVE', 'TRACE_SAVE', 'UNDO'].includes(wire.type), 'ATLAS_DEFECT_RETRACE_REQUIRED');
     if (wire.type === 'UNDO') {
       requireThat(target.reviewResult === 'REMOVED' && target.reviewResultBeforeRemoval, 'ATLAS_DEFECT_NOT_REMOVED');
       requireThat(!target.geometryExclusion, 'ATLAS_DEFECT_RETRACE_REQUIRED');
@@ -135,8 +136,7 @@ function validate(state) {
     slot.humanEditedIds.forEach(text);
     for (const finding of slot.findings) if (finding.geometryExclusion) {
       const retained = finding.geometryExclusion;
-      requireThat(slot.humanEditedIds.includes(finding.id)
-        && retained.sourceImage.version === slot.frame.imageVersion && retained.sourceImage.originalSha256 === slot.frame.originalSha256
+      requireThat(retained.sourceImage.version === slot.frame.imageVersion && retained.sourceImage.originalSha256 === slot.frame.originalSha256
         && retained.sourceFrame.version < slot.frame.preparationVersion, 'ATLAS_DEFECT_GEOMETRY_EXCLUSION_INVALID');
     }
     object(slot.source, ['method'], ['version', 'id', 'map']);
@@ -193,6 +193,7 @@ function validate(state) {
     for (const side of SIDES) {
       matches(state.confirmation.base[side], baseFor(state, side));
       requireThat(state.sides[side].inspection && !state.sides[side].pending, 'ATLAS_DEFECT_INSPECTION_REQUIRED');
+      requireThat(!state.sides[side].findings.some(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED'), 'ATLAS_DEFECT_RETRACE_REQUIRED');
       requireThat(state.sides[side].findings.every(f => f.reviewResult !== 'UNREVIEWED'));
     }
   }
@@ -241,7 +242,7 @@ export function markDefectFindingReviewed(state, request) {
   matches(request.base, baseFor(state, request.side));
   const slot = state.sides[request.side];
   requireThat(!slot.pending, 'ATLAS_DEFECT_MEASUREMENT_PENDING');
-  requireThat(slot.findings.some(finding => finding.id === request.findingId && finding.reviewResult !== 'REMOVED'), 'ATLAS_DEFECT_NOT_FOUND');
+  requireThat(slot.findings.some(finding => finding.id === request.findingId && finding.reviewResult !== 'REMOVED' && !finding.geometryExclusion), 'ATLAS_DEFECT_NOT_FOUND');
   const ids = reviewedDefectFindingIds(state, request.side);
   if (ids.includes(request.findingId)) return publish({ state, invalidated: { report: false, sides: { FRONT: [], BACK: [] } } });
   const decisions = slot.findingReviews?.decisions.filter(value => ids.includes(value.findingId)) ?? [];
@@ -319,9 +320,13 @@ export async function runDefectMeasurement(state, side, measure) {
   requireThat(slot?.pending && typeof measure === 'function', 'ATLAS_DEFECT_NO_PENDING_EDIT');
   const base = defectBase(snapshot, side); let receipt = null;
   const callback = async input => {
-      const result = await measure(copy({ ...input, base, frame: slot.frame, cornerShape: slot.cornerShape }));
-      const checked = checkedMeasurement(input, result); receipt = result.receipt ?? null;
-      return checked;
+      // Old-frame observations remain reviewable, but their pixels must never
+      // enter a CPU measurement under the corrected frame.
+      const deferred = input.findings.filter(finding => finding.geometryExclusion);
+      const current = { ...input, findings: input.findings.filter(finding => !finding.geometryExclusion) };
+      const result = await measure(copy({ ...current, base, frame: slot.frame, cornerShape: slot.cornerShape }));
+      const checked = checkedMeasurement(current, result); receipt = result.receipt ?? null;
+      return { defects: [...deferred, ...checked.defects] };
     };
   const measured = slot.pending.action.type === 'REMEASURE'
     ? [...slot.findings.filter(f => f.reviewResult === 'REMOVED'),
@@ -333,7 +338,13 @@ export async function runDefectMeasurement(state, side, measure) {
             ? { ...prior, measurementRegions: measured.measurementRegions }
             : { ...prior, zone: measured.zone, canonicalContour: measured.canonicalContour, measurement: measured.measurement };
         })]
-    : await remeasureSpeedsterReviewAction({ defects: slot.findings, action: cpuAction(slot.pending.action), measure: callback });
+    : await remeasureSpeedsterReviewAction({ defects: slot.findings.map(finding => {
+        if (slot.pending.action.type !== 'TRACE_SAVE' || slot.pending.action.findingId !== finding.id || !finding.geometryExclusion) return finding;
+        // The saved prior draft retains the old trace/frame. Only this explicit
+        // human redraw replaces its current-frame authority.
+        const { geometryExclusion, ...current } = finding;
+        return current;
+      }), action: cpuAction(slot.pending.action), measure: callback });
   return copy({ side, base, findings: findings(measured, side), receipt });
 }
 export function applyDefectMeasurement(state, result) {
@@ -400,6 +411,7 @@ export function confirmDefectFindings(state, request) {
   for (const side of SIDES) {
     matches(request.base[side], baseFor(state, side));
     requireThat(state.sides[side].inspection && !state.sides[side].pending, 'ATLAS_DEFECT_INSPECTION_REQUIRED');
+    requireThat(!state.sides[side].findings.some(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED'), 'ATLAS_DEFECT_RETRACE_REQUIRED');
   }
   const result = { ...state, draftRevision: next(state.draftRevision), sides: {} };
   for (const side of SIDES) {
@@ -420,7 +432,8 @@ export function defectStatus(state) {
       removed: slot.findings.filter(f => f.reviewResult === 'REMOVED').length }];
   }));
   return copy({ sides, settled: SIDES.every(side => sides[side].settled),
-    canConfirm: SIDES.every(side => sides[side].settled && sides[side].inspected),
+    canConfirm: SIDES.every(side => sides[side].settled && sides[side].inspected
+      && !state.sides[side].findings.some(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED')),
     confirmed: Boolean(state.confirmation), reportApproval: false, learningPublished: false });
 }
 /** Identity/border changes affect draft report content only; they do not erase
@@ -433,4 +446,17 @@ export function previewDefectReport(state, { identity, centeringQuads, draftRevi
       inspectionImageSha256: state.sides[side].frame.inspectionImageSha256 }])),
     reviewedDefects: SIDES.flatMap(side => state.sides[side].findings),
     manualInspection: { method: 'HUMAN', front: state.sides.FRONT.inspection, back: state.sides.BACK.inspection } });
+}
+
+/** An original observation is resolved only by an explicit rejection or by its
+ * linked human trace after successful current-frame measurement. A saved or
+ * failed pending trace alone is never a completed review. */
+export function isDefectObservationResolved(workspace, review) {
+  if (review?.action === 'REJECT') return true;
+  if (review?.action !== 'TRACE_SAVE' || !review.findingId) return false;
+  const slot = workspace?.sides?.[review.side];
+  const finding = slot?.findings.find(value => value.id === review.findingId);
+  return Boolean(slot && !slot.pending && slot.measurement?.receipt && slot.humanEditedIds.includes(review.findingId)
+    && finding && (finding.reviewResult === 'REMOVED' || !finding.geometryExclusion
+      && finding.measurementRegions?.some(region => region.measurement.pixelCount > 0 || region.measurement.areaMm2 > 0)));
 }

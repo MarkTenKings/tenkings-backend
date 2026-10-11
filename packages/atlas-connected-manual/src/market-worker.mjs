@@ -17,16 +17,16 @@ export function marketProviderFailure(error) {
 /** Cold construction. Only start/cycle executes durable, human-admitted jobs.
  * Leases bound process concurrency, never the number of approved cards. */
 export function createMarketWorker({ store, approved, publication, artifacts, provider, authorityFor, queryContextResolver = null, labelMarket = null,
-  concurrency = 2, intervalMs = 2000, heartbeatMs = 30000, timers = globalThis, now, onError = () => {} }) {
+  concurrency = 2, intervalMs = 2000, heartbeatMs = 30000, timers = globalThis, onError = () => {} }) {
   requireThat(typeof provider === 'function' && typeof authorityFor === 'function' && Number.isInteger(concurrency)
     && concurrency >= 1 && concurrency <= 16 && Number.isInteger(intervalMs) && intervalMs >= 10
     && Number.isInteger(heartbeatMs) && heartbeatMs >= 10, 500, 'MARKET_WORKER_CONFIG_INVALID');
-  const market = createPresentationMarket({ ...(now ? { now } : {}) });
+  const market = createPresentationMarket();
   const tasks = new Set(); let stopped = true, cycling = null, timer = null;
   const emit = error => { try { onError({ code: /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'MARKET_WORKER_INTERRUPTED' }); } catch { /* Logging cannot change receipts. */ } };
   async function execute(job) {
     const local = (job.audit??[]).some(value=>value.event==='RECLASSIFY');
-    let dispatched = false, responseSaved = Boolean(job.response), providerFailed = null, previewExpired = false, leaseLost = false, renewing = Promise.resolve();
+    let dispatched = false, responseSaved = Boolean(job.response), providerFailed = null, leaseLost = false, renewing = Promise.resolve();
     const heartbeat = timers.setInterval(() => { renewing = renewing.then(async () => {
       if (!await store.renew(job)) leaseLost = true;
     }).catch(error => { leaseLost = true; emit(error); }); }, heartbeatMs); heartbeat.unref?.();
@@ -61,26 +61,24 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
         if (context.marketQueryContext) response = { ...response, marketQueryContext: context.marketQueryContext };
         requireThat(await store.recordResponse(job, response), 503, 'MARKET_RESPONSE_NOT_SAVED');
         responseSaved = true;
+        requireThat(response.responsePolicy === 'ATLAS_SLAB_V1', 502, 'MARKET_PROVIDER_POLICY_INVALID');
       }
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
-      let result;
-      try {
-        let evidence = response;
-        if (response.responsePolicy === 'ATLAS_SLAB_V1') {
-          requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
-          evidence = await labelMarket({ source, response: structuredClone(response), job });
-          requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
-        }
-        result = market.project(source, evidence);
+      let evidence = response;
+      if (response.responsePolicy === 'ATLAS_SLAB_V1') {
+        requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
+        evidence = await labelMarket({ source, response: structuredClone(response), job });
+        requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       }
-      catch (error) { previewExpired = error?.code === 'MARKET_PREVIEW_EXPIRED'; throw error; }
+      const result = market.project(source, evidence);
       const artifactHash = digest(JSON.stringify(result.preview));
       const ref = await artifacts.write(result.preview, { cardId: job.card_id, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
       requireThat(result.sourceHash === marketPreviewHash(result.preview), 503, 'MARKET_PREVIEW_CORRUPT');
       await store.finish(job, { result: { state: 'READY', ref, artifactHash, sourceHash: result.sourceHash } });
     } catch (error) {
       emit(error);
-      const failure = providerFailed ?? (error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'RETRY' } : previewExpired ? { code: 'MARKET_PREVIEW_EXPIRED', disposition: 'FAILED' } : local ? {code:'MARKET_RECLASSIFICATION_INTERRUPTED',disposition:'RETRY'} : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
+      const terminal = /^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE|MARKET_PROVIDER_POLICY_INVALID)$/.test(error?.code ?? '');
+      const failure = providerFailed ?? (terminal ? { code: error.code, disposition: 'FAILED' } : error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'RETRY' } : local ? {code:'MARKET_RECLASSIFICATION_INTERRUPTED',disposition:'RETRY'} : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
         : dispatched ? { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' }
         : { code: 'MARKET_PREPARATION_INTERRUPTED', disposition: 'RETRY' });
       try { await store.finish(job, failure); } catch (saveError) { emit(saveError); }

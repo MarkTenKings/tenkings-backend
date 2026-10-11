@@ -106,7 +106,7 @@ test('final corrections begin only on the explicit gesture and retain the exact 
   f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick();
   await f.flush();
   assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
-  assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'rapid');
+  assert.deepEqual(f.routes, []); assert.ok(f.find(node=>node.type?.name==='RapidReviewDialog')[0]);
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
 });
@@ -132,7 +132,7 @@ test('a corrected report continues the current final review and cannot approve t
   assert.equal(f.find(node => node.type === 'button' && /Approve & print/.test(text(node))).length, 0);
   f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick();
   await f.flush();
-  assert.equal(f.actions.length, 0); assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'rapid');
+  assert.equal(f.actions.length, 0); assert.deepEqual(f.routes, []); assert.ok(f.find(node=>node.type?.name==='RapidReviewDialog')[0]);
   f.dispose();
 });
 test('a delayed queue response cannot display a prior staff account after account change', async () => {
@@ -178,7 +178,7 @@ test('partial batch report keeps evidence visible and gives geometry action inst
   const f=await fixture({partial:true});assert.equal(f.reviews().length,1);f.ready();
   assert.equal(f.find(node=>node.type==='button'&&/Approve/.test(text(node))).length,0);
   f.find(node=>node.type==='button'&&text(node)==='Review card →')[0].props.onClick();await f.flush();
-  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,0);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'rapid');f.dispose();
+  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,0);assert.ok(f.find(node=>node.type?.name==='RapidReviewDialog')[0]);f.dispose();
 });
 
 test('old scoring policy explains the approval block and opens the bound final review only on an explicit gesture', async () => {
@@ -186,18 +186,20 @@ test('old scoring policy explains the approval block and opens the bound final r
   assert.equal(f.find(node=>node.type==='button'&&/Approve/.test(text(node))).length,0);
   f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick(); await f.flush();
   assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
-  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog')[0].props.job.navigationMode, 'rapid');
+  assert.ok(f.find(node => node.type?.name === 'RapidReviewDialog')[0]);
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
 });
 
 
-test('label queue opens saved completion workspace directly instead of another navigation screen',async()=>{
+test('label queue opens the same focused review dialog as every other card',async()=>{
   const f=await fixture();f.jobs=[{...f.jobs[0],state:'APPROVED'}];
   f.find(node=>node.type==='button'&&/^Label queue/.test(text(node)))[0].props.onClick();await f.flush();
   // Refresh the fixture through a staff generation to provide the updated queue.
   f.switchStaff('next-reviewer');await f.flush();
-  const workspace=f.find(node=>node.type==='ManualWorkspace')[0];assert.ok(workspace);assert.equal(workspace.props.cardId,f.packet.cardId);
+  assert.equal(f.find(node=>node.type==='ManualWorkspace').length,0);
+  f.find(node=>node.type==='button'&&/^Review card/.test(text(node)))[0].props.onClick();await f.flush();
+  const dialog=f.find(node=>node.type?.name==='RapidReviewDialog')[0];assert.ok(dialog);assert.equal(dialog.props.job.cardId,f.packet.cardId);
   assert.doesNotMatch(f.text(),/Open label & finishing/);assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);f.dispose();
 });
 
@@ -207,18 +209,17 @@ test('label queue opens saved completion workspace directly instead of another n
   await f.flush();
   assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog').length, 0);
   assert.equal(f.reviews().length, 1);
-  assert.match(f.text(), /Retry opening review/); assert.match(f.text(), /Open saved card workspace/);
+  assert.match(f.text(), /Retry opening review/); assert.doesNotMatch(f.text(), /Open saved card workspace/);
   f.find(node => node.type === 'button' && text(node) === 'Retry opening review')[0].props.onClick();
   await f.flush();
-  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog')[0].props.job.navigationMode, 'rapid');
+  assert.ok(f.find(node => node.type?.name === 'RapidReviewDialog')[0]);
   assert.deepEqual(f.actions[1], f.actions[0]);
   assert.doesNotMatch(f.text(), /Retry opening review/); assert.equal(f.popups.length, 0); f.dispose();
 });
-test('a refused stale review points to saved work and offers the existing workspace', async () => {
+test('a definitely stale machine binding resumes the current review without an extra recovery choice', async () => {
   const f = await fixture({ correctionFailure: { code: 'BATCH_REVIEW_STALE' } });
   f.find(node => node.type === 'button' && text(node) === 'Start review →')[0].props.onClick(); await f.flush();
-  assert.match(f.text(), /newer saved work/); assert.doesNotMatch(f.text(), /This step did not finish/);
-  f.find(node => node.type === 'button' && text(node) === 'Open saved card workspace')[0].props.onClick();
+  assert.doesNotMatch(f.text(), /Open saved card workspace|Retry opening review/);
   await f.flush();assert.deepEqual(f.routes, []);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog').length,1);assert.equal(f.actions.length,1,'saved-work fallback never tries to adopt the stale report again'); assert.equal(f.popups.length, 0); f.dispose();
 });
 

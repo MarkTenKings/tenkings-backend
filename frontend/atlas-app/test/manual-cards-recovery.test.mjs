@@ -470,8 +470,10 @@ test('confirmed current-card deletion routes away instead of keeping a stale gra
  f.render();await flush();f.render();assert.deepEqual(f.navigations,['/manual']);assert.equal(f.workspace(),false);
 });
 
-test('final geometry correction holds explain preserving findings and deliberate recovery instead of blind retry',()=>{
-  assert.match(manualMessage({code:'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED'}),/Restore the previous outline, review the affected findings/);
+test('geometry correction messages direct current outline review without restoring the previous outline',()=>{
+  const geometryMessage=manualMessage({code:'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED'});
+  assert.match(geometryMessage,/outline needs another adjustment.*Review the selected side/);
+  assert.doesNotMatch(geometryMessage,/Restore the previous outline/);
   assert.match(manualMessage({code:'ATLAS_DEFECT_RETRACE_REQUIRED'}),/Add a new trace on the current photograph/);
   assert.match(manualMessage({code:'MANUAL_GEOMETRY_REVIEW_REQUIRED'}),/confirm both sides in Geometry/);
 });
@@ -483,7 +485,7 @@ test('unknown Year and Manufacturer remain editable without blocking geometry or
   f.render();await flush();f.render();
   assert.equal(f.field('Year').props['aria-invalid'],false);assert.equal(f.field('Manufacturer').props['aria-invalid'],false);
   assert.equal(f.attention('detail-year'),false);assert.equal(f.attention('detail-manufacturer'),false);
-  f.submit();await flush();f.render();assert.equal(f.workspace(),true);assert.equal(f.workspaceProps().rapid,true);
+  f.submit();await flush();f.render();assert.equal(f.workspace(),true);assert.equal(Object.hasOwn(f.workspaceProps(),'rapid'),false);
   assert.equal(posts.filter(post=>post.path.endsWith('/initialize')).length,1);
   assert.equal(card.details.fields.year,'');assert.equal(card.details.fields.manufacturer,'');f.dispose();
 });
@@ -579,7 +581,7 @@ test('direct saved-card review mounts the bounded shell and carries its pending-
  const card={...pokemonCard(),manual:{current:true,revision:7}};
  const f=harness(storage(null),async()=>{throw Error('Unexpected write');},{readCard:()=>card});
  f.render();await flush();f.render();
- assert.ok(f.workspace());assert.equal(f.workspaceProps().rapid,true);assert.ok(f.directShell(),'actual direct route owns the shared bounded shell');
+ assert.ok(f.workspace());assert.equal(Object.hasOwn(f.workspaceProps(),'rapid'),false);assert.ok(f.directShell(),'actual direct route owns the shared bounded shell');
  assert.equal(f.directShell().busy,false);
  f.workspaceProps().onBusyChange(true);f.render();assert.equal(f.directShell().busy,true,'pending saves/edits lock the direct exit');
  f.workspaceProps().onBusyChange(false);f.render();assert.equal(f.directShell().busy,false);f.dispose();

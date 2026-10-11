@@ -7,9 +7,9 @@ import {prepareGeometry} from '../../atlas-preparation-runtime/src/index.mjs';
 import {measureDefectWorkspaceEdit} from '../../atlas-measurement-runtime/src/index.mjs';
 import {createGeometryWorkspace,applyGeometryEdit,applyPreparedFrame,geometryBase,preparationBase,
   markPrintedBorderAbsent,confirmBothGeometry} from '../src/geometry-actions.mjs';
-import {createDefectWorkspace,adoptDefectProposals,defectBase,invalidateDefectFindingReviews,
+import {createDefectWorkspace,adoptDefectProposals,defectBase,invalidateDefectFindingReviews,beginDefectEdit,
   applyDefectMeasurement,markDefectFindingReviewed,markDefectSideInspected,confirmDefectFindings,
-  previewDefectReport} from '../src/defect-actions.mjs';
+  previewDefectReport,isDefectObservationResolved} from '../src/defect-actions.mjs';
 import {beginReprojectDefectFrame} from '../src/geometry-reprojection.mjs';
 import {focusedFixture,printed} from '../test/focused-geometry-fixture.mjs';
 import {measurements} from '../test/defect-fixtures.mjs';
@@ -29,7 +29,8 @@ const frameFromGeometry=(geometry,side)=>{
 export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=async()=>{}}={}) {
   if(!pythonExecutable?.startsWith('/'))throw Error('ATLAS_FIXTURE_PYTHON must name an absolute local CPU Python executable');
   const cardId='focused-synthetic',assets=new Map(),sources={},previousGeometry={},actions=[];
-  let geometry,defects,revision=1,queue=Promise.resolve();
+  let geometry,defects,revision=1,queue=Promise.resolve(),observation=null,assistance={reviews:[]};
+  const observationReportHash=sha("synthetic original observation"),analysisId="synthetic-observation-analysis";
   const identity={playerName:'Synthetic reviewer card',year:'2026',manufacturer:'Local fixture',productSet:'Not production'};
   const retain=(bytes,mime)=>{
     const hash=sha(bytes);assets.set(hash,{bytes:Buffer.from(bytes),mime});return hash;
@@ -77,7 +78,7 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
     images:Object.fromEntries(SIDES.map(side=>{const slot=geometry.sides[side],prepared=slot.prepared?.frame;
       return [side,{original:descriptor(slot.image.frameSha256,slot.image.width,slot.image.height),
         ...(prepared?{inspection:descriptor(prepared.inspection.sha256,1350,1858),rectified:descriptor(prepared.rectified.sha256,1270,1778)}:{})}];})),
-    identity,astra:{enabled:false},finalReview:{report:{findings:SIDES.flatMap(side=>defects.sides[side].findings)}},
+    identity,astra:{enabled:false},assistance,finalReview:{reportHash:observationReportHash,report:{analysisId,findings:SIDES.flatMap(side=>defects.sides[side].findings),unmeasurableProposals:observation?[observation]:[]}},
     provisional:{state:'READY',report:{findings:SIDES.flatMap(side=>defects.sides[side].findings)}}});
   const apply=async action=>{
     if(action.type==='GEOMETRY_EDIT'){
@@ -96,6 +97,17 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
       const nextDefects=applyDefectMeasurement(pending,measured).state;
       // Keep old evidence/images if preparation, reprojection or measurement fails.
       retainPrepared(candidate.result);geometry=candidate.geometry;defects=nextDefects;delete previousGeometry[side];
+    }else if(action.type==='DEFECT_EDIT'){
+      if(action.finalObservation && (action.finalObservation.reportHash!==observationReportHash||action.finalObservation.proposalId!==observation?.id||action.side!==observation.side))throw Error('Synthetic observation binding mismatch');
+      const next=beginDefectEdit(defects,{side:action.side,base:action.base,actor:'HUMAN',action:action.edit}).state;
+      if(action.finalObservation)assistance={reviews:[{analysisId,proposalId:observation.id,side:action.side,action:'TRACE_SAVE',findingId:action.edit.trace.id,base:action.base,proposal:observation,reviewerId:'synthetic'}]};
+      defects=next;
+    }else if(action.type==='REJECT_FINAL_OBSERVATION'){
+      if(action.reportHash!==observationReportHash||action.proposalId!==observation?.id||!action.reviewed)throw Error('Synthetic observation binding mismatch');
+      assistance={reviews:[{analysisId,proposalId:observation.id,side:observation.side,action:'REJECT',findingId:null,proposal:observation,reviewerId:'synthetic'}]};
+    }else if(action.type==='MEASURE_SIDE'){
+      const measured=await measureDefectWorkspaceEdit({workspace:defects,side:action.side,pythonExecutable,limits:measurementLimits});
+      defects=applyDefectMeasurement(defects,measured).state;
     }else if(action.type==='MARK_PRINTED_ABSENT'){
       geometry=markPrintedBorderAbsent(geometry,{side:action.side,base:action.base,actor:'HUMAN'}).state;
       defects=invalidateDefectFindingReviews(defects,action.side);
@@ -104,13 +116,32 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
       if(action.type==='CONFIRM_GEOMETRY')geometry=confirmBothGeometry(geometry,request).state;
       else if(action.type==='REVIEW_FINDING')defects=markDefectFindingReviewed(defects,{...request,reviewerId:'synthetic',reviewedAt:new Date().toISOString()}).state;
       else if(action.type==='INSPECT_SIDE')defects=markDefectSideInspected(defects,request).state;
-      else if(action.type==='CONFIRM_FINDINGS')defects=confirmDefectFindings(defects,request).state;
+      else if(action.type==='CONFIRM_FINDINGS'){
+        if(observation&&!assistance.reviews.some(review=>review.proposalId===observation.id&&isDefectObservationResolved(defects,review)))throw Error('Synthetic observation requires explicit review');
+        defects=confirmDefectFindings(defects,request).state;
+      }
       else throw Error(`Unsupported synthetic action ${action.type}`);
     }
     revision++;actions.push(structuredClone(action));return view();
   };
   return {
     view,
+    async observeFrontForReview(){
+      observation={id:'synthetic-off-frame',side:'FRONT',defectType:'LIGHT_SCRATCH_SCUFF',reason:'OUTSIDE_CARD_FRAME',measurementHold:'OUTSIDE_CARD_FRAME',canonicalContour:[{x:.2,y:1.01},{x:.3,y:1.01},{x:.3,y:1.02}]};
+      await apply({type:'CONFIRM_GEOMETRY',reviewed:true,base:Object.fromEntries(SIDES.map(side=>[side,geometryBase(geometry,side,'REVIEW')]))});
+      return view();
+    },
+    async excludeFrontForReview(){
+      // Deliberately correct the left edge past a synthetic saved mark. This
+      // exercises real reprojection and CPU measurement, not a fabricated view.
+      const quad=geometry.sides.FRONT.physical.quad.map((point,index)=>({...point,x:(index===0||index===3) ? .6 : point.x}));
+      await apply({type:'GEOMETRY_EDIT',edit:{side:'FRONT',kind:'PHYSICAL',base:geometryBase(geometry,'FRONT','PHYSICAL'),quad}});
+      await apply({type:'PREPARE_SIDE',side:'FRONT'});
+      await apply({type:'GEOMETRY_EDIT',edit:{side:'FRONT',kind:'PRINTED',base:geometryBase(geometry,'FRONT','PRINTED'),quad:printed}});
+      await apply({type:'CONFIRM_GEOMETRY',reviewed:true,base:Object.fromEntries(SIDES.map(side=>[side,geometryBase(geometry,side,'REVIEW')]))});
+      if(!defects.sides.FRONT.findings.some(finding=>finding.geometryExclusion&&finding.reviewResult==='UNREVIEWED'))throw Error('Synthetic exclusion fixture did not exclude a finding');
+      return view();
+    },
     asset:hash=>assets.get(hash),
     actions:()=>structuredClone(actions),
     execute:action=>{const owned=structuredClone(action),pending=queue.then(()=>apply(owned));queue=pending.catch(()=>{});return pending;},

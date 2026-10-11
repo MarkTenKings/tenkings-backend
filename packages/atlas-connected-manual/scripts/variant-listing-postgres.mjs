@@ -24,10 +24,15 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   await fixture.admin.$executeRawUnsafe('UPDATE atlas_manual.card SET content=$2,content_hash=$3,revision=revision+1 WHERE id=$1::uuid',cardB,canonical(aliasDraft),digest(canonical(aliasDraft)));
   assert.equal(await store.discover(),2);
   const a=await store.claim(2),b=await second.claim(2);assert.deepEqual(new Set([a.card_id,b.card_id]),new Set([cardA,cardB]));
-  const printing={name:'Reverse Holofoil',language:'en'},request=prepareVariantListingRequest(a.input.identity,printing);assert.deepEqual(prepareVariantListingRequest(b.input.identity,printing),request);
-  assert.notEqual(prepareVariantListingRequest(a.input.identity,{name:'Holofoil',language:'en'}).requestKey,request.requestKey);
+  const printing={name:'Reverse Holofoil',language:'en'},request=prepareVariantListingRequest(a.input.identity,printing,{graded:true});assert.deepEqual(prepareVariantListingRequest(b.input.identity,printing,{graded:true}),request);
+  assert.notEqual(prepareVariantListingRequest(a.input.identity,{name:'Holofoil',language:'en'},{graded:true}).requestKey,request.requestKey);
   const forgedInput={...a.input,identity:{...a.input.identity,name:'Different player'}};
-  await assert.rejects(store.reserveListingSource({...a,input:forgedInput},prepareVariantListingRequest(forgedInput.identity)),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+  await assert.rejects(store.reserveListingSource({...a,input:forgedInput},prepareVariantListingRequest(forgedInput.identity,null,{graded:true})),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+  const probeBefore=await fixture.admin.$queryRawUnsafe('SELECT key,audit,updated_at FROM atlas_manual_connected.variant_job WHERE key=ANY($1::text[]) ORDER BY key',[a.key,b.key]);
+  assert.deepEqual(await store.reserveListingSource(a,request,{retainedOnly:true}),{state:'MISSING'});
+  assert.deepEqual(await second.reserveListingSource(b,request,{retainedOnly:true}),{state:'MISSING'});
+  assert.equal((await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1',`variant-listing-dispatch:v1:${request.requestKey}`))[0].n,0);
+  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT key,audit,updated_at FROM atlas_manual_connected.variant_job WHERE key=ANY($1::text[]) ORDER BY key',[a.key,b.key]),probeBefore);
   const reservations=await Promise.all([store.reserveListingSource(a,request),second.reserveListingSource(b,request)]);
   assert.deepEqual(reservations.map(r=>r.state).sort(),['RESERVED','UNKNOWN']);
   const winner=reservations.findIndex(r=>r.state==='RESERVED'),reservation=reservations[winner].reservation,original=[a,b][winner],other=[a,b][1-winner];
@@ -42,6 +47,9 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   assert(await second.saveListingSource(reservation,source),'late response survives original lease expiry');
   assert(await store.saveListingSource(reservation,source),'identical completion is idempotent');
   assert.deepEqual(await second.reserveListingSource(other,request),{state:'REUSED',source});
+  const retainedProbeBefore=await fixture.admin.$queryRawUnsafe('SELECT audit,updated_at FROM atlas_manual_connected.variant_job WHERE key=$1',other.key);
+  assert.deepEqual(await second.reserveListingSource(other,request,{retainedOnly:true}),{state:'REUSED',source});
+  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT audit,updated_at FROM atlas_manual_connected.variant_job WHERE key=$1',other.key),retainedProbeBefore);
   await assert.rejects(store.saveListingSource(reservation,{...source,bodyText:'{}',sha256:digest('{}')}),{code:'VARIANT_LISTING_RESPONSE_CONFLICT'});
   await assert.rejects(store.saveListingSource(reservation,{...source,bodyText:'x'.repeat(1048577),sha256:digest('x'.repeat(1048577))}),{code:'VARIANT_EVIDENCE_BODY_TOO_LARGE'});
   await assert.rejects(store.saveListingSource({...reservation,dispatchId:randomUUID()},source),{code:'VARIANT_LISTING_RESERVATION_CHANGED'});
@@ -69,8 +77,8 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   assert(await store.finish(current,{state:'FAILED',code:'SYNTHETIC_CASE_FINISHED'}));
   const revokedCard=await seed();await store.discover();const revoked=await store.claim(1);assert.equal(revoked.card_id,revokedCard);
   await fixture.admin.$executeRawUnsafe('UPDATE atlas_staff."StaffIdentity" SET "accessVersion"="accessVersion"+1 WHERE id=$1::uuid',revoked.actor_id);
-  await assert.rejects(store.reserveListingSource(revoked,prepareVariantListingRequest(revoked.input.identity)),{code:'VARIANT_LEASE_LOST'});
-  return ['two cap-one restricted PostgreSQL clients reserve one shared named-printing request per canonical identity despite case/collector aliases; expired/uncertain journal never repurchases',
+  await assert.rejects(store.reserveListingSource(revoked,prepareVariantListingRequest(revoked.input.identity,null,{graded:true})),{code:'VARIANT_LEASE_LOST'});
+  return ['two cap-one restricted PostgreSQL clients probe MISSING/REUSED without reservations or audit changes, then reserve one shared named-printing request per canonical identity despite case/collector aliases; expired/uncertain journal never repurchases',
    'late exact raw response survives lease expiry, duplicate save is idempotent, conflicting/oversized/forged completion refuses',
    'same-identity physical card and explicit refresh reuse retained source; model fields stay empty; changed identity, forged input, revoked access and expired lease reject dispatch'];
  }finally{await client.$disconnect();}

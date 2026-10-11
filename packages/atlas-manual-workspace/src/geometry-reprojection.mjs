@@ -97,9 +97,9 @@ function reprojectTrace(trace, forward, backward, side, findingId) {
 
 /** Server composition calls this with both hash-verified geometry artifacts
  * before invoking the existing checked CPU measurement adapter. No measurement
- * or inspection survives a changed frame. An unmappable included finding
- * rejects the whole candidate; a deliberately removed finding may retain its
- * exact old frame as an explicit exclusion. The host keeps prior artifacts.
+ * or inspection survives a changed frame. An unmappable finding retains its
+ * exact old frame as an unresolved observation, allowing corrected geometry
+ * to be prepared while explicit human review remains required.
  * This never calls a detector, changes a classification or grants approval. */
 export function beginReprojectDefectFrame({ workspace, side, previousGeometry, geometry }) {
   requireThat(SIDES.includes(side), 'ATLAS_DEFECT_SIDE_MISMATCH');
@@ -135,15 +135,14 @@ export function beginReprojectDefectFrame({ workspace, side, previousGeometry, g
     let finalTrace;
     try { finalTrace = reprojectTrace(sourceTrace, forward, backward, side, finding.id); }
     catch (error) {
-      // Only a deliberate human rejection can leave the active raster. Keep
-      // its exact old trace and frame visibly excluded; never clip it or label
-      // its old pixels as the current frame. A later wider outline may make
-      // exact reprojection possible again; otherwise restoration needs a new
-      // trace. All included findings retain the fail-closed review hold.
-      if (finding.reviewResult !== 'REMOVED' || !slot.humanEditedIds.includes(finding.id)
-        || error?.code !== 'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED'
+      // Preserve exact prior pixels outside the current raster; never clip
+      // them into a smaller defect or mark an automatic human rejection.
+      // Corrected geometry can proceed, but this observation needs a redraw
+      // or explicit rejection before findings can be confirmed.
+      if (error?.code !== 'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED'
         || !['TRACE_OUTSIDE_CORRECTED_CARD', 'TRACE_COMPONENT_LOST'].includes(error.details?.reason)) throw error;
-      return { ...retained, finalTrace: sourceTrace, measurementRegions: [],
+      return { ...retained, reviewResult: finding.reviewResult === 'REMOVED' ? 'REMOVED' : 'UNREVIEWED',
+        finalTrace: sourceTrace, measurementRegions: [],
         traceProvenance: finding.traceProvenance ?? { version: 'speedster-trace-provenance-v1', sourceViewId: finding.sourceViewId,
           cropTransform: { version: 'speedster-canonical-crop-affine-v1', crop: { x: 0, y: 0, width: WIDTH-1, height: HEIGHT-1 } },
           highlighterStrokes: [], finalTraceSha256: sourceTrace.sha256 },

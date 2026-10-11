@@ -1,5 +1,5 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { adoptDefectProposals, createDefectWorkspace, parseDefectWorkspace, defectBase } from '@atlas/manual-workspace/defect-actions';
+import { adoptDefectProposals, createDefectWorkspace, parseDefectWorkspace, defectBase, isDefectObservationResolved } from '@atlas/manual-workspace/defect-actions';
 import { calculateAtlasReview, ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { calculateAtlasFinalGrade, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
@@ -53,7 +53,15 @@ export function finalReviewDecisions({ finalReview, defects, assistance, princip
   for (const proposal of finalReview.proposals) {
     const id = proposalFindingId(proposal.id), original = finalReview.report.findings.find(value => value.id === id);
     const previousIndex = reviews.findIndex(review => review.analysisId === finalReview.report.analysisId && review.proposalId === proposal.id);
-    if (!original && previousIndex !== -1) continue;
+    if (!original) {
+      requireThat(previousIndex !== -1 && isDefectObservationResolved(defects, reviews[previousIndex]), 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
+      const previous = reviews[previousIndex], replacement = previous.findingId
+        && defects.sides[proposal.side].findings.find(value => value.id === previous.findingId);
+      if (replacement) reviews[previousIndex] = { ...previous,
+        action: replacement.reviewResult === 'REMOVED' ? 'REJECT' : 'TRACE_SAVE',
+        base: defectBase(defects, proposal.side), reviewerId: principal.id, reviewedAt: new Date().toISOString() };
+      continue;
+    }
     const finding = defects.sides[proposal.side].findings.find(value => value.id === id);
     // Findings without raster pixels remain ordinary visible proposals and
     // need a deliberate correction/rejection; they cannot disappear here.
@@ -91,7 +99,8 @@ export function finalReviewPreview(card, state) {
     centeringBorders: measureSpeedsterCenteringBorders(state.geometry.sides[side].printed.quad),
   }]));
   const findings = SIDES.flatMap(side => state.defects.sides[side].findings);
-  const calculated = capture ? calculateAtlasReview(capture, findings) : { grade: null, defects: findings };
+  const geometryObservations = findings.filter(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED');
+  const calculated = capture && !geometryObservations.length ? calculateAtlasReview(capture, findings) : { grade: null, defects: findings };
   const geometryReview = { policy: 'atlas-final-human-geometry-review-v1', requiresHumanConfirmation: true,
     sides: Object.fromEntries(SIDES.map(side => {
       const slot = state.geometry.sides[side];
@@ -102,12 +111,12 @@ export function finalReviewPreview(card, state) {
     })) };
   const unresolvedObservations = (state.finalReview.report.unmeasurableProposals ?? []).filter(proposal =>
     !(state.assistance?.reviews ?? []).some(review => review.analysisId === state.finalReview.report.analysisId
-      && review.proposalId === proposal.id && review.action === 'REJECT'));
+      && review.proposalId === proposal.id && isDefectObservationResolved(state.defects, review)));
   const report = { ...state.finalReview.report, version: 'atlas-review-provisional-report-v1', authority: 'HUMAN_REVIEW_DRAFT',
     originalMachineReportHash: state.finalReview.reportHash, manualRevision: card.revision, manualContentHash: card.contentHash,
     identity: state.identity, ruleVersion: ATLAS_RULE_VERSION,
     grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
-    calculationState: calculated.grade ? 'COMPLETE' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry, geometryReview,
+    calculationState: calculated.grade ? 'COMPLETE' : geometryObservations.length ? 'FINDINGS_UNRESOLVED' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry, geometryReview,
     // Original receipts and warnings remain bound to the immutable machine
     // report; they must not impersonate measurements of a corrected frame.
     originalMachineEvidence: { geometryReview: state.finalReview.report.geometryReview ?? null,
@@ -115,7 +124,8 @@ export function finalReviewPreview(card, state) {
     measurementReceipts: SIDES.flatMap(side => state.defects.sides[side].measurement
       ? [{ side, ...state.defects.sides[side].measurement }] : []),
     analysisLimitations: state.finalReview.report.analysisLimitations ?? [],
-    limitations: [...(state.finalReview.report.analysisLimitations ?? []), ...(unresolvedGeometry.length ? ['Centering geometry is unresolved; the overall grade is unavailable.'] : []),
+    limitations: [...(state.finalReview.report.analysisLimitations ?? []),
+      ...(geometryObservations.length ? ['Observations outside the corrected outline need redraw or rejection before grading.'] : []), ...(unresolvedGeometry.length ? ['Centering geometry is unresolved; the overall grade is unavailable.'] : []),
       ...(SIDES.some(side => geometryReview.sides[side].ambiguous && !geometryReview.sides[side].confirmed)
         ? ['Competing proposed outlines remain for final human geometry review.'] : []),
       ...(unresolvedObservations.length ? ['Original observations without measurable pixels remain for explicit human review.'] : [])],

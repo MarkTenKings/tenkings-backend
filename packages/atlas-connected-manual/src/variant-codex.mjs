@@ -29,15 +29,25 @@ export function variantCodexChoice(candidate) {
     parallel: normalized(candidate.parallel), label: normalized(candidate.label) };
 }
 export const codexLibraryKey = choice => `atlas-codex-library:v1:${choice.key}`;
+export const codexPhotoPoolKey = choice => `atlas-codex-photo-pool:v1:${choice.cardKey}`;
 export const codexReadingKey = (request, imageSha) => `atlas-codex-reading:v1:${sha({policy:request.policy,model:request.model,sha256:imageSha})}`;
 export const codexImageReservationKey = (request,imageSha) => `atlas-codex-reservation:v1:${codexReadingKey(request,imageSha)}`;
 export const codexChoices = catalog => [...new Map(catalog.candidates
   .filter(c => c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'))
   .map(c => { const choice=variantCodexChoice(c); return [choice.key,choice]; })).values()].sort((a,b)=>a.key.localeCompare(b.key));
+/** A card's acquired photo pool includes unmatched evidence. Pool membership
+ * never claims that the photographed card is the requested identity. */
+export function validateCodexPhotoPool(saved,choice) {
+  requireThat(saved?.schemaVersion==='atlas-codex-photo-pool/v1' && saved.cardKey===choice.cardKey
+    && Array.isArray(saved.photos) && new Set(saved.photos.map(photo=>photo.sha256)).size===saved.photos.length,
+  503,'VARIANT_CODEX_POOL_INVALID');
+  saved.photos.forEach(validateVariantReferencePhoto);
+  return saved;
+}
 export function validateCodexLibrary(saved,choice) {
   requireThat(saved?.schemaVersion==='atlas-codex-library/v1' && saved.policy===CODEX_LABEL_POLICY
     && saved.choice?.key===choice.key && saved.choice.cardKey===choice.cardKey && canonicalJson(saved.choice.catalog)===canonicalJson(choice.catalog)
-    && ['category','name','year','cardNumber','language'].every(k=>saved.choice.identity[k]===choice.identity[k]) && Array.isArray(saved.references) && saved.references.length>0 && saved.references.length<=2,
+    && ['category','name','year','cardNumber','language'].every(k=>saved.choice.identity[k]===choice.identity[k]) && Array.isArray(saved.references) && saved.references.length>0,
   503,'VARIANT_CODEX_LIBRARY_INVALID');
   for (const entry of saved.references) {
     validateVariantReferencePhoto(entry.image);
@@ -63,7 +73,35 @@ export function validateVariantReferenceLabels(value,catalog) {
   }
   return value;
 }
-export function projectCodexReading(reading,catalog) {
+const labelWords = value => String(value ?? '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  .split(/\s+/).map(word => word.replace(/^([a-z]*)0+(\d+)$/, '$1$2')).join(' ');
+const labelLanguages = { en: 'english', ja: 'japanese', fr: 'french', de: 'german', es: 'spanish', it: 'italian',
+  pt: 'portuguese', ko: 'korean', zh: 'chinese' };
+/** Reassociation is a local projection of permanent OCR, not another image or
+ * model request. Only a newly admitted choice with an exact, separately printed
+ * label line and all identity anchors can resolve a formerly unmatched reading.
+ * Abbreviations, missing language/number/year and ambiguous finishes stay null. */
+export function reassociateCodexReading(reading, catalog, previousChoices = []) {
+  if (reading.candidateKey !== null || !reading.labelText || !reading.gradingCompany) return reading;
+  const oldKeys = new Set(previousChoices.map(choice => choice.key));
+  const text = ` ${labelWords(reading.labelText)} `;
+  const contains = value => Boolean(value) && text.includes(` ${labelWords(value)} `);
+  const lines = new Set(reading.labelText.split(/\r?\n/).map(labelWords));
+  const years = [...reading.labelText.matchAll(/\b(?:19|20)\d{2}\b/g)].map(match => match[0]);
+  const matches = codexChoices(catalog).filter(choice => {
+    const identity = choice.identity;
+    return !oldKeys.has(choice.key) && lines.has(labelWords(choice.parallel))
+      && [identity.name, identity.year, identity.cardNumber, ...String(identity.setName ?? '').split(/\s+[—–]\s+/u)].every(contains)
+      && years.every(year => labelWords(identity.year).split(' ').includes(year))
+      && (!identity.manufacturer || contains(identity.manufacturer))
+      && (!identity.language || contains(identity.language) || contains(labelLanguages[identity.language]));
+  });
+  if (matches.length !== 1) return reading;
+  return { ...reading, candidateKey: matches[0].key,
+    reason: 'Exact literal label identity and printing match a newly available catalog choice. Original label reading is retained.' };
+}
+export function projectCodexReading(reading,catalog,previousChoices = null) {
+  if (previousChoices !== null) reading = reassociateCodexReading(reading,catalog,previousChoices);
   const image=catalog.referencePhotos.find(i=>i.sha256===reading.sha256);
   const matches=catalog.candidates.filter(c=>variantCodexChoice(c).key===reading.candidateKey);
   const candidate=matches.length===1?matches[0]:null;

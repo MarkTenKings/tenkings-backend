@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createManualWorkflow } from '../src/workflow.mjs';
+import { finalReviewPreview } from '../src/final-review.mjs';
 import { digest, stateDocument } from '../../atlas-manual-service/src/contract.mjs';
 import { createGeometryWorkspace, applyGeometryEdit, applyPreparedFrame, geometryBase, preparationBase } from '../../atlas-manual-workspace/src/geometry-actions.mjs';
 import { runDefectMeasurement, parseDefectWorkspace, defectBase } from '../../atlas-manual-workspace/src/defect-actions.mjs';
@@ -83,33 +84,34 @@ test('physical correction retains the source artifact and commits reprojection o
   await f.execute(prepare);assert.equal(f.counts.commits,2);assert.equal(f.counts.prepares,2);
 });
 
-test('restore, reject false positive and retry a narrower outline retains every finding and its proper source frame',async()=>{
+test('corrected outline saves without restoration and preserves off-frame observations for quick rejection',async()=>{
   const f=await setup({edge:true}),original=f.card(),before=await f.state();
-  await f.execute(f.edit());const held=f.card();
-  await assert.rejects(f.execute(f.command({type:'PREPARE_SIDE',side:'FRONT'})),/GEOMETRY_REVIEW_REQUIRED/);
-  assert.deepEqual(f.card(),held);assert.deepEqual((await f.state()).defects,before.defects);
-  await f.execute(f.command({type:'RESTORE_GEOMETRY',side:'FRONT'}));
-  let state=await f.state();assert.deepEqual(state.geometry.sides.FRONT.prepared,before.geometry.sides.FRONT.prepared);
-  assert.equal(f.card().draft.geometryBeforeEdit,undefined);
-  await f.execute(f.command({type:'DEFECT_EDIT',side:'FRONT',base:defectBase(state.defects,'FRONT'),
-    edit:{type:'REMOVE',defectIds:['FRONT:outside-corrected-card']}}));
-  await f.execute(f.command({type:'MEASURE_SIDE',side:'FRONT'}));
-  state=await f.state();
-  await f.execute(f.command({type:'GEOMETRY_EDIT',edit:{side:'FRONT',kind:'PHYSICAL',base:geometryBase(state.geometry,'FRONT','PHYSICAL'),
-    quad:[quad[0],{x:.125+.75/1.02,y:.1},{x:.125+.75/1.02,y:.1+.8/1.02},{x:.125,y:.1+.8/1.02}]}}));
+  await f.execute(f.edit());
   await f.execute(f.command({type:'PREPARE_SIDE',side:'FRONT'}));
-  const after=await f.state(),retained=after.defects.sides.FRONT.findings.find(finding=>finding.id==='FRONT:outside-corrected-card');
-  assert.deepEqual(after.defects.sides.FRONT.findings.map(f=>f.id).sort(),before.defects.sides.FRONT.findings.map(f=>f.id).sort());
+  let state=await f.state();
+  assert.equal(f.card().draft.geometryBeforeEdit,undefined);
+  assert.equal(state.geometry.sides.FRONT.prepared.frame.id,'corrected-FRONT-2');
+  const observation=state.defects.sides.FRONT.findings.find(f=>f.id==='FRONT:outside-corrected-card');
+  assert.equal(observation.reviewResult,'UNREVIEWED');
+  assert.deepEqual(observation.geometryExclusion.sourceFrame,before.geometry.sides.FRONT.prepared.frame);
+  assert.deepEqual(observation.finalTrace,before.defects.sides.FRONT.findings[1].finalTrace);
+  assert.deepEqual(observation.measurementRegions,[]);
+  const previewState=clone(state);
+  for(const side of sides) previewState.geometry.sides[side].printed={quad:[{x:.02,y:.02},{x:.98,y:.02},{x:.98,y:.98},{x:.02,y:.98}]};
+  const preview=finalReviewPreview(f.card(),previewState);
+  assert.equal(preview.state,'READY');assert.equal(preview.report.calculationState,'FINDINGS_UNRESOLVED');
+  assert.equal(preview.report.grade,null);assert.equal(preview.report.proposedGrade,null);
+  await f.execute(f.command({type:'DEFECT_EDIT',side:'FRONT',base:defectBase(state.defects,'FRONT'),edit:{type:'REMOVE',defectIds:[observation.id]}}));
+  await f.execute(f.command({type:'MEASURE_SIDE',side:'FRONT'}));
+  const after=await f.state(),retained=after.defects.sides.FRONT.findings.find(f=>f.id===observation.id);
   assert.equal(retained.reviewResult,'REMOVED');assert.equal(retained.reviewResultBeforeRemoval,'UNREVIEWED');
-  assert.deepEqual(retained.finalTrace,before.defects.sides.FRONT.findings[1].finalTrace);
-  assert.deepEqual(retained.geometryExclusion.sourceFrame,before.geometry.sides.FRONT.prepared.frame);
-  assert.deepEqual(retained.measurementRegions,[]);assert.equal(after.defects.sides.FRONT.pending,null);
-  assert.equal(after.defects.sides.FRONT.findings.find(f=>f.id===before.defects.sides.FRONT.findings[0].id).geometryReprojections.length,1);
+  assert.deepEqual(retained.finalTrace,observation.finalTrace);
+  assert.deepEqual(retained.geometryExclusion,observation.geometryExclusion);
+  assert.deepEqual(after.defects.sides.FRONT.findings.map(f=>f.id).sort(),before.defects.sides.FRONT.findings.map(f=>f.id).sort());
   assert.deepEqual(after.defects.sides.BACK,before.defects.sides.BACK);
   assert.deepEqual(f.artifact(original.draft.defects.ref),before.defects);
   assert.equal(after.defects.confirmation,null);assert.equal(after.geometry.sides.FRONT.confirmation,null);
-  await assert.rejects(f.execute(f.command({type:'DEFECT_EDIT',side:'FRONT',base:defectBase(after.defects,'FRONT'),
-    edit:{type:'UNDO',defectIds:[retained.id]}})),/RETRACE_REQUIRED/);
+  await assert.rejects(f.execute(f.command({type:'DEFECT_EDIT',side:'FRONT',base:defectBase(after.defects,'FRONT'),edit:{type:'UNDO',defectIds:[retained.id]}})),/RETRACE_REQUIRED/);
 });
 
 test('native workflow correction automatically remeasures the preserved trace against corrected physical dimensions',

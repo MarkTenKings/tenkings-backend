@@ -92,7 +92,7 @@ export async function buildReviewedLessons({ confirmation, hydrate, createExempl
       await append(side, slot, finding, trace, disposition, previousDefectType, review);
     }
     for (const review of reviews.filter(entry => entry.side === side && entry.action === 'REJECT'
-      && !entry.findingId && entry.noMeasurablePixels !== true && canonical(entry.base.frame) === canonical(slot.frame))) {
+      && !entry.findingId && entry.noMeasurablePixels !== true && !entry.measurementHold && !entry.proposal.measurementHold && canonical(entry.base.frame) === canonical(slot.frame))) {
       // Explicitly rejected original observations with no measurable pixels
       // retain their review history, but cannot supply an invented crop/mask.
       requireThat(typeof proposalTrace === 'function', 503, 'MEMORY_PROPOSAL_TRACE_UNAVAILABLE');

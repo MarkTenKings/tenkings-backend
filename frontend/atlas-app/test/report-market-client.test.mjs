@@ -62,7 +62,7 @@ test('staff-scoped storage and disabled storage prevent an untracked provider re
   await assert.rejects(broken.preview(), /storage unavailable/); assert.equal(f.searches, 1);
 });
 test('only definitive post-receipt stale refusals release a selection for fresh review', async () => {
-  for (const code of ['MARKET_PREVIEW_EXPIRED', 'PRESENTATION_REVISION_STALE', 'PRESENTATION_APPROVAL_STALE']) {
+  for (const code of ['PRESENTATION_REVISION_STALE', 'PRESENTATION_APPROVAL_STALE']) {
     const f = fixture(), preview = await f.client.preview();
     f.select = () => { throw Object.assign(new Error(code), { code, status: 409 }); };
     await assert.rejects(f.client.select({ previewId: preview.previewId, selectedIds: ['ebay:123456789012'] }), { code: 'MARKET_SELECTION_REVIEW_REQUIRED' });

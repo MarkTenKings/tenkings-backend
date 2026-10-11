@@ -7,6 +7,8 @@ import { rasterizeSpeedsterCanonicalContour, clipSpeedsterTraceToEditorBounds,
 
 const FULL_CROP = { version: 'speedster-canonical-crop-affine-v1', crop: { x: 0, y: 0, width: 1269, height: 1777 } };
 export function proposalTrace({ proposal, cornerShape }) {
+  requireThat(!proposal.measurementHold && proposal.canonicalContour.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1),
+    409, 'MANUAL_PROPOSAL_RETRACE_REQUIRED');
   return clipSpeedsterTraceToEditorBounds(rasterizeSpeedsterCanonicalContour(proposal.canonicalContour), FULL_CROP, cornerShape);
 }
 export function proposalRle({ proposal, review }) {
@@ -31,6 +33,7 @@ function editFromBitmap(proposal, side, bitmap) {
 }
 export function checkProposalReview(defects, action, resolved, assistance) {
   requireThat(['ACCEPT', 'REJECT', 'TRACE_SAVE'].includes(action.action), 400, 'MANUAL_PROPOSAL_ACTION_INVALID');
+  requireThat(action.action !== 'ACCEPT' || !resolved.proposal.measurementHold, 409, 'MANUAL_PROPOSAL_RETRACE_REQUIRED');
   const base = defectBase(defects, action.side), captured = resolved.base;
   requireThat(canonical(base) === canonical(action.base) && captured.cardId === base.cardId
     && captured.side === base.side && captured.profile === base.profile && captured.cornerShape === base.cornerShape

@@ -71,7 +71,7 @@ test('unmeasurable observations prevent bulk confirmation and a failed side save
  const f=fixture();await approveRapidStage('geometry',f.view,f.execute);
  f.view.finalReview={report:{analysisId:'original',unmeasurableProposals:[{id:'missing'}]}};
  assert.equal(rapidReviewStatus(f.view).unresolved,1);await assert.rejects(approveRapidStage('findings',f.view,f.execute));assert.equal(f.actions.length,1);
- f.view.assistance={reviews:[{analysisId:'original',proposalId:'missing'}]};let calls=0;
+ f.view.assistance={reviews:[{analysisId:'original',proposalId:'missing',action:'REJECT'}]};let calls=0;
  await assert.rejects(approveRapidStage('findings',f.view,async action=>{calls++;if(calls===2)throw Error('connection lost');return f.execute(action);}));
  assert.equal(calls,2);assert.equal(f.view.defects.confirmation,null);assert.equal(f.actions.at(-1).side,'FRONT');
  await approveRapidStage('findings',f.view,f.execute);assert.ok(f.view.defects.confirmation);
@@ -135,4 +135,17 @@ test('resume follows saved human checkpoints and never replays decisions',async(
  assert.equal(rapidResumeStage(f.view),'report');assert.equal(f.actions.length,count);
  f.view={...f.view,variantVerification:{confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'DISPATCHED'}}};
  assert.equal(rapidResumeStage(f.view),'findings-review');assert.equal(f.actions.length,count);
+});
+
+test('pending analysis cannot masquerade as an empty completed inspection; terminal manual review stays available', async () => {
+  const f=fixture(); await approveRapidStage('geometry',f.view,f.execute); await approveRapidStage('findings',f.view,f.execute); f.actions=[];
+  for (const astra of [{enabled:true,status:'RUNNING'}, {enabled:true,status:'UNKNOWN',resumeAvailable:true}]) {
+    f.view={...f.view,astra}; assert.equal(rapidReviewStatus(f.view).findings,false);
+    assert.equal(rapidResumeStage(f.view),'findings-review');
+    await assert.rejects(approveRapidStage('findings',f.view,f.execute)); assert.equal(f.actions.length,0);
+  }
+  for (const status of ['UNKNOWN','REFUSED','STALE']) {
+    f.view={...f.view,astra:{enabled:true,status,resumeAvailable:false}};
+    assert.equal(rapidReviewStatus(f.view).findings,true);
+  }
 });

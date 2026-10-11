@@ -42,11 +42,11 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],intakeCard
   const [batch,setBatch]=useState(null),[error,setError]=useState(''),[ready,setReady]=useState(false),[saving,setSaving]=useState(false),[resuming,setResuming]=useState(false);
   const [pair,setPair]=useState(emptyPair),[message,setMessage]=useState(''),[camera,setCamera]=useState(false),[ordered,setOrdered]=useState(null);
   const refreshSession=useRef(null);
-  const discarder=useRef(null),discarded=useRef(onDiscarded),[deleting,setDeleting]=useState(false),[deletePending,setDeletePending]=useState(false);
+  const discarder=useRef(null),discarded=useRef(onDiscarded),[deleting,setDeleting]=useState(false),[deletePending,setDeletePending]=useState(false),[deleteError,setDeleteError]=useState('');
   discarded.current=onDiscarded;
   useEffect(()=>{
     const token={};lifetime.current=token;let stopped=false,batchJournal,intakeJournal,owner,release;
-    setReady(false);setBatch(null);setError('');setSaving(false);setResuming(false);setDeleting(false);setDeletePending(hasPendingDiscard(localStorage,staff.id));setMessage('');selection.current=emptyPair();setPair(selection.current);staging.current=false;recovered.current=false;
+    setReady(false);setBatch(null);setError('');setSaving(false);setResuming(false);setDeleting(false);setDeleteError('');setDeletePending(hasPendingDiscard(localStorage,staff.id));setMessage('');selection.current=emptyPair();setPair(selection.current);staging.current=false;recovered.current=false;
     const current=()=>!stopped&&lifetime.current===token;
     (async()=>{
       // Local admission is bound to the authenticated page's staff ID. A slow
@@ -127,17 +127,17 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],intakeCard
   async function removeCards(item=null){
     const owner=importer.current,cleanup=discarder.current,token=lifetime.current;
     if(!owner||!cleanup||deleting||saving||staff.role!=='REVIEWER')return;
-    setDeleting(true);setCamera(false);setError('');
+    setDeleting(true);setCamera(false);setError('');setDeleteError('');
     try{
       refreshSession.current?.();
       const result=await cleanup.discard(item?{scope:'SELECTED',createRequestIds:[item.createId],cardIds:item.cardId?[item.cardId]:[]}:{scope:'ALL'});
       if(lifetime.current!==token)return;
       await owner.refresh();setOrdered(null);setMessage(item?'Card deleted from your workspace and this device.':'All cards deleted from your workspace and this device.');
       discarded.current?.(result);await notify.current?.();
-    }catch(failure){if(lifetime.current===token)setError(copy[failure.code]??manualMessage(failure));}
+    }catch(failure){if(lifetime.current===token){const text=copy[failure.code]??manualMessage(failure);setError(text);setDeleteError(text);}}
     finally{if(lifetime.current===token){setDeleting(false);setDeletePending(cleanup.pending());}}
   }
-  useEffect(()=>{onDeleteControls?.({removeAll:()=>removeCards(),busy:deleting,pending:deletePending,disabled:!discarder.current||saving||deleting||staff.role!=='REVIEWER'});},[onDeleteControls,ready,saving,deleting,deletePending,staff.role,error]);
+  useEffect(()=>{onDeleteControls?.({removeAll:()=>removeCards(),busy:deleting,pending:deletePending,error:deleteError,disabled:!discarder.current||saving||deleting||staff.role!=='REVIEWER'});},[onDeleteControls,ready,saving,deleting,deletePending,staff.role,deleteError]);
   async function resume(){
     if(resuming||deleting||deletePending||!ready||!enabled||staff.role!=='REVIEWER'||!importer.current)return;setResuming(true);setError('');const token=lifetime.current,owner=importer.current;
     try{refreshSession.current?.();await owner.whenIdle();await owner.run();await notify.current?.();}catch(failure){if(lifetime.current===token)setError(copy[failure.code]??manualMessage(failure));}

@@ -3,9 +3,10 @@ import {createHash} from 'node:crypto';
 import {before,test} from 'node:test';
 import {createRapidPreviewAdapter} from '../scripts/rapid-preview-adapter.mjs';
 import {geometryBase,geometryStatus,printedQuadOnOriginal} from '../src/geometry-actions.mjs';
-import {defectStatus} from '../src/defect-actions.mjs';
+import {defectStatus,defectBase,isDefectObservationResolved} from '../src/defect-actions.mjs';
 import {sourceQuadToPrepared,focusedGeometryOutlines} from '../src/geometry-focus.mjs';
-import {approveRapidGeometrySide,confirmRapidGeometryPair,approveRapidFinding} from '../src/rapid-review.mjs';
+import {approveRapidGeometrySide,confirmRapidGeometryPair,approveRapidFinding,approveRapidStage} from '../src/rapid-review.mjs';
+import {proposalEdit} from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import {decodeSpeedsterTraceRleV1} from '@atlas/grading-core/trace-codec';
 
 const pythonExecutable=process.env.ATLAS_FIXTURE_PYTHON;
@@ -84,4 +85,38 @@ nativeTest('both edited sides proceed through finding decisions to a real draft 
   assert.equal(preview.report.findings.length,2);
   await assert.rejects(adapter.execute({type:'APPROVE_REPORT'}),/Unsupported synthetic action/);
   assert.equal(adapter.actions().some(a=>a.type==='APPROVE_REPORT'),false);
+});
+
+nativeTest('corrected outline continues to an unresolved current finding and explicit rejection retains its exact old trace',async()=>{
+  const isolated=await createRapidPreviewAdapter({pythonExecutable}),before=isolated.view();
+  const excluded=await isolated.excludeFrontForReview(),finding=excluded.defects.sides.FRONT.findings[0];
+  assert.equal(geometryStatus(excluded.geometry).confirmed,true);assert.equal(finding.reviewResult,'UNREVIEWED');
+  assert.equal(finding.geometryExclusion.sourceTraceSha256,before.defects.sides.FRONT.findings[0].detectorMask.sha256);
+  assert.equal(finding.finalTrace.sha256,finding.geometryExclusion.sourceTraceSha256);assert.equal(finding.measurementRegions.length,0);
+  assert.throws(()=>isolated.preview(),error=>error.code==='ATLAS_DEFECT_CONFIRMATION_REQUIRED');
+  await isolated.execute({type:'DEFECT_EDIT',side:'FRONT',base:defectBase(excluded.defects,'FRONT'),edit:{type:'REMOVE',defectIds:[finding.id]}});
+  const rejected=await isolated.execute({type:'MEASURE_SIDE',side:'FRONT'});
+  assert.equal(rejected.defects.sides.FRONT.findings[0].reviewResult,'REMOVED');assert.equal(rejected.defects.sides.FRONT.findings[0].finalTrace.sha256,finding.finalTrace.sha256);
+  assert.equal(rejected.defects.sides.FRONT.pending,null);assert.equal(isolated.actions().some(action=>action.type==='APPROVE_REPORT'),false);
+});
+
+
+nativeTest('original observation redraw remains unresolved until real CPU measurement, then permits findings confirmation', async () => {
+  const isolated = await createRapidPreviewAdapter({ pythonExecutable });
+  let view = await isolated.observeFrontForReview();
+  await assert.rejects(approveRapidStage('findings', view, isolated.execute));
+  const proposal = view.finalReview.report.unmeasurableProposals[0], side = proposal.side;
+  const trace = proposalEdit({ ...proposal, id: 'synthetic-human-correction', measurementHold: undefined,
+    canonicalContour: [{ x: .4, y: .4 }, { x: .42, y: .4 }, { x: .42, y: .42 }, { x: .4, y: .42 }] }, side, 'SQUARE');
+  view = await isolated.execute({ type: 'DEFECT_EDIT', side, base: defectBase(view.defects, side),
+    finalObservation: { reportHash: view.finalReview.reportHash, proposalId: proposal.id },
+    edit: { type: 'TRACE_SAVE', side, findingId: null, trace } });
+  assert.equal(isDefectObservationResolved(view.defects, view.assistance.reviews[0]), false);
+  view = await isolated.execute({ type: 'MEASURE_SIDE', side });
+  assert.equal(isDefectObservationResolved(view.defects, view.assistance.reviews[0]), true);
+  assert.equal(view.defects.sides[side].measurement.receipt.version, 'atlas-manual-cpu-measurement-v1');
+  view = await approveRapidStage('findings', view, isolated.execute);
+  assert.equal(defectStatus(view.defects).confirmed, true);
+  assert.ok(Number.isFinite(isolated.preview().report.finalGrade));
+  assert.equal(isolated.actions().some(action => action.type === 'APPROVE_REPORT'), false);
 });

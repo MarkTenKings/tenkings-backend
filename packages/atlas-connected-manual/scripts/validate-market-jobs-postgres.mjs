@@ -62,9 +62,9 @@ try {
   const provider = async input => {
     providerCalls++;
     const { buildEbaySoldCompsV2Query } = await import('@tenkings/ebay-sold-comps-v2');
-    return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: buildEbaySoldCompsV2Query(input), retrievedAt: new Date().toISOString(), offset:0,nextOffset:0,requestedResultCount:60,hasMore:false,candidates: [] };
+    return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: buildEbaySoldCompsV2Query(input), retrievedAt: new Date().toISOString(), responsePolicy:'ATLAS_SLAB_V1', items:[], acquisitionDiagnostics:{returnedItemCount:0,retainedItemCount:0,missingImageCount:0} };
   };
-  const worker = createMarketWorker({ store, approved, publication, artifacts: storeArtifacts, provider,
+  const worker = createMarketWorker({ store, approved, publication, artifacts: storeArtifacts, provider, labelMarket:async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}}),
     authorityFor: job => machine.machineOwner({ ownerId: job.actor_id, accessVersion: job.access_version }), concurrency: 2 });
   const service = createPresentationMarketService({ repository: presentationRepo, approved, artifacts: storeArtifacts, provider, jobs: store, worker });
   async function approve({ enqueue = true, publish = false } = {}) {
@@ -110,7 +110,7 @@ try {
   }
   const lost = claims[0], saved = claims[1];
   const savedSource = await approved.loadPacket(staff, saved.card_id, saved.approval_action_id);
-  const savedResult = { source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:publishedMarketQuery(savedSource).query,retrievedAt:new Date().toISOString(),candidates:[] };
+  const savedResult = { source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:publishedMarketQuery(savedSource).query,retrievedAt:new Date().toISOString(),offset:0,nextOffset:0,requestedResultCount:60,hasMore:false,candidates:[] };
   assert(await store.recordResponse(saved, savedResult));
   await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.market_job SET lease_until=clock_timestamp()-interval '1 second' WHERE request_id=ANY($1::uuid[])", claims.map(x=>x.request_id));
   assert.equal(await store.finish(lost,{code:'STALE',disposition:'RETRY'}),false);
@@ -183,30 +183,29 @@ try {
   assert.equal(expiredJob.card_id,expired.cardId);
   const expiredSource=await approved.loadPacket(staff,expired.cardId,expired.actionId);
   await store.bind(expiredJob,expiredSource);await store.dispatch(expiredJob);
-  await store.recordResponse(expiredJob,{source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:publishedMarketQuery(expiredSource).query,retrievedAt:new Date(Date.now()-48*60*60*1000).toISOString(),candidates:[]});
-  await store.finish(expiredJob,{code:'MARKET_PROCESSING_INTERRUPTED',disposition:'RETRY'});
-  await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.market_job SET available_at=clock_timestamp()-interval '1 second' WHERE request_id=$1::uuid",expiredJob.request_id);
-  const callsBeforeExpiry=providerCalls;await worker.drainOnce();assert.equal(providerCalls,callsBeforeExpiry);
-  const expiredStatus=await service.status(staff,expired.cardId);
-  assert.equal(expiredStatus.state,'FAILED');assert.equal(expiredStatus.reason,'MARKET_PREVIEW_EXPIRED');assert.equal(expiredStatus.refreshAction,'SEARCH_AGAIN');assert.equal(expiredStatus.refreshable,true);
-  const expiredHistory=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',expiredJob.request_id);
-  const expiredMarket=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid',expired.cardId,expiredJob.request_id);
+  const oldResponse={source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:publishedMarketQuery(expiredSource).query,
+    retrievedAt:new Date(Date.now()-48*60*60*1000).toISOString(),offset:0,nextOffset:0,requestedResultCount:60,hasMore:false,candidates:[]};
+  await store.recordResponse(expiredJob,oldResponse);
+  // Exercise a failure written by the previous application release.
+  await store.finish(expiredJob,{code:'MARKET_PREVIEW_EXPIRED',disposition:'FAILED'});
+  const callsBeforeExpiry=providerCalls,expiredStatus=await service.status(staff,expired.cardId);
+  assert.equal(expiredStatus.refreshAction,'RETRY_SAVED_RESPONSE');assert.equal(expiredStatus.refreshable,true);
   const freshInput={requestId:randomUUID(),approvalActionId:expired.actionId,expectedRevision:0};
-  const freshQueued=await service.preview(staff,expired.cardId,freshInput);assert.equal(freshQueued.previewId,freshInput.requestId);assert.notEqual(freshQueued.previewId,expiredJob.request_id);
+  const freshQueued=await service.preview(staff,expired.cardId,freshInput);assert.equal(freshQueued.previewId,expiredJob.request_id);
   assert.deepEqual(await service.preview(staff,expired.cardId,freshInput),freshQueued);
-  await worker.drainOnce();await worker.drainOnce();assert.equal(providerCalls,callsBeforeExpiry+1);
-  assert.equal((await service.status(staff,expired.cardId)).state,'READY');
-  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',expiredJob.request_id),expiredHistory);
-  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid',expired.cardId,expiredJob.request_id),expiredMarket);
-  checks.push('conclusively expired retained response permits one explicitly requested new search identity; replay dedupes and old response/audit/market bytes stay unchanged');
+  await worker.drainOnce();assert.equal(providerCalls,callsBeforeExpiry);
+  const recoveredStatus=await service.status(staff,expired.cardId);assert.equal(recoveredStatus.state,'READY');assert.equal(recoveredStatus.preview.retrievedAt,oldResponse.retrievedAt);
+  assert.deepEqual((await store.latest(staff,expired.cardId)).response,oldResponse);
+  checks.push('historical expiry failure recovers the same saved response and preview identity after days, with exact request deduplication and zero new paid searches');
 
-  const replaySource=a.actionId,callsBeforeReplay=providerCalls;
+  const slabPlan=await store.reclassificationPlan({sourceRequestIds:[a.actionId]});assert.equal(slabPlan.entries[0].disposition,'SOURCE_POLICY_NOT_LEGACY');
+  const replaySource=saved.request_id,callsBeforeReplay=providerCalls;
   const originalJob=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',replaySource);
   const originalPreview=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation_market WHERE request_id=$1::uuid',replaySource);
   const replayPlan=await store.reclassificationPlan({sourceRequestIds:[replaySource]});assert.equal(replayPlan.entries[0].disposition,'RECLASSIFY_READY');
   await assert.rejects(store.reclassify('a'.repeat(64),{sourceRequestIds:[replaySource]}),{code:'MARKET_RECLASSIFICATION_PLAN_CHANGED'});
   const replayQueued=await store.reclassify(replayPlan.planHash,{sourceRequestIds:[replaySource]});assert.equal(replayQueued.queued.length,1);assert.notEqual(replayQueued.queued[0].previewId,replaySource);
-  await worker.drainOnce();assert.equal(providerCalls,callsBeforeReplay);assert.equal((await service.status(other,a.cardId)).state,'READY');assert.equal((await service.status(other,a.cardId)).previewId,replayQueued.queued[0].previewId);
+  await worker.drainOnce();assert.equal(providerCalls,callsBeforeReplay);assert.equal((await service.status(staff,saved.card_id)).state,'READY');assert.equal((await service.status(staff,saved.card_id)).previewId,replayQueued.queued[0].previewId);
   const [replayed]=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',replayQueued.queued[0].previewId);
   assert.equal(replayed.state,'READY');assert.equal(replayed.dispatch_id,originalJob[0].dispatch_id);assert.equal(replayed.audit.filter(v=>v.event==='DISPATCH').length,0);assert.equal(replayed.audit.filter(v=>v.event==='RECLASSIFY_RESPONSE').length,1);
   assert.equal(JSON.parse(replayed.response).classificationRevision,replayPlan.classificationRevision);
@@ -230,13 +229,11 @@ try {
   assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',emptyReplay.request_id),emptyBefore);
   checks.push('pre-response FAILED replay refresh stays local through a new exact marker-bound request, exact retry dedupes, old FAILED remains immutable and database refuses provider dispatch even with caller marker omitted');
 
-  const replayExpiryPlan=await store.reclassificationPlan({sourceRequestIds:[freshInput.requestId]});await store.reclassify(replayExpiryPlan.planHash,{sourceRequestIds:[freshInput.requestId]});
-  const replayExpiryWorker=createMarketWorker({store,approved,publication,artifacts:storeArtifacts,provider,authorityFor:job=>machine.machineOwner({ownerId:job.actor_id,accessVersion:job.access_version}),now:()=>new Date(Date.now()+48*3600000)});
-  await replayExpiryWorker.drainOnce();const replayExpiredStatus=await service.status(staff,expired.cardId);assert.equal(replayExpiredStatus.reason,'MARKET_PREVIEW_EXPIRED');assert.equal(replayExpiredStatus.refreshAction,'SEARCH_AGAIN');
-  const replayExpiryRetry={requestId:randomUUID(),approvalActionId:expired.actionId,expectedRevision:0};const replayExpiryQueued=await service.preview(staff,expired.cardId,replayExpiryRetry);assert.equal(replayExpiryQueued.previewId,replayExpiryRetry.requestId);assert.notEqual(replayExpiryQueued.previewId,replayExpiredStatus.previewId);assert.deepEqual(await service.preview(staff,expired.cardId,replayExpiryRetry),replayExpiryQueued);
-  await worker.drainOnce();await worker.drainOnce();await replayExpiryWorker.stop();assert.equal(providerCalls,callsBeforeReplay+1);assert.equal((await service.status(staff,expired.cardId)).state,'READY');
+  const replayExpiryPlan=await store.reclassificationPlan({sourceRequestIds:[expired.actionId]});await store.reclassify(replayExpiryPlan.planHash,{sourceRequestIds:[expired.actionId]});
+  await worker.drainOnce();const replayAgedStatus=await service.status(staff,expired.cardId);
+  assert.equal(replayAgedStatus.state,'READY');assert.equal(replayAgedStatus.preview.retrievedAt,oldResponse.retrievedAt);assert.equal(providerCalls,callsBeforeReplay);
   const blockedPlan=await store.reclassificationPlan({sourceRequestIds:[revoked.actionId,d.actionId,randomUUID()]});assert(blockedPlan.entries.every(e=>e.disposition!=='RECLASSIFY_READY'));
-  checks.push('expired replay never refreshes retrieval time or automatically purchases a search; conclusive expiry plus explicit new request permits one fresh search with exact retry deduplication; failed, missing and retired source requests cannot enter replay');
+  checks.push('old saved legacy replay preserves its retrieval time and remains usable without another search; current slab pools, failed, missing and retired source requests cannot enter legacy reclassification');
   await worker.stop();
   const evidence={version:'atlas-market-jobs-postgres-v1',synthetic:true,providerCalls,checks,productionTouched:false,paidProviderCalls:0};
   await writeFile(join(output,'result.json'),JSON.stringify(evidence,null,2)+'\n',{mode:0o600});

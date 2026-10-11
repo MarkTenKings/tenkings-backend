@@ -68,10 +68,10 @@ function RapidReviewDialog({ job, staff, csrf, busy, error, onClose, onQueued })
   if(reviewSession.current?.staffId!==staff.id)reviewSession.current=createReviewSession(staff.id);
   useEffect(()=>{const element=dialog.current,previous=document.activeElement,overflow=document.body.style.overflow;element?.showModal();document.body.style.overflow='hidden';return()=>{element?.close();document.body.style.overflow=overflow;previous?.focus?.();};},[]);
   return <dialog className={styles.rapidDialog} ref={dialog} aria-labelledby="rapid-review-title" onCancel={event=>{event.preventDefault();if(!locked&&!busy)onClose();}}>
-    <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">{job.navigationMode==='ordinary'?'Review card':'Rapid review'} <span>· {job.evidence?.name||job.label||'Card'}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></div></header>
+    <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">Review card <span>· {job.evidence?.name||job.label||'Card'}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></div></header>
     <div className={styles.rapidBody}>
     {error&&<p className={styles.error} role="alert">{error}</p>}
-    {job.needsSetup?<ManualCards key={job.key} embedded staff={staff} cardId={job.cardId} reviewSession={reviewSession.current} onBusyChange={setLocked} onQueued={onQueued}/>:<ManualWorkspace key={job.key} rapid initialInspection={job.initialInspection} initialReviewStage={job.initialInspection?'defects':null} reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>}
+    {job.needsSetup?<ManualCards key={job.key} embedded staff={staff} cardId={job.cardId} reviewSession={reviewSession.current} onBusyChange={setLocked} onQueued={onQueued}/>:<ManualWorkspace key={job.key} initialInspection={job.initialInspection} initialReviewStage={job.initialInspection?'defects':null} reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>}
     </div><footer id="atlas-rapid-actions" className="mc-rapid-actions" aria-label="Review controls"><div id="atlas-rapid-edits" className="mc-rapid-edit-dock"/></footer>
   </dialog>;
 }
@@ -155,8 +155,8 @@ export default function BatchGrading({ staff }) {
   const queueJobs = mergeProcessingCards(jobs, intakeCards);
   const shown = queueJobs.filter(job => tab === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : tab === 'REVIEW' ? reviewable(job) : job.state === tab);
   const focused = shown.find(job => job.key === active) ?? shown[0] ?? null;
-  const open = job => { if (job) void correct(job, true); };
-  async function correct(job, rapid = false, initialInspection = null, useSaved = false) {
+  const open = job => { if (job) void correct(job); };
+  async function correct(job, initialInspection = null) {
     if (!job || mutation.current || !session.current || deleteControls?.pending) return;
     const owner = lifetime.current;
     mutation.current = true; setBusy(true); setReviewError(''); setReviewRetry(null);
@@ -169,15 +169,21 @@ export default function BatchGrading({ staff }) {
         if (lifetime.current !== owner) return;
         // A completed machine report is adopted only with its exact saved hash.
         // Partial preparation opens the same workspace without inventing one.
-        if (!useSaved && !current.finalReview && job.state === 'REVIEW') {
+        if (!current.finalReview && job.state === 'REVIEW') {
           const detail = await readReview(job, true);
-          if (detail.state !== 'PENDING' && detail.reportHash) await client.execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: job.key, reportHash: detail.reportHash });
+          if (detail.state !== 'PENDING' && detail.reportHash) {
+            try { await client.execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: job.key, reportHash: detail.reportHash }); }
+            catch (failure) {
+              if (!['BATCH_REVIEW_STALE', 'MANUAL_REVISION_CONFLICT'].includes(failure.code)) throw failure;
+              await client.recover();
+            }
+          }
         }
       }
-      if (lifetime.current === owner) {primeReviewAudio();reviewing.current=job.key;setRapidJob({...job,navigationMode:'rapid',initialInspection,needsSetup});}
+      if (lifetime.current === owner) {primeReviewAudio();reviewing.current=job.key;setRapidJob({...job,initialInspection,needsSetup});}
     } catch (failure) { if (lifetime.current === owner) {
       setReviewError(messages[failure.code] ?? manualMessage(failure));
-      setReviewRetry({ job, rapid, initialInspection, useSaved });
+      setReviewRetry({ job, initialInspection });
     } }
     finally { if (lifetime.current === owner) { mutation.current = false; setBusy(false); } }
   }
@@ -223,7 +229,7 @@ export default function BatchGrading({ staff }) {
       const fresh=await request(path);if(lifetime.current!==owner||reviewing.current!==reviewKey)return;
       const next=fresh.jobs?.find(job=>reviewable(job)&&job.cardId!==result.cardId);
       setJobs(fresh.jobs??[]);
-      if(next) {await correct(next,true);setActive(next.key);}
+      if(next) {await correct(next);setActive(next.key);}
       else await closeRapid();
     }catch(failure){setReviewError(manualMessage(failure));}finally{rapidAdvancing.current=false;if(lifetime.current===owner)setBusy(false);}
   }
@@ -249,32 +255,31 @@ export default function BatchGrading({ staff }) {
   return <Shell staff={staff} manual title="Batch grading">
     <main className={styles.studio}>
       <header className={styles.heading}><div><p>ATLAS STUDIO</p><h1>Grading queue</h1></div><div className={styles.headingActions}>{staff.role==='REVIEWER'&&<button type="button" className={styles.deleteButton} disabled={busy||!deleteControls||deleteControls.disabled} onClick={()=>void deleteControls.removeAll()}>{deleteControls?.busy?'Deleting cards…':deleteControls?.pending?'Finish saved deletion':'Delete all cards'}</button>}<button type="button" className={styles.add} onClick={() => selectTab('INTAKE')}>+ Add cards</button></div></header>
-      {error && <p className={styles.error} role="alert">{error}</p>}
+      {(error || tab!=='INTAKE' && deleteControls?.error) && <p className={styles.error} role="alert">{error || deleteControls.error}</p>}
       <nav className={styles.tabs} aria-label="Grading queues">
         {[['INTAKE', 'Add cards'], ['PROCESSING', 'Grading'], ['REVIEW', 'Review'], ['APPROVED', 'Label queue']].map(([value, label]) => {
           const count = value === 'INTAKE' ? null : queueJobs.filter(job => value === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : value === 'REVIEW' ? reviewable(job) : job.state === value).length;
           return <button key={value} disabled={busy} aria-current={tab === value ? 'page' : undefined} onClick={() => selectTab(value)}>{label}{count !== null && <span>{count}</span>}</button>;
         })}
       </nav>
-      {tab==='REVIEW'&&staff.role==='REVIEWER'&&<div className={styles.rapidEntry}><div><strong>Review with a rhythm.</strong><p>Borders & centering → findings → final grade → label queue</p></div><button className={styles.primary} disabled={busy||!focused||deleteControls?.busy||deleteControls?.pending} onClick={()=>void correct(focused,true)}>Start review →</button></div>}
-      {reviewError&&focused?.state!=='REVIEW'&&!rapidJob&&<div role="alert" className={styles.error}><p>{reviewError}</p>{reviewRetry&&<button type="button" disabled={busy} onClick={()=>void correct(reviewRetry.job,true,reviewRetry.initialInspection,reviewRetry.useSaved)}>Retry opening review</button>}</div>}
+      {tab==='REVIEW'&&staff.role==='REVIEWER'&&<div className={styles.rapidEntry}><div><strong>Review with a rhythm.</strong><p>Borders & centering → findings → variant → final grade → label queue</p></div><button className={styles.primary} disabled={busy||!focused||deleteControls?.busy||deleteControls?.pending} onClick={()=>void correct(focused)}>Start review →</button></div>}
+      {reviewError&&focused?.state!=='REVIEW'&&!rapidJob&&<div role="alert" className={styles.error}><p>{reviewError}</p>{reviewRetry&&<button type="button" disabled={busy} onClick={()=>void correct(reviewRetry.job,reviewRetry.initialInspection)}>Retry opening review</button>}</div>}
       <section className={styles.intake} hidden={tab !== 'INTAKE'}>
         <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} intakeCards={intakeCards} onDiscarded={onDiscarded} onDeleteControls={setDeleteControls} onOpenCard={cardId=>open(queueJobs.find(job=>job.cardId===cardId)??{cardId,key:`intake:${cardId}`,state:'NEEDS_ATTENTION',intakeOnly:true})}/>
       </section>
       {tab !== 'INTAKE' && <div className={`${styles.review} ${!queueExpanded ? styles.compactQueue : ''}`}>
         <aside className={styles.rail} aria-label="Cards"><button className={styles.queueToggle} type="button" aria-expanded={queueExpanded} aria-label={queueExpanded ? 'Collapse card queue' : 'Expand card queue'} onClick={() => setQueueExpanded(value => !value)}>{queueExpanded ? '← Cards' : '☰'}<small>{shown.length}</small></button>{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-label={`${job.evidence?.name || job.label || 'Card'} · ${status[job.state]}${job.evidence?.proposedGrade != null ? ` · ${job.evidence.proposedGrade}` : ''}`} title={job.evidence?.name || job.label || 'Card'} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><QueuePhoto job={job} eager={focused?.key === job.key} readPreview={readPreview}/><span className={styles.cardLabel}><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>
-        {focused?.state === 'APPROVED' ? <section className={styles.focus}><ManualWorkspace key={focused.cardId} staff={staff} cardId={focused.cardId} csrf={session.current?.csrf} onPhotos={()=>open(focused)}/></section> : focused?.state === 'REVIEW' ? <section className={styles.machineReview} aria-label="Review proposed grade">
+        {focused?.state === 'REVIEW' ? <section className={styles.machineReview} aria-label="Review proposed grade">
           {reviewError && <div className={styles.error} role="alert"><p>{reviewError}</p>
             {reviewRetry?.job.key === focused.key && <div className={styles.reviewActions}>
-              <button type="button" disabled={busy} onClick={() => void correct(reviewRetry.job, reviewRetry.rapid, reviewRetry.initialInspection, reviewRetry.useSaved)}>Retry opening review</button>
-              <button type="button" disabled={busy} onClick={() => void correct(focused,true,null,true)}>Open saved card workspace</button>
+              <button type="button" disabled={busy} onClick={() => void correct(reviewRetry.job, reviewRetry.initialInspection)}>Retry opening review</button>
             </div>}
           </div>}
-          {packet?.key === focused.key && packet.state !== 'PENDING' ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} onCorrectFinding={(finding,context) => { if (!busy) void correct(focused,false,context??{side:finding.side,findingId:finding.id,imageSha256:packet?.report?.geometry?.[finding.side]?.frame?.inspectionImageSha256}); }} onAddFinding={context=>{if(!busy)void correct(focused,false,{...context,intent:'ADD'});}} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
-            <div className={styles.reviewActions}><button className={styles.primary} disabled={busy} onClick={() => void correct(focused,true)}>Review card →</button></div>
-          </MachineReportReview> : <div className={styles.empty}><p>{reviewError ? 'Open the current card to continue.' : packet?.state === 'PENDING' ? 'Preparation or measurement is incomplete. Open the card workspace to retry preparation, restore the previous outline or finish pending findings.' : 'Loading the exact grading evidence…'}</p><button onClick={() => open(focused)}>Open card workspace</button></div>}
+          {packet?.key === focused.key && packet.state !== 'PENDING' ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} onCorrectFinding={(finding,context) => { if (!busy) void correct(focused,context??{side:finding.side,findingId:finding.id,imageSha256:packet?.report?.geometry?.[finding.side]?.frame?.inspectionImageSha256}); }} onAddFinding={context=>{if(!busy)void correct(focused,{...context,intent:'ADD'});}} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
+            <div className={styles.reviewActions}><button className={styles.primary} disabled={busy} onClick={() => void correct(focused)}>Review card →</button></div>
+          </MachineReportReview> : <div className={styles.empty}><p>{reviewError ? 'Open the current card to continue.' : packet?.state === 'PENDING' ? 'Preparation or measurement is incomplete. Open the card workspace to retry preparation, finish its geometry and findings.' : 'Loading the exact grading evidence…'}</p><button onClick={() => open(focused)}>Open card workspace</button></div>}
         </section> : focused ? <section className={styles.focus} aria-label="Selected card">
-          <div className={styles.focusHeader}><div><p>{focused.state === 'REVIEW' ? 'MACHINE DRAFT · HUMAN REVIEW' : status[focused.state]}</p><h2>{focused.evidence?.name || focused.label || 'Card review'}</h2></div>{Number.isFinite(focused.evidence?.proposedGrade) && <div className={styles.grade}><strong>{focused.evidence.proposedGrade}</strong><span>PROPOSED</span></div>}</div>
+          <div className={styles.focusHeader}><div><p>{focused.state === 'REVIEW' ? 'MACHINE DRAFT · HUMAN REVIEW' : status[focused.state]}</p><h2>{focused.evidence?.name || focused.label || 'Card review'}</h2></div>{Number.isFinite(focused.evidence?.proposedGrade) && <div className={styles.grade}><strong>{focused.evidence.proposedGrade}</strong><span>{focused.state==='APPROVED'?'APPROVED':'PROPOSED'}</span></div>}</div>
           <div className={styles.photos}>{['FRONT', 'BACK'].map(side => <figure key={`${focused.key}:${side}`}><QueuePhoto job={focused} side={side} eager readPreview={readPreview}/><figcaption>{side}</figcaption></figure>)}</div>
           <footer className={styles.actions}><span>{focused.state === 'REVIEW' ? `${focused.evidence.findingCount ?? 0} proposed findings` : queueProblemMessage(focused) ?? messages[focused.code] ?? stages[focused.stage]}<small>↑ ↓ select · Enter review</small></span>
             {focused.canResumeProcessing && <button disabled={busy} onClick={() => resume(focused)}>{busy ? 'Resuming…' : 'Resume saved processing'}</button>}

@@ -1,5 +1,5 @@
 import { geometryBase, geometryStatus } from './geometry-actions.mjs';
-import { defectBase, defectStatus, reviewedDefectFindingIds } from './defect-actions.mjs';
+import { defectBase, defectStatus, reviewedDefectFindingIds, isDefectObservationResolved } from './defect-actions.mjs';
 import { collectiveProposalReview } from './astra-review-ui.mjs';
 const sides = ['FRONT', 'BACK'];
 const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
@@ -81,9 +81,14 @@ export function variantFindingsBlocked(view) {
 export function rapidReviewStatus(view) {
   const geometry = geometryStatus(view.geometry);
   const unresolved = (view.finalReview?.report.unmeasurableProposals ?? []).filter(proposal =>
-    !view.assistance?.reviews?.some(review => review.analysisId === view.finalReview.report.analysisId && review.proposalId === proposal.id));
+    !view.assistance?.reviews?.some(review => review.analysisId === view.finalReview.report.analysisId && review.proposalId === proposal.id && isDefectObservationResolved(view.defects, review)));
+  const geometryObservations = sides.flatMap(side => view.defects?.sides[side].findings ?? []).filter(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED');
   const proposals = view.defects ? collectiveProposalReview(view.defects, view.astra) : null;
-  return { geometry: geometry.canConfirmBoth, findings: Boolean(!variantFindingsBlocked(view) && geometry.confirmed && view.defects && defectStatus(view.defects).settled && proposals?.ready && !unresolved.length), unresolved: unresolved.length };
+  // An empty proposal list while a request is still running is not a finished
+  // inspection. Match the server's pending-analysis fence without blocking
+  // manual review after a terminal refused or uncertain result.
+  const analysisPending = view.astra?.enabled && (view.astra.status === 'RUNNING' || view.astra.resumeAvailable === true);
+  return { geometry: geometry.canConfirmBoth, findings: Boolean(!analysisPending && !variantFindingsBlocked(view) && geometry.confirmed && view.defects && defectStatus(view.defects).settled && proposals?.ready && !unresolved.length && !geometryObservations.length), unresolved: unresolved.length + geometryObservations.length };
 }
 /** Resume the unfinished human step without replaying any approval. */
 export function rapidResumeStage(view) {

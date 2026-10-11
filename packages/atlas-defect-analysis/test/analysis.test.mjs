@@ -99,7 +99,7 @@ test('invalid geometries are refused before any rasterization or measurement', (
     assert.throws(() => parseDefectProposals(raw, prepared.evidence));
   }
   const raw = outputFixture(prepared.evidence); raw.findings[0].imageId = 'FRONT:whole';
-  assert.throws(() => parseDefectProposals(raw, prepared.evidence), { code: 'DEFECT_ANALYSIS_OUTSIDE_CARD' });
+  assert.equal(parseDefectProposals(raw, prepared.evidence).proposals[0].measurementHold, 'OUTSIDE_CARD_FRAME');
 });
 
 test('proposal count, output length and duplicates are bounded; empty is only an empty proposal list', () => {

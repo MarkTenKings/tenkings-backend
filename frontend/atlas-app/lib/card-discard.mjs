@@ -19,9 +19,12 @@ export function discardedIdsFromEvent(event) {
   } catch { return null; }
 }
 export function clearDiscardedCommands(storage, staffId, cardIds) {
+  if (!storage) return;
   const deleted = new Set(cardIds);
   for (const id of deleted) for (const key of [`atlas-connected-command:${staffId}:${id}`,
-    `atlas-manual-pending:v1:/admin:${staffId}:${id}`, `atlas-manual-pending:v1:${staffId}:${id}`, `atlas-defect-analysis:v1:${staffId}:${id}`]) storage.removeItem(key);
+    `atlas-manual-pending:v1:/admin:${staffId}:${id}`, `atlas-manual-pending:v1:${staffId}:${id}`, `atlas-defect-analysis:v1:${staffId}:${id}`,
+    `atlas-variant-review:${staffId}:${id}`, `atlas-report-market:${staffId}:${id}`, `atlas-report-research:${staffId}:${id}`,
+    `atlas-research-observation:${staffId}:${id}`, ...['FRONT', 'BACK'].map(side => `atlas:display-retry:v1:${staffId}:${id}:${side}`)]) storage.removeItem(key);
   const key = `atlas-batch-enqueue:${staffId}`, saved = storage.getItem(key);
   if (saved) {
     // Never rewrite a multi-card idempotent request into a different request.
@@ -46,7 +49,7 @@ function checkedReceipt(value, body) {
  * commit together, so keep the acknowledged receipt until both retirements
  * and exact card-command cleanup finish. No original is removed on timeout. */
 export function createWorkspaceDiscarder({ staffId, request, batchJournal, intakeJournal, storage = globalThis.localStorage,
-  locks = globalThis.navigator?.locks, cryptoImpl = globalThis.crypto, pause = async () => {}, resume = () => {} }) {
+  sessionStorage = globalThis.sessionStorage, locks = globalThis.navigator?.locks, cryptoImpl = globalThis.crypto, pause = async () => {}, resume = () => {} }) {
   const key = discardKey(staffId);
   const read = () => { const value = storage.getItem(key); return value ? JSON.parse(value) : null; };
   const save = value => { storage.setItem(key, JSON.stringify(value)); announceDiscard(staffId); };
@@ -61,6 +64,7 @@ export function createWorkspaceDiscarder({ staffId, request, batchJournal, intak
     await intakeJournal.retire(value);
     await batchJournal.retire({ ...value, draftId });
     clearDiscardedCommands(storage, staffId, value.cardIds);
+    clearDiscardedCommands(sessionStorage, staffId, value.cardIds);
     announceDiscard(staffId, value);
   }
   async function complete(intent) {

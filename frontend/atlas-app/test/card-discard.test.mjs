@@ -97,3 +97,19 @@ test('a later refused chunk retains earlier acknowledged progress and all remain
   const saved=JSON.parse(f.storage.getItem(discardKey(f.staffId)));assert.ok(saved.requests[0].receipt);assert.equal(saved.requests[1].receipt,undefined);
   assert.equal(f.batch.items.length,101);assert.equal(f.pending.length,101);
 });
+
+test('deletion clears variant, sales, research and display recovery for the exact deleted card in both stores', async()=>{
+  const f=fixture(),[first,second]=f.batch.items, session=new Map();
+  const ss={getItem:key=>session.get(key)??null,removeItem:key=>session.delete(key)};
+  const prefixes=['atlas-variant-review','atlas-report-market','atlas-report-research','atlas-research-observation'];
+  for(const prefix of prefixes)for(const id of [first.cardId,second.cardId]){
+    const key=`${prefix}:${f.staffId}:${id}`;f.storage.setItem(key,'pending');session.set(key,'pending');
+  }
+  for(const side of ['FRONT','BACK'])f.storage.setItem(`atlas:display-retry:v1:${f.staffId}:${first.cardId}:${side}`,'pending');
+  const controller=createWorkspaceDiscarder({staffId:f.staffId,request:f.request,batchJournal:f.batchJournal,intakeJournal:f.intakeJournal,
+    storage:f.storage,sessionStorage:ss,locks:{request:async(_name,_options,work)=>work({})},cryptoImpl:webcrypto});
+  await controller.discard({scope:'SELECTED',cardIds:[first.cardId]});
+  for(const prefix of prefixes){assert.equal(f.storage.getItem(`${prefix}:${f.staffId}:${first.cardId}`),null);assert.equal(ss.getItem(`${prefix}:${f.staffId}:${first.cardId}`),null);
+    assert.equal(f.storage.getItem(`${prefix}:${f.staffId}:${second.cardId}`),'pending');assert.equal(ss.getItem(`${prefix}:${f.staffId}:${second.cardId}`),'pending');}
+  for(const side of ['FRONT','BACK'])assert.equal(f.storage.getItem(`atlas:display-retry:v1:${f.staffId}:${first.cardId}:${side}`),null);
+});

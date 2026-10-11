@@ -44,7 +44,7 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
       // The service checks an exact committed receipt before these terminal
       // refusals. They prove this request cannot change the current report;
       // ordinary network/unknown outcomes always keep their exact intent.
-      if (error?.status === 409 && ['MARKET_PREVIEW_EXPIRED', 'PRESENTATION_REVISION_STALE', 'PRESENTATION_APPROVAL_STALE'].includes(error.code)) {
+      if (error?.status === 409 && ['PRESENTATION_REVISION_STALE', 'PRESENTATION_APPROVAL_STALE'].includes(error.code)) {
         clear(saved); sawReady = false; throw fail('MARKET_SELECTION_REVIEW_REQUIRED');
       }
       throw error;

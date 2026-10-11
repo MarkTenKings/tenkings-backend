@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGeometryWorkspace, applyGeometryEdit, applyPreparedFrame, geometryBase, preparationBase } from '../src/geometry-actions.mjs';
 import { createDefectWorkspace, adoptDefectProposals, defectBase, defectStatus, markDefectSideInspected,
-  runDefectMeasurement, applyDefectMeasurement, discardPendingDefectEdit, parseDefectWorkspace } from '../src/defect-actions.mjs';
+  runDefectMeasurement, applyDefectMeasurement, discardPendingDefectEdit, parseDefectWorkspace, confirmDefectFindings, markDefectFindingReviewed } from '../src/defect-actions.mjs';
+import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { beginDefectEdit } from '../src/defect-actions.mjs';
 import { beginReprojectDefectFrame } from '../src/geometry-reprojection.mjs';
 import { encodeSpeedsterTraceRleV1, decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
@@ -81,12 +82,29 @@ test('perspective reprojects the actual mask through source pixels rather than r
   }
 });
 
-test('out-of-frame source pixels and disappearing isolated components are explicit holds with no mutations', () => {
+test('out-of-frame traces retain exact evidence for review without blocking corrected geometry', async () => {
   for (const [input,reason] of [[fixture([[2,500,20,20]],{x:210}),'TRACE_OUTSIDE_CORRECTED_CARD'],
     [fixture([[501,601,1,1],[600,600,40,40]],{scale:.5}),'TRACE_COMPONENT_LOST']]) {
     const before=structuredClone(input);
-    assert.throws(()=>beginReprojectDefectFrame(input),error=>error.code==='ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED'
-      && error.details.reason===reason && error.details.findingIds[0]==='FRONT:fixture');
+    const pending=beginReprojectDefectFrame(input), finding=pending.sides.FRONT.findings[0];
+    assert.equal(finding.geometryExclusion.reason,reason);
+    assert.equal(finding.reviewResult,'UNREVIEWED');
+    assert.equal(finding.finalTrace.sha256,input.workspace.sides.FRONT.findings[0].finalTrace.sha256);
+    assert.deepEqual(finding.geometryExclusion.sourceFrame,input.previousGeometry.sides.FRONT.prepared.frame);
+    assert.deepEqual(finding.measurementRegions,[]);
+    assert.deepEqual(pending.sides.FRONT.humanEditedIds,[]);
+    assert.equal(pending.sides.FRONT.frame.frameId,input.geometry.sides.FRONT.prepared.frame.id);
+    let measured=applyDefectMeasurement(pending,await runDefectMeasurement(pending,'FRONT',async({findings})=>{
+      assert.deepEqual(findings,[],'old pixels never reach the new-frame CPU'); return {defects:[]};
+    })).state;
+    assert.throws(()=>markDefectFindingReviewed(measured,{side:'FRONT',base:defectBase(measured,'FRONT'),findingId:finding.id,actor:'HUMAN',reviewed:true,reviewerId:'reviewer',reviewedAt:'2026-10-10T00:00:00Z'}));
+    for(const side of SIDES)measured=markDefectSideInspected(measured,{side,base:defectBase(measured,side),actor:'HUMAN',inspected:true}).state;
+    assert.equal(defectStatus(measured).canConfirm,false);
+    assert.throws(()=>confirmDefectFindings(measured,{base:Object.fromEntries(SIDES.map(side=>[side,defectBase(measured,side)])),actor:'HUMAN',reviewed:true}),/RETRACE_REQUIRED/);
+    const removing=beginDefectEdit(measured,{side:'FRONT',base:defectBase(measured,'FRONT'),actor:'HUMAN',action:{type:'REMOVE',defectIds:[finding.id]}}).state;
+    const removed=applyDefectMeasurement(removing,await runDefectMeasurement(removing,'FRONT',async({findings})=>{assert.deepEqual(findings,[]);return {defects:[]};})).state;
+    assert.equal(removed.sides.FRONT.findings[0].reviewResult,'REMOVED');
+    assert.equal(removed.sides.FRONT.findings[0].finalTrace.sha256,finding.finalTrace.sha256);
     assert.deepEqual(input,before);
   }
 });
@@ -132,9 +150,9 @@ test('human correction and removal history survive; invalid marker cannot masque
 test('deliberately removed out-of-frame evidence remains source-bound and cannot restore stale coordinates', async () => {
   const input=fixture([[2,500,20,20]],{x:210}),mutable=structuredClone(input.workspace),finding=mutable.sides.FRONT.findings[0];
   finding.reviewResult='REMOVED';finding.reviewResultBeforeRemoval='UNREVIEWED';
-  // Engine-only removal never permits discarding a trace from the current frame.
+  // Reprojection keeps the saved review decision and its original pixels.
   input.workspace=parseDefectWorkspace(mutable);
-  assert.throws(()=>beginReprojectDefectFrame(input),/GEOMETRY_REVIEW_REQUIRED/);
+  assert.equal(beginReprojectDefectFrame(input).sides.FRONT.findings[0].reviewResult,'REMOVED');
   mutable.sides.FRONT.humanEditedIds=[finding.id];input.workspace=parseDefectWorkspace(mutable);
   const before=structuredClone(input),pending=beginReprojectDefectFrame(input),retained=pending.sides.FRONT.findings[0];
   assert.equal(retained.reviewResult,'REMOVED');assert.equal(retained.finalTrace.sha256,finding.finalTrace.sha256);
@@ -206,3 +224,18 @@ test('actual checked CPU remeasures changed geometry with preserved exact trace 
     assert.deepEqual(finding.geometryReprojections,pending.sides.FRONT.findings[0].geometryReprojections);
     assert.deepEqual(settled.sides.BACK,input.workspace.sides.BACK);
   });
+
+test('explicit redraw replaces the old-frame observation with the exact new trace without measuring its old pixels', async () => {
+  const input=fixture([[2,500,20,20]],{x:210}),pending=beginReprojectDefectFrame(input);
+  const settled=applyDefectMeasurement(pending,await runDefectMeasurement(pending,'FRONT',async({findings})=>({defects:findings}))).state;
+  const previous=settled.sides.FRONT.findings[0],pixels=mask([[400,500,10,10]]),rle=encodeSpeedsterTraceRleV1(pixels);
+  const trace={traceWire:encodeSpeedsterTraceBitmapWireV1(pixels,rle.sha256),traceProvenance:{version:'speedster-trace-provenance-v1',sourceViewId:previous.sourceViewId,cropTransform:{version:'speedster-canonical-crop-affine-v1',crop:{x:0,y:0,width:1269,height:1777}},highlighterStrokes:[],finalTraceSha256:rle.sha256}};
+  const editing=beginDefectEdit(settled,{side:'FRONT',base:defectBase(settled,'FRONT'),actor:'HUMAN',action:{type:'TRACE_SAVE',side:'FRONT',findingId:previous.id,trace}}).state;
+  const result=await runDefectMeasurement(editing,'FRONT',async({findings,marks})=>{
+    assert.equal(findings[0].geometryExclusion,undefined);assert.equal(findings[0].finalTrace.sha256,rle.sha256);
+    assert.equal(marks[0].finalTrace.sha256,rle.sha256);return {defects:findings};
+  });
+  const redrawn=applyDefectMeasurement(editing,result).state.sides.FRONT.findings[0];
+  assert.equal(redrawn.geometryExclusion,undefined);assert.equal(redrawn.finalTrace.sha256,rle.sha256);
+  assert.equal(redrawn.reviewResult,'UNREVIEWED');assert.equal(previous.finalTrace.sha256,input.workspace.sides.FRONT.findings[0].finalTrace.sha256);
+});

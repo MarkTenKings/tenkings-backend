@@ -65,7 +65,7 @@ test('absent, unsupported and incompatible layout markers cannot reinterpret cro
   assert.throws(() => restorePreparedRequest({ ...old, evidence: prepared.evidence, evidenceHash: prepared.evidenceHash }));
 });
 
-test('each context crop maps its outer physical card corner exactly and rejects adjacent real background pixels', () => {
+test('each context crop maps its card corner exactly and retains adjacent background observations without clamping', () => {
   const { evidence } = contextRequest();
   // Independent physical corner positions in the four local images.
   const corners = [
@@ -91,7 +91,31 @@ test('each context crop maps its outer physical card corner exactly and rejects 
     for (const axis of ['x', 'y']) {
       const invalid = structuredClone(output);
       invalid.findings[0].localContour[0][axis] -= corner[axis === 'x' ? 'sx' : 'sy'];
-      assert.throws(() => parseDefectProposals(invalid, evidence), { code: 'DEFECT_ANALYSIS_OUTSIDE_CARD' });
+      const retained = parseDefectProposals(invalid, evidence).proposals[0];
+      assert.equal(retained.measurementHold, 'OUTSIDE_CARD_FRAME');
+      assert.deepEqual(retained.provenance.localContour, invalid.findings[0].localContour);
+      assert.notDeepEqual(retained.canonicalContour, proposal.canonicalContour);
     }
   }
+});
+
+// The saved Magmar response contained five observations: two bottom-edge
+// marks were 7–12 pixels beyond the physical frame, alongside three in-card
+// marks. Reproduce its crop coordinates without retaining private images.
+test('one off-card observation no longer refuses a completed response with valid peers', () => {
+  const { evidence } = contextRequest(), raw = outputFixture(evidence), first = raw.findings[0];
+  const points = [
+    ['FRONT',4,[[690,891],[694,891],[694,897],[692,902],[688,901],[689,896]]],
+    ['BACK',2,[[671,332],[696,315],[697,317],[673,335]]],
+    ['BACK',3,[[87,961],[92,959],[97,960],[97,962],[93,963],[88,963]]],
+    ['BACK',4,[[695,918],[698,919],[695,929],[690,938],[683,945],[678,948],[678,945],[682,941],[687,935],[692,927]]],
+    ['BACK',4,[[638,960],[644,960],[649,961],[649,963],[643,964],[638,963]]],
+  ];
+  raw.findings = points.map(([side, crop, contour]) => ({ ...first, side, imageId: `${side}:crop:${crop}`,
+    localContour: contour.map(([x,y]) => ({x,y})) }));
+  const parsed = parseDefectProposals(raw,evidence);
+  assert.equal(parsed.proposals.length,5);
+  assert.deepEqual(parsed.proposals.map(p => Boolean(p.measurementHold)),[false,false,true,false,true]);
+  for (const [index,p] of parsed.proposals.entries()) assert.deepEqual(p.provenance.localContour,raw.findings[index].localContour);
+  assert.ok(parsed.proposals[2].canonicalContour.every(p => p.y > 1));
 });

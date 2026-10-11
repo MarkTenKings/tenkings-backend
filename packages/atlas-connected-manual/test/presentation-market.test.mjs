@@ -38,14 +38,14 @@ test('provider absence is unavailable while a transport failure retains an unkno
   assert.deepEqual(await createPresentationMarket({ now, provider: async () => { throw new Error('secret provider response'); } }).preview(f),
     { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN' });
 });
-test('malformed provider source, wrong query, duplicate ids and future observations fail closed', async () => {
+test('malformed provider source, wrong query, duplicate ids and invalid observation dates fail closed', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
   for (const change of [{ query: 'different card' }, { engineVersion: 'unknown' }, { source: 'ASKING_PRICES' },
-    { candidates: [result.candidates[0], result.candidates[0]] }, { retrievedAt: '2026-09-23T16:00:00.000Z' }]) {
+    { candidates: [result.candidates[0], result.candidates[0]] }, { retrievedAt: 'not-a-date' }]) {
     await assert.rejects(createPresentationMarket({ now, provider: async () => ({ ...result, ...change }) }).preview(f));
   }
 });
-test('selection requires retained source hash, same exact publication, unexpired observation and explicit eligible ids', async () => {
+test('selection requires retained source hash, same exact publication and explicit eligible ids at any retained observation age', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
   const market = createPresentationMarket({ now, provider: async () => result }), saved = await market.preview(f), id = saved.preview.candidates[0].sale.id;
   for (const alter of [v => { v.sourceHash = 'a'.repeat(64); }, v => { v.preview.query = 'different'; },
@@ -53,7 +53,7 @@ test('selection requires retained source hash, same exact publication, unexpired
     v => { v.selectedIds = [id, id]; }, v => { v.packet.approvalVersion++; v.publicHash = digest(JSON.stringify(v.packet)); }]) {
     const request = structuredClone({ ...f, ...saved, selectedIds: [id] }); alter(request); assert.throws(() => market.select(request));
   }
-  assert.throws(() => createPresentationMarket({ now: () => new Date('2026-09-24T16:00:00Z') }).select({ ...f, ...saved, selectedIds: [id] }), { code: 'MARKET_PREVIEW_EXPIRED' });
+  assert.equal(createPresentationMarket({ now: () => new Date('2030-09-24T16:00:00Z') }).select({ ...f, ...saved, selectedIds: [id] }).sales.length, 1);
 });
 test('unknown identity match requires explicit review and contradictory variant cannot become a reference', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
@@ -144,8 +144,8 @@ test('local title reclassification retains exclusion evidence, original capture 
   const selected = market.select({ ...f, ...ready, selectedIds: [ready.preview.candidates[0].sale.id] });
   assert.equal(selected.sales[0].priceMinor, 4000);
   assert.throws(() => market.select({ ...f, ...ready, selectedIds: ['ebay:123456789099'] }));
-  assert.throws(() => createPresentationMarket({ now: () => new Date('2026-09-24T16:00:00Z') })
-    .project(f, { ...result, ...metadata }), { code: 'MARKET_PREVIEW_EXPIRED' });
+  assert.deepEqual(createPresentationMarket({ now: () => new Date('2030-09-24T16:00:00Z') })
+    .project(f, { ...result, ...metadata }), ready);
 });
 
 test('malformed or double-counted reclassification exclusions cannot become trusted preview evidence', async () => {

@@ -9,7 +9,7 @@ const validSource = value => value?.state === 'READY' && typeof value.previewId 
     && ['sold', 'accepted_offer_unknown', 'unknown'].includes(candidate.sale.priceBasis))
   && new Set(value.preview.candidates.map(candidate => candidate.sale.id)).size === value.preview.candidates.length;
 function message(error) {
-  if (['MARKET_PREVIEW_EXPIRED', 'MARKET_PUBLICATION_MISMATCH'].includes(error?.code)) return 'This selection no longer matches the current report. Check the saved result before starting another search.';
+  if (error?.code === 'MARKET_PUBLICATION_MISMATCH') return 'This selection no longer matches the current report. Check the saved result before starting another search.';
   return 'The result is not confirmed yet. Retry this saved selection.';
 }
 
@@ -73,7 +73,6 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   if (!available) return null;
   const blocked = disabled || Boolean(busy) || pending, current = savedSource?.state === 'READY' ? source : savedSource ?? source;
   const waiting = ['QUEUED', 'SEARCHING', 'PENDING'].includes(current?.state), uncertain = current?.state === 'UNKNOWN';
-  const expired = current?.state === 'FAILED' && current.reason === 'MARKET_PREVIEW_EXPIRED' && current.refreshable === true && current.refreshAction === 'SEARCH_AGAIN';
   const slabComps = source?.preview.version === 'atlas-market-preview-v2';
   const groups = slabComps ? source.preview.candidates.length ? [{ key: 'recent', label: 'Recent graded',
     identityLabel: 'Card and grade read from the photographed label', needsReview: false,
@@ -91,7 +90,7 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   return <section className={styles.panel} aria-label="Grade report sales references">
     <div className={styles.heading}><div><p className={styles.eyebrow}>REPORT · MARKET REFERENCES</p><h3>{title}</h3></div>
       <button type="button" disabled={blocked || waiting || current?.refreshable === false && !uncertain}
-        onClick={() => { if ((uncertain || automatic && searchPending) && callbacks.current.onCheck) void callbacks.current.onCheck(); else void search(); }}>{uncertain || searchPending ? 'Check saved search' : expired ? 'Start fresh search' : current?.refreshAction === 'RETRY_SAVED_RESPONSE' ? 'Retry saved results' : source ? refreshLabel : searchLabel}</button></div>
+        onClick={() => { if ((uncertain || automatic && searchPending) && callbacks.current.onCheck) void callbacks.current.onCheck(); else void search(); }}>{uncertain || searchPending ? 'Check saved search' : current?.refreshAction === 'RETRY_SAVED_RESPONSE' ? 'Retry saved results' : source ? refreshLabel : searchLabel}</button></div>
     {(cardName || cardImage) && <div className={styles.cardHeading}>{cardImage && <div className={styles.cardImage}>{cardImage}</div>}<div><h4>{cardName || 'Approved card'}{card?.cardNumber && <span> #{card.cardNumber}</span>}</h4>
       {card?.parallel && <span className={styles.variant}>{card.parallel}</span>}<p>{[card?.year, card?.manufacturer, card?.productSet].filter(Boolean).join(' · ')}</p><small>Approved ATLAS identity · Unrecorded variant details remain unconfirmed</small></div></div>}
     <p className={styles.note}>{note}</p>
@@ -99,7 +98,8 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
     {!notice && !error && <p className={styles.searchStatus} role="status">{source ? source.preview.candidates.length ? `${source.preview.candidates.length} sold ${source.preview.candidates.length === 1 ? 'comp' : 'comps'} ready for your review` : 'Search saved · No qualifying sales'  : automatic ? automaticEnabled ? 'Saved results appear here automatically after approval.' : 'Saved results appear here. Start a search when needed.' : 'Search when needed · no lookup starts from opening this tool'}</p>}
     {source && <><div className={styles.query}><span>Search: {source.preview.query}</span><span>ATLAS {source.preview.atlasGrade} · Retrieved {saleDateLabel(source.preview.retrievedAt)}</span></div>
       {!groups.length && <div className={styles.empty}><strong>No qualifying sold listings</strong><p>The saved search returned no selectable sales for this card. Your approved grade is unchanged.</p></div>}
-      {slabComps && source.preview.counts && <p className={styles.note}>{source.preview.counts.returned ?? source.preview.counts.received ?? source.preview.counts.total ?? source.preview.candidates.length} listings returned · {source.preview.candidates.length} comps within one grade point · Most recent first</p>}
+      {slabComps && source.preview.labelProcessing?.state === 'PARTIAL' && <p className={styles.error} role="status">Some label readings could not finish: {source.preview.labelProcessing.failed} failed · {source.preview.labelProcessing.unknown} unconfirmed. Completed matches are available below.</p>}
+      {slabComps && <p className={styles.note}>{Number.isSafeInteger(source.preview.counts?.returned) && source.preview.counts.returned >= 0 ? `${source.preview.counts.returned} listings returned` : 'Returned listing count unavailable'}{source.preview.labelProcessing && <> · {source.preview.labelProcessing.completed} photos checked · {source.preview.labelProcessing.unavailable} without a photo</>} · {source.preview.candidates.length} comps within one grade point · Most recent first</p>}
       {groups.length > 0 && <><div className={styles.groupTabs} ref={tabs} role="tablist" aria-label="Sales by grade, condition and variant">{groups.map((group, index) => <button key={group.key} id={`${tabPrefix}-tab-${index}`} type="button" role="tab" aria-selected={group.key === active.key} aria-controls={`${tabPrefix}-sales`} tabIndex={group.key === active.key ? 0 : -1}
         onClick={() => setActiveGroup(group.key)} onKeyDown={event => keyTab(event, index)}><strong>{group.label}</strong><span>{group.candidates.length} observed {group.candidates.length === 1 ? 'sale' : 'sales'}</span><small>{group.identityLabel}</small>{group.needsReview && <small>Identity needs review</small>}</button>)}</div>
         <div id={`${tabPrefix}-sales`} role="tabpanel" aria-labelledby={`${tabPrefix}-tab-${groups.indexOf(active)}`}><div className={styles.groupHeading}><h4>{active.label} sales</h4><span>Most recent first</span></div>

@@ -588,3 +588,11 @@ test('late provider acceptance turns UNKNOWN into pending and invalidates the lo
   await assert.rejects(f.confirm(), { code: 'MANUAL_ASTRA_REVIEW_STALE' });
   assert.deepEqual(f.card(), before); assert.equal(f.publications.length, 0);
 });
+
+test('saved parser refusal projects its exact diagnostic without making another paid request', async () => {
+  const f=await savedAnalysisFixture();
+  Object.assign(f.receipt,{state:'REFUSED',resultRef:null,code:'DEFECT_ANALYSIS_OUTSIDE_CARD',httpStatus:200});
+  const status=await f.assistance.status(f.staff,f.cardId,f.analysisId);
+  assert.equal(status.astra.status,'REFUSED');assert.equal(status.astra.code,'DEFECT_ANALYSIS_OUTSIDE_CARD');
+  assert.equal(status.astra.httpStatus,200);assert.deepEqual(f.calls,{provider:0,images:0});
+});

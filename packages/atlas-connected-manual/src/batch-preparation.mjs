@@ -33,7 +33,11 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
     const side = proposal.side, slot = measured.sides[side];
     requireThat(Array.isArray(proposal.canonicalContour) && proposal.canonicalContour.length >= 3
       && proposal.canonicalContour.every(point => point && Number.isFinite(point.x) && Number.isFinite(point.y)
-        && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1), 409, 'BATCH_ANALYSIS_INVALID_CONTOUR');
+        && (proposal.measurementHold === 'OUTSIDE_CARD_FRAME' || point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)), 409, 'BATCH_ANALYSIS_INVALID_CONTOUR');
+    if (proposal.measurementHold === 'OUTSIDE_CARD_FRAME') {
+      unmeasurableProposals.push({ ...structuredClone(proposal), reason: 'OUTSIDE_CARD_FRAME' });
+      continue;
+    }
     // A valid model contour can lie wholly outside a rounded physical corner,
     // or cover less than one canonical pixel. Keep that proposal for a human;
     // an empty clipped mask is neither a measurable finding nor a zero-area
@@ -160,7 +164,12 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
         if (['RUNNING', 'PREPARED', 'DISPATCHED'].includes(response.state) || astra?.status === 'RUNNING') return wait();
         if (astra?.rateLimited === true) return (job.analysisAttempt ?? 0) < BATCH_RATE_LIMIT_RETRIES
           ? { kind: 'RETRY_ANALYSIS', code: 'BATCH_PROVIDER_RATE_LIMITED' } : attention('BATCH_PROVIDER_RATE_LIMITED');
-        return attention(astra?.status === 'UNKNOWN' ? 'BATCH_ANALYSIS_UNCERTAIN' : 'BATCH_ANALYSIS_NEEDS_REVIEW');
+        // Keep the saved refusal reason: one invalid outline or provider reply
+        // must not disappear behind an undiagnosable generic batch status.
+        const code = /^[A-Z][A-Z0-9_]{0,100}$/.test(astra?.code ?? '') ? astra.code
+          : astra?.status === 'UNKNOWN' ? 'BATCH_ANALYSIS_UNCERTAIN' : 'BATCH_ANALYSIS_NEEDS_REVIEW';
+        return { ...attention(code), evidence: { analysisStatus: astra?.status ?? response.state ?? 'UNKNOWN',
+          ...(Number.isInteger(astra?.httpStatus) ? { analysisHttpStatus: astra.httpStatus } : {}) } };
       }
       requireThat(job.stage === 'REPORT', 400, 'BATCH_STAGE_INVALID');
       const response = await connected.assistance.status(staff, job.cardId, job.analysisActionId);

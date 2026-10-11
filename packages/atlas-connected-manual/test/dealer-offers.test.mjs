@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { createDealerOfferService } from '../src/dealer-offers.mjs';
 import { createPresentationMarketService } from '../src/presentation-market-service.mjs';
-import { publishedMarketQuery } from '../src/presentation-market.mjs';
+import { createPresentationMarket, publishedMarketQuery } from '../src/presentation-market.mjs';
 import { parseEbaySoldCompsV2Candidate, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { createDealerOffersClient } from '../../../frontend/atlas-app/lib/dealer-offers-client.mjs';
 import { createReportMarketClient } from '../../../frontend/atlas-app/lib/report-market-client.mjs';
@@ -23,6 +23,18 @@ async function fixture() {
   f.select = async ids => { const status = await f.status(); return f.offers.select(f.staff, f.cardId,
     f.command({ sourceHash: status.sourceHash, selectedIds: ids })); };
   return f;
+}
+async function savedMarket(f, candidates) {
+  const context = publishedMarketQuery(f.source), input = f.command();
+  const ready = createPresentationMarket().project(f.source, { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
+    query: context.query, retrievedAt: f.now.toISOString(), candidates });
+  await f.repository.reserveMarket(f.staff, f.cardId, input);
+  const artifactHash = digest(JSON.stringify(ready.preview)), ref = await f.artifacts.write(ready.preview, { cardId: f.cardId, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
+  await f.repository.finishMarket(f.staff, f.cardId, input.requestId, { state: 'READY', ref, artifactHash, sourceHash: ready.sourceHash });
+  const job = { state: 'READY', request_id: input.requestId, approval_action_id: f.actionId, created_at: f.now.toISOString() };
+  return createPresentationMarketService({ repository: f.repository, approved: f.approved, artifacts: f.artifacts,
+    provider: async () => assert.fail('historical reference selection cannot run a provider'),
+    jobs: { latest: async () => job, reserve: async () => assert.fail('saved reference fixture does not request a new search') } });
 }
 test('actual client/HTTP/service/repository/public reader publish only sourced configured offers and retain exact grade bytes', async () => {
   const f = await fixture(), request = f.transport({ dealerOffers: f.offers });
@@ -80,12 +92,10 @@ test('changed offer terms require new review, exact committed replay survives ex
   await assert.rejects(f.offers.select(f.staff, f.cardId, input), { code: 'MANUAL_CARD_NOT_FOUND' });
 });
 test('legacy sold references, photo evidence and committed retries survive offer publication, removal and later comps updates', async () => {
-  const f = await fixture(), context = publishedMarketQuery(f.source); let calls = 0;
+  const f = await fixture(), context = publishedMarketQuery(f.source);
   const candidates = ['123456789012','123456789013'].map((itemId, index) => parseEbaySoldCompsV2Candidate({ title: '2026 Fixture Local only Synthetic report PSA 9', itemId,
     url: `https://www.ebay.com/itm/${itemId}`, soldPrice: `${40 + index}.00`, soldCurrency: 'USD', bestOfferAccepted: false, endedAt: `2026-09-${21 + index}` }, context.input));
-  const market = createPresentationMarketService({ repository: f.repository, approved: f.approved, artifacts: f.artifacts, now: () => f.now,
-    provider: async () => { calls++; return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: context.query, retrievedAt: f.now.toISOString(), candidates }; } });
-  const search = await market.preview(f.staff, f.cardId, f.command());
+  const market = await savedMarket(f, candidates), search = await market.status(f.staff, f.cardId);
   const selection = f.command({ previewId: search.previewId, selectedIds: candidates.map(value => value.id) });
   const comps = await market.select(f.staff, f.cardId, selection);
   assert.equal(JSON.parse(f.presentations[0].market_source).version, 'atlas-selected-market-source-v1');
@@ -95,22 +105,21 @@ test('legacy sold references, photo evidence and committed retries survive offer
   assert.equal(offers.presentation.slabPhoto.sha256, 'd'.repeat(64)); assert.notEqual(f.presentations.at(-1).media, null);
   assert.deepEqual(await market.select(f.staff, f.cardId, selection), comps);
   const next = await market.select(f.staff, f.cardId, f.command({ previewId: search.previewId, selectedIds: [candidates[0].id] }));
-  assert.equal(next.presentation.dealerOffers.length, 1); assert.equal(calls, 1);
+  assert.equal(next.presentation.dealerOffers.length, 1);
   const removed = await f.select([]); assert.deepEqual(removed.presentation.dealerOffers, []); assert.deepEqual(removed.presentation.market, next.presentation.market);
   const report = JSON.parse((await f.reader(f.offers).read(f.claims())).bytes);
   assert.deepEqual(report.presentation.market.sales.map(value => value.id), [candidates[0].id]); assert.equal(report.presentation.market.estimate, undefined);
   assert.equal(digest(JSON.stringify(report.packet)), f.source.publicHash);
 });
 test('market browser selection traverses real HTTP/service/repository and public projection without an automatic search', async () => {
-  const f = await fixture(), context = publishedMarketQuery(f.source); let calls = 0;
+  const f = await fixture(), context = publishedMarketQuery(f.source);
   const candidate = parseEbaySoldCompsV2Candidate({ title: '2026 Fixture Local only Synthetic report PSA 9', itemId: '123456789012', url: 'https://www.ebay.com/itm/123456789012', soldPrice: '40.00', soldCurrency: 'USD', bestOfferAccepted: false, endedAt: '2026-09-21' }, context.input);
-  const market = createPresentationMarketService({ repository: f.repository, approved: f.approved, artifacts: f.artifacts, now: () => f.now,
-    provider: async () => { calls++; return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: context.query, retrievedAt: f.now.toISOString(), candidates: [candidate] }; } });
+  const market = await savedMarket(f, [candidate]);
   const request = f.transport({ market, presentation: { status: (staff, cardId) => f.repository.status(staff, cardId) } });
   const client = createReportMarketClient({ staffId: f.actorId, cardId: f.cardId, approvalActionId: f.actionId, storage: f.storageClient(), request, cryptoImpl: { randomUUID } });
-  await client.read(); assert.equal(calls, 0); const preview = await client.preview();
+  const status = await client.read(), preview = status.marketSearch;
   await client.select({ previewId: preview.previewId, selectedIds: [candidate.id] });
   const report = JSON.parse((await f.reader(f.offers).read(f.claims())).bytes);
-  assert.equal(report.presentation.market.sales[0].listingUrl, candidate.listingUrl); assert.equal(calls, 1);
+  assert.equal(report.presentation.market.sales[0].listingUrl, candidate.listingUrl);
   assert.equal(digest(JSON.stringify(report.packet)), f.source.publicHash); assert.equal(client.pending(), null);
 });

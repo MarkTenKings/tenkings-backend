@@ -152,14 +152,29 @@ function prepareSlabPreview(context, result) {
     && result.imageMatch.readings.every(reading => result.items.some(item => item.id === reading.rowId)),
   502, 'MARKET_PROVIDER_RESULT_INVALID');
   const counts = { returned: result.items.length, missingImage: 0, unreadGrade: 0, differentIdentity: 0, outsideGrade: 0, shown: 0 };
+  const labelProcessing = { state: 'COMPLETE', completed: 0, failed: 0, unknown: 0, unavailable: 0, reasons: [] };
   const eligible = [];
   for (const item of result.items) {
     const reading = result.imageMatch.readings.find(value => value.rowId === item.id);
     if (!item.imageUrl) counts.missingImage++;
+    const outcome = reading?.outcome ?? (!item.imageUrl ? 'UNAVAILABLE' : reading ? 'COMPLETE' : 'FAILED');
+    requireThat(['COMPLETE','FAILED','UNKNOWN','UNAVAILABLE'].includes(outcome), 502, 'MARKET_PROVIDER_RESULT_INVALID');
+    labelProcessing[{ COMPLETE: 'completed', FAILED: 'failed', UNKNOWN: 'unknown', UNAVAILABLE: 'unavailable' }[outcome]]++;
+    if (['FAILED','UNKNOWN'].includes(outcome)) {
+      const code = reading?.failureCode ?? 'MARKET_LABEL_READING_MISSING';
+      requireThat(/^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE)$/.test(code), 502, 'MARKET_PROVIDER_RESULT_INVALID');
+      if (!labelProcessing.reasons.includes(code)) labelProcessing.reasons.push(code);
+      counts.unreadGrade++; continue;
+    }
     if (reading?.identityMatch === 'DIFFERENT') { counts.differentIdentity++; continue; }
     if (!reading || !Number.isFinite(reading.numericGrade) || !['MATCH', 'UNCERTAIN'].includes(reading.identityMatch)) { counts.unreadGrade++; continue; }
     if (Math.abs(reading.numericGrade - context.atlasGrade) > 1) { counts.outsideGrade++; continue; }
     eligible.push(item.id);
+  }
+  if (labelProcessing.failed || labelProcessing.unknown) {
+    labelProcessing.state = labelProcessing.completed ? 'PARTIAL' : 'FAILED';
+    requireThat(labelProcessing.state !== 'FAILED', 502,
+      labelProcessing.unknown ? 'MARKET_LABEL_OUTCOME_UNKNOWN' : labelProcessing.reasons[0]);
   }
   const sales = projectSelectedSlabReferences(result, eligible, context.atlasGrade)?.sales ?? [];
   const candidates = sales.map(sale => {
@@ -176,7 +191,7 @@ function prepareSlabPreview(context, result) {
   });
   counts.shown = candidates.length;
   return { version: 'atlas-market-preview-v2', ...context, source: result.source, engineVersion: result.engineVersion,
-    responsePolicy: result.responsePolicy, retrievedAt: result.retrievedAt, candidates, counts,
+    responsePolicy: result.responsePolicy, retrievedAt: result.retrievedAt, candidates, counts, labelProcessing,
     acquisitionDiagnostics: structuredClone(result.acquisitionDiagnostics), imageMatchCounts: structuredClone(result.imageMatch.counts ?? {}) };
 }
 
@@ -230,17 +245,11 @@ function preparePreview(context, result) {
  * The staff request supplies only its saved preview id and chosen candidate ids.
  * No endpoint, live credential, persistence or automatic pricing is enabled here.
  */
-export function createPresentationMarket({ provider = null, now = () => new Date(), maxAgeMs = 24 * 60 * 60 * 1000 } = {}) {
-  requireThat((provider === null || typeof provider === 'function') && Number.isSafeInteger(maxAgeMs)
-    && maxAgeMs > 0 && maxAgeMs <= 7 * 24 * 60 * 60 * 1000, 500, 'MARKET_CONFIGURATION_INVALID');
-  function fresh(preview) {
-    const observed = Date.parse(preview.retrievedAt), time = now().getTime();
-    requireThat(Number.isFinite(observed) && Number.isFinite(time) && observed <= time + 60000
-      && time - observed <= maxAgeMs, 409, 'MARKET_PREVIEW_EXPIRED');
-  }
+export function createPresentationMarket({ provider = null } = {}) {
+  requireThat(provider === null || typeof provider === 'function', 500, 'MARKET_CONFIGURATION_INVALID');
   function project(source, result) {
     const context = publishedMarketQuery(source, { savedQuery: result?.query, queryContext: result?.marketQueryContext });
-    const preview = result?.responsePolicy === 'ATLAS_SLAB_V1' ? prepareSlabPreview(context, result) : preparePreview(context, result); fresh(preview);
+    const preview = result?.responsePolicy === 'ATLAS_SLAB_V1' ? prepareSlabPreview(context, result) : preparePreview(context, result);
     return { state: 'READY', preview, sourceHash: marketPreviewHash(preview) };
   }
   return Object.freeze({
@@ -278,7 +287,6 @@ export function createPresentationMarket({ provider = null, now = () => new Date
           && preview.engineVersion === EBAY_SOLD_COMPS_V2_ENGINE_VERSION && Array.isArray(preview.candidates)
           && Array.isArray(selectedIds)
           && new Set(selectedIds).size === selectedIds.length, 409, 'MARKET_SELECTION_INVALID');
-        fresh(preview);
         return projectSelectedSlabReferences({ responsePolicy: preview.responsePolicy, retrievedAt: preview.retrievedAt,
           items: preview.candidates.map(value => value.sourceItem),
           imageMatch: { readings: preview.candidates.map(value => ({ ...value.slabReading, labelText: value.sale.labelText })) } }, selectedIds, context.atlasGrade);
@@ -287,7 +295,6 @@ export function createPresentationMarket({ provider = null, now = () => new Date
         && Array.isArray(preview.candidates) && preview.candidates.length <= 60
         && Array.isArray(selectedIds) && selectedIds.length <= 60 && new Set(selectedIds).size === selectedIds.length,
       409, 'MARKET_SELECTION_INVALID');
-      fresh(preview);
       // Reproject the saved allowlisted sale evidence; selecting unknown ids,
       // contradictory or excluded rows cannot introduce a fallback candidate.
       const result = { source: preview.source, engineVersion: preview.engineVersion, retrievedAt: preview.retrievedAt,

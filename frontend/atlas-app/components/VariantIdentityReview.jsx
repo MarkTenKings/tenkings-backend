@@ -37,8 +37,8 @@ function safeUrl(value) {
 function listingSource(image) {
   if (image?.relationship !== 'listing_photo' || image.provenance?.provider !== 'ebay_sold_comps_v2') return null;
   const listing = image.listing, url = safeUrl(listing?.url);
-  return typeof listing?.id === 'string' && listing.id.trim() && typeof listing.title === 'string' && listing.title.trim()
-    && url?.startsWith('https://') ? { title: listing.title, url } : null;
+  if (!listing || !Object.hasOwn(listing, 'url') || listing.url != null && !url?.startsWith('https://')) return null;
+  return { title: typeof listing.title === 'string' && listing.title.trim() ? listing.title : 'Saved eBay reference photo', url };
 }
 export function variantReference(candidate, cardId, { artwork = true, result = null } = {}) {
   const labels = result?.referenceLabels;

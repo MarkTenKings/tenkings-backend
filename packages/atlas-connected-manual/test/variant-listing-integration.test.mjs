@@ -6,6 +6,8 @@ import {createVariantCatalogService} from '../src/variant-catalog.mjs';
 import {createVariantListingProvider,prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
 import {importScrydexVariantCandidates,scrydexVariantSearchUrl} from '@tenkings/card-catalog-evidence';
 import {createVariantReviewService} from '../src/variant-service.mjs';
+import {codexChoices,codexReadingKey} from '../src/variant-codex.mjs';
+import {VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from '../src/variant-photo-provider.mjs';
 
 const identity={category:'POKEMON',name:'Mewtwo',year:'2016',setName:'Evolutions',cardNumber:'051/108',manufacturer:null,language:'en'};
 const date='2026-10-10T10:00:00.000Z',now=()=>Date.parse(date),sha=v=>createHash('sha256').update(v).digest('hex');
@@ -50,10 +52,14 @@ test('one saved source supplies separate physical cards and refreshed photos; au
   if(url.startsWith('https://api.sold-comps.com/')){paid++;return new Response(responseFor(prepareVariantListingRequest(identity,printing,{graded:true})).bodyText,{headers:{'content-type':'application/json'}});}
   images++;return new Response(bytes,{headers:{'content-type':'image/png'}});
  }});
- const executeListingSource=async(request,dispatch)=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};const source=await dispatch();journal.set(request.requestKey,source);return {state:'SAVED',source};};
+ const executeListingSource=async(request,dispatch,{retainedOnly=false}={})=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};if(retainedOnly)return {state:'MISSING'};const source=await dispatch();journal.set(request.requestKey,source);return {state:'SAVED',source};};
  const catalogClient={findCurrentSetCatalogPublications:async()=>[],prepareSetDemand:async()=>({state:'QUEUED',coverage:'unknown',candidates:[]})};
- const service=createVariantCatalogService({providers:[metadata],catalogClient,listingProvider:provider,now});
+ const service=createVariantCatalogService({providers:[metadata],catalogClient,listingProvider:provider,cache,now});
  const snapshot=await service.prepare({identity,cardId:'physical-a'},{executeListingSource});
+ const settledImage=snapshot.referencePhotos[0];
+ entries.set(codexReadingKey({policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL},settledImage.sha256),{
+  schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices:codexChoices(snapshot),
+  reading:{sha256:settledImage.sha256,candidateKey:null,gradingCompany:'PSA',labelText:'2016 Pokemon Mewtwo',reason:'Finish remains unreadable'}});
  const again=await service.prepare({identity,cardId:'physical-b'},{executeListingSource});
  assert.equal(paid,1);assert.equal(images,1);assert.equal(again.snapshotHash,snapshot.snapshotHash);
  const image=snapshot.referencePhotos[0];assert(image);assert(snapshot.candidates.every(c=>c.images.every(i=>i.relationship!=='listing_photo')),'seller titles never attach photos to a printing');
@@ -75,7 +81,7 @@ test('official sports metadata bypasses alternate acquisition and searches every
  const metadata=createManufacturerChecklistVariantProvider({catalog:{schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[{manufacturer:'Panini',year:'2024',setName:'Donruss Optic',sport:'football',aliases:[],url:'https://www.paniniamerica.net/checklist.html',sha256:sha('synthetic source')}],rows:labels.map(label=>[0,label,'229','Drake Maye','New England Patriots'])}});
  const provider=createVariantListingProvider({fetchImpl:noNetwork,now,cache:{get:noNetwork,getRetained:noNetwork,put:noNetwork}}),journal=new Map();
  const service=createVariantCatalogService({providers:[metadata],listingProvider:provider,now,catalogClient:{findCurrentSetCatalogPublications:noNetwork,prepareSetDemand:noNetwork}});
- const executeListingSource=async request=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});const source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};};
+ const executeListingSource=async(request,_dispatch,{retainedOnly=false}={})=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};if(retainedOnly)return {state:'MISSING'};const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});const source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};};
  const first=await service.prepare({identity:target},{executeListingSource}),second=await service.prepare({identity:target},{executeListingSource});
  assert.equal(journal.size,9);assert.equal(first.candidates.length,9);assert.deepEqual(first,second);assert(first.candidates.every(c=>c.images.length===0&&c.source.provider==='manufacturer_checklist'));
 });

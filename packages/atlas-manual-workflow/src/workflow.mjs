@@ -2,7 +2,7 @@ import { canonical, digest, object, requireThat, ManualServiceError } from '@atl
 import { createManualService } from '@atlas/manual-service';
 import { applyGeometryEdit, markPrintedBorderAbsent, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, updateGeometrySettings, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
 import { beginDefectEdit, applyDefectMeasurement, confirmDefectFindings, createDefectWorkspace, defectBase,
-  markDefectSideInspected, markDefectFindingReviewed, invalidateDefectFindingReviews, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
+  markDefectSideInspected, markDefectFindingReviewed, invalidateDefectFindingReviews, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, isDefectObservationResolved, DefectActionError } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement-runtime';
 import { canonicalizeNewSpeedsterSessionIdentity, SpeedsterIdentityValidationError } from '@atlas/grading-core/identity';
 
@@ -91,6 +91,15 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       defects: defects ? await store(defects, cardId, 'DEFECTS') : null, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, identity), identityRevision: 1 };
     return repository.provision(staff, { cardId, draft });
   }
+  function finalObservationProposal(finalReview, defects, assistance, binding, side) {
+    object(binding, ['reportHash', 'proposalId']);
+    requireThat(finalReview && binding.reportHash === finalReview.reportHash, 409, 'MANUAL_FINAL_REVIEW_REQUIRED');
+    const proposal = finalReview.report.unmeasurableProposals?.find(value => value.id === binding.proposalId);
+    requireThat(proposal && proposal.side === side, 409, 'MANUAL_PROPOSAL_STALE');
+    const previous = assistance?.reviews.find(review => review.analysisId === finalReview.report.analysisId && review.proposalId === proposal.id);
+    requireThat(!isDefectObservationResolved(defects, previous), 409, 'MANUAL_PROPOSAL_ALREADY_REVIEWED');
+    return proposal;
+  }
   async function reduce({ card, action, principal, startedAt }, staff) {
     let { geometry, defects, assistance, finalReview } = await hydrate(card);
     let draft = card.draft;
@@ -105,15 +114,17 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       requireThat(finalReview && action.reviewed === true && action.reportHash === finalReview.reportHash
         && principal.actorKind !== 'MACHINE', 409, 'MANUAL_FINAL_REVIEW_REQUIRED');
       const proposal = finalReview.report.unmeasurableProposals?.find(value => value.id === action.proposalId);
-      requireThat(proposal && proposal.reason === 'NO_IN_CARD_RASTER_PIXELS', 409, 'MANUAL_PROPOSAL_STALE');
+      requireThat(proposal && ['NO_IN_CARD_RASTER_PIXELS', 'OUTSIDE_CARD_FRAME'].includes(proposal.reason), 409, 'MANUAL_PROPOSAL_STALE');
       requireThat(!(assistance?.reviews ?? []).some(review => review.analysisId === finalReview.report.analysisId
-        && review.proposalId === proposal.id), 409, 'MANUAL_PROPOSAL_ALREADY_REVIEWED');
+        && review.proposalId === proposal.id && isDefectObservationResolved(defects, review)), 409, 'MANUAL_PROPOSAL_ALREADY_REVIEWED');
       // The human rejects an explicitly retained original observation. This
       // never reuses its old polygon as pixels on a changed inspection frame.
-      assistance = { version: 'atlas-defect-assistance-v1', reviews: [...(assistance?.reviews ?? []), {
+      assistance = { version: 'atlas-defect-assistance-v1', reviews: [...(assistance?.reviews ?? []).filter(review =>
+        review.analysisId !== finalReview.report.analysisId || review.proposalId !== proposal.id), {
         analysisId: finalReview.report.analysisId, proposalId: proposal.id, side: proposal.side, action: 'REJECT', findingId: null,
         base: finalReview.originalBases[proposal.side], proposal: finalReview.proposals.find(value => value.id === proposal.id),
-        reviewerId: principal.id, reviewedAt: new Date().toISOString(), noMeasurablePixels: true,
+        reviewerId: principal.id, reviewedAt: new Date().toISOString(),
+        ...(proposal.reason === 'NO_IN_CARD_RASTER_PIXELS' ? { noMeasurablePixels: true } : { measurementHold: proposal.reason }),
       }] };
       defects = invalidateDefectConfirmation(defects);
       draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
@@ -237,10 +248,21 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       } else if (action.type === 'DEFECT_EDIT' || action.type === 'TRACE_SAVE') {
         let edit;
         if (action.type === 'TRACE_SAVE') {
-          object(action, ['type', 'side', 'base', 'findingId', 'traceRef', 'traceSourceHash']);
+          object(action, ['type', 'side', 'base', 'findingId', 'traceRef', 'traceSourceHash', ...(Object.hasOwn(action, 'finalObservation') ? ['finalObservation'] : [])]);
           requireThat(action.traceSourceHash === digest(canonical(action.base)), 409, 'MANUAL_TRACE_STALE');
           const trace = await artifacts.read(action.traceRef, { cardId: card.cardId, kind: 'EDIT', sourceHash: action.traceSourceHash });
           edit = { type: 'TRACE_SAVE', side: action.side, findingId: action.findingId, trace };
+          if (Object.hasOwn(action, 'finalObservation')) {
+            requireThat(action.findingId === null, 409, 'MANUAL_PROPOSAL_STALE');
+            const proposal = finalObservationProposal(finalReview, defects, assistance, action.finalObservation, action.side);
+            assistance = { version: 'atlas-defect-assistance-v1', reviews: [
+              ...(assistance?.reviews ?? []).filter(review => review.analysisId !== finalReview.report.analysisId || review.proposalId !== proposal.id),
+              { analysisId: finalReview.report.analysisId, proposalId: proposal.id, side: action.side, action: 'TRACE_SAVE',
+                findingId: trace.id, base: action.base, proposal: finalReview.proposals.find(value => value.id === proposal.id),
+                reviewerId: principal.id, reviewedAt: new Date().toISOString() },
+            ] };
+            draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
+          }
         } else { object(action, ['type', 'side', 'base', 'edit']); edit = action.edit; }
         defects = beginDefectEdit(defects, { side: action.side, base: action.base, actor: 'HUMAN', action: edit }).state;
       } else if (action.type === 'MEASURE_SIDE') {
@@ -358,16 +380,21 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       return { ...action, traceRef, traceSourceHash };
     }),
     stageTrace: domain(async (staff, cardId, request) => {
-      object(request, ['side', 'base', 'findingId', 'trace']);
-      const { card } = await service.authorizeEdit(staff, cardId), { geometry, defects, finalReview } = await hydrate(card);
+      object(request, ['side', 'base', 'findingId', 'trace', ...(Object.hasOwn(request, 'finalObservation') ? ['finalObservation'] : [])]);
+      const { card } = await service.authorizeEdit(staff, cardId), { geometry, defects, assistance, finalReview } = await hydrate(card);
       requireThat(geometryStatus(geometry).confirmed || finalReview && preparedForReview(geometry), 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
+      if (Object.hasOwn(request, 'finalObservation')) {
+        requireThat(request.findingId === null, 409, 'MANUAL_PROPOSAL_STALE');
+        finalObservationProposal(finalReview, defects, assistance, request.finalObservation, request.side);
+      }
       // Parse the exact unchanged wire before storing any user trace. Client
       // actor labels never enter the public envelope or the server authority.
       beginDefectEdit(defects, { side: request.side, base: request.base, actor: 'HUMAN',
         action: { type: 'TRACE_SAVE', side: request.side, findingId: request.findingId, trace: request.trace } });
       const traceSourceHash = digest(canonical(request.base));
       const traceRef = await artifacts.write(request.trace, { cardId, kind: 'EDIT', sourceHash: traceSourceHash });
-      return { type: 'TRACE_SAVE', side: request.side, base: request.base, findingId: request.findingId, traceRef, traceSourceHash };
+      return { type: 'TRACE_SAVE', side: request.side, base: request.base, findingId: request.findingId, traceRef, traceSourceHash,
+        ...(request.finalObservation ? { finalObservation: request.finalObservation } : {}) };
     }),
   });
 }

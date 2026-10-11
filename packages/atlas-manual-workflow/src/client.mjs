@@ -60,8 +60,15 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
       onStatus('Checking pending save…');
       try { return await reconcile(command); }
       catch (error) {
-        if ([400, 401, 403, 404, 409, 413, 422].includes(error.status)) { clearPending(command); await load().catch(() => {}); }
-        onStatus('Pending save needs review'); throw error;
+        if ([400, 401, 403, 404, 409, 413, 422].includes(error.status)) {
+          clearPending(command);
+          // A refused old command is settled. Resume the authoritative card
+          // instead of turning a stale browser journal into an extra review gate.
+          // A denied/missing card or failed view read must still surface.
+          const current = await load();
+          if (![401, 403, 404].includes(error.status)) { onStatus('Saved'); return current; }
+        }
+        onStatus('Last edit not confirmed — check its saved status'); throw error;
       }
     }),
     execute: action => exclusive(async () => {
@@ -74,7 +81,7 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
       if (!view) await load();
       const expectedRevision = view.card.revision;
       const action = input.action.type === 'TRACE_SAVE'
-        ? await request(`${path}/trace`, { side: input.side, base: input.base, findingId: input.action.findingId, trace: input.action.trace })
+        ? await request(`${path}/trace`, { side: input.side, base: input.base, findingId: input.action.findingId, trace: input.action.trace, ...(input.finalObservation ? { finalObservation: input.finalObservation } : {}) })
         : { type: 'DEFECT_EDIT', side: input.side, base: input.base, edit: input.action };
       return send({ actionId: crypto.randomUUID(), expectedRevision, action });
     }),

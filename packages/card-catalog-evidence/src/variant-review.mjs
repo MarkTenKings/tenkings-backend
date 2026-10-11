@@ -3,7 +3,7 @@ import { canonicalJson, CatalogContractError } from './index.mjs';
 
 export const VARIANT_REVIEW_VERSION = 'atlas-variant-catalog/v1';
 export const VARIANT_CATALOG_REVISION = 'variant-catalog-2026-10-09-v1';
-export const VARIANT_REVIEW_LIMITS = Object.freeze({ candidates: 48, imagesPerCandidate: 4, referencePhotos: 96, diagnostics: 16, bytes: 768 * 1024 });
+export const VARIANT_REVIEW_LIMITS = Object.freeze({ candidates: 48, imagesPerCandidate: 4, diagnostics: 16, bytes: 768 * 1024 });
 export const VARIANT_WARNING_CODES = Object.freeze(['LANGUAGE_UNCONFIRMED', 'DENOMINATOR_UNVERIFIED', 'FINISH_UNVERIFIED',
   'SET_NAME_REQUIRES_REVIEW', 'REFERENCE_IMAGE_MISSING', 'CARD_ART_ONLY', 'APPLICABILITY_UNCONFIRMED', 'SCOPE_UNCONFIRMED',
   'LISTING_CLAIMS_UNREVIEWED', 'REFERENCE_USAGE_NOT_REVIEWED']);
@@ -197,6 +197,17 @@ export function validateVariantCandidate(input) {
 }
 
 /** A retained listing photograph awaiting label reading; it names no printing. */
+/** Listing metadata is context, never an admission test for a retained photo.
+ * The original provider response retains absent, conflicting or longer fields. */
+export function validVariantReferenceListing(listing) {
+  if (!keys(listing, ['id', 'title', 'url']) || !nullable(listing.id, 200) || !nullable(listing.title, 2000)) return false;
+  if (listing.url === null) return true;
+  try {
+    const link = new URL(listing.url);
+    return url(listing.url) && !link.port && (link.hostname === 'ebay.com' || link.hostname.endsWith('.ebay.com'))
+      && link.pathname.startsWith('/itm/');
+  } catch { return false; }
+}
 export function validateVariantReferencePhoto(input) {
   const i = clone(input);
   fail(keys(i, ['imageId', 'relationship', 'url', 'sha256', 'mimeType', 'width', 'height', 'publication', 'provenance',
@@ -209,8 +220,7 @@ export function validateVariantReferencePhoto(input) {
     && ['image/jpeg', 'image/png', 'image/webp'].includes(i.mimeType)
     && Number.isSafeInteger(i.width) && i.width > 0 && i.width <= 8000
     && Number.isSafeInteger(i.height) && i.height > 0 && i.height <= 8000 && i.width * i.height <= 16000000
-    && keys(i.listing, ['id', 'title', 'url']) && /^\d{6,20}$/.test(i.listing.id)
-    && text(i.listing.title, 500) && i.listing.url === `https://www.ebay.com/itm/${i.listing.id}`
+    && validVariantReferenceListing(i.listing)
     && i.imageId === `listing-image:${digest({ listing: i.listing, sha256: i.sha256, sourceResponseSha256: i.sourceResponseSha256 })}`,
   'referencePhoto.binding');
   let source; try { source = new URL(i.provenance.sourceUrl); } catch {}
@@ -258,7 +268,7 @@ export function validateVariantReviewSnapshot(input) {
   fail(list(s.candidates, VARIANT_REVIEW_LIMITS.candidates) && unique(s.candidates.map(c => c.candidateId)), 'snapshot.candidates');
   s.candidates.forEach(validateVariantCandidate);
   if (Object.hasOwn(s, 'referencePhotos')) {
-    fail(list(s.referencePhotos, VARIANT_REVIEW_LIMITS.referencePhotos) && unique(s.referencePhotos.map(i => i.imageId))
+    fail(Array.isArray(s.referencePhotos) && unique(s.referencePhotos.map(i => i.imageId))
       && unique(s.referencePhotos.map(i => i.sha256)), 'snapshot.referencePhotos');
     s.referencePhotos.forEach(validateVariantReferencePhoto);
   }

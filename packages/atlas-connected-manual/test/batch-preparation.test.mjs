@@ -203,7 +203,7 @@ test('REPORT persists measured partial report and enters final review when print
   assert.equal(writes[0].binding.kind, 'BATCH_REPORT');
 });
 
-for (const status of ['READY', 'RUNNING', 'UNKNOWN', 'PREPARED', 'NOT_FOUND']) test(`machine analysis reconciles exact saved ${status} state before dispatch`, async () => {
+for (const status of ['READY', 'RUNNING', 'UNKNOWN', 'REFUSED', 'PREPARED', 'NOT_FOUND']) test(`machine analysis reconciles exact saved ${status} state before dispatch`, async () => {
   const f = fixture(), uploads = { FRONT: 'front', BACK: 'back' }, calls = [];
   const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage: 'ANALYZE',
     analysisActionId: 'same-analysis-action', evidence: { manualRevision: f.card.revision, manualContentHash: f.card.contentHash } };
@@ -211,14 +211,15 @@ for (const status of ['READY', 'RUNNING', 'UNKNOWN', 'PREPARED', 'NOT_FOUND']) t
     sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) } };
   const connected = { open: async () => opened, workflow: { service: { read: async () => f.card }, hydrate: async () => f.state },
     assistance: {
-      async status(_actor, cardId, actionId) { calls.push(['status', cardId, actionId]); return { state: status, astra: { status, analysisId: actionId } }; },
+      async status(_actor, cardId, actionId) { calls.push(['status', cardId, actionId]); return { state: status, astra: { status, analysisId: actionId, ...(status === 'REFUSED' ? {code:'DEFECT_ANALYSIS_OUTSIDE_CARD',httpStatus:200}: {}) } }; },
       async analyzeMachine(_actor, cardId, input) { calls.push(['analyze', cardId, input.actionId]); return { state: 'DISPATCHED', astra: { status: 'RUNNING' } }; },
     } };
   const result = await createBatchPreparation({ connected }).run({}, job);
   assert.deepEqual(calls[0], ['status', job.cardId, job.analysisActionId]);
   assert.equal(calls.length, ['PREPARED', 'NOT_FOUND'].includes(status) ? 2 : 1);
-  assert.equal(result.kind, status === 'READY' ? 'CONTINUE' : status === 'UNKNOWN' ? 'ATTENTION' : 'WAIT');
+  assert.equal(result.kind, status === 'READY' ? 'CONTINUE' : ['UNKNOWN', 'REFUSED'].includes(status) ? 'ATTENTION' : 'WAIT');
   if (status === 'READY') assert.equal(result.evidence.analysisId, job.analysisActionId);
+  if(status === 'REFUSED'){assert.equal(result.code,'DEFECT_ANALYSIS_OUTSIDE_CARD');assert.deepEqual(result.evidence,{analysisStatus:'REFUSED',analysisHttpStatus:200});}
 });
 
 for (const stage of ['PREPARE', 'ANALYZE']) test(`shutdown during real ${stage} preparation reads prevents provider admission and retains the same stage`, async () => {
@@ -249,4 +250,14 @@ for (const stage of ['PREPARE', 'ANALYZE']) test(`shutdown during real ${stage} 
     assert.equal(finished[0].value.stage, stage); assert.equal(finished[0].outcome.kind, 'WAIT');
     assert.equal(worker.status().active, 0);
   } finally { release(); await worker.stop(); }
+});
+
+test('off-frame observations keep their exact contour without measuring or discarding valid peers', async () => {
+  const f=fixture(), original=f.analysis.proposals[0];
+  const outside={...original,id:'outside-frame',measurementHold:'OUTSIDE_CARD_FRAME',canonicalContour:[{x:.2,y:1.01},{x:.3,y:1.01},{x:.3,y:1.02}]};
+  const crossing={...original,id:'crossing-frame',measurementHold:'OUTSIDE_CARD_FRAME',canonicalContour:[{x:.2,y:.99},{x:.3,y:.99},{x:.3,y:1.01}]};
+  f.analysis.proposals.push(outside,crossing);
+  const report=await buildMachineReport(f);
+  assert.equal(report.findings.length,2);assert.equal(report.measurementReceipts.length,2);
+  assert.deepEqual(report.unmeasurableProposals,[outside,crossing].map(p=>({...p,reason:'OUTSIDE_CARD_FRAME'})));
 });

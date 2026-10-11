@@ -7,14 +7,14 @@ import { marketJobStatus, marketJobGrantSQL, createMarketJobStore } from '../src
 import { publishedMarketQuery } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
-async function setup({ providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1, now, reclassify=false, failSource=false, loseLocalReceipt=false, legacyResponse=false, labelMarket=null, queryContextResolver=null } = {}) {
+async function setup({ providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1, now, reclassify=false, failSource=false, loseLocalReceipt=false, legacyResponse=false, labelMarket=async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}}), queryContextResolver=null } = {}) {
   const fixture = await publicationFixture(); await fixture.publication.publish({}, fixture.cardId, fixture.actionId);
   const manifest = JSON.parse(fixture.row.manifest);
   const packet = await fixture.artifacts.read(manifest.packet.ref, { cardId: fixture.cardId, kind: 'PUBLIC_REPORT', sourceHash: manifest.packet.sourceHash });
   const source = { packet, publicHash: fixture.row.public_hash, row: fixture.row }, context = publishedMarketQuery(source);
   let calls = 0, writes = 0, maxActive = 0, active = 0, publicationCalls = 0,localWrites=0,sourceReads=0;
   const priorInput = { ...context.input }; delete priorInput.queryOverride;
-  const original={source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:legacyResponse ? buildEbaySoldCompsV2Query(priorInput) : context.query,retrievedAt:new Date().toISOString(),offset:0,nextOffset:0,requestedResultCount:60,hasMore:false,candidates:[]};
+  const original={source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:legacyResponse ? buildEbaySoldCompsV2Query(priorInput) : context.query,retrievedAt:new Date().toISOString(),offset:0,nextOffset:0,requestedResultCount:legacyResponse||reclassify?60:240,hasMore:false,...(legacyResponse||reclassify?{candidates:[]}:{responsePolicy:'ATLAS_SLAB_V1',items:[],acquisitionDiagnostics:{returnedItemCount:0,retainedItemCount:0,missingImageCount:0}})};
   const marker={event:'RECLASSIFY',version:'atlas-market-reclassification-v1',sourceRequestId:randomUUID(),responseHash:'c'.repeat(64),originalDispatchId:randomUUID(),classificationRevision:EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,sourceHash:fixture.row.source_hash,reportHash:fixture.row.report_hash,publicHash:fixture.row.public_hash};
   const rows = Array.from({ length: jobs }, () => ({ request_id: randomUUID(), card_id: fixture.cardId, approval_action_id: fixture.actionId,
     state: 'QUEUED', created_at: new Date().toISOString(), attempts: 0, response: null, source_hash: fixture.row.source_hash, report_hash: fixture.row.report_hash,
@@ -57,11 +57,11 @@ test('READY source reclassification saves a distinct local response/preview with
 test('local replay retries storage or lost local-response acknowledgements without provider fallback',async()=>{
   for(const options of [{failArtifact:true},{loseLocalReceipt:true}]){const f=await setup({reclassify:true,...options});await f.worker.drainOnce();assert.equal(f.rows[0].state,'QUEUED');await f.worker.drainOnce();assert.equal(f.rows[0].state,'READY');assert.equal(f.calls(),0);assert.equal(f.localWrites(),1);assert.equal(f.sourceReads(),1);}
 });
-test('replay source unavailable, invalid marker, revision drift and expired source cannot purchase a search',async()=>{
+test('replay source unavailable, invalid marker, revision drift cannot purchase a search and old retained source remains usable',async()=>{
   const absent=await setup({reclassify:true,failSource:true});await absent.worker.drainOnce();await absent.worker.drainOnce();assert.equal(absent.calls(),0);assert.equal(absent.rows[0].state,'QUEUED');assert.equal(absent.rows[0].response,null);
   absent.rows[0].state='FAILED';assert.equal(marketJobStatus(absent.rows[0]).refreshAction,'RETRY_SAVED_RESPONSE');
   for(const change of [row=>row.audit[0].classificationRevision='old-policy',row=>row.audit.push({...row.audit[0]})]){const f=await setup({reclassify:true});change(f.rows[0]);await f.worker.drainOnce();assert.equal(f.calls(),0);assert.equal(f.localWrites(),0);}
-  const expired=await setup({reclassify:true,now:()=>new Date(Date.now()+48*3600000)});await expired.worker.drainOnce();assert.equal(expired.rows[0].state,'FAILED');assert.equal(expired.rows[0].code,'MARKET_PREVIEW_EXPIRED');assert.equal(expired.calls(),0);assert.equal(marketJobStatus(expired.rows[0]).refreshAction,'SEARCH_AGAIN');
+  const aged=await setup({reclassify:true,now:()=>new Date(Date.now()+48*3600000)});await aged.worker.drainOnce();assert.equal(aged.rows[0].state,'READY');assert.equal(aged.calls(),0);
 });
 test('artifact failure resumes from durable provider response without another search', async () => {
   const f = await setup({ failArtifact: true });
@@ -94,13 +94,13 @@ test('only typed explicit refusals permit retries; status hides all private job/
 });
 
 
-test('retained response expiry conclusively stops local retries and offers only explicit new search', async () => {
+test('retained response recovery survives elapsed days without a new search', async () => {
   let elapsed=0;const f=await setup({failArtifact:true,now:()=>new Date(Date.now()+elapsed)});
   await f.worker.drainOnce();assert.equal(f.rows[0].state,'QUEUED');const response=structuredClone(f.rows[0].response);
   elapsed=48*60*60*1000;await f.worker.drainOnce();await f.worker.drainOnce();
-  assert.equal(f.rows[0].state,'FAILED');assert.equal(f.rows[0].code,'MARKET_PREVIEW_EXPIRED');
-  assert.equal(f.calls(),1);assert.equal(f.writes(),1);assert.deepEqual(f.rows[0].response,response);
-  const status=marketJobStatus(f.rows[0]);assert.equal(status.refreshable,true);assert.equal(status.refreshAction,'SEARCH_AGAIN');
+  assert.equal(f.rows[0].state,'READY');
+  assert.equal(f.calls(),1);assert.equal(f.writes(),2);assert.deepEqual(f.rows[0].response,response);
+  const previousFailure={...f.rows[0],state:'FAILED',code:'MARKET_PREVIEW_EXPIRED'};assert.equal(marketJobStatus(previousFailure).refreshAction,'RETRY_SAVED_RESPONSE');
 });
 
 
@@ -162,4 +162,19 @@ test('new raw-pool receipt retains long fields and more than512KiB while histori
   const legacy = { source: 'EBAY_SOLD', candidates: [] };
   await store.recordResponse(job, legacy); assert.equal(saved, JSON.stringify({ candidates: [], source: 'EBAY_SOLD' }));
   assert.throws(() => store.recordResponse(job, { responsePolicy: 'ATLAS_SLAB_V1', bad: undefined }), { code: 'MARKET_RESPONSE_INVALID' });
+});
+
+test('label processing failures stay FAILED with their real reason and retained-response recovery action', async () => {
+  for (const code of ['MARKET_LABEL_OUTCOME_UNKNOWN','MARKET_LABEL_RESPONSE_REJECTED','MARKET_LABEL_RESPONSE_INVALID','MARKET_LABEL_RESPONSE_INCOMPLETE','MARKET_LABEL_READING_INVALID','MARKET_PHOTO_UNAVAILABLE']) {
+    const f = await setup({ labelMarket: async () => { throw Object.assign(new Error(code), { code }); } });
+    await f.worker.drainOnce(); await f.worker.drainOnce();
+    assert.equal(f.rows[0].state, 'FAILED'); assert.equal(f.rows[0].code, code); assert(f.rows[0].response);
+    assert.equal(f.calls(), 1); assert.equal(f.writes(), 0);
+    assert.equal(marketJobStatus(f.rows[0]).refreshAction, 'RETRY_SAVED_RESPONSE');
+  }
+});
+test('fresh provider cannot execute the historical title-only path while its exact response remains retained', async () => {
+  const f = await setup({ legacyResponse: true }); await f.worker.drainOnce(); await f.worker.drainOnce();
+  assert.equal(f.rows[0].state, 'FAILED'); assert.equal(f.rows[0].code, 'MARKET_PROVIDER_POLICY_INVALID');
+  assert.equal(f.calls(), 1); assert.equal(f.writes(), 0); assert.deepEqual(f.rows[0].response, f.original);
 });

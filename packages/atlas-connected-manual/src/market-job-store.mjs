@@ -53,7 +53,7 @@ export function marketJobStatus(row) {
   return { state, previewId: row.request_id, approvalActionId: row.approval_action_id,
     updatedAt: new Date(row.updated_at ?? row.created_at).toISOString(), ...(row.code ? { reason: row.code } : {}),
     refreshable: !['QUEUED','SEARCHING','UNKNOWN'].includes(state),
-    ...(state === 'FAILED' && (row.response||local) ? { refreshAction: row.code === 'MARKET_PREVIEW_EXPIRED' ? 'SEARCH_AGAIN' : 'RETRY_SAVED_RESPONSE' } : {}) };
+    ...(state === 'FAILED' && (row.response||local) ? { refreshAction: 'RETRY_SAVED_RESPONSE' } : {}) };
 }
 
 /** Runs in the existing human-approval transaction, after publication intent.
@@ -119,7 +119,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
   async function reclassificationPlan(tx,mode,sourceRequestIds) {
     requireThat(Array.isArray(sourceRequestIds)&&sourceRequestIds.length>0&&new Set(sourceRequestIds).size===sourceRequestIds.length);sourceRequestIds.forEach(uuid);
     const rows=await tx.$queryRawUnsafe(`SELECT j.request_id,j.card_id,j.approval_action_id,j.actor_id,j.access_version,j.source_hash,j.report_hash,j.public_hash,j.response_hash,j.dispatch_id,j.state,
-      (${live}) current,
+      j.response::jsonb->>'responsePolicy' response_policy, (${live}) current,
       (SELECT COALESCE(MAX(revision),0)::int FROM atlas_manual.presentation s WHERE s.card_id=j.card_id AND s.approval_action_id=j.approval_action_id) revision,
       (SELECT m.request_id FROM atlas_manual.presentation_market m WHERE m.card_id=j.card_id AND m.approval_action_id=j.approval_action_id ORDER BY m.created_at DESC,m.request_id DESC LIMIT 1) latest
       FROM ${table} j WHERE j.request_id=ANY($1::uuid[]) AND j.mode=$2 ORDER BY j.request_id`,sourceRequestIds,mode);
@@ -132,7 +132,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       const [busy]=await tx.$queryRawUnsafe(`SELECT request_id FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid AND request_id<>$3::uuid AND state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN') LIMIT 1`,row.card_id,row.approval_action_id,requestId);
       entries.push({sourceRequestId:sourceId,requestId,cardId:row.card_id,approvalActionId:row.approval_action_id,actorId:row.actor_id,accessVersion:row.access_version,
         sourceHash:row.source_hash,reportHash:row.report_hash,publicHash:row.public_hash,responseHash:row.response_hash,originalDispatchId:row.dispatch_id,expectedRevision:row.revision,
-        disposition:existing?'RETAIN_RECLASSIFICATION':row.state!=='READY'||!row.response_hash||!row.dispatch_id?'SOURCE_UNAVAILABLE':!row.current||row.latest!==sourceId?'SOURCE_STALE':busy?'SEARCH_IN_PROGRESS':'RECLASSIFY_READY'});
+        disposition:existing?'RETAIN_RECLASSIFICATION':row.state!=='READY'||!row.response_hash||!row.dispatch_id?'SOURCE_UNAVAILABLE':row.response_policy==='ATLAS_SLAB_V1'?'SOURCE_POLICY_NOT_LEGACY':!row.current||row.latest!==sourceId?'SOURCE_STALE':busy?'SEARCH_IN_PROGRESS':'RECLASSIFY_READY'});
     }
     const plan={version:'atlas-market-reclassification-plan-v1',mode,classificationRevision:EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,sourceRequestIds:[...sourceRequestIds].sort(),entries};
     return {...plan,planHash:digest(canonical(plan,{maxBytes:1048576}))};
@@ -202,12 +202,12 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         const [recoverable]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid
           ORDER BY created_at DESC,request_id DESC LIMIT 1`,cardId,input.approvalActionId);
         const local=marketReclassification(recoverable);
-        if(recoverable?.state==='FAILED'&&recoverable.response&&recoverable.code!=='MARKET_PREVIEW_EXPIRED'){
+        if(recoverable?.state==='FAILED'&&recoverable.response){
           return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET state='QUEUED',attempts=0,recoveries=recoveries+1,code='MARKET_RESPONSE_RECOVERED',
             available_at=clock_timestamp(),updated_at=clock_timestamp(),audit=audit||jsonb_build_array(jsonb_build_object('event','RECOVERY','requestId',$2::text,'requestHash',$3::text,'actorId',$4::text,'at',clock_timestamp()))
             WHERE request_id=$1::uuid RETURNING *`,recoverable.request_id,input.requestId,digest(canonical(input)),principal.id))[0]);
         }
-        if(recoverable?.state==='FAILED'&&local&&recoverable.code!=='MARKET_PREVIEW_EXPIRED')return insertReclassification(tx,{cardId,actionId:publication.action_id,requestId:input.requestId,actorId:principal.id,accessVersion:principal.accessVersion,mode:principal.mode,expectedRevision:input.expectedRevision},local);
+        if(recoverable?.state==='FAILED'&&local)return insertReclassification(tx,{cardId,actionId:publication.action_id,requestId:input.requestId,actorId:principal.id,accessVersion:principal.accessVersion,mode:principal.mode,expectedRevision:input.expectedRevision},local);
         return insert(tx, { cardId, actionId: publication.action_id, requestId: input.requestId, actorId: principal.id,
           accessVersion: principal.accessVersion, mode: principal.mode, expectedRevision: input.expectedRevision, origin: 'REFRESH' });
       });

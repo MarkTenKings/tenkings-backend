@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { createVariantCatalogService } from '../src/variant-catalog.mjs';
+import { codexChoices, codexLibraryKey, codexReadingKey, projectCodexReading, variantCodexChoice } from '../src/variant-codex.mjs';
+import { VARIANT_LABEL_POLICY, VARIANT_PHOTO_MODEL } from '../src/variant-photo-provider.mjs';
+import { labelCatalog } from './variant-label-fixture.mjs';
+import { variantIdentity } from './variant-fixture.mjs';
 import { prepareVariantListingRequest as prepare, projectVariantListingSource as project,
-  createVariantListingProvider as provider, composeVariantListingCandidates as compose, VARIANT_LISTING_LIMITS as limits } from '../src/variant-listing-provider.mjs';
+  createVariantListingProvider as provider, composeVariantListingCandidates as compose, prepareRetainedVariantListingRequest, VARIANT_LISTING_LIMITS as limits } from '../src/variant-listing-provider.mjs';
 import { importScrydexVariantCandidates, validateVariantCandidate, createVariantReviewSnapshot,
   canonicalJson, isVariantPhotoComparable, scrydexVariantSearchUrl, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
 
@@ -37,6 +41,54 @@ const scrydexChoices = () => importScrydexVariantCandidates({ identity, card: { 
   images: [{ type: 'front', large: 'https://images.scrydex.com/pokemon/xy12-51/large' }],
   variants: ['normal', 'holofoil', 'reverseHolofoil', 'cosmosHolofoil', 'snowflakeStamp'].map(name => ({ name, images: [] })) },
   source: { url: scrydexVariantSearchUrl(identity), sha256: sha('scrydex'), capturedAt } });
+
+test('historical bootstrap reads only saved bytes and settled labels before a new printing, without fetching or expanding OCR', async () => {
+  const cache = cacheFixture(), original = labelCatalog({ photos: 0 }), choice = variantCodexChoice(original.candidates[0]);
+  const request = prepareRetainedVariantListingRequest(variantIdentity, { name: 'Base', language: null });
+  const saved = source(request, [1, 2, 3, 4].map(n => item(n))), bytes = await png();
+  let imageFetches = 0, decodes = 0;
+  const initial = provider({ cache, now, fetchImpl: async url => {
+    imageFetches++; return new Response(Buffer.concat([bytes, Buffer.from(url)]), { headers: { 'content-type': 'image/png' } });
+  } });
+  const acquired = await initial.acquireImages({ request, source: saved }, { imageLimit: 3 });
+  assert.equal(imageFetches, 3);
+  const [matched, unmatched, unread] = acquired.referencePhotos;
+  const reading = (image, candidateKey, labelText) => ({ schemaVersion: 'atlas-codex-reading/v1', policy: VARIANT_LABEL_POLICY,
+    choices: codexChoices(original), reading: { sha256: image.sha256, candidateKey, gradingCompany: 'CGC', labelText, reason: 'Saved literal reading' } });
+  const matchedReading = reading(matched, choice.key, 'Known Base');
+  const unmatchedReading = reading(unmatched, null, '2020 POKEMON REBEL CLASH\nMAGIKARP\n#039/192\nCostco Exclusive');
+  for (const record of [matchedReading, unmatchedReading]) cache.entries.set(codexReadingKey({ policy: VARIANT_LABEL_POLICY, model: VARIANT_PHOTO_MODEL }, record.reading.sha256), record);
+  cache.entries.set(codexLibraryKey(choice), { schemaVersion: 'atlas-codex-library/v1', policy: VARIANT_LABEL_POLICY, choice,
+    references: [{ image: matched, reading: matchedReading.reading, responseHash: sha('saved response'), requestKey: 'saved' }] });
+  const expanded = labelCatalog({ count: 2, photos: 0, candidateTransform: (candidate, index) => {
+    if (index) { candidate.label = candidate.parallel = 'Costco Exclusive'; candidate.canonical.printingId = `setops-printing:v1:${'0'.repeat(64)}`; }
+  } });
+  assert.equal(expanded.candidates[0].label, 'Costco Exclusive');
+  const writesBefore = cache.puts, lookups = [];
+  const restored = provider({ cache, now, fetchImpl: () => { imageFetches++; return noNetwork(); }, inspectImage: () => { decodes++; return noNetwork(); } });
+  const service = createVariantCatalogService({ cache, now, providers: [{ prepare: async () => ({ candidates: expanded.candidates, problems: [], truncated: false }) }], listingProvider: restored });
+  const snapshot = await service.prepare({ identity: variantIdentity }, { executeListingSource: async (current, _dispatch, { retainedOnly = false } = {}) => {
+    assert(retainedOnly, 'All ordinary acquisitions must be avoided'); lookups.push(current.printing.name);
+    return current.printing.name === 'base' ? { state: 'REUSED', request, source: saved } : { state: 'MISSING' };
+  } });
+  assert.deepEqual(lookups, ['costco exclusive', 'base']);
+  assert.equal(imageFetches, 3, 'The fourth old raw URL is not fetched'); assert.equal(decodes, 0); assert.equal(cache.puts, writesBefore);
+  assert.deepEqual(snapshot.referencePhotos.map(photo => photo.sha256).sort(), [matched.sha256, unmatched.sha256].sort());
+  assert(!snapshot.referencePhotos.some(photo => photo.sha256 === unread.sha256), 'A saved but unread photo cannot enter the new OCR batch');
+  assert.equal(projectCodexReading(unmatchedReading.reading, snapshot, unmatchedReading.choices).candidateId, expanded.candidates[0].candidateId);
+  assert.equal(unmatchedReading.reading.candidateKey, null); assert(!snapshot.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
+});
+
+test('explicit refresh proceeds when a historical source probe fails, while preserving the partial problem', async () => {
+  const catalog = labelCatalog({ photos: 0 }), generation = '1c24bd7a-b4e6-4d79-97f0-b634d830a204', requests = [];
+  const service = createVariantCatalogService({ providers: [{ prepare: async () => ({ candidates: catalog.candidates, problems: [], truncated: false }) }],
+    listingProvider: { acquireImages: async (_input, { retainedOnly }) => { assert.equal(retainedOnly, false); return { referencePhotos: [] }; } } });
+  const snapshot = await service.prepare({ identity: variantIdentity, generation }, { executeListingSource: async (request, _dispatch, { retainedOnly = false } = {}) => {
+    if (retainedOnly) throw new Error('Corrupt historical journal'); requests.push(request);
+    return { state: 'SAVED', source: { sha256: sha('new response') } };
+  } });
+  assert.equal(requests.length, 1); assert.equal(requests[0].generation, generation); assert(snapshot.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
+});
 
 test('public identity request is deterministic, bounded, ungraded and preserves unknown language/finish', () => {
   const request = prepare(identity), url = new URL(request.url);
@@ -71,7 +123,7 @@ test('conflicting language, ambiguous editions/finishes and imitation claims are
 });
 
 test('one metadata GET retains exact public source bytes and no bearer; failure body is retained without retry', async () => {
-  const request = prepare(identity), expected = source(request, [item(1)]), calls = [];
+  const request = prepare(identity,null,{graded:true}), expected = source(request, [item(1)]), calls = [];
   const p = provider({ apiKey: 'test-secret-credential', now, fetchImpl: async (url, init) => {
     calls.push({ url, init }); return new Response(expected.bodyText, { status: 200, headers: { 'content-type': 'application/json' } });
   } });
@@ -146,7 +198,7 @@ test('source/request tampering, mismatched query, malformed envelope and unsafe 
     source(request, Array.from({ length: 61 }, (_, n) => item(n)))]) assert.throws(() => project(request, mutated), /VARIANT_LISTING/);
   assert.throws(() => project({ ...request, query: 'other' }, saved), /REQUEST_CHANGED/);
   const p = provider({ apiKey: 'secret-test-key', fetchImpl: async () => new Response('secret-test-key', { headers: { 'content-type': 'application/json' } }) });
-  await assert.rejects(p.fetchSource(request), /SOURCE_UNSAFE/);
+  await assert.rejects(p.fetchSource(prepare(identity,null,{graded:true})), /SOURCE_UNSAFE/);
 });
 
 test('observed 60-row provider overdelivery reuses the exact request and projects only the first40 with explicit truncation', () => {
@@ -204,7 +256,7 @@ test('retained serving survives TTL without credentials, network, writes or deco
   for (const mutated of [{ ...image, sha256: '0'.repeat(64) }, { ...image, sourceResponseSha256: '0'.repeat(64) },
     { ...image, width: 99 }, { ...image, listing: { ...image.listing, title: 'forged' } }, { ...image, relationship: 'exact' }])
     await assert.rejects(reader.readImage(mutated), /VARIANT_LISTING/);
-  await assert.rejects(reader.fetchSource(request), /CREDENTIAL_MISSING/);
+  await assert.rejects(reader.fetchSource(prepare(identity,null,{graded:true})), /CREDENTIAL_MISSING/);
   for (const [key, entry] of cache.entries) if (key.startsWith('variant-listing-image-evidence:')) entry.body = Buffer.from('changed').toString('base64');
   await assert.rejects(reader.readImage(image), /CACHE_INVALID/);
 });
@@ -242,12 +294,14 @@ test('image network budget is eight requests, including failed full-resolution a
   assert.equal(calls.length, 8); assert.equal(result.acquisition.requests, 8); assert.equal(result.acquisition.images, 0);
 });
 
-test('bounded source read cancels stalled body and never issues another paid request', async () => {
-  const request = prepare(identity); let calls = 0, cancelled = 0;
+test('worker cancellation ends stalled source body without another paid request', async () => {
+  const request = prepare(identity,null,{graded:true}); let calls = 0, cancelled = 0;
   const p = provider({ apiKey: 'test-secret-key', timeoutMs: 20, fetchImpl: async () => {
     calls++; return new Response(new ReadableStream({ cancel() { cancelled++; } }), { headers: { 'content-type': 'application/json' } });
   } });
-  await assert.rejects(p.fetchSource(request), /CANCELLED/); assert.equal(calls, 1); assert.equal(cancelled, 1);
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(new Error('worker cancelled')),20);
+  try { await assert.rejects(p.fetchSource(request,{signal:controller.signal})); } finally { clearTimeout(timer); }
+  assert.equal(calls, 1); assert.equal(cancelled, 1);
 });
 
 test('named requests share a durable public printing key and reject language conflicts or injected fields',()=>{
@@ -375,16 +429,17 @@ test('production-style 151 identity accepts a single matching reverse-holo title
 });
 
 
-test('graded search includes base, preserves old request keys, and retains title-incomplete slab photos for label reading',async()=>{
+test('graded search includes base and any company while retaining old paid request identities for reads',async()=>{
  const printing={name:'Normal',language:'en'},request=prepare(identity,printing,{graded:true});
- assert.match(request.query,/\(PSA,CGC,BGS,SGC\)/);assert.doesNotMatch(request.query,/normal/i);
+ assert.match(request.query,/graded$/);assert.doesNotMatch(request.query,/normal|PSA|CGC|BGS|SGC/i);assert.equal(new URL(request.url).searchParams.get('count'),'240');
+ const old=prepareRetainedVariantListingRequest(identity,printing);assert.match(old.query,/\(PSA,CGC,BGS,SGC\)/);assert.equal(new URL(old.url).searchParams.get('count'),'40');assert.notEqual(old.requestKey,request.requestKey);
  assert.notEqual(request.requestKey,prepare(identity,printing).requestKey);
  const saved=source(request,[item(1,'Mewtwo PSA 9'),item(2,'Mewtwo PSA 9 pick your card'),item(3,'Mewtwo PSA 9 lot of 2'),
   item(4,'Mewtwo PSA 9',{listingType:'active'})]);
- const projected=project(request,saved);assert.deepEqual(projected.listings.map(v=>v.listing.id),['123456780001']);
+ const projected=project(request,saved);assert.deepEqual(projected.listings.map(v=>v.listing.id),[1,2,3,4].map(n=>item(n).itemId));
  const cache=cacheFixture(),bytes=await png();let reads=0;
  const first=await provider({cache,now,fetchImpl:async()=>{reads++;return new Response(bytes,{headers:{'content-type':'image/png'}});}}).acquireImages({request,source:saved});
- assert.equal(first.referencePhotos.length,1);assert.equal(first.referencePhotos[0].relationship,'listing_photo');assert.equal(reads,1);
+ assert.equal(first.referencePhotos.length,1);assert.equal(first.referencePhotos[0].relationship,'listing_photo');assert.equal(reads,4);
  const retained=provider({cache,now:()=>now()+1000*limits.ttlMs,fetchImpl:noNetwork,inspectImage:noNetwork});
  const second=await retained.acquireImages({request,source:saved});
  assert.equal(second.acquisition.requests,0);assert.deepEqual(second.referencePhotos,first.referencePhotos);
@@ -394,8 +449,8 @@ test('graded photos remain outside catalog choices until the slab label is read'
  const choices=scrydexChoices(),cache=cacheFixture(),bytes=await png(),requests=[];
  const p=provider({cache,now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});
  const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:choices,problems:[],truncated:false})}],listingProvider:p,now});
- const result=await service.prepare({identity},{executeListingSource:async request=>{requests.push(request);return {state:'REUSED',source:source(request,[item(1,'Mewtwo PSA 9')])};}});
- assert.equal(requests.length,choices.length);assert(requests.every(r=>r.query.includes('(PSA,CGC,BGS,SGC)')));
+ const result=await service.prepare({identity},{executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>{if(retainedOnly)return {state:'MISSING'};requests.push(request);return {state:'SAVED',source:source(request,[item(1,'Mewtwo PSA 9')])};}});
+ assert.equal(requests.length,choices.length);assert(requests.every(r=>r.query.endsWith('graded')&&!r.query.includes('PSA')));
  assert.equal(result.referencePhotos.length,1);assert.equal(result.candidates.length,choices.length);
  assert(result.candidates.every(c=>c.images.every(i=>i.relationship!=='listing_photo')));
 });
@@ -414,18 +469,64 @@ test('explicit missing-reference refresh has a new durable key without changing 
  assert.throws(()=>prepare(identity,printing,{graded:true,generation:'automatic'}),/REFRESH_GENERATION/);
 });
 
-test('explicit refresh skips retained readings and duplicate slab bytes to find new photos',async()=>{
+test('explicit refresh retains already-read photos while deduplicating identical bytes',async()=>{
  const generation='eaf7aeb8-b65a-4737-954a-08003c35d271',printing={name:'Normal',language:'en'};
  const request=prepare(identity,printing,{graded:true,generation}),cache=cacheFixture(),known=await png();
  const fresh=await sharp({create:{width:12,height:16,channels:3,background:'#fc4820'}}).png().toBuffer();
- const seen=[],p=provider({cache,now,fetchImpl:async url=>new Response(url===imageUrl(1)?known:fresh,{headers:{'content-type':'image/png'}})});
+ const p=provider({cache,now,fetchImpl:async url=>new Response(url===imageUrl(1)?known:fresh,{headers:{'content-type':'image/png'}})});
  const saved=source(request,[item(1,'Mewtwo PSA 9'),item(2,'Mewtwo PSA 10'),item(3,'Mewtwo CGC 10')]);
- const result=await p.acquireImages({request,source:saved},{imageLimit:2,isKnownReference:async digest=>{seen.push(digest);return digest===sha(known);}});
- assert(seen.includes(sha(known)));assert.equal(result.referencePhotos.length,1);
- assert.equal(result.referencePhotos[0].sha256,sha(fresh));assert.equal(result.acquisition.uniqueImages,1);
- const ordinary=prepare(identity,printing,{graded:true});
- await assert.rejects(p.acquireImages({request:ordinary,source:source(ordinary,[])},{isKnownReference:async()=>true}),/REFRESH_GENERATION/);
+ const result=await p.acquireImages({request,source:saved},{imageLimit:2});
+ assert.deepEqual(result.referencePhotos.map(p=>p.sha256),[sha(known),sha(fresh)]);assert.equal(result.acquisition.uniqueImages,2);
  const later=provider({cache,now:()=>now()+1000*limits.ttlMs,fetchImpl:noNetwork,inspectImage:noNetwork});
- const reused=await later.acquireImages({request,source:saved},{imageLimit:2,isKnownReference:async digest=>digest===sha(known)});
+ const reused=await later.acquireImages({request,source:saved},{imageLimit:2});
  assert.deepEqual(reused.referencePhotos,result.referencePhotos);assert.equal(reused.acquisition.requests,0);
+});
+
+test('slab pool keeps all returned rows and admits a late photo without seller title, item ID or link',async()=>{
+ const request=prepare(identity,{name:'Normal',language:'en'},{graded:true}),cache=cacheFixture(),bytes=await png();
+ const rows=Array.from({length:241},()=>({title:null,itemId:null,url:'not a link'}));
+ rows[240].thumbnailUrl=imageUrl(240);
+ rows[0]={title:'A'.repeat(5001),itemId:'not-a-numeric-id',url:'https://www.ebay.com/itm/123456780999'};
+ rows[1]={...rows[0],title:'Different title, same provider ID'};
+ const saved=source(request,rows),before=JSON.stringify(saved),projected=project(request,saved);
+ assert.equal(projected.listings.length,241);assert.deepEqual(projected.excluded,[]);
+ assert.equal(projected.listings[0].listing.title.length,2000);assert.equal(projected.listings[0].listing.id,'not-a-numeric-id');
+ assert.deepEqual(projected.listings[240].listing,{id:null,title:null,url:null});
+ const p=provider({cache,now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});
+ const acquired=await p.acquireImages({request,source:saved});assert.equal(acquired.referencePhotos.length,1);
+ const snapshot=createVariantReviewSnapshot({identity,candidates:scrydexChoices(),capturedAt,referencePhotos:acquired.referencePhotos});
+ assert.deepEqual(snapshot.referencePhotos[0].listing,{id:null,title:null,url:null});
+ assert.equal((await p.readImage(snapshot.referencePhotos[0])).sha256,sha(bytes));assert.equal(JSON.stringify(saved),before);
+});
+
+test('slab source ignores the obsolete short search timer but honors worker cancellation',async()=>{
+ const request=prepare(identity,{name:'Normal',language:'en'},{graded:true}),controller=new AbortController();
+ const p=provider({apiKey:'synthetic-credential',now,timeoutMs:1,fetchImpl:async(_url,options)=>{
+  assert.equal(options.signal,controller.signal);await new Promise(resolve=>setTimeout(resolve,12));
+  options.signal.throwIfAborted();return new Response(source(request,[]).bodyText,{headers:{'content-type':'application/json'}});
+ }});
+ assert.equal((await p.fetchSource(request,{signal:controller.signal})).httpStatus,200);
+ controller.abort(new Error('worker lease lost'));
+ await assert.rejects(p.fetchSource(request,{signal:controller.signal}),/worker lease lost/);
+});
+
+test('a complete 240-photo pool survives acquisition and catalog projection beyond former 8/2/96 limits',async()=>{
+ const request=prepare(identity,{name:'Normal',language:'en'},{graded:true}),cache=cacheFixture(),base=await png();let calls=0;
+ const rows=Array.from({length:240},(_,index)=>item(index));
+ const p=provider({cache,now,inspectImage:async()=>({mimeType:'image/png',width:12,height:16}),fetchImpl:async url=>{
+  calls++;return new Response(Buffer.concat([base,Buffer.from(url)]),{headers:{'content-type':'image/png'}});
+ }});
+ const acquired=await p.acquireImages({request,source:source(request,rows)});
+ assert.equal(calls,240);assert.equal(acquired.referencePhotos.length,240);
+ const snapshot=createVariantReviewSnapshot({identity,candidates:scrydexChoices(),capturedAt,referencePhotos:acquired.referencePhotos});
+ assert.equal(snapshot.referencePhotos.length,240);assert.equal(acquired.acquisition.uniqueImages,240);
+ const retained=provider({cache,now,fetchImpl:noNetwork,inspectImage:noNetwork});
+ assert.equal((await retained.acquireImages({request,source:source(request,rows)})).referencePhotos.length,240);
+ assert.equal(calls,240);
+});
+
+test('historical company-filtered and title-filtered requests can never dispatch another paid GET',async()=>{
+ const p=provider({apiKey:'synthetic-credential',fetchImpl:noNetwork});
+ for(const request of [prepare(identity),prepareRetainedVariantListingRequest(identity,{name:'Normal',language:'en'})])
+  await assert.rejects(p.fetchSource(request),{code:'VARIANT_LISTING_RETIRED_REQUEST'});
 });

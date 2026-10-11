@@ -428,7 +428,9 @@ function contour(points, image) {
   check(Number.isFinite(area) && Math.abs(area) > 1e-8, 'DEFECT_ANALYSIS_OUTLINE_INVALID');
   const normalized = points.map(p => ({ x: (p.x + image.crop.x - CARD.x) / (CARD.width - 1),
     y: (p.y + image.crop.y - CARD.y) / (CARD.height - 1) }));
-  check(normalized.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1), 'DEFECT_ANALYSIS_OUTSIDE_CARD');
+  // The inspection image intentionally includes real background. Retain its
+  // exact observation for human review; one off-card mark must not discard
+  // the other findings or be clamped into a fabricated boundary defect.
   return normalized;
 }
 
@@ -457,6 +459,7 @@ export function parseDefectProposals(value, evidence) {
     const shape = canonical({ side: finding.side, canonicalContour }); check(!duplicate.has(shape), 'DEFECT_ANALYSIS_DUPLICATE_PROPOSAL'); duplicate.add(shape);
     return { id: `${evidence.analysisId}:${i + 1}`, side: finding.side, defectType: finding.defectType, canonicalContour,
       observation: finding.observation, uncertainty: finding.uncertainty, reviewStatus: 'UNREVIEWED',
+      ...(canonicalContour.some(p => p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) ? { measurementHold: 'OUTSIDE_CARD_FRAME' } : {}),
       provenance: { version: evidence.version, ...(evidence.cropLayoutVersion === undefined ? {} : { cropLayoutVersion: evidence.cropLayoutVersion }),
         analysisId: evidence.analysisId, sourceBindingSha256: evidence.sourceBindingSha256,
         frame: evidence.binding.sides[finding.side].frame, imageId: image.id, imageSha256: image.sha256,

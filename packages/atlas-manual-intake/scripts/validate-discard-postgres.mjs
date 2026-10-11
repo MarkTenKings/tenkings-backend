@@ -114,7 +114,7 @@ try{
 
  const later=await create();assert.deepEqual(await service.discard(owner,all),removed);
  assert.deepEqual((await service.list(owner)).cards.map(c=>c.cardId),[later.card.cardId]);
- await denied(service.discard(owner,{requestId:randomUUID(),scope:'SELECTED',cardIds:[ready.cardId]}),'INTAKE_CARD_NOT_FOUND');
+ assert.deepEqual((await service.discard(owner,{requestId:randomUUID(),scope:'SELECTED',cardIds:[ready.cardId]})).receipt.cardIds,[ready.cardId]);
  await denied(service.discard(owner,{...all,createRequestIds:[]}),'INTAKE_REQUEST_ID_CONFLICT');
  const status=await service.discardStatus(owner,{createRequestIds:[localOnly,first.input.requestId,later.input.requestId],cardIds:[foreign.card.cardId]});
  assert.deepEqual(status,{createRequestIds:[localOnly,first.input.requestId].sort(),cardIds:[]});
@@ -182,17 +182,17 @@ try{
  await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual.approval(card_id,action_id,actor_id,source_revision,source_hash,report_hash,report) VALUES($1::uuid,$2::uuid,$3::uuid,1,$4,$4,$5)',protectedCard.card.cardId,approvalId,owner.id,content.hash,content.text);
  await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual.public_report_identity(card_id,public_token,report_number) VALUES($1::uuid,$2,$3)',protectedCard.card.cardId,'ar_'+randomUUID().replaceAll('-','').slice(0,24),'ATLAS-'+randomUUID().replaceAll('-','').slice(0,12).toUpperCase());
  await fixture.admin.$executeRawUnsafe("INSERT INTO atlas_manual.publication(card_id,action_id,version,mode) VALUES($1::uuid,$2::uuid,1,'LOCAL_FIXTURE')",protectedCard.card.cardId,approvalId);
- const refused={requestId:randomUUID(),scope:'ALL'};
- await denied(service.discard(owner,refused),'INTAKE_CARD_HAS_COMMITTED_OBLIGATIONS');
- assert.deepEqual((await service.list(owner)).cards.map(c=>c.cardId).sort(),[protectedCard.card.cardId,ordinaryCard.card.cardId].sort());
- assert.equal((await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_manual_intake.discard_request WHERE owner_id=$1::uuid AND request_id=$2::uuid',owner.id,refused.requestId))[0].n,0);
+ const deletedReviewed=await service.discard(owner,{requestId:randomUUID(),scope:'ALL'});
+ assert.deepEqual(deletedReviewed.receipt.cardIds,[protectedCard.card.cardId,ordinaryCard.card.cardId].sort());
+ assert.equal((await service.list(owner)).cards.length,0);
+ await denied(manual.load(owner,protectedCard.card.cardId),'INTAKE_CARD_DELETED');
+ assert.equal((await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_manual.approval WHERE card_id=$1::uuid',protectedCard.card.cardId))[0].n,1);
  const handle=connection.auth.actors.get(owner),binding=Object.fromEntries(['mode','origin','deploymentId','releaseSha','configHash'].map(k=>[k,fixture.config[k]]));
  const [{result:dealer}]=await fixture.admin.$queryRawUnsafe('SELECT atlas_dealer.staff_call($1,$2,$3,$4::jsonb,$5::text[],$6::jsonb) result','read',handle.sessionHash,handle.browserHash,JSON.stringify(binding),[...fixture.config.phoneByHash.keys()],'{}');
- assert.deepEqual(dealer.manualCards.map(c=>c.id),[protectedCard.card.cardId]);
- record('publication obligation refuses whole ALL atomically, and dealer candidates exclude previously discarded manual cards');
+ assert.deepEqual(dealer.manualCards.map(c=>c.id),[]);
+ record('approved published cards can be deleted; ordinary reads and dealer candidates exclude them while immutable history cannot resurrect them');
 
- // A saved review or machine report must block staff discard even before
- // approval/publication. An ungraded companion must not be swept by ALL.
+ // Saved review and machine analysis are ordinary deletable workspace state.
  const reviewedCard=await create(),machineCard=await create(),ungradedPeer=await create();
  const reviewRequest=document({action:{type:'CONFIRM_FINDINGS'}});
  await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id) VALUES($1::uuid,1,$2,$3,$4::uuid)',reviewedCard.card.cardId,content.text,content.hash,owner.id);
@@ -204,13 +204,15 @@ try{
    (key,card_id,source_hash,actor_id,access_version,analysis_action_id,input,input_hash,state,stage,evidence)
    VALUES($1,$2::uuid,$3,$4::uuid,$5,$6::uuid,$7,$8,'REVIEW','REPORT',$9)`,
  '4'.repeat(64),machineCard.card.cardId,'3'.repeat(64),owner.id,machineAccessVersion,randomUUID(),machineInput.text,machineInput.hash,machineEvidence.text);
- for(const card of [reviewedCard,machineCard]) {
-  const refused={requestId:randomUUID(),scope:'SELECTED',cardIds:[card.card.cardId,ungradedPeer.card.cardId]};
-  await denied(service.discard(owner,refused),'INTAKE_CARD_HAS_COMMITTED_OBLIGATIONS');
-  assert.equal((await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_manual_intake.discard_request WHERE request_id=$1::uuid',refused.requestId))[0].n,0);
-  assert.deepEqual(await service.discardStatus(owner,{cardIds:[card.card.cardId,ungradedPeer.card.cardId]}),{cardIds:[],createRequestIds:[]});
- }
- record('unapproved human review and saved machine report independently block staff discard; mixed selections remain atomic');
+ const reviewedSelection={requestId:randomUUID(),scope:'SELECTED',cardIds:[reviewedCard.card.cardId,machineCard.card.cardId,ungradedPeer.card.cardId]};
+ const removedReviewed=await service.discard(owner,reviewedSelection);
+ assert.deepEqual(removedReviewed.receipt.cardIds,reviewedSelection.cardIds.sort());
+ // A stale local upload journal after an ALL acknowledgement may submit the
+ // same explicit IDs in a later chunk. It must finish instead of blocking UI.
+ const repeated=await service.discard(owner,{...reviewedSelection,requestId:randomUUID()});
+ assert.deepEqual(repeated.receipt.cardIds,removedReviewed.receipt.cardIds);
+ assert.equal((await service.list(owner)).cards.length,0);
+ record('unapproved human review and machine reports delete atomically with ungraded peers; repeated explicit selectors are idempotent');
  await writeFile(join(output,'result.json'),JSON.stringify({status:'PASS',checks,modelCalls:0,productionWrites:0},null,2));
  console.log(JSON.stringify({status:'PASS',checks:checks.length,output}));
 }finally{await connection.close();await fixture.stop();await writeFile(join(output,'cleanup.json'),JSON.stringify({ownedFixtureStopped:true}));}

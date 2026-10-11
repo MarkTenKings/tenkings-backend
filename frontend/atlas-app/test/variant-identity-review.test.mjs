@@ -325,3 +325,9 @@ test('Codex slab references join only the exact catalog printing and photo bytes
  assert.equal(f.exports.variantReference(candidate,f.props.cardId,{artwork:false,result:changed}),null);
  assert.deepEqual(candidate.images,[],'rendering does not rewrite the authoritative catalog');f.dispose();
 });
+
+test('saved slab photos remain visible when provider listing ID, title and URL are unavailable',()=>{
+ const f=fixture(),image=listingImage({listing:{id:null,title:null,url:null}});
+ const picked=f.exports.variantReference({authority:'provider_candidate',images:[image]},f.props.cardId);
+ assert.equal(picked.sha256,image.sha256);assert.equal(picked.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${image.sha256}`);f.dispose();
+});

@@ -164,7 +164,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     if (!run) return analysisId ? { state: 'NOT_FOUND' } : { astra: { enabled: true, requestAvailable: Boolean(provider), status: 'IDLE' } };
     if (run.retired) return { state: 'REFUSED',
       ...(['DEFECT_ANALYSIS_PENDING', 'DEFECT_ANALYSIS_REPLACEMENT_INVALID'].includes(run.code) ? { followLatest: true } : {}),
-      astra: { enabled: true, requestAvailable: Boolean(provider), status: 'REFUSED', analysisId: run.analysisId, requestActionId: run.actionId,
+      astra: { enabled: true, requestAvailable: Boolean(provider), status: 'REFUSED', code: run.code, analysisId: run.analysisId, requestActionId: run.actionId,
       proposals: [], limitations: [run.code === 'DEFECT_ANALYSIS_PENDING'
         ? 'Another analysis is still pending. Check the saved analysis before starting another.'
         : run.code === 'DEFECT_ANALYSIS_REPLACEMENT_INVALID'
@@ -197,7 +197,10 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     const rateLimited = run.state === 'REFUSED' && !run.backgroundAccepted && run.receipts.some(receipt => receipt.kind === 'RESPONSE'
       && receipt.evidence.state === 'REFUSED' && receipt.evidence.httpStatus === 429 && receipt.evidence.responseId === null
       && receipt.evidence.code === 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR');
+    const outcome = ['REFUSED', 'UNKNOWN'].includes(status)
+      ? (run.receipts.find(receipt => receipt.kind === 'RESPONSE') ?? run.receipts.find(receipt => receipt.kind === 'OUTCOME'))?.evidence : null;
     return { state: run.state, astra: { enabled: !state.finalReview || proposals.length > 0, requestAvailable: !state.finalReview && Boolean(provider), status, analysisId: run.analysisId, requestActionId: run.actionId,
+      ...(status === 'STALE' ? { code: 'DEFECT_ANALYSIS_STALE' } : outcome?.code ? { code: outcome.code, httpStatus: outcome.httpStatus } : {}),
       base: Object.fromEntries(SIDES.map(side => [side, baseFromRun(run, side)])), proposals,
       ...(status === 'READY' && loaded?.result ? { proposalReview: confirmationOffer(run, loaded.result, state) } : {}),
       limitations: loaded?.result?.limitations ?? [],

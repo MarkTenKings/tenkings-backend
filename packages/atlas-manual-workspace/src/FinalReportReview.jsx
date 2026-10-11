@@ -50,7 +50,7 @@ function FindingCalculation({ finding, explanation, policy, printLabel }) {
 function FindingMeasurements({ finding, printLabel }) {
   return <section className="rr-finding-detail" aria-label={printLabel ? `${printLabel} measurements` : 'Selected finding measurements'}>
     <h3>{printLabel ? `${printLabel} · ` : ''}{title(finding.defectType)}</h3>
-    <p>{finding.geometryExclusion ? 'Removed observation retained in its previous image frame. Add a new trace in Findings to restore it on the current photograph.' : finding.reviewResult === 'REMOVED' ? 'Removed from the current findings; retained in review history.' : 'Measured in the current saved card frame. The overall grade is unavailable until centering geometry is resolved.'}</p>
+    <p>{finding.geometryExclusion && finding.reviewResult!=='REMOVED' ? 'Needs review after outline change. Redraw or reject this finding in Findings before calculating the grade.' : finding.geometryExclusion ? 'Removed observation retained in its previous image frame. Add a new trace in Findings to restore it on the current photograph.' : finding.reviewResult === 'REMOVED' ? 'Removed from the current findings; retained in review history.' : 'Measured in the current saved card frame. The overall grade is unavailable until centering geometry is resolved.'}</p>
     {reportFindingRegions(finding).map((region, index) => <article key={`${region.zone}:${index}`}>
       <h4>{title(region.zone)} region</h4><dl className="rr-measurements">
         <div><dt>Measured area</dt><dd>{n(region.measurement?.areaMm2, ' mm²')}</dd></div>

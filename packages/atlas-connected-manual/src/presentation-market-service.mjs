@@ -1,12 +1,12 @@
-import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
+import { digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
 import { marketJobStatus } from './market-job-store.mjs';
 import { createPresentationMarket, marketPreviewHash, MARKET_UNAVAILABLE_REASONS } from './presentation-market.mjs';
 
 // Automatic approval jobs and explicit staff refresh share saved previews.
 // Durable mode never calls a provider inside HTTP; ambiguous requests remain
 // fenced. Public report visits read only deliberately selected evidence.
-export function createPresentationMarketService({ repository, approved, artifacts, provider = null, readPhoto = null, run = work => work(), now, jobs = null, worker = null }) {
-  const market = createPresentationMarket({ provider, ...(now ? { now } : {}) });
+export function createPresentationMarketService({ repository, approved, artifacts, provider = null, readPhoto = null, jobs = null, worker = null }) {
+  const market = createPresentationMarket();
   async function saved(staff, cardId, requestId) {
     const row = await repository.market(staff, cardId, requestId);
     const binding = { approvalActionId: row.input.approvalActionId };
@@ -24,7 +24,7 @@ export function createPresentationMarketService({ repository, approved, artifact
     const { sourceHash, ref, input, ...publicValue } = value; return publicValue;
   };
   return Object.freeze({
-    enabled: Boolean(provider),
+    enabled: Boolean(provider && jobs),
     async image(staff, cardId, previewId, sha256) {
       uuid(previewId); requireThat(/^[a-f0-9]{64}$/.test(sha256) && typeof readPhoto === 'function', 404, 'MARKET_IMAGE_NOT_FOUND');
       const value = await saved(staff, cardId, previewId);
@@ -43,39 +43,18 @@ export function createPresentationMarketService({ repository, approved, artifact
         return { ...status, ...publicPreview(await saved(staff, cardId, status.previewId)) };
       }
       const id = await repository.latestMarket(staff, cardId);
-      if (!id) return { state: 'NOT_REQUESTED', refreshable: Boolean(provider) };
+      if (!id) return { state: 'NOT_REQUESTED', refreshable: Boolean(provider && jobs) };
       const value = publicPreview(await saved(staff, cardId, id));
       return { ...value, state: value.state === 'PENDING' ? 'UNKNOWN' : value.state,
-        refreshable: !['PENDING','UNKNOWN'].includes(value.state) && Boolean(provider) };
+        refreshable: !['PENDING','UNKNOWN'].includes(value.state) && Boolean(provider && jobs) };
     },
-    preview: (staff, cardId, input) => jobs ? (async () => {
+    async preview(staff, cardId, input) {
       if (!provider) return { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED', refreshable: false };
+      requireThat(jobs, 503, 'MARKET_DURABLE_LABEL_WORKER_REQUIRED');
       const job = await jobs.reserve(staff, cardId, input);
       void worker?.wake();
       return job.state === 'READY' ? { ...marketJobStatus(job), ...publicPreview(await saved(staff, cardId, job.request_id)), requestId: input.requestId } : { ...marketJobStatus(job), requestId: input.requestId };
-    })() : run(async () => {
-      if (!provider) return { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED' };
-      const row = await repository.reserveMarket(staff, cardId, input);
-      if (!row.created) return publicPreview(await saved(staff, cardId, input.requestId));
-      try {
-        const source = await approved.loadPacket(staff, cardId, input.approvalActionId);
-        await repository.market(staff, cardId, input.requestId);
-        const result = await market.preview(source);
-        if (result.state !== 'READY') {
-          await repository.finishMarket(staff, cardId, input.requestId, result);
-          return { ...result, previewId: input.requestId };
-        }
-        const artifactHash = digest(JSON.stringify(result.preview));
-        const ref = await artifacts.write(result.preview, { cardId, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
-        await repository.finishMarket(staff, cardId, input.requestId, { state: 'READY', ref, artifactHash, sourceHash: result.sourceHash });
-        return publicPreview(await saved(staff, cardId, input.requestId));
-      } catch (error) {
-        // A late successful terminal write is never overwritten. If even the
-        // UNKNOWN receipt cannot commit, STARTED remains a no-repeat fence.
-        try { await repository.finishMarket(staff, cardId, input.requestId, { state: 'UNKNOWN' }); } catch { /* Reconcile saved exact request. */ }
-        throw error;
-      }
-    }),
+    },
     async select(staff, cardId, input) {
       object(input, ['requestId','approvalActionId','expectedRevision','previewId','selectedIds']);
       uuid(input.requestId); uuid(input.approvalActionId); uuid(input.previewId);

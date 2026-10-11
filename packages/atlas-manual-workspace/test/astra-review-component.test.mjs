@@ -562,6 +562,19 @@ test('focused measurement failure retries the exact saved trace without resendin
  assert.ok(f.props.workspace.sides.FRONT.pending,'trace was saved before measurement failed');f.ready();await f.click('Approve');assert.equal(retries,1);assert.equal(saves,1);assert.equal(approvals,1);assert.equal(f.has('Unsaved trace'),false);
 });
 
+test('an in-flight saved finding edit hides measurement recovery until the request actually fails',async()=>{
+ const state=workspace(),id=state.sides.FRONT.findings[0].id;let fail;
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:id,renderActions:focusedActions,onApprove:async()=>{}},onRetry:async()=>{},onDiscardPending:async()=>{},onEdit:async input=>{
+  f.props.workspace=actions.beginDefectEdit(f.props.workspace,JSON.parse(JSON.stringify(input))).state;
+  return new Promise((_resolve,reject)=>{fail=reject;});
+ }});f.ready();
+ const saving=f.button('Reject finding','Front').props.onClick();f.render();
+ assert.ok(f.props.workspace.sides.FRONT.pending);assert.equal(f.has('Saving and measuring your decision…'),true);
+ assert.equal(f.has('Retry measurement below.'),false);assert.equal(f.nodes(n=>n.type==='button'&&['Retry measurement','Discard pending change'].includes(text(n))).length,0);
+ fail(Error('measurement held'));await saving;f.render();
+ assert.equal(f.has('Retry measurement below.'),true);assert.equal(f.button('Retry measurement','Front').props.disabled,false);assert.equal(f.button('Discard pending change','Front').props.disabled,false);
+});
+
 
 test('focused selected trace uses its true raster boundary and clean view shares the exact camera and image',async()=>{
  const state=workspace(),id=state.sides.FRONT.findings[0].id;
@@ -650,7 +663,7 @@ test('focused region bounds use saved calibrated mask extents while area remains
 test('unmeasured observations block empty finding approval and direct tracing activates the actual editor without inventing a saved review',async()=>{
   let traceAction,approvals=0;
   const f=harness({focusedReview:{side:'FRONT',findingId:null,unresolvedObservations:1,renderActions:focusedActions,onApprove:async()=>{approvals++;},renderObservations:({side,onTrace,disabled})=>{if(side==='FRONT')traceAction={onTrace,disabled};return {type:'p',props:{children:'Original observation remains unresolved'}};}}});f.ready();
-  assert.ok(f.button('Approve','Front').props.disabled);assert.ok(f.has('Resolve original observations'));assert.ok(f.has('original observation stays pending'));assert.equal(traceAction.disabled,false);
+  assert.ok(f.button('Approve','Front').props.disabled);assert.ok(f.has('Resolve original observations'));assert.ok(f.has('replace the original observation with a measured finding'));assert.equal(traceAction.disabled,false);
   await f.button('Approve','Front').props.onClick();assert.equal(approvals,0);
   traceAction.onTrace();f.render();assert.ok(f.has('Trace visible damage'));assert.ok(f.button('Approve','Front').props.disabled,'empty trace cannot approve');
   assert.equal(f.calls.length,0);f.draw();assert.equal(f.button('Approve','Front').props.disabled,false);
@@ -719,4 +732,78 @@ test('overview keeps uncertain accepted analysis read-only until an explicit sav
   assert.equal(f.nodes(node=>node.type==='button'&&text(node)==='Start a new ATLAS analysis').length,0);
   assert.equal(f.nodes(node=>node.type==='button'&&text(node)==='Find defects with ATLAS').length,0);
   await f.click('Check saved analysis');assert.deepEqual(calls,['GET']);assert.equal(f.calls.length,0);
+});
+
+test('outline-excluded finding requires redraw or rejection and starts its same-id trace empty in the current photo',async()=>{
+  const state=structuredClone(workspace()),slot=state.sides.FRONT,finding=slot.findings[0];
+  finding.reviewResult='UNREVIEWED';finding.finalTrace=finding.detectorMask;finding.measurementRegions=[];delete finding.zone;delete finding.measurement;delete finding.canonicalContour;
+  finding.traceProvenance={version:'speedster-trace-provenance-v1',sourceViewId:finding.sourceViewId,
+    cropTransform:{version:'speedster-canonical-crop-affine-v1',crop:{x:0,y:0,width:1269,height:1777}},highlighterStrokes:[],finalTraceSha256:finding.finalTrace.sha256};
+  const sourceImage={version:1,originalSha256:slot.frame.originalSha256,frameId:'working-FRONT',frameSha256:'a'.repeat(64),width:1600,height:2400,coordinateSpace:'ORIENTED_DECODED'};
+  const sourceQuad=[{x:.125,y:.1},{x:.875,y:.1},{x:.875,y:.9},{x:.125,y:.9}],sx=1269/1200,sy=1777/1920;
+  const sourceFrame={id:slot.frame.frameId,version:1,rectified:{sha256:slot.frame.rectifiedImageSha256,width:1270,height:1778},
+    inspection:{sha256:slot.frame.inspectionImageSha256,width:1350,height:1858,cardBounds:{x:40,y:40,width:1270,height:1778}},sourceToRectified:[sx,0,-200*sx,0,sy,-240*sy,0,0,1]};
+  finding.geometryExclusion={version:'atlas-geometry-exclusion-v1',reason:'TRACE_OUTSIDE_CORRECTED_CARD',sourceImage,sourceQuad,sourceFrame,sourceTraceSha256:finding.finalTrace.sha256};
+  slot.humanEditedIds=[finding.id];slot.frame.preparationVersion=2;slot.frame.frameId='corrected-FRONT';
+  const calls=[],f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:finding.id,renderActions:focusedActions,onApprove:async value=>calls.push({kind:'approve',value})},onEdit:async value=>calls.push({kind:'save',value})});f.ready();
+  assert.equal(f.has('Needs review after outline change'),true);assert.equal(f.has('Removed · retained'),false);
+  assert.equal(f.button('Approve').props.disabled,true);await f.button('Approve').props.onClick();assert.equal(calls.length,0);
+  assert.equal(f.nodes(node=>node.props.className==='ad-exact-outline','Front').length,0);
+  assert.equal(f.has('no current measurement'),true);
+  assert.equal(f.button('Reject finding','Front').props.disabled,false);
+  await f.click('Redraw on current photo','Front');assert.equal(f.button('Approve').props.disabled,true,'old pixels never seed the current trace');
+  f.draw();await f.click('Approve');
+  assert.deepEqual(calls.map(value=>value.kind),['save','approve']);assert.equal(calls[0].value.action.findingId,finding.id);
+  const pixels=traceWire.decodeSpeedsterTraceBitmapWireV1(calls[0].value.action.trace.traceWire);
+  const oldPixels=traceCodec.decodeSpeedsterTraceRleV1(finding.finalTrace);
+  assert.equal(pixels[660*1270+660],1);assert.ok(oldPixels.some((value,index)=>value&&!pixels[index]),'retained earlier damage is not copied');
+  assert.equal(calls[0].value.action.trace.traceProvenance.sourceViewId,'FRONT:inspection');
+  assert.deepEqual(calls[0].value.base,actions.defectBase(state,'FRONT'));
+  const rejecting=harness({workspace:state,focusedReview:{side:'FRONT',findingId:finding.id,renderActions:focusedActions,onApprove:async()=>{throw Error('must not approve');}}});rejecting.ready();await rejecting.click('Reject finding','Front');
+  assert.equal(rejecting.calls[0].request.action.type,'REMOVE');assert.deepEqual(Array.from(rejecting.calls[0].request.action.defectIds),[finding.id]);
+  const overview=harness({workspace:state},undefined,'FindingsOverview');overview.ready();assert.equal(overview.has('Needs review after outline change'),true);assert.equal(overview.nodes(node=>node.props['data-finding-id']===finding.id).length,0);
+});
+
+test('outside-frame proposal keeps its raw contour, blocks acceptance, and allows explicit empty redraw or rejection',async()=>{
+ const state=workspace(false),astra=astraFor(state);astra.proposals[0].measurementHold='OUTSIDE_CARD_FRAME';astra.proposals[0].canonicalContour[0].x=-.1;
+ const original=JSON.stringify(astra.proposals[0]),f=harness({workspace:state,astra});f.ready();
+ assert.equal(f.button('Accept suggestion').props.disabled,true);await f.button('Accept suggestion').props.onClick();assert.equal(f.calls.length,0);
+ assert.equal(f.has('outside the corrected card frame'),true);assert.equal(f.button('Reject suggestion').props.disabled,false);
+ await f.click('Correct trace');assert.equal(f.button('Save trace','Front').props.disabled,true);f.draw();await f.click('Save trace','Front');
+ assert.equal(f.calls[0].request.action,'TRACE_SAVE');assert.equal(f.calls[0].request.proposalId,astra.proposals[0].id);assert.equal(JSON.stringify(astra.proposals[0]),original);
+ const rejected=harness({workspace:state,astra});rejected.ready();await rejected.click('Reject suggestion');assert.equal(rejected.calls[0].request.action,'REJECT');
+});
+
+
+test('redrawing an original observation sends its exact binding with the human trace and keeps it after a failed save', async () => {
+  let traceAction, fail = true;
+  const binding = { reportHash: 'a'.repeat(64), proposalId: 'original-unmeasurable' };
+  const f = harness({ focusedReview: { side: 'FRONT', findingId: null, unresolvedObservations: 1, renderActions: focusedActions, onApprove: async () => {},
+    renderObservations: ({ side, onTrace }) => { if (side === 'FRONT') traceAction = onTrace; return null; } } });
+  f.props.onEdit = async request => { f.calls.push({ request }); if (fail) throw Error('Local save failed'); };
+  f.ready(); traceAction({ ...binding, defectType: 'VISIBLE_WHITENING' }); f.render();
+  assert.equal(f.calls.length, 0); f.draw();
+  await f.click('Approve', 'Front');
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls[0].request.finalObservation)), binding);
+  assert.equal(f.calls[0].request.action.findingId, null);
+  assert.equal(f.calls[0].request.action.trace.defectType, 'VISIBLE_WHITENING');
+  assert.ok(f.has('not confirmed saved')); assert.equal(f.button('Approve', 'Front').props.disabled, false);
+  fail = false; await f.click('Approve', 'Front');
+  assert.deepEqual(f.calls[1].request, f.calls[0].request, 'retry preserves the same human pixels and original observation link');
+});
+
+
+test('overview observation redraw carries its original binding into the focused add editor', async () => {
+  let redraw, context;
+  const observation = { reportHash: 'd'.repeat(64), proposalId: 'overview-original', defectType: 'VISIBLE_WHITENING' };
+  const overview = harness({ onAddFinding: value => { context = value; },
+    renderObservations: ({ side, onTrace }) => { if (side === 'FRONT') redraw = onTrace; return null; } }, undefined, 'FindingsOverview');
+  overview.ready(); redraw(observation);
+  assert.deepEqual(context.observation, observation);
+  const editor = harness({ initialInspection: context }); editor.ready(); editor.draw();
+  await editor.click('Save trace', 'Front');
+  assert.deepEqual(JSON.parse(JSON.stringify(editor.calls[0].request.finalObservation)), {
+    reportHash: observation.reportHash, proposalId: observation.proposalId,
+  });
+  assert.equal(editor.calls[0].request.action.trace.defectType, observation.defectType);
 });
