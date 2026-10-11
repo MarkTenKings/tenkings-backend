@@ -370,8 +370,9 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
 }
 export function variantJobGrantSQL(role,{worker=false}={}){requireThat(/^[a-z][a-z0-9_]{0,62}$/.test(role));return `GRANT USAGE ON SCHEMA atlas_manual_connected TO "${role}";
 GRANT SELECT ON atlas_manual_connected.variant_job,atlas_manual_connected.variant_catalog_cache TO "${role}";
+GRANT INSERT ON atlas_manual_connected.variant_catalog_cache TO "${role}";
 GRANT INSERT ON atlas_manual_connected.variant_job TO "${role}";
 GRANT EXECUTE ON FUNCTION atlas_manual_connected.display_owner_version(uuid) TO "${role}";
-GRANT ${worker?'SELECT':'SELECT,INSERT'} ON atlas_manual_connected.variant_confirmation,atlas_manual_connected.variant_contribution TO "${role}";${worker?`\nGRANT INSERT ON atlas_manual_connected.variant_catalog_cache TO "${role}";\nGRANT UPDATE(state,attempts,claim_id,lease_until,dispatch_id,catalog,catalog_hash,response,response_hash,result,result_hash,code,available_at,updated_at,audit) ON atlas_manual_connected.variant_job TO "${role}";
+GRANT ${worker?'SELECT':'SELECT,INSERT'} ON atlas_manual_connected.variant_confirmation,atlas_manual_connected.variant_contribution TO "${role}";${worker?`\nGRANT UPDATE(state,attempts,claim_id,lease_until,dispatch_id,catalog,catalog_hash,response,response_hash,result,result_hash,code,available_at,updated_at,audit) ON atlas_manual_connected.variant_job TO "${role}";
 GRANT UPDATE(state,attempts,claim_id,lease_until,receipt,receipt_hash,reference_packet,reference_packet_hash,code,available_at) ON atlas_manual_connected.variant_contribution TO "${role}";
 GRANT EXECUTE ON FUNCTION atlas_manual_connected.display_owner_current(uuid,integer),atlas_manual_connected.display_owner_version(uuid) TO "${role}";`:''}`;}

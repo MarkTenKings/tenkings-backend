@@ -365,6 +365,37 @@ async function decodeImage(bytes) {
   return { mimeType: `image/${info.format}`, width: info.width, height: info.height };
 }
 
+/** Serving uses exact retained bytes only; it cannot initiate an image fetch. */
+export async function readSavedListingPhoto(url, sha256, { cache } = {}) {
+  check(cache?.getRetained && isStaffInventoryResearchImageUrl(url) && HASH.test(sha256), 'VARIANT_LISTING_IMAGE_URL');
+  const media = verifyImage(await cache.getRetained(retainedImageKey(url, sha256)), url);
+  check(media.sha256 === sha256, 'VARIANT_LISTING_REFERENCE_CHANGED');
+  return media;
+}
+
+/** Shared permanent public-image read for reference and market slab evidence. */
+export async function readRetainedListingPhoto(url, { cache, fetchImpl = globalThis.fetch, inspectImage = decodeImage,
+  now = () => Date.now(), signal, timeoutMs = VARIANT_LISTING_LIMITS.imageTimeoutMs, beforeFetch = () => {}, admitBytes = () => {} } = {}) {
+  check(cache?.getRetained && cache?.put && isStaffInventoryResearchImageUrl(url), 'VARIANT_LISTING_IMAGE_URL');
+  const saved = await cache.getRetained(imageKey(url));
+  if (saved && Date.parse(saved.capturedAt) <= now()) return verifyImage(saved, url);
+  beforeFetch();
+  return boundedProviderOperation(signal, timeoutMs, async active => {
+    const response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: active,
+      headers: { Accept: 'image/jpeg,image/png,image/webp' } });
+    check(response.ok && !response.redirected && (!response.url || response.url === url), 'VARIANT_LISTING_IMAGE_UNAVAILABLE');
+    const bytes = await readBoundedProviderBody(response, active, VARIANT_LISTING_LIMITS.imageBytes);
+    const metadata = await inspectImage(bytes), captured = now(); active.throwIfAborted();
+    check(validMetadata(metadata) && (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase() === metadata.mimeType, 'VARIANT_LISTING_IMAGE_INVALID');
+    const entry = { schemaVersion: 'variant-provider-image/v1', url, body: bytes.toString('base64'), sha256: hash(bytes),
+      mimeType: metadata.mimeType, width: metadata.width, height: metadata.height,
+      capturedAt: new Date(captured).toISOString(), expiresAt: new Date(captured + VARIANT_LISTING_LIMITS.ttlMs).toISOString() };
+    const verified = verifyImage(entry, url); admitBytes(bytes, entry.sha256); active.throwIfAborted();
+    await cache.put(retainedImageKey(url, entry.sha256), entry); active.throwIfAborted();
+    await cache.put(imageKey(url), entry); return verified;
+  });
+}
+
 /** apiKey is optional for cold/read-only serving. Only fetchSource needs it.
  * An ambiguous dispatched GET must be reconciled by the caller, never retried
  * automatically here. Listing image requests are public bounded CDN reads. */
@@ -406,27 +437,10 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
             if (!byUrl.has(url)) {
               let media = null;
               try {
-                const saved = await cache.getRetained(imageKey(url));
-                if (saved && Date.parse(saved.capturedAt) <= now()) media = verifyImage(saved, url);
-                else if (requests < VARIANT_LISTING_LIMITS.imageRequests) {
-                  requests++;
-                  media = await boundedProviderOperation(active, Math.min(timeoutMs, VARIANT_LISTING_LIMITS.imageTimeoutMs), async imageSignal => {
-                    const response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: imageSignal,
-                      headers: { Accept: 'image/jpeg,image/png,image/webp' } });
-                    check(response.ok && !response.redirected && (!response.url || response.url === url), 'VARIANT_LISTING_IMAGE_UNAVAILABLE');
-                    const bytes = await readBoundedProviderBody(response, imageSignal, VARIANT_LISTING_LIMITS.imageBytes);
-                    const metadata = await inspectImage(bytes), captured = now(); imageSignal.throwIfAborted();
-                    check(validMetadata(metadata) && (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase() === metadata.mimeType, 'VARIANT_LISTING_IMAGE_INVALID');
-                    const entry = { schemaVersion: 'variant-provider-image/v1', url, body: bytes.toString('base64'), sha256: hash(bytes),
-                      mimeType: metadata.mimeType, width: metadata.width, height: metadata.height,
-                      capturedAt: new Date(captured).toISOString(), expiresAt: new Date(captured + VARIANT_LISTING_LIMITS.ttlMs).toISOString() };
-                    const verified = verifyImage(entry, url);
-                    check(byHash.has(entry.sha256) || totalBytes + bytes.length <= VARIANT_LISTING_LIMITS.totalImageBytes, 'VARIANT_LISTING_IMAGE_BUDGET');
-                    imageSignal.throwIfAborted();
-                    await cache.put(retainedImageKey(url, entry.sha256), entry); imageSignal.throwIfAborted();
-                    await cache.put(imageKey(url), entry); return verified;
-                  });
-                }
+                media = await readRetainedListingPhoto(url, { cache, fetchImpl, inspectImage, now, signal: active,
+                  timeoutMs: Math.min(timeoutMs, VARIANT_LISTING_LIMITS.imageTimeoutMs),
+                  beforeFetch: () => { check(requests < VARIANT_LISTING_LIMITS.imageRequests, 'VARIANT_LISTING_IMAGE_BUDGET'); requests++; },
+                  admitBytes: (bytes, sha256) => check(byHash.has(sha256) || totalBytes + bytes.length <= VARIANT_LISTING_LIMITS.totalImageBytes, 'VARIANT_LISTING_IMAGE_BUDGET') });
               } catch { active.throwIfAborted(); }
               byUrl.set(url, media);
             }

@@ -43,9 +43,9 @@ export function photoTilt(event, rect) {
 
 export function saleReferenceRows(sales) {
   return Array.isArray(sales) ? sales.filter(sale => sale && nonempty(sale.id) && nonempty(sale.title)
-    && (sale.raw === true || nonempty(sale.grader) && nonempty(sale.grade)) && safePresentationLink(sale.listingUrl)
-    && (sale.soldAt === null || Number.isFinite(Date.parse(sale.soldAt))) && /^[A-Z]{3}$/.test(sale.currency ?? '')
-    && (sale.priceBasis === 'accepted_offer_unknown' || sale.priceBasis === 'sold' && Number.isSafeInteger(sale.priceMinor) && sale.priceMinor >= 0))
+    && (sale.raw === true || nonempty(sale.grader) && nonempty(sale.grade)) && (sale.listingUrl === null || safePresentationLink(sale.listingUrl))
+    && (sale.soldAt === null || Number.isFinite(Date.parse(sale.soldAt))) && (sale.currency === null || /^[A-Z]{3}$/.test(sale.currency ?? ''))
+    && (['accepted_offer_unknown', 'unknown'].includes(sale.priceBasis) || sale.priceBasis === 'sold' && Number.isSafeInteger(sale.priceMinor) && sale.priceMinor >= 0))
     .slice().sort((a, b) => (Date.parse(b.soldAt) || 0) - (Date.parse(a.soldAt) || 0)) : [];
 }
 

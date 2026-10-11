@@ -1,6 +1,6 @@
-import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
+import { digest, requireThat } from '@atlas/manual-service/contract';
 import { EbaySoldCompsV2Error, reclassifyEbaySoldCompsV2Result, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION } from '@tenkings/ebay-sold-comps-v2';
-import { createPresentationMarket, publishedMarketQuery } from './presentation-market.mjs';
+import { createPresentationMarket, publishedMarketQuery, marketPreviewHash } from './presentation-market.mjs';
 import { marketReclassification } from './market-job-store.mjs';
 
 // Only typed provider refusals prove there was no successful paid result.
@@ -16,7 +16,7 @@ export function marketProviderFailure(error) {
 
 /** Cold construction. Only start/cycle executes durable, human-admitted jobs.
  * Leases bound process concurrency, never the number of approved cards. */
-export function createMarketWorker({ store, approved, publication, artifacts, provider, authorityFor,
+export function createMarketWorker({ store, approved, publication, artifacts, provider, authorityFor, queryContextResolver = null, labelMarket = null,
   concurrency = 2, intervalMs = 2000, heartbeatMs = 30000, timers = globalThis, now, onError = () => {} }) {
   requireThat(typeof provider === 'function' && typeof authorityFor === 'function' && Number.isInteger(concurrency)
     && concurrency >= 1 && concurrency <= 16 && Number.isInteger(intervalMs) && intervalMs >= 10
@@ -37,14 +37,17 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       await publication.publish(staff, job.card_id, job.approval_action_id);
       const source = await approved.loadPacket(staff, job.card_id, job.approval_action_id);
       requireThat(!leaseLost && await store.bind(job, source), 409, 'MARKET_LEASE_LOST');
-      const context = publishedMarketQuery(source);
       let response = job.response;
+      const queryContext = response?.marketQueryContext ?? (!response && !local && queryContextResolver
+        ? await queryContextResolver({ source, staff, job }) : null);
+      const context = publishedMarketQuery(source, { ...(response ? { savedQuery: response.query } : {}), queryContext });
       if(local) {
         const marker=marketReclassification(job);
         requireThat(marker.classificationRevision===EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,409,'MARKET_RECLASSIFICATION_POLICY_CHANGED');
         if(!response) {
           const original=await store.reclassificationSource(job);
-          response=reclassifyEbaySoldCompsV2Result(structuredClone(context.input),original);
+          const replayContext=publishedMarketQuery(source,{savedQuery:original?.query,queryContext:original?.marketQueryContext});
+          response=reclassifyEbaySoldCompsV2Result(structuredClone(replayContext.input),original);
           requireThat(await store.recordReclassification(job,response),503,'MARKET_RECLASSIFICATION_NOT_SAVED');responseSaved=true;
         }
       }
@@ -55,20 +58,29 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
         requireThat(!leaseLost && await store.dispatch(job), 409, 'MARKET_LEASE_LOST');
         try { response = await provider(structuredClone(context.input)); }
         catch (error) { providerFailed = marketProviderFailure(error); throw error; }
+        if (context.marketQueryContext) response = { ...response, marketQueryContext: context.marketQueryContext };
         requireThat(await store.recordResponse(job, response), 503, 'MARKET_RESPONSE_NOT_SAVED');
         responseSaved = true;
       }
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       let result;
-      try { result = market.project(source, response); }
+      try {
+        let evidence = response;
+        if (response.responsePolicy === 'ATLAS_SLAB_V1') {
+          requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
+          evidence = await labelMarket({ source, response: structuredClone(response), job });
+          requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
+        }
+        result = market.project(source, evidence);
+      }
       catch (error) { previewExpired = error?.code === 'MARKET_PREVIEW_EXPIRED'; throw error; }
       const artifactHash = digest(JSON.stringify(result.preview));
       const ref = await artifacts.write(result.preview, { cardId: job.card_id, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
-      requireThat(result.sourceHash === digest(canonical(result.preview)), 503, 'MARKET_PREVIEW_CORRUPT');
+      requireThat(result.sourceHash === marketPreviewHash(result.preview), 503, 'MARKET_PREVIEW_CORRUPT');
       await store.finish(job, { result: { state: 'READY', ref, artifactHash, sourceHash: result.sourceHash } });
     } catch (error) {
       emit(error);
-      const failure = providerFailed ?? (previewExpired ? { code: 'MARKET_PREVIEW_EXPIRED', disposition: 'FAILED' } : local ? {code:'MARKET_RECLASSIFICATION_INTERRUPTED',disposition:'RETRY'} : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
+      const failure = providerFailed ?? (error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'RETRY' } : previewExpired ? { code: 'MARKET_PREVIEW_EXPIRED', disposition: 'FAILED' } : local ? {code:'MARKET_RECLASSIFICATION_INTERRUPTED',disposition:'RETRY'} : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
         : dispatched ? { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' }
         : { code: 'MARKET_PREPARATION_INTERRUPTED', disposition: 'RETRY' });
       try { await store.finish(job, failure); } catch (saveError) { emit(saveError); }

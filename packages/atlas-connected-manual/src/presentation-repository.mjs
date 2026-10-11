@@ -4,7 +4,7 @@ import { parseUploadPlan } from '@atlas/photo-core';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
 
 const integer = value => requireThat(Number.isSafeInteger(value) && value >= 0 && value < 2147483647);
-const document = value => ({ text: canonical(value), hash: digest(canonical(value)) });
+const document = value => { const text = canonical(value, { maxBytes: 2097152 }); return { text, hash: digest(text) }; };
 function stored(text, hash) { requireThat(typeof text === 'string' && digest(text) === hash, 503, 'PRESENTATION_CORRUPT'); return JSON.parse(text); }
 function sources(row) {
   const value = row?.market_source ? stored(row.market_source, row.market_source_hash) : null;

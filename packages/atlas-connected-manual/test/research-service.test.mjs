@@ -12,7 +12,7 @@ test('actual research core, acknowledged providers and current market selection 
  assert(!result.preview.query.includes('PSA'));assert.equal(result.research.candidates[0].conditionDecision.classification,'rejected');
  assert.equal(result.research.candidates[0].identityMatch,true);assert.equal(result.research.candidates[0].imageCompared,true);
  assert.equal(result.research.catalog.status,'not_configured');assert.equal('estimate' in result.research,false);
- const source=f.calls.find(c=>c.url.startsWith('https://api.sold-comps.com/'));assert.equal(new URL(source.url).searchParams.get('count'),'40');assert.equal(new URL(source.url).searchParams.get('hydrateBoa'),'false');
+ const source=f.calls.find(c=>c.url.startsWith('https://api.sold-comps.com/'));assert.equal(new URL(source.url).searchParams.get('keyword'),'2026 Fixture Local only Synthetic report');assert.equal(new URL(source.url).searchParams.get('count'),'40');assert.equal(new URL(source.url).searchParams.get('hydrateBoa'),'false');
  assert(f.calls.every(c=>c.redirect==='error'));const count=f.calls.length;
  assert.deepEqual(await f.create().preview(f.staff,f.cardId,input),result);assert.equal(f.calls.length,count);
  const market=createPresentationMarketService({repository:f.repo,approved:f.approved,artifacts:f.artifacts});

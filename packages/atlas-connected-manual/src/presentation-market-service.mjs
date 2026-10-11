@@ -1,11 +1,11 @@
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
 import { marketJobStatus } from './market-job-store.mjs';
-import { createPresentationMarket, MARKET_UNAVAILABLE_REASONS } from './presentation-market.mjs';
+import { createPresentationMarket, marketPreviewHash, MARKET_UNAVAILABLE_REASONS } from './presentation-market.mjs';
 
 // Automatic approval jobs and explicit staff refresh share saved previews.
 // Durable mode never calls a provider inside HTTP; ambiguous requests remain
 // fenced. Public report visits read only deliberately selected evidence.
-export function createPresentationMarketService({ repository, approved, artifacts, provider = null, run = work => work(), now, jobs = null, worker = null }) {
+export function createPresentationMarketService({ repository, approved, artifacts, provider = null, readPhoto = null, run = work => work(), now, jobs = null, worker = null }) {
   const market = createPresentationMarket({ provider, ...(now ? { now } : {}) });
   async function saved(staff, cardId, requestId) {
     const row = await repository.market(staff, cardId, requestId);
@@ -16,7 +16,7 @@ export function createPresentationMarketService({ repository, approved, artifact
     const record = row.saved;
     requireThat(record?.state === 'READY' && record.ref?.kind === 'MARKET_PREVIEW', 503, 'MARKET_PREVIEW_CORRUPT');
     const preview = await artifacts.read(record.ref, { cardId, kind: 'MARKET_PREVIEW', sourceHash: record.artifactHash });
-    requireThat(digest(JSON.stringify(preview)) === record.artifactHash && digest(canonical(preview)) === record.sourceHash, 503, 'MARKET_PREVIEW_CORRUPT');
+    requireThat(digest(JSON.stringify(preview)) === record.artifactHash && marketPreviewHash(preview) === record.sourceHash, 503, 'MARKET_PREVIEW_CORRUPT');
     await repository.market(staff, cardId, requestId);
     return { ...binding, state: 'READY', previewId: requestId, preview, sourceHash: record.sourceHash, ref: record.ref, input: row.input };
   }
@@ -25,6 +25,16 @@ export function createPresentationMarketService({ repository, approved, artifact
   };
   return Object.freeze({
     enabled: Boolean(provider),
+    async image(staff, cardId, previewId, sha256) {
+      uuid(previewId); requireThat(/^[a-f0-9]{64}$/.test(sha256) && typeof readPhoto === 'function', 404, 'MARKET_IMAGE_NOT_FOUND');
+      const value = await saved(staff, cardId, previewId);
+      const candidate = value.preview?.candidates?.find(row => row.slabReading?.sha256 === sha256);
+      requireThat(candidate?.slabReading?.imageUrl, 404, 'MARKET_IMAGE_NOT_FOUND');
+      const photo = await readPhoto(candidate.slabReading.imageUrl, sha256);
+      requireThat(photo?.bytes && digest(photo.bytes) === sha256, 503, 'MARKET_IMAGE_CORRUPT');
+      await repository.market(staff, cardId, previewId);
+      return { bytes: photo.bytes, contentType: photo.mimeType };
+    },
     async status(staff, cardId) {
       const job = jobs ? await jobs.latest(staff, cardId) : null;
       if (job) {
@@ -69,7 +79,7 @@ export function createPresentationMarketService({ repository, approved, artifact
     async select(staff, cardId, input) {
       object(input, ['requestId','approvalActionId','expectedRevision','previewId','selectedIds']);
       uuid(input.requestId); uuid(input.approvalActionId); uuid(input.previewId);
-      requireThat(Array.isArray(input.selectedIds) && input.selectedIds.length > 0 && input.selectedIds.length <= 60);
+      requireThat(Array.isArray(input.selectedIds) && input.selectedIds.length > 0);
       const committed = await repository.marketCommitStatus(staff, cardId, input);
       if (committed) return committed;
       const found = await saved(staff, cardId, input.previewId);

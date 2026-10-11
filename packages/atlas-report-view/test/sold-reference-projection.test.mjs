@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { projectSelectedSoldReferences } from '../src/sold-reference-projection.mjs';
+import { projectSelectedSoldReferences, projectSelectedSlabReferences } from '../src/sold-reference-projection.mjs';
 const require = createRequire(new URL('../../atlas-manual-workspace/package.json', import.meta.url));
 const built = await require('esbuild').build({ entryPoints: [fileURLToPath(new URL('../../ebay-sold-comps-v2/src/index.ts', import.meta.url))], bundle: true, write: false, format: 'esm', platform: 'node', target: 'es2022' });
 const code = built.outputFiles[0].text;
@@ -14,6 +14,21 @@ function candidate(overrides = {}) {
     bestOfferAccepted: false, endedAt: '2026-09-21', ...overrides }, input);
 }
 const result = candidates => ({ source: engine.EBAY_SOLD_COMPS_V2_SOURCE, engineVersion: engine.EBAY_SOLD_COMPS_V2_ENGINE_VERSION, retrievedAt: '2026-09-22T00:00:00Z', candidates });
+test('slab projection retains abbreviated labels, any company and missing sale metadata, ordered newest first', () => {
+  const source = { responsePolicy: 'ATLAS_SLAB_V1', retrievedAt: '2026-10-10T18:00:00Z',
+    items: [{ id: 'first', title: null, listingUrl: null, currency: null, priceBasis: 'UNKNOWN', soldDate: '2026-10-09' },
+      { id: 'second', title: 'Wrong seller title', listingUrl: 'not a URL', currency: 'CAD', priceBasis: 'UPPER_BOUND', reportedPrice: 'CAD 50.00', soldDate: '2026-10-10' }],
+    imageMatch: { readings: [{ rowId: 'first', gradingCompany: 'Other Grading Company', numericGrade: 8.5, labelText: 'PIKACHU\nC. HOLO\n8.5', identityMatch: 'UNCERTAIN' },
+      { rowId: 'second', gradingCompany: 'TAG', numericGrade: 9, labelText: 'Pikachu Holo\n9', identityMatch: 'MATCH' }] } };
+  const before = structuredClone(source), selected = projectSelectedSlabReferences(source, ['first', 'second'], 8.5);
+  assert.deepEqual(selected.sales.map(sale => sale.id), ['second', 'first']);
+  assert.equal(selected.sales[0].listingUrl, null); assert.equal(selected.sales[0].priceMinor, null);
+  assert.equal(selected.sales[0].priceBasis, 'accepted_offer_unknown'); assert.equal(selected.sales[0].reportedPrice, 'CAD 50.00');
+  assert.equal(selected.sales[1].labelText, 'PIKACHU\nC. HOLO\n8.5'); assert.equal(selected.sales[1].grader, 'Other Grading Company');
+  assert.equal(selected.sales[1].currency, null); assert.deepEqual(source, before);
+  source.imageMatch.readings[0].numericGrade = 6;
+  assert.throws(() => projectSelectedSlabReferences(source, ['first'], 8.5));
+});
 test('actual existing parser output projects only explicitly selected disclosed graded USD sales', () => {
   const value = candidate(); assert.ok(value);
   const before = structuredClone(value), projected = projectSelectedSoldReferences(result([value]), [value.id]);
@@ -41,4 +56,12 @@ test('grade metadata cannot contradict the grader and absent identity checks nev
   const variantEvidence = { status: 'MATCH', observed: { language: ['english'], finish: ['reverse holo'], parallelSignals: ['reverse holo'] } };
   const sale = projectSelectedSoldReferences(result([{ ...value, variantEvidence }]), [value.id]).sales[0];
   assert.equal(sale.identityStatus, 'UNKNOWN'); assert.equal(sale.variant, 'reverse holo');
+});
+
+
+test('slab projection keeps an overreturned pool larger than the requested page size', () => {
+  const items=Array.from({length:241},(_,index)=>({id:String(index),priceBasis:'UNKNOWN'}));
+  const source={responsePolicy:'ATLAS_SLAB_V1',retrievedAt:'2026-10-10T18:00:00Z',items,
+    imageMatch:{readings:items.map(({id})=>({rowId:id,numericGrade:8.5,identityMatch:'MATCH',labelText:'PIKACHU C.HOLO 8.5'}))}};
+  assert.equal(projectSelectedSlabReferences(source,items.map(row=>row.id),8.5).sales.length,241);
 });

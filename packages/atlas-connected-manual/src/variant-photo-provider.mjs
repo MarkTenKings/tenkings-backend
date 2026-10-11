@@ -16,6 +16,10 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const safeText = (value, maximum) => typeof value === 'string' && value.trim() === value && value.length > 0
   && value.length <= maximum && !/[\x00-\x1f\x7f]/u.test(value);
+// A literal slab transcription may span printed lines. Validate line breaks
+// without changing the retained text or admitting other control characters.
+const safeLabelText = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 2000
+  && !/[\x00-\x1f\x7f]/u.test(value.replace(/\r?\n/g, ' '));
 const fields = (value, names) => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).sort().join('|') === [...names].sort().join('|');
 const LABEL_PROMPT = [
@@ -138,7 +142,7 @@ export function projectVariantLabelResponse(saved, rawCatalog) {
     &&new Set(result.readings.map(r=>r.sha256)).size===result.readings.length,502,'VARIANT_RESPONSE_INVALID');
   const readings=result.readings.map(r=>{
     requireThat(fields(r,['sha256','candidateKey','gradingCompany','labelText','reason'])&&request.photos.some(p=>p.sha256===r.sha256)
-      &&safeText(r.reason,1000)&&(r.gradingCompany===null||safeText(r.gradingCompany,120))&&(r.labelText===null||safeText(r.labelText,2000))
+      &&safeText(r.reason,1000)&&(r.gradingCompany===null||safeText(r.gradingCompany,120))&&(r.labelText===null||safeLabelText(r.labelText))
       &&(r.candidateKey===null||request.choices.some(c=>c.key===r.candidateKey)&&r.gradingCompany!==null&&r.labelText!==null),502,'VARIANT_RESPONSE_INVALID');
     return projectCodexReading(r,catalog);
   });

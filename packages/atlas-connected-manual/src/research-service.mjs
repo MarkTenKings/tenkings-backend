@@ -76,7 +76,7 @@ export function createAtlasResearchService({boundary,repository,approved,intake,
     fail(init.policyHash===policyHash&&init.kind==='RESEARCH'&&init.approvalActionId===input.approvalActionId,'RESEARCH_REQUEST_KIND_CONFLICT');
     const source=await approved.loadPacket(staff,cardId,input.approvalActionId);fail(source.publicHash===init.publicHash,'RESEARCH_PUBLICATION_CHANGED');
     const saved=await artifacts.read(init.inputRef,{cardId,kind:'RESEARCH_INPUT',sourceHash:init.publicHash});
-    fail(saved.input.subject.id===cardId&&saved.input.subject.revision===source.publicHash&&saved.context.query===publishedMarketQuery(source).query,'RESEARCH_INPUT_CONFLICT');
+    fail(saved.input.subject.id===cardId&&saved.input.subject.revision===source.publicHash&&saved.context.query===publishedMarketQuery(source,{savedQuery:saved.context.query,savedInput:saved.context.input,queryContext:saved.context.marketQueryContext}).query,'RESEARCH_INPUT_CONFLICT');
     const loaded=await readResearchPhotos({artifacts,cardId,sourceHash:init.publicHash,input:saved.input,lineage:saved.lineage});
     const fetchImpl=createResearchEffects({journal,artifacts,staff,cardId,requestId:input.requestId,sourceHash:init.publicHash,fetchImpl:config.fetchImpl,secrets});
     const deps={env:{OPENAI_API_KEY:config.openaiApiKey,SOLDCOMPS_API_KEY:config.soldCompsApiKey,STAFF_INVENTORY_RESEARCH_FULL_RES_IMAGES:'true'},
@@ -106,7 +106,7 @@ export function createAtlasResearchService({boundary,repository,approved,intake,
       object(input,['requestId','approvalActionId','expectedRevision']);uuid(input.requestId);uuid(input.approvalActionId);
       const key=`${cardId}:${input.requestId}`;
       if(active.has(key)){await repository.market(staff,cardId,input.requestId);return {state:'PENDING',previewId:input.requestId};}
-      const source=await approved.loadPacket(staff,cardId,input.approvalActionId),context=publishedMarketQuery(source);
+      const source=await approved.loadPacket(staff,cardId,input.approvalActionId),context=publishedMarketQuery(source,{queryStyle:'legacy'});
       // Read-only lookup before photo processing; a missing exact request has no effects.
       let existing=null;try{existing=await repository.market(staff,cardId,input.requestId);}catch(error){if(error?.code!=='PRESENTATION_MARKET_NOT_FOUND')throw error;}
       if(existing)fail(canonical(existing.input)===canonical(input),'PRESENTATION_REQUEST_CONFLICT');

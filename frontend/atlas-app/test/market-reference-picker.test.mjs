@@ -34,6 +34,17 @@ function fixture() {
   f.find = predicate => all(tree, predicate); f.text = () => text(tree); f.button = label => f.find(node => node.type === 'button' && text(node) === label)[0];
   f.render(); return f;
 }
+test('photo comps retain any grading company, missing link and undisclosed amount without hiding the result', () => {
+  const f = fixture(), source = ready();
+  source.preview.version = 'atlas-market-preview-v2'; source.preview.counts = { returned: 4 };
+  source.preview.candidates[0].sale = { ...source.preview.candidates[0].sale, grader: 'TAG', grade: '9',
+    listingUrl: null, priceMinor: null, currency: null, priceBasis: 'unknown', labelText: 'PIKACHU\nC. HOLO\n9',
+    imageUrl: 'https://i.ebayimg.com/images/g/fixture/s-l1600.jpg' };
+  f.props.savedSource = source; f.render();
+  assert.match(f.text(), /TAG · Grade 9/); assert.match(f.text(), /C. HOLO/); assert.match(f.text(), /Sold amount unavailable/);
+  assert.match(f.text(), /4 listings returned/); assert.equal(f.find(node => node.type === 'input').length, 1);
+  assert.equal(f.find(node => node.type === 'img').length, 1); assert.equal(f.searches, 0); assert.equal(f.saves.length, 0);
+});
 test('optional picker performs no lookup on mount and never preselects even a priced graded sale', async () => {
   const f = fixture(); assert.equal(f.searches, 0); assert.equal(f.saves.length, 0);
   assert.match(f.text(), /no lookup starts from opening this tool/);

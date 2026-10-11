@@ -68,6 +68,22 @@ export type EbaySoldCompsV2SearchResult = {
   classificationExcluded?: Array<{ id: string; reason: "UNANCHORED_MULTI_CARD_LISTING" }>;
 };
 
+/** Unfiltered acquisition for the separate ATLAS slab-photo review path. */
+export type AtlasSoldPhotoPool = {
+  responsePolicy: "ATLAS_SLAB_V1";
+  source: typeof EBAY_SOLD_COMPS_V2_SOURCE;
+  engineVersion: typeof EBAY_SOLD_COMPS_V2_ENGINE_VERSION;
+  query: string;
+  retrievedAt: string;
+  items: Array<{
+    id: string; sourceIndex: number; title: string | null; listingUrl: string | null;
+    providerItemId: string | null; imageUrl: string | null; soldDate: string | null;
+    reportedPrice: string | null; soldPriceCents: number | null; currency: string | null;
+    priceBasis: "EXACT" | "UPPER_BOUND" | "UNKNOWN";
+  }>;
+  acquisitionDiagnostics: { returnedItemCount: number; retainedItemCount: number; missingImageCount: number };
+};
+
 export type EbaySoldCompsV2SelectionSummary = {
   includedCandidateIds: string[];
   includedCount: number;
@@ -735,11 +751,11 @@ async function fetchPayload(
   apiKey: string,
   expectedQuery: string,
   fetcher: EbaySoldCompsV2Fetch,
-  timeoutMs: number,
+  timeoutMs: number | null,
 ) {
   const controller = new AbortController();
   let timedOut = false;
-  const timeout = setTimeout(() => {
+  const timeout = timeoutMs === null ? null : setTimeout(() => {
     timedOut = true;
     controller.abort();
   }, timeoutMs);
@@ -805,8 +821,38 @@ async function fetchPayload(
       { retryable: false },
     );
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== null) clearTimeout(timeout);
   }
+}
+
+/** Retain every returned row for photo-label review. The existing Ten Kings and
+ * historical ATLAS parser remains separate. No application timer, title/grade
+ * classifier, deduplication, or retained-candidate limit applies here. */
+export async function searchAtlasSoldPhotoPool(
+  input: EbaySoldCompsV2SearchInput,
+  runtimeInput: Omit<EbaySoldCompsV2Runtime, "timeoutMs">,
+): Promise<AtlasSoldPhotoPool> {
+  validatedSearchInput(input);
+  const apiKey = cleanText(runtimeInput.apiKey);
+  if (!apiKey) throw new EbaySoldCompsV2Error("SOLDCOMPS_CREDENTIAL_MISSING", "A SoldComps credential is required.");
+  const requestCount = runtimeInput.requestCount ?? EBAY_SOLD_COMPS_V2_REQUEST_COUNT;
+  if (!Number.isSafeInteger(requestCount) || requestCount < 1 || requestCount > EBAY_SOLD_COMPS_V2_REQUEST_COUNT) invalidInput("Request count must be between 1 and 240.");
+  const query = buildEbaySoldCompsV2Query(input);
+  const params = new URLSearchParams({ keyword: query, ebaySite: "ebay.com", count: String(requestCount), page: "1" });
+  const payload = await fetchPayload(`${SOLDCOMPS_ENDPOINT}?${params.toString()}`, apiKey, query, runtimeInput.fetch ?? defaultFetch, null);
+  const items: AtlasSoldPhotoPool["items"] = (payload.items as unknown[]).map((raw, sourceIndex) => {
+    const row = isRecord(raw) ? raw : {};
+    const amount = cleanText(row.soldPrice), currency = cleanText(row.soldCurrency);
+    const cents = amount === null ? null : decimalSoldPriceCents(amount);
+    return { id: `atlas-sale:${sourceIndex}`, sourceIndex, title: cleanText(row.title),
+      listingUrl: safeEbaySourceUrl(row.url), providerItemId: cleanText(row.itemId), imageUrl: ebayImageUrl(row.fullResThumbnailUrl) ?? firstImageUrl(row),
+      soldDate: normalizeEbaySoldCompsV2Date(row.endedAt), reportedPrice: amount,
+      soldPriceCents: cents, currency,
+      priceBasis: cents === null || currency === null ? "UNKNOWN" : row.bestOfferAccepted === true ? "UPPER_BOUND" : row.bestOfferAccepted === false ? "EXACT" : "UNKNOWN" };
+  });
+  return { responsePolicy: "ATLAS_SLAB_V1", source: EBAY_SOLD_COMPS_V2_SOURCE, engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
+    query, retrievedAt: (runtimeInput.now ?? (() => new Date()))().toISOString(), items,
+    acquisitionDiagnostics: { returnedItemCount: items.length, retainedItemCount: items.length, missingImageCount: items.filter(row => row.imageUrl === null).length } };
 }
 
 export async function searchEbaySoldCompsV2(

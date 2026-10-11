@@ -134,6 +134,17 @@ response. The integration must preserve the prior response/preview and record a
 new request and response hash; a successful immutable preview is not a failed
 job to retry. Legacy Ten Kings searches do not emit these fields.
 
+The separate `searchAtlasSoldPhotoPool` API returns `responsePolicy: ATLAS_SLAB_V1`
+for new photo-based ATLAS market searches. It retains every provider row in order,
+including duplicate listings, missing/long titles and missing/conflicting IDs;
+unsafe or unavailable links are nullable, not a reason to lose the sale. It uses
+the caller's exact query, requests up to 240 rows, prefers supplied full-resolution
+photographs, and has no application timeout or 60-candidate ranking/classification
+step. Reported currencies and accepted-offer upper bounds remain factual. The
+connected worker saves this acquisition before reading slab photographs and
+comparing their visible identity/grade. This API does not change old paid-response
+replay or the original Ten Kings search API.
+
 Primary sources checked for category semantics:
 
 - [Pokémon's Legendary Treasures description](https://www.pokemon.com/uk/pokemon-tcg/black-white-legendary-treasures) identifies Black & White as expansion context and Radiant Collection as a separately numbered subset with special foil treatment. That set fact does not resolve a photographed card's missing variant.

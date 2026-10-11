@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { digest } from '@atlas/manual-service/contract';
 import { variantReviewSettings, variantWorkerSettings, variantWorkerEnvironment, validateVariantRuntimeConfiguration } from '../../../frontend/atlas-app/lib/server/variant-runtime-settings.mjs';
 import { createVariantSourcePhotoReader } from '../src/variant-source-photos.mjs';
-import { variantBinding } from '../src/variant-job-store.mjs';
+import { variantBinding, variantJobGrantSQL } from '../src/variant-job-store.mjs';
 import { createVariantRecheck } from '../src/variant-recheck.mjs';
 import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 
@@ -31,6 +31,19 @@ test('startup refuses absent schema and incomplete grants; disabled runtime perf
   await assert.rejects(validateVariantRuntimeConfiguration({ enabled: true, client }), { code: 'VARIANT_QUEUE_SCHEMA_REQUIRED' });
   const partial = { async $queryRawUnsafe(sql) { return sql.includes('to_regclass') ? [{ installed: true }] : [{ allowed: false }]; } };
   await assert.rejects(validateVariantRuntimeConfiguration({ enabled: true, client: partial }), { code: 'VARIANT_QUEUE_GRANTS_REQUIRED' });
+});
+
+test('main cache journaling requires INSERT without UPDATE, DELETE or TRUNCATE access', async () => {
+  const grants=variantJobGrantSQL('atlas_manual_main');
+  assert.match(grants,/GRANT INSERT ON atlas_manual_connected\.variant_catalog_cache TO "atlas_manual_main";/);
+  assert.doesNotMatch(grants,/GRANT (?:UPDATE|DELETE|TRUNCATE).*variant_catalog_cache/);
+  for(const insert of [false,true]){
+    const client={async $queryRawUnsafe(sql){if(sql.includes('to_regclass'))return [{installed:true}];
+      assert.match(sql,/has_table_privilege\(current_user,'atlas_manual_connected\.variant_catalog_cache','INSERT'\)/);
+      return [{allowed:insert}];}};
+    if(insert)await validateVariantRuntimeConfiguration({enabled:true,client});
+    else await assert.rejects(validateVariantRuntimeConfiguration({enabled:true,client}),{code:'VARIANT_QUEUE_GRANTS_REQUIRED'});
+  }
 });
 
 test('listing acquisition is explicitly enabled only with its worker credential', () => {

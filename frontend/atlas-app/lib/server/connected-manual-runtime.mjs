@@ -20,6 +20,7 @@ import { variantReviewSettings, validateVariantRuntimeConfiguration } from './va
 import { createAtlasCatalogClient } from '../../../../packages/atlas-connected-manual/src/research-catalog.mjs';
 import { createVariantCatalogService } from '../../../../packages/atlas-connected-manual/src/variant-catalog.mjs';
 import { createVariantListingProvider } from '../../../../packages/atlas-connected-manual/src/variant-listing-provider.mjs';
+import { createMarketSlabLabeler } from '../../../../packages/atlas-connected-manual/src/market-slab-labels.mjs';
 import { createVariantSourcePhotoReader } from '../../../../packages/atlas-connected-manual/src/variant-source-photos.mjs';
 import { createOrderDeskService } from '../../../../packages/atlas-connected-manual/src/order-desk.mjs';
 import { createOrderDeskInboxService } from '../../../../packages/atlas-connected-manual/src/order-desk-inbox.mjs';
@@ -154,9 +155,10 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const orderDesk=dealerOperations?createOrderDeskService({auth,boundary,photos:orderPhotos}):null;
   const orderDeskInbox=dealerOperations?createOrderDeskInboxService({auth,boundary}):null;
   const marketAutomaticEnabled=env.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED==='true';
+  const marketLabeler=marketAutomaticEnabled&&marketProvider?createMarketSlabLabeler({boundary,apiKey:env.ATLAS_MANUAL_OPENAI_KEY}):null;
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
   requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
-  const connected=createConnectedManual({orderDesk,orderDeskInbox,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
+  const connected=createConnectedManual({orderDesk,orderDeskInbox,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,marketLabeler,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
     processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.

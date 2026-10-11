@@ -97,7 +97,7 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
         save(saved); sawReady = true;
       }
       check(saved && (saved.previewId ?? saved.search.requestId) === input.previewId, 'MARKET_PREVIEW_MISMATCH');
-      check(Array.isArray(input.selectedIds) && input.selectedIds.length > 0 && input.selectedIds.length <= 60
+      check(Array.isArray(input.selectedIds) && input.selectedIds.length > 0
         && new Set(input.selectedIds).size === input.selectedIds.length && input.selectedIds.every(id => typeof id === 'string'), 'MARKET_SELECTION_INVALID');
       if (saved.selection) check(same(saved.selection.selectedIds, input.selectedIds), 'MARKET_SELECTION_PENDING');
       else {

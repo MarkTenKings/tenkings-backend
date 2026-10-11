@@ -1,5 +1,42 @@
 import { reportPresentationSchema } from './presentation-contract.mjs';
 
+// New ATLAS comps use the photographed label. Listing text, links and amounts
+// are display metadata; incomplete metadata does not remove a photographed comp.
+export function projectSelectedSlabReferences(result, selectedIds, atlasGrade) {
+  const invalid = () => { throw new Error('SOLD_REFERENCE_SELECTION_INVALID'); };
+  if (result?.responsePolicy !== 'ATLAS_SLAB_V1' || !Array.isArray(result.items)
+    || !Array.isArray(result.imageMatch?.readings) || !Array.isArray(selectedIds)
+    || new Set(selectedIds).size !== selectedIds.length
+    || !Number.isFinite(atlasGrade)) invalid();
+  if (!selectedIds.length) return null;
+  const schema = reportPresentationSchema.shape.market.unwrap();
+  const field = schema.shape.sales.element;
+  const optionalUrl = (value, key) => field.shape[key].safeParse(value).success ? value : null;
+  const sales = selectedIds.map(id => {
+    const items = result.items.filter(item => item.id === id), readings = result.imageMatch.readings.filter(reading => reading.rowId === id);
+    if (items.length !== 1 || readings.length !== 1) invalid();
+    const item = items[0], reading = readings[0];
+    if (!Number.isFinite(reading.numericGrade) || Math.abs(reading.numericGrade - atlasGrade) > 1
+      || !['MATCH', 'UNCERTAIN'].includes(reading.identityMatch)) invalid();
+    const company = String(reading.gradingCompany ?? '').trim().slice(0, 180) || 'Grading company unread';
+    const literalLabel = typeof reading.labelText === 'string' ? reading.labelText : '';
+    const title = literalLabel.replace(/\s+/g, ' ').trim().slice(0, 500) || `${company} · Grade ${reading.numericGrade}`;
+    const priceMinor = item.priceBasis === 'EXACT' && Number.isSafeInteger(item.soldPriceCents)
+      && item.soldPriceCents >= 0 ? item.soldPriceCents : null;
+    const time = item.soldDate == null ? NaN : Date.parse(item.soldDate);
+    return { id, title, listingUrl: optionalUrl(item.listingUrl, 'listingUrl'),
+      grader: company, grade: String(reading.numericGrade), raw: false, rawCondition: null, designation: null,
+      soldAt: Number.isFinite(time) ? new Date(time).toISOString() : null,
+      priceMinor, currency: /^[A-Z]{3}$/.test(item.currency ?? '') ? item.currency : null,
+      priceBasis: priceMinor !== null ? 'sold' : item.priceBasis === 'UPPER_BOUND' ? 'accepted_offer_unknown' : 'unknown',
+      reportedPrice: item.reportedPrice == null ? null : String(item.reportedPrice).slice(0, 500),
+      imageUrl: optionalUrl(reading.imageUrl ?? item.imageUrl ?? null, 'imageUrl'),
+      labelText: literalLabel.slice(0, 6000), identityStatus: reading.identityMatch === 'MATCH' ? 'MATCH' : 'UNKNOWN' };
+  }).sort((a, b) => (Date.parse(b.soldAt) || 0) - (Date.parse(a.soldAt) || 0)
+    || Math.abs(Number(a.grade) - atlasGrade) - Math.abs(Number(b.grade) - atlasGrade));
+  return schema.parse({ observedAt: result.retrievedAt, sales });
+}
+
 /** Projects an explicitly selected set from the existing SoldComps engine.
  * The v2.3.0 engine only supplies soldPriceCents for disclosed USD sales with
  * bestOfferAccepted=false. Its null price has several meanings, so neither a

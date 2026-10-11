@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {createVariantCatalogService} from '../src/variant-catalog.mjs';
 import {variantCodexChoice,codexLibraryKey,codexReadingKey,validateCodexLibrary,validateVariantReferenceLabels} from '../src/variant-codex.mjs';
 import {createVariantWorker} from '../src/variant-worker.mjs';
-import {prepareVariantLabelRequest} from '../src/variant-photo-provider.mjs';
-import {labelCatalog,labelPhoto,labelHash} from './variant-label-fixture.mjs';
+import {prepareVariantLabelRequest,projectVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from '../src/variant-photo-provider.mjs';
+import {labelCatalog,labelPhoto,labelHash,labelResponse} from './variant-label-fixture.mjs';
 import {variantIdentity} from './variant-fixture.mjs';
 
 test('all48known printings receive two photo slots; seller title never establishes the association',async()=>{
@@ -39,6 +39,21 @@ test('worker processes96photos in12bounded calls, never loads intake images or w
  const provider=async({prepared})=>{calls.push(prepared.request.photos.length);return {};};provider.labelRequest=prepareVariantLabelRequest;provider.prepare=async({catalog,photoShas})=>({request:prepareVariantLabelRequest(catalog,photoShas),evidence:{}});
  const worker=createVariantWorker({store,catalog:{},provider,loadPhotos:()=>assert.fail('physical uploads'),projectResponse:()=>assert.fail('legacy projector')});await worker.drainOnce();
  assert.deepEqual(calls,Array(12).fill(8));assert.equal(result.result.referenceLabels.readings.length,96);assert.equal(result.result.suggestion.candidateId,null);
+});
+test('queued job publishes its retained multiline label response and reaches READY without another paid request',async()=>{
+ const snapshot=labelCatalog(),request=prepareVariantLabelRequest(snapshot),literal='2020 POKEMON\nMAGIKARP\n#039\nGEM MT 10';
+ const body=labelResponse(request,request.photos.map(p=>({sha256:p.sha256,candidateKey:request.choices[0].key,gradingCompany:'PSA',labelText:literal,reason:'Exact visible card and standard base printing.'})));
+ const saved={version:VARIANT_LABEL_POLICY,requestEvidence:{policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL,requestSha256:labelHash('original paid body'),request},httpStatus:200,bodyText:JSON.stringify(body)};
+ const original=JSON.stringify(saved),row={key:'recover-multiline',claim_id:'claim',input:{identity:variantIdentity},catalog:snapshot};let claimed=false,labels={version:'atlas-slab-label-associations/v1',catalogHash:snapshot.snapshotHash,readings:[]},finished;
+ const store={discover:async()=>{},claim:async()=>{if(claimed)return null;claimed=true;return row;},renew:async()=>true,codexReadings:async()=>validateVariantReferenceLabels(labels,snapshot),
+  labelSource:async(_job,requested,evidence)=>{assert.equal(evidence,undefined);assert.deepEqual(requested,request);return {state:'REUSED',response:saved};},
+  publishLabelSource:async()=>{labels=projectVariantLabelResponse(saved,snapshot);const choice=request.choices[0];
+   const library={schemaVersion:'atlas-codex-library/v1',policy:VARIANT_LABEL_POLICY,choice,references:labels.readings.map(r=>({image:snapshot.referencePhotos.find(p=>p.sha256===r.sha256),reading:{sha256:r.sha256,candidateKey:r.canonicalPrintingKey,gradingCompany:r.gradingCompany,labelText:r.labelText,reason:r.reason},responseHash:labelHash(saved.bodyText),requestKey:request.requestKey}))};
+   assert.deepEqual(validateCodexLibrary(JSON.parse(JSON.stringify(library)),choice).references.map(r=>r.reading.labelText),[literal,literal]);},
+  finish:async(_job,outcome)=>{finished=outcome;return true;},saveLabelSource:()=>assert.fail('retained response cannot be replaced')};
+ const provider=()=>assert.fail('no second model call');provider.labelRequest=prepareVariantLabelRequest;provider.prepare=()=>assert.fail('no image read or new request preparation');
+ const worker=createVariantWorker({store,catalog:{},provider,loadPhotos:()=>assert.fail('no physical images'),projectResponse:()=>assert.fail('no legacy projector'),onError:error=>assert.fail(error.code)});
+ await worker.drainOnce();assert.equal(finished.result.referenceLabels.readings.length,2);assert.deepEqual(finished.result.referenceLabels.readings.map(r=>r.labelText),[literal,literal]);assert.equal(JSON.stringify(saved),original);assert.equal(finished.result.suggestion.candidateId,null);
 });
 
 test('explicit missing-only refresh uses its saved generation, skips completed printings and already-read photo bytes',async()=>{

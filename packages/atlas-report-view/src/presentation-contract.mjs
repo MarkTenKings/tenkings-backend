@@ -27,13 +27,19 @@ const dealerUrl = z.string().max(300).refine(value => {
       && [...url.searchParams.keys()].sort().join(',') === 'dealer,service';
   } catch { return false; }
 });
-const sale = z.strictObject({ id: text, title: z.string().trim().min(1).max(500), listingUrl,
-  grader: z.string().trim().min(1).max(40).nullable(), grade: z.string().trim().min(1).max(40).nullable(), soldAt: date.nullable(),
+const referenceImageUrl = z.string().max(2048).refine(value => {
+  try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && !url.port
+    && /(^|\.)(ebayimg|ebaystatic)\.com$/i.test(url.hostname); } catch { return false; }
+});
+const sale = z.strictObject({ id: text, title: z.string().trim().min(1).max(500), listingUrl: listingUrl.nullable(),
+  grader: z.string().trim().min(1).max(180).nullable(), grade: z.string().trim().min(1).max(40).nullable(), soldAt: date.nullable(),
   raw: z.boolean().optional(), rawCondition: text.nullable().optional(),
   designation: z.enum(['STANDARD', 'BLACK_LABEL', 'PRISTINE', 'PERFECT']).nullable().optional(),
   language: text.nullable().optional(), printing: text.nullable().optional(), variant: text.nullable().optional(),
   identityStatus: z.enum(['MATCH', 'UNKNOWN']).optional(),
-  priceMinor: money.nullable(), currency, priceBasis: z.enum(['sold', 'accepted_offer_unknown'])
+  imageUrl: referenceImageUrl.nullable().optional(), labelText: z.string().max(6000).nullable().optional(),
+  reportedPrice: z.string().max(500).nullable().optional(),
+  priceMinor: money.nullable(), currency: currency.nullable(), priceBasis: z.enum(['sold', 'accepted_offer_unknown', 'unknown'])
 }).superRefine((value, ctx) => {
   if ((value.priceBasis === 'sold') !== (value.priceMinor !== null)) ctx.addIssue({ code: 'custom', message: 'Only a disclosed sold amount can be a price' });
   if (value.raw === true ? value.grader !== null || value.grade !== null || value.designation != null : value.grader === null || value.grade === null) {
@@ -47,7 +53,7 @@ export const reportPresentationSchema = z.strictObject({ version: z.literal('atl
     byteCount: z.number().int().positive().max(50 * 1024 * 1024), contentType: z.enum(['image/webp','image/jpeg','image/png']),
     width: z.number().int().positive().max(20000), height: z.number().int().positive().max(20000),
     alt: z.string().trim().min(1).max(300), capturedAt: date.optional() }).optional(),
-  market: z.strictObject({ observedAt: date, sales: z.array(sale).max(60),
+  market: z.strictObject({ observedAt: date, sales: z.array(sale),
     estimate: z.strictObject({ lowMinor: money, highMinor: money, currency, asOf: date,
       method: z.string().trim().min(1).max(500), sampleCount: z.number().int().positive().max(100000) })
       .refine(value => value.lowMinor <= value.highMinor, 'Valuation range must be ordered').optional() }).optional(),

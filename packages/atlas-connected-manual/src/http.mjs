@@ -108,12 +108,16 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       const marketFound=marketRoute.exec(url.pathname);
       if(marketFound){
         const write=Boolean(marketFound[2]);
-        requireThat(!url.search && req.method===(write?'POST':'GET'),405,'METHOD_NOT_ALLOWED');
+        const image=!write && [...url.searchParams.keys()].sort().join(',')==='image,preview'
+          && /^[a-f0-9]{64}$/.test(url.searchParams.get('image')??'');
+        requireThat((!url.search || image) && req.method===(write?'POST':'GET'),405,'METHOD_NOT_ALLOWED');
         requireThat(connected.market,503,'MARKET_DISABLED');
         if(write)requireThat(connected.market.enabled,503,'MARKET_DISABLED');
         if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
           && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
         const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
+        if(image){const photo=await connected.market.image(staff,marketFound[1],url.searchParams.get('preview'),url.searchParams.get('image'));
+          res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Type',photo.contentType);res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");res.status(200).send(photo.bytes);return true;}
         const result=!write?await connected.market.status(staff,marketFound[1]):marketFound[2]==='search'?await connected.market.preview(staff,marketFound[1],req.body):await connected.market.select(staff,marketFound[1],req.body);
         res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
       }

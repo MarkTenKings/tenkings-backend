@@ -23,6 +23,24 @@ const live = `EXISTS(SELECT 1 FROM atlas_manual.publication p JOIN atlas_manual.
  AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=p.card_id))
  AND atlas_manual_connected.display_owner_current(j.actor_id,j.access_version)`;
 const active = `j.request_id=$1::uuid AND j.claim_id=$2::uuid AND j.state IN('RUNNING','REQUESTED') AND j.lease_until>clock_timestamp() AND ${live}`;
+// New unfiltered acquisition keeps every JSON field, including long provider
+// titles. The old canonical envelope remains exact for historical responses.
+function responseText(response) {
+  if (response?.responsePolicy !== 'ATLAS_SLAB_V1') return canonical(response, { maxBytes: 524288 });
+  const visit = (value, depth = 0) => {
+    requireThat(depth <= 40, 413, 'MARKET_RESPONSE_TOO_LARGE');
+    if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
+    if (typeof value === 'number') { requireThat(Number.isFinite(value), 503, 'MARKET_RESPONSE_INVALID'); return JSON.stringify(value); }
+    if (Array.isArray(value)) return `[${Array.from(value, entry => visit(entry, depth + 1)).join(',')}]`;
+    requireThat(value && Object.getPrototypeOf(value) === Object.prototype, 503, 'MARKET_RESPONSE_INVALID');
+    const keys = Object.keys(value).sort(), descriptors = Object.getOwnPropertyDescriptors(value);
+    requireThat(Reflect.ownKeys(value).length === keys.length && keys.every(key => Object.hasOwn(descriptors[key], 'value')), 503, 'MARKET_RESPONSE_INVALID');
+    return `{${keys.map(key => `${JSON.stringify(key)}:${visit(value[key], depth + 1)}`).join(',')}}`;
+  };
+  const text = visit(response);
+  requireThat(Buffer.byteLength(text) <= 5242880, 413, 'MARKET_RESPONSE_TOO_LARGE');
+  return text;
+}
 const stored = row => {
   if (!row) return null;
   requireThat(!row.response || digest(row.response) === row.response_hash, 503, 'MARKET_RESPONSE_CORRUPT');
@@ -242,7 +260,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       AND EXISTS(SELECT 1 FROM ${table} s WHERE s.request_id=$6::uuid AND s.state='READY' AND s.response_hash=$7 AND s.dispatch_id=$5::uuid AND s.card_id=j.card_id AND s.approval_action_id=j.approval_action_id AND s.source_hash=j.source_hash AND s.report_hash=j.report_hash AND s.public_hash=j.public_hash)`,job.request_id,job.claim_id,value,digest(value),marker.originalDispatchId,marker.sourceRequestId,marker.responseHash,marker.classificationRevision,marker.publicHash,canonical([marker])))===1);},
     recordResponse(job, response) {
       requireThat(!marketReclassification(job),409,'MARKET_RECLASSIFICATION_NO_PROVIDER');
-      const value = canonical(response, { maxBytes: 524288 });
+      const value = responseText(response);
       // A late paid response survives retirement and lease loss. Only its exact
       // persisted dispatch can append it; immutable evidence cannot be replaced.
       return machine(async ({ tx, principal }) => (await tx.$executeRawUnsafe(`UPDATE ${table} SET response=$3,response_hash=$4,audit=audit||jsonb_build_array(jsonb_build_object('event','RESPONSE','dispatchId',$2::text,'responseHash',$4::text,'at',clock_timestamp())),updated_at=clock_timestamp()

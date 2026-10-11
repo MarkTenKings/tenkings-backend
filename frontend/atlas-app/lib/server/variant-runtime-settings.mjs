@@ -59,9 +59,9 @@ export async function validateVariantRuntimeConfiguration({ enabled, client, wor
   const [grants] = await client.$queryRawUnsafe(`SELECT
     has_table_privilege(current_user,'atlas_manual_connected.variant_job','SELECT') AND
     has_table_privilege(current_user,'atlas_manual_connected.variant_job','INSERT') AND
-    has_table_privilege(current_user,'atlas_manual_connected.variant_catalog_cache','SELECT')
-    ${worker ? `AND has_table_privilege(current_user,'atlas_manual_connected.variant_catalog_cache','INSERT')
-      AND has_table_privilege(current_user,'atlas_manual_connected.batch_grading','SELECT')
+    has_table_privilege(current_user,'atlas_manual_connected.variant_catalog_cache','SELECT') AND
+    has_table_privilege(current_user,'atlas_manual_connected.variant_catalog_cache','INSERT')
+    ${worker ? `AND has_table_privilege(current_user,'atlas_manual_connected.batch_grading','SELECT')
       AND has_table_privilege(current_user,'atlas_manual_connected.identification','SELECT')` : ''} AND
     has_table_privilege(current_user,'atlas_manual_connected.variant_confirmation','SELECT')
     ${worker ? '' : `AND has_table_privilege(current_user,'atlas_manual_connected.variant_confirmation','INSERT')`} AND

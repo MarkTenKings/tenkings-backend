@@ -71,7 +71,7 @@ export default function ReportMarketPicker({ cardId, staffId, approvalActionId, 
     {!ready && error && <button type="button" disabled={disabled || busy} onClick={() => void recover()}>Check report status</button>}
     {error && <p role="alert" className={styles.error}>{error}</p>}
   </section>;
-  return <>{status && <p role="status">{status}</p>}<MarketReferencePicker {...pickerOptions} scopeKey={`${staffId}:${cardId}:${approvalActionId}`} available={available} disabled={disabled || busy}
+  return <>{status && <p role="status">{status}</p>}<MarketReferencePicker {...pickerOptions} cardId={cardId} scopeKey={`${staffId}:${cardId}:${approvalActionId}`} available={available} disabled={disabled || busy}
     automatic={automatic} automaticEnabled={automaticEnabled} savedSource={automatic ? preview : null} onCheck={() => recover()}
     onPreview={async () => { const value = client.current, version = generation.current, result = await value.preview();
       if (version === generation.current) { setPreview(result); setError(''); } return result; }} onSave={async input => {

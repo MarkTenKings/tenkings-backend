@@ -41,6 +41,24 @@ test('retained labels reject invented printing IDs, duplicate/foreign images, mi
  const incomplete=JSON.parse(saved.bodyText);incomplete.status='incomplete';assert.throws(()=>projectVariantPhotoResponse({...saved,bodyText:JSON.stringify(incomplete)},catalog),{code:'VARIANT_RESPONSE_INCOMPLETE'});
  const altered=labelCatalog({photos:1});assert.throws(()=>projectVariantPhotoResponse(saved,altered));
 });
+test('literal slab label lines survive retained-response projection; unrelated control characters remain invalid',async()=>{
+ const catalog=labelCatalog(),request=prepareVariantLabelRequest(catalog),provider=providerFor(catalog,async()=>Response.json(labelResponse(request))),saved=await provider({prepared:await provider.prepare({catalog})});
+ const readings=JSON.parse(JSON.parse(saved.bodyText).output[0].content[0].text).readings;
+ readings[0].labelText='2020 POKEMON\nMAGIKARP\n#039\nGEM MT 10';
+ readings[1].labelText='2020 POKEMON\r\nMAGIKARP\r\n#039\r\nGEM MT 10';
+ const retained={...saved,bodyText:JSON.stringify(labelResponse(request,readings))},before=JSON.stringify(retained);
+ const projected=projectVariantPhotoResponse(retained,catalog);
+ assert.deepEqual(projected.readings.map(r=>r.labelText),readings.map(r=>r.labelText));
+ assert.equal(JSON.stringify(retained),before,'projection never rewrites the already-billed response');
+ for(const control of ['\t','\r','\u0000','\u001b','\u007f']){
+  const invalid=structuredClone(readings);invalid[0].labelText=`PSA${control}10`;
+  assert.throws(()=>projectVariantPhotoResponse({...saved,bodyText:JSON.stringify(labelResponse(request,invalid))},catalog),{code:'VARIANT_RESPONSE_INVALID'});
+ }
+ for(const field of ['reason','gradingCompany']){
+  const invalid=structuredClone(readings);invalid[0][field]='First\nSecond';
+  assert.throws(()=>projectVariantPhotoResponse({...saved,bodyText:JSON.stringify(labelResponse(request,invalid))},catalog),{code:'VARIANT_RESPONSE_INVALID'});
+ }
+});
 test('historical physical-card model responses retain their original strict binding and projector',()=>{
  const image=variantCatalog.candidates[0].images[0],sha=labelHash('original'),input={sourceHash:labelHash('source'),identityHash:labelHash('identity'),identityRevision:1};
  const evidence={policy:VARIANT_PHOTO_POLICY,model:VARIANT_PHOTO_MODEL,...input,catalogHash:variantCatalog.snapshotHash,requestSha256:labelHash('request'),originals:{FRONT:sha,BACK:sha},photoDerivation:{policy:VARIANT_SOURCE_PHOTO_POLICY,sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{originalSha256:sha,frameSha256:sha,comparisonSha256:sha}]))},references:[{candidateId:variantCatalog.candidates[0].candidateId,imageId:image.imageId,sha256:image.sha256}],candidateIds:[variantCatalog.candidates[0].candidateId]};

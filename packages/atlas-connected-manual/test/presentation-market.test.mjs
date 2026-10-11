@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, digest } from '@atlas/manual-service/contract';
-import { parseEbaySoldCompsV2Candidate, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
-import { createPresentationMarket, publishedMarketQuery } from '../src/presentation-market.mjs';
+import { buildEbaySoldCompsV2Query, parseEbaySoldCompsV2Candidate, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
+import { createPresentationMarket, publishedMarketQuery, createRetainedMarketQueryResolver, marketPreviewHash } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
 const now = () => new Date('2026-09-22T16:00:00.000Z');
@@ -24,7 +24,7 @@ test('published identity drives query; ATLAS award is context without a PSA grad
   const market = createPresentationMarket({ now, provider: async input => { calls.push(input); return source(context); } });
   const saved = await market.preview(f);
   assert.equal(saved.state, 'READY'); assert.equal(calls.length, 1); assert.equal(Object.hasOwn(calls[0], 'targetGrade'), false);
-  assert.equal(Object.hasOwn(calls[0], 'queryOverride'), false); assert.doesNotMatch(context.query, /PSA/);
+  assert.equal(calls[0].queryOverride, context.query); assert.doesNotMatch(context.query, /PSA/);
   assert.equal(saved.preview.atlasGrade, f.packet.report.finalGrade); assert.equal(saved.preview.candidates.length, 1);
   assert.equal(saved.preview.candidates[0].requiresReview, true); assert.equal(saved.preview.excluded.undisclosedOrUnsupported, 1);
   assert.equal(saved.sourceHash, digest(canonical(saved.preview))); assert.deepEqual(f.packet, before);
@@ -159,4 +159,142 @@ test('malformed or double-counted reclassification exclusions cannot become trus
       [{ ...row, inventedPrice: 100 }], Array.from({ length: 59 }, (_, i) => ({ ...row, id: `ebay:excluded-${i}` }))]
       .map(classificationExcluded => ({ classificationRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, classificationExcluded })),
   ]) assert.throws(() => market.project(f, { ...result, ...metadata }), { code: 'MARKET_PROVIDER_RESULT_INVALID' });
+});
+
+
+test('ATLAS Pokemon retrieval uses common wording and literal exact grade without altering approved fields', async () => {
+  const f = await pokemonFixture({ productSet: '151', parallel: 'English Cosmos Holofoil' }), before = structuredClone(f.packet);
+  const context = publishedMarketQuery(f);
+  assert.equal(context.query, '2023 151 Pikachu Cosmo Holo 25/165 grade 10');
+  assert.deepEqual(context.input, { matchingPolicy: 'ATLAS_IDENTITY_V1', category: 'POKEMON', cardName: 'Pikachu', year: '2023',
+    productSet: '151', parallel: 'English Cosmos Holofoil', cardNumber: '025/165', queryOverride: '2023 151 Pikachu Cosmo Holo 25/165 grade 10' });
+  assert.deepEqual(f.packet, before);
+  assert.equal(buildEbaySoldCompsV2Query({ ...context.input, queryOverride: undefined }), '2023 151 Pikachu English Cosmos Holofoil #025/165');
+  const base = await pokemonFixture({ parallel: 'English Base' });
+  assert.equal(publishedMarketQuery(base).query, '2023 Scarlet & Violet 151 Pikachu 25/165 grade 10');
+});
+
+test('sports retrieval deduplicates product and printing phrases without losing a player surname or changing saved identity', async () => {
+  const f = await fixture();
+  f.packet.report.identity = { year: '2025', manufacturer: 'Topps', productSet: '2025 Topps Chrome — Ball of Duty',
+    playerName: 'LaMelo Ball', cardNumber: 'BD-013', insert: 'Ball of Duty', parallel: 'Ball of Duty' };
+  f.publicHash = digest(JSON.stringify(f.packet));
+  const before = structuredClone(f.packet), context = publishedMarketQuery(f);
+  assert.equal(context.query, '2025 Topps Chrome Ball of Duty LaMelo Ball BD-13 grade 10');
+  assert.deepEqual(f.packet, before); assert.equal(context.input.cardNumber, 'BD-013');
+  f.packet.report.identity = { year: '2025', manufacturer: 'Panini', productSet: '2025 Panini Donruss Optic Football',
+    playerName: 'Jaxson Dart', cardNumber: 'DTBH-JDT', insert: 'Donruss Threads', parallel: 'Base Donruss Threads Red' };
+  f.publicHash = digest(JSON.stringify(f.packet));
+  assert.equal(publishedMarketQuery(f).query, '2025 Panini Donruss Optic Football Jaxson Dart Donruss Threads Red DTBH-JDT grade 10');
+  f.packet.report.identity = { year: '1990', manufacturer: 'Fleer', productSet: 'Fleer Basketball',
+    playerName: 'Alex English', cardNumber: '001', insert: null, parallel: 'Base Card' };
+  f.publicHash = digest(JSON.stringify(f.packet));
+  assert.equal(publishedMarketQuery(f).query, '1990 Fleer Basketball Alex English 1 grade 10');
+});
+
+test('exact historical paid queries reproject without altering their response and old signed input shapes remain selectable', async () => {
+  const f = await pokemonFixture({ productSet: '151', parallel: 'English Cosmos Holofoil' }), context = publishedMarketQuery(f);
+  const legacyInput = { ...context.input }; delete legacyInput.queryOverride;
+  const oldQuery = buildEbaySoldCompsV2Query(legacyInput);
+  assert.equal(oldQuery, '2023 151 Pikachu English Cosmos Holofoil #025/165');
+  const response = titleResult({ ...context, query: oldQuery }, ['2023 Pokemon 151 Pikachu 025/165 English Cosmos Holofoil PSA 9']);
+  const original = structuredClone(response), market = createPresentationMarket({ now }), ready = market.project(f, response);
+  assert.equal(ready.preview.query, oldQuery); assert.equal(ready.preview.input.queryOverride, oldQuery);
+  assert.deepEqual(response, original); assert.equal(ready.preview.candidates.length, 1);
+  for (const matchingPolicy of [true, false]) {
+    const saved = structuredClone(ready); saved.preview.input = { ...legacyInput };
+    if (!matchingPolicy) delete saved.preview.input.matchingPolicy;
+    saved.sourceHash = digest(canonical(saved.preview));
+    const before = structuredClone(saved), selected = market.select({ ...f, ...saved, selectedIds: [ready.preview.candidates[0].sale.id] });
+    assert.equal(selected.sales[0].priceMinor, 4000); assert.deepEqual(saved, before);
+    saved.preview.input.cardNumber = '026/165'; saved.sourceHash = digest(canonical(saved.preview));
+    assert.throws(() => market.select({ ...f, ...saved, selectedIds: [] }), { code: 'MARKET_PUBLICATION_MISMATCH' });
+  }
+  assert.throws(() => publishedMarketQuery(f, { savedQuery: 'pokemon charizard' }), { code: 'MARKET_PUBLICATION_MISMATCH' });
+  assert.throws(() => publishedMarketQuery(f, { savedQuery: oldQuery, savedInput: context.input }), { code: 'MARKET_PUBLICATION_MISMATCH' });
+});
+
+
+test('retained Scrydex expansion supplies the exact full-set query and remains self-contained for later projection', async () => {
+  const f = await pokemonFixture({ productSet: '151', parallel: 'English Cosmos Holofoil' });
+  f.packet.report.finalGrade = 8.5; f.packet.report.grade.overall = { rawGrade: 8.5, displayGrade: 8.5 }; f.publicHash = digest(JSON.stringify(f.packet));
+  const before = structuredClone(f.packet);
+  const url = 'https://api.scrydex.com/pokemon/v1/cards?q=pikachu&page=1&page_size=7&casing=snake&select=id,name,number,printed_number,expansion,language_code,variants,images';
+  const card = { id: 'sv3pt5-25', name: 'Pikachu', number: '25', printed_number: '025/165',
+    expansion: { id: 'sv3pt5', name: '151', series: 'Scarlet & Violet', release_date: '2023/09/22', printed_total: 165, is_online_only: false } };
+  const body = JSON.stringify({ data: [card] }), sha256 = digest(body), entry = { schemaVersion: 'scrydex-source/v1', url, sha256, body };
+  const reference = { provider: 'scrydex', url, sha256 };
+  let reads = 0;
+  const resolver = createRetainedMarketQueryResolver({ cache: { async getRetained(key) { reads++; assert.equal(key, `variant-scrydex-evidence:v1:${digest(url)}:${sha256}`); return entry; } },
+    readCatalog: async () => ({ candidates: [{ source: reference }] }) });
+  const queryContext = await resolver({ source: f, staff: {}, job: { card_id: 'fixture' } });
+  const context = publishedMarketQuery(f, { queryContext });
+  assert.equal(context.query, '2023 Scarlet & Violet 151 Pikachu Cosmo Holo 25/165 grade 8.5');
+  assert.equal(context.input.productSet, '151'); assert.equal(context.input.parallel, 'English Cosmos Holofoil');
+  assert.equal(Object.hasOwn(context.input, 'targetGrade'), false); assert.deepEqual(f.packet, before); assert.equal(reads, 1);
+  const result = { ...titleResult(context, ['2023 Pokemon 151 Pikachu 25/165 English Cosmos Holofoil PSA 9']), marketQueryContext: queryContext };
+  const ready = createPresentationMarket({ now }).project(f, result);
+  assert.equal(ready.preview.query, context.query); assert.equal(reads, 1);
+  assert.equal(createPresentationMarket({ now }).select({ ...f, ...ready, selectedIds: [ready.preview.candidates[0].sale.id] }).sales.length, 1);
+  for (const change of [c => { c.publicHash = 'f'.repeat(64); }, c => { c.card.number = '26/165'; }, c => { c.fullSetName = 'Other set'; }]) {
+    const corrupt = structuredClone(queryContext); change(corrupt);
+    assert.throws(() => publishedMarketQuery(f, { queryContext: corrupt }), { code: 'MARKET_QUERY_CONTEXT_INVALID' });
+  }
+  entry.body += ' '; await assert.rejects(resolver({ source: f, staff: {}, job: { card_id: 'fixture' } }), { code: 'MARKET_QUERY_SOURCE_INVALID' });
+});
+
+test('slab preview uses image readings, retains uncertain abbreviations and unknown sale metadata, and reports every outcome', async () => {
+  const f = await pokemonFixture({ productSet: '151', parallel: 'English Cosmos Holofoil' });
+  f.packet.report.finalGrade = 8.5; f.packet.report.grade.overall = { rawGrade: 8.5, displayGrade: 8.5 }; f.publicHash = digest(JSON.stringify(f.packet));
+  const context = publishedMarketQuery(f);
+  const items = Array.from({ length: 6 }, (_, i) => ({ id: `atlas-sale:${i}`, sourceIndex: i, title: '1999 Different title lot of 12'.repeat(1000),
+    listingUrl: null, providerItemId: null, imageUrl: i === 5 ? null : `https://i.ebayimg.com/images/g/fixture${i}/s-l1600.jpg`,
+    soldDate: i === 0 ? '2026-09-20' : '2026-09-21', reportedPrice: i === 0 ? '40.00' : null,
+    soldPriceCents: i === 0 ? 4000 : null, currency: i === 0 ? 'EUR' : null, priceBasis: i === 0 ? 'UPPER_BOUND' : 'UNKNOWN' }));
+  const readings = items.slice(0, 5).map((item, i) => ({ rowId: item.id, sha256: String(i + 1).repeat(64), imageUrl: item.imageUrl,
+    gradingCompany: i === 1 ? null : 'Other Company', numericGrade: [8.5, 9, 8.5, 6, null][i],
+    labelText: '2023 PIKACHU\n151 C.HOLO 25/165', identityMatch: i === 1 ? 'UNCERTAIN' : i === 2 ? 'DIFFERENT' : 'MATCH',
+    reason: 'Visible photographed label', canonicalCardKey: null, canonicalPrintingKey: null }));
+  const result = { responsePolicy: 'ATLAS_SLAB_V1', source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
+    query: context.query, retrievedAt: now().toISOString(), items, acquisitionDiagnostics: { returnedItemCount: 6, retainedItemCount: 6, missingImageCount: 1 },
+    imageMatch: { policy: 'atlas-market-slab-label-v1', readings, counts: {} } };
+  const original = structuredClone(result), market = createPresentationMarket({ now }), ready = market.project(f, result);
+  assert.equal(ready.preview.version, 'atlas-market-preview-v2'); assert.equal(ready.sourceHash, marketPreviewHash(ready.preview));
+  assert.deepEqual(ready.preview.candidates.map(v => v.sale.id), ['atlas-sale:1', 'atlas-sale:0']);
+  assert.deepEqual(ready.preview.counts, { returned: 6, missingImage: 1, unreadGrade: 2, differentIdentity: 1, outsideGrade: 1, shown: 2 });
+  const selected = market.select({ ...f, ...ready, selectedIds: ['atlas-sale:0', 'atlas-sale:1'] });
+  assert.equal(selected.sales[0].grader, 'Grading company unread'); assert.equal(selected.sales[0].priceBasis, 'unknown');
+  assert.equal(selected.sales[1].priceMinor, null); assert.equal(selected.sales[1].priceBasis, 'accepted_offer_unknown');
+  assert.equal(selected.sales[1].reportedPrice, '40.00'); assert.equal(selected.sales[1].currency, 'EUR');
+  assert.match(selected.sales[1].labelText, /\n/); assert.deepEqual(result, original);
+  assert.throws(() => market.select({ ...f, ...ready, selectedIds: ['atlas-sale:2'] }));
+});
+
+
+test('new slab provider is refused before a nondurable preview can spend a search', async () => {
+  let calls = 0;
+  const provider = Object.assign(async () => { calls++; }, { requiresSlabLabels: true });
+  await assert.rejects(createPresentationMarket({ provider, now }).preview(await fixture()), { code: 'MARKET_DURABLE_LABEL_WORKER_REQUIRED' });
+  assert.equal(calls, 0);
+});
+
+
+test('slab preview and explicit selection retain every eligible row when the provider exceeds the requested count', async () => {
+  const f = await pokemonFixture({ productSet: '151', parallel: 'English Cosmos Holofoil' }), context = publishedMarketQuery(f);
+  const items = Array.from({ length: 241 }, (_, i) => ({ id: `atlas-sale:${i}`, sourceIndex: i, title: null,
+    listingUrl: null, providerItemId: null, imageUrl: `https://i.ebayimg.com/images/g/fixture${i}/s-l1600.jpg`,
+    soldDate: '2026-09-21', reportedPrice: null, soldPriceCents: null, currency: null, priceBasis: 'UNKNOWN' }));
+  const readings = items.map(item => ({ rowId: item.id, sha256: digest(item.id), imageUrl: item.imageUrl,
+    gradingCompany: 'Other Company', numericGrade: context.atlasGrade, labelText: '2023 PIKACHU 151 C.HOLO 25/165',
+    identityMatch: 'MATCH', reason: 'Visible photographed label', canonicalCardKey: null, canonicalPrintingKey: null }));
+  const result = { responsePolicy: 'ATLAS_SLAB_V1', source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
+    query: context.query, retrievedAt: now().toISOString(), items,
+    acquisitionDiagnostics: { returnedItemCount: items.length, retainedItemCount: items.length, missingImageCount: 0 },
+    imageMatch: { policy: 'atlas-market-slab-label-v1', readings, counts: {} } };
+  const market = createPresentationMarket({ now }), ready = market.project(f, result);
+  assert.equal(ready.preview.candidates.length, 241);
+  assert.equal(ready.preview.counts.returned, 241); assert.equal(ready.preview.counts.shown, 241);
+  const selected = market.select({ ...f, ...ready, selectedIds: items.map(item => item.id) });
+  assert.equal(selected.sales.length, 241);
+  assert.deepEqual(new Set(selected.sales.map(item => item.id)), new Set(items.map(item => item.id)));
 });

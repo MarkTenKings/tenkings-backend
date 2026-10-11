@@ -1,4 +1,4 @@
-import { searchEbaySoldCompsV2 } from '@tenkings/ebay-sold-comps-v2';
+import { searchAtlasSoldPhotoPool } from '@tenkings/ebay-sold-comps-v2';
 import { requireThat } from '@atlas/manual-service/contract';
 
 // Dedicated ATLAS configuration; no Ten Kings credential lookup or inherited
@@ -9,5 +9,6 @@ export function createSoldReferenceProvider({ apiKey, fetchImpl = globalThis.fet
   // The dedicated credential is sent only to the engine's fixed provider URL.
   // A redirect is an uncertain failed request, never another authorized hop.
   const fetchProvider = (url, init) => fetchImpl(url, { ...init, redirect: 'error' });
-  return input => searchEbaySoldCompsV2(input, { apiKey, timeoutMs: 45000, requestCount: 40, fetch: fetchProvider });
+  const provider = input => searchAtlasSoldPhotoPool(input, { apiKey, requestCount: 240, fetch: fetchProvider });
+  return Object.assign(provider, { requiresSlabLabels: true });
 }
