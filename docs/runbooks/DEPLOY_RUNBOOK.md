@@ -1,6 +1,22 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current approval repair — October 10, 2026, 23:49 UTC
+## Current ATLAS Codex release — October 11, 2026, 00:44 UTC
+
+Source `c469f7b6d17d8cc745cf21946b67bb159e2df739` is live. The catalog card/printing now owns permanently retained graded listing photos and literal slab-label readings in the existing append-only cache. Later physical submissions load this shared library before searching; populated printings avoid repeated SoldComps/image/model calls. Base/Normal uses the same reference and explicit human-confirmation workflow. Missing printings can use the existing explicit Refresh to search a new generation. Saved paid responses/readings survive restarts; unknown outcomes are not repurchased. Scrydex metadata refresh is separate. Manufacturer aliases remain scoped to proven identities.
+
+The staff display shows the saved grading company and literal label beside the complete reference photograph. Rapid review resumes at the actual unfinished step, and the unconditional completed-analysis warning is removed. No reference operation approves the submitted card or reruns grading. These changes have passed local/native qualification; **real production slab-label/photo acceptance is pending normal staff sign-in and explicit reference refresh**. Existing historical reference snapshots remain unchanged until refreshed. Before-refresh observation at00:44:40Z confirms no new slab-label calls or libraries yet.
+
+The user's Pikachu is already **Completed, ATLAS8.5**, revision10, with one final approval, label `ATLAS-EF7F8C305855` queued and report `ar_xUfBd-DhVxM3H3HantxweT8L?v=1`. Root clicked final approval once under the user's explicit delegation. Automatic originAPPROVAL market retrieval completed; its saved projection has zero candidates. This outcome is not proof that raw SoldComps returned zero sales. Preserve the completed report and all human decisions.
+
+Staff: `dpl_Cbmmuo3ypAaFmmfVmCUqMdWRou65` / `atlas-grading-staff-3k6j0cznr-ten-kings.vercel.app`. Public: `dpl_4wNNwy4GDr9EnXxd3xU77TQ7uTzp` / `atlas-grading-public-2aqk7hait-ten-kings.vercel.app`. Customer remains `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app`, source `546fd382d51ec42674d54114cbfcad83c574b79f`.
+
+Both native roles use image `sha256:d0638b69aff4d6dddb1207ed34bb0c0d4d0b609aca8054c1a33421b576d1f81a`. Main `5ef59ef95bcdc6a74f76ad573b1fce74cdc98af6fe7bd5527587fcd59938f681` started00:40:51.469672754Z; worker `25a302132bbc74d1e4dd71f5ade3d0b8b738957803a73c4a21bd8716880e31f5` started00:44:01.569120822Z. Both ready/unless-stopped, exact resources/environment except staff bindings, zero restarts/OOM. Controls Staff89/Customer53/Public57/StaffSMS65/CustomerSMS21; schemas79/121 unchanged.
+
+Independent postflight00:44:27.932019Z proves all55saved-card records, all10current approvals, all protected history and both ledgers exactly preserved; active16all0, priority flagsfalse, missinguploads0. Canonical routing/assets/CSP pass after one public promotion. Native674/674PASS; focused172/172 and28ownedPostgreSQL groupsPASS, with zero external test calls. Packet: `~/.codex/atlas-handoffs/atlas-unified-review-20261010/release-r7`; plan fileSHA `5146c7c8c90428c2974873dd4b6b334ab4338207c3eacc87d4988c8580b6f67f`; independent postflight SHA `8a6e6bd949b60e1770fa13f323c1eae140f6172e231dd0f1bfd3279525967d9e`. All r7 mutation intents are consumed; never replay them or the completed45-card retirement. Source freeze is lifted after canonical/postflight completion.
+
+Sports serving data remains618sources/1,131,964rows. Expanded Topps/Leaf/Panini/Upper Deck data is retained privately and is not deployed. Panini has156remaining product downloads paused for local disk capacity; Topps/Upper Deck historical/format gaps remain explicit. The expanded bounded-shard reader is qualified, but the final expanded data export and deletion of its transitional monolithic fallback await final qualification. Do not claim complete1990–present coverage.
+
+## Historical approval repair — October 10, 2026, 23:49 UTC
 
 Source `452ac807c49ce8b79cbbaf24f392c3c70e8ed007` is live. Scrydex-verified expansion/series aliases preserve the saved Pokémon set spelling, so choosing an initially unknown finish no longer changes Scarlet & Violet—151 to151 and needlessly reruns analysis. Named listing-photo matching accepts that verified expansion alias while retaining other identity checks. During a genuine required variant check, findings approval waits for its bound READY result and shows a specific status; inspection/navigation stay available. The direct review header prefers the saved current card name.
 
