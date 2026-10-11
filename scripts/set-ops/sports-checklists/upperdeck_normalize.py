@@ -23,12 +23,18 @@ def parse_capture(payload):
         if not table or table[0][:4] != ['Set Name', 'Card', 'Description', 'Category']:
             raise ValueError('UPPERDECK_HEADER_MISMATCH')
         headers = table[0]
-        if len(set(headers)) != len(headers):
+        named = [h for h in headers if h]
+        if len(set(named)) != len(named):
             raise ValueError('UPPERDECK_DUPLICATE_HEADER')
         for line, cells in enumerate(table[1:], 2):
             if len(cells) != len(headers):
                 raise ValueError(f'UPPERDECK_COLUMN_MISMATCH:{table_number}:{line}')
-            row = dict(zip(headers, map(clean, cells)))
+            if any(clean(value) for header, value in zip(headers, cells) if not header):
+                raise ValueError(f'UPPERDECK_UNNAMED_DATA:{table_number}:{line}')
+            row = {header: clean(value) for header, value in zip(headers, cells) if header}
+            if not any(row.values()):
+                skipped['empty_row'] += 1
+                continue
             category = row['Category']
             categories[category] += 1
             # A printed multi-sport category applies to each sport it names.
@@ -52,6 +58,12 @@ def parse_capture(payload):
 def retained_supplement(root):
     root = Path(root).resolve()
     sources, audits = [], []
+    index_path = root / 'discovered-products.json'
+    index_bytes = index_path.read_bytes() if index_path.exists() else None
+    index = json.loads(index_bytes) if index_bytes else []
+    titles = {}
+    for entry in index:
+        titles.setdefault(entry['url'], set()).add(entry['title'])
     for receipt in json.loads((root / 'capture-receipts.json').read_text()):
         if receipt.get('completeTableCapture') is not True:
             raise ValueError('UPPERDECK_INCOMPLETE_RECEIPT')
@@ -68,11 +80,21 @@ def retained_supplement(root):
                 raise ValueError('UPPERDECK_RECEIPT_MISMATCH')
         if not re.fullmatch(r'https://upperdeck\.com/checklist/[a-z0-9-]+/', payload['url']):
             raise ValueError('UPPERDECK_SOURCE_URL')
-        title = clean(payload['title']).removesuffix(' Checklist')
-        year = re.match(r'((?:19|20)\d\d)\b', title)
+        title = clean(payload['title'])
+        index_title = False
+        if not title and len(titles.get(payload['url'], [])) == 1:
+            title = clean(next(iter(titles[payload['url']])))
+            index_title = True
+        title = title.removesuffix(' Checklist')
+        year = re.match(r'((?:19|20)\d\d(?:-\d{2,4})?)\b', title)
         if not year:
-            raise ValueError('UPPERDECK_SOURCE_YEAR')
-        rows, audit = parse_capture(payload)
+            audits.append({'url': payload['url'], 'sha256': digest, 'problem': 'UPPERDECK_SOURCE_YEAR'})
+            continue
+        try:
+            rows, audit = parse_capture(payload)
+        except ValueError as error:
+            audits.append({'url': payload['url'], 'sha256': digest, 'problem': str(error)})
+            continue
         for sport, records in rows.items():
             if records:
                 sources.append({'source': {'manufacturer': 'Upper Deck',
@@ -80,9 +102,11 @@ def retained_supplement(root):
                     'setName': title, 'aliases': [title[len(year[1]):].strip()],
                     'url': payload['url'], 'sha256': digest}, 'rows': records})
         audits.append({'url': payload['url'], 'sha256': digest,
+                       'titleFromIndex': index_title,
                        'rowsBySport': {k: len(v) for k, v in rows.items()}, **audit})
     return {'schemaVersion': 'upperdeck-explicit-supplement/v1', 'complete': False,
-            'parser': 'upperdeck-multisport-dom/v1', 'sources': sources, 'audit': audits}
+            'parser': 'upperdeck-multisport-dom/v1', 'sources': sources, 'audit': audits,
+            'indexSha256': hashlib.sha256(index_bytes).hexdigest() if index_bytes else None}
 
 
 if __name__ == '__main__':

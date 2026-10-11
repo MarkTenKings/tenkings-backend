@@ -46,6 +46,15 @@ class UpperDeckCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'COLUMN_MISMATCH'):
             parse_capture(capture([['Base Set', '1', 'Player A']]))
 
+    def test_blank_spreadsheet_columns_only_ignore_empty_cells(self):
+        payload = capture([['Base Set', '1', 'Player A', 'Basketball']])
+        for row in payload['tables'][0]: row.extend(['', ''])
+        rows, _ = parse_capture(payload)
+        self.assertEqual(len(rows['basketball']), 1)
+        payload['tables'][0][1][-1] = 'Unlabeled printing detail'
+        with self.assertRaisesRegex(ValueError, 'UNNAMED_DATA'):
+            parse_capture(payload)
+
     def test_receipt_and_bytes_are_bound_without_source_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); (root / 'raw').mkdir()
@@ -63,6 +72,25 @@ class UpperDeckCaptureTests(unittest.TestCase):
             source.write_bytes(raw + b' ')
             with self.assertRaisesRegex(ValueError, 'SOURCE_HASH_MISMATCH'):
                 retained_supplement(root)
+
+    def test_official_index_title_supplies_missing_heading_and_retains_season(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root / 'raw').mkdir()
+            payload = capture([['Base Set', '1', 'Player A', 'Basketball']])
+            payload['title'] = ''
+            raw = json.dumps(payload).encode(); digest = hashlib.sha256(raw).hexdigest()
+            (root / 'raw' / 'source.json').write_bytes(raw)
+            receipt = {k: payload[k] for k in ['url', 'title', 'rowCounts']}
+            receipt.update(path='raw/source.json', bytes=len(raw), sha256=digest, completeTableCapture=True)
+            (root / 'capture-receipts.json').write_text(json.dumps([receipt]))
+            self.assertEqual(retained_supplement(root)['audit'][0]['problem'], 'UPPERDECK_SOURCE_YEAR')
+            index = json.dumps([{'url': payload['url'], 'title': '2025-26 Example Checklist'}]).encode()
+            (root / 'discovered-products.json').write_bytes(index)
+            result = retained_supplement(root)
+            self.assertEqual(result['sources'][0]['source']['year'], '2025-26')
+            self.assertEqual(result['sources'][0]['source']['aliases'], ['Example'])
+            self.assertTrue(result['audit'][0]['titleFromIndex'])
+            self.assertEqual(result['indexSha256'], hashlib.sha256(index).hexdigest())
 
 
 if __name__ == '__main__':

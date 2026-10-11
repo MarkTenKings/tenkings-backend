@@ -94,6 +94,40 @@ successful responses are recorded. This is identification, not an Astra grading
 operator, market research or finishing system. The separate opt-in defect assistant
 and reviewed-memory path below do not change identification behavior.
 
+## ATLAS Codex reference library
+
+The catalog card owns its base and variant references; a physical submission
+only points to those references and records its own human decision. Pokémon
+choices use Scrydex card/printing IDs. Published sports choices use SetOps IDs;
+manufacturer checklist choices use a normalized card identity and literal
+printing, independently of the downloaded file hash or row position.
+
+On background preparation, `variant-catalog.mjs` loads the saved printing
+library first. Missing printings receive a graded SoldComps search and up to two
+reference photos. The worker reads the visible slab labels in batches of eight,
+retains the literal company/label reading, and associates each photo with a known
+printing. The staff screen displays the full saved photo and label beside the
+submitted card. Base/Normal follows the same workflow and still requires the
+reviewer's explicit confirmation.
+
+The existing append-only `variant_catalog_cache` stores three related records:
+retained source/photo bytes, per-image label readings keyed by policy/model/SHA,
+and per-printing libraries pointing to those exact photos/readings. Ordinary
+TTL expiry does not remove Codex photos or trigger repeat listing/image/model
+calls for a populated printing. Scrydex metadata retains its separate refresh
+policy. No additional table, queue, or physical-card image copy is required.
+Unmatched readings are also retained. The existing explicit reference Refresh
+creates a search generation only for missing printings and seeks unseen photos;
+repeating that same generation reuses its saved paid response.
+
+Human geometry, findings, variant confirmation and final report approval stay
+in the physical submission's existing history. Reference acquisition never
+approves them or reruns grading. Automatic market comps remain a separate
+post-approval job. Saved reference images are review evidence, not a guarantee
+that every printing has sold examples or that every slab is readable. Catalog
+coverage remains partial, and manufacturer naming/season aliases require
+explicit source evidence rather than silently merging unlike cards.
+
 ## Qualification and release
 
 See `docs/atlas/runbooks/CONNECTED_MANUAL_RELEASE.md` for exact config boundaries,
