@@ -12,6 +12,7 @@ import * as reviewFeedback from '../lib/review-feedback.mjs';
 import * as variantReview from '../lib/variant-review-client.mjs';
 import * as analysisClient from '../lib/manual-defect-analysis-client.mjs';
 import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
+import {isDefectObservationResolved} from '../../../packages/atlas-manual-workspace/src/defect-actions.mjs';
 import {variantFindingsBlocked} from '../../../packages/atlas-manual-workspace/src/rapid-review.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
@@ -73,7 +74,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace',FindingsOverview:'FindingsOverview',reviewedMemoryState };
       if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview',CompletedReviewCard:'CompletedReviewCard',reportAwardedGrade };
       if (name === '@atlas/manual-workspace/rapid-review') return {variantFindingsBlocked,rapidResumeStage:view=>!view.geometry.confirmed?'geometry-review':view.defects?.confirmed&&!variantFindingsBlocked(view)&&!view.astra?.proposals?.some(p=>p.reviewStatus==='UNREVIEWED')?'report':'findings-review',rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage}),approveRapidGeometrySide:async(view,input,execute)=>execute({type:'EXPLICIT_SIDE',side:input.side}),confirmRapidGeometryPair:async(view,approvals,execute)=>{assert.ok(approvals.FRONT);assert.ok(approvals.BACK);return execute({type:'EXPLICIT_STAGE',stage:'geometry'});},approveRapidFinding:async(view,id,execute)=>{if(id){const side=Object.keys(view.defects.sides).find(side=>view.defects.sides[side].findings.some(f=>f.id===id));view=await execute({type:'REVIEW_FINDING',side,findingId:id});}const next=Object.values(view.defects.sides??{}).flatMap(slot=>slot.findings??[]).find(f=>!Object.values(view.defects.sides).some(slot=>slot.findingReviews?.decisions.some(value=>value.findingId===f.id)));if(next)return {view,nextFindingId:next.id,complete:false};return {view:await execute({type:'EXPLICIT_STAGE',stage:'findings'}),complete:true};}};
-      if (name === '@atlas/manual-workspace/defect-actions') return {defectBase:(_value,side)=>base[side],reviewedDefectFindingIds:(value,side)=>value.sides?.[side]?.findingReviews?.decisions?.map(item=>item.findingId)??[]};
+      if (name === '@atlas/manual-workspace/defect-actions') return {isDefectObservationResolved,defectBase:(_value,side)=>base[side],reviewedDefectFindingIds:(value,side)=>value.sides?.[side]?.findingReviews?.decisions?.map(item=>item.findingId)??[]};
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value,geometryBase:(_geometry,side)=>({side}) };
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/manual-defect-analysis-client.mjs') return analysisClient;
@@ -577,12 +578,41 @@ test('rapid original observations live in the inspector and retain exact reject 
   f.publish({...f.current,finalReview:{reportHash:'observed-report',report:{analysisId:'original-analysis',findings:[],unmeasurableProposals:[{id:'front-unmeasured',side:'FRONT',defectType:'VISIBLE_WHITENING'},{id:'back-unmeasured',side:'BACK',defectType:'VISIBLE_WHITENING'}]}}});
   assert.doesNotMatch(f.text(),/These observations produced no measurable trace/,'the old full-width banner is absent');
   const inspector=f.focusedGeometry().reviewObservations;
-  assert.match(text(inspector),/A new trace keeps the original observation pending/);assert.match(text(inspector),/2 to resolve/);assert.match(text(inspector),/Front · visible whitening/);assert.match(text(inspector),/Back · visible whitening/);
+  assert.match(text(inspector),/Redraw visible damage to replace an observation with a measured finding/);
+  assert.doesNotMatch(text(inspector),/A new trace keeps the original observation pending/);
+  assert.equal(f.actions.length,0,'reading retained observations records no decision');assert.match(text(inspector),/2 to resolve/);assert.match(text(inspector),/Front · visible whitening/);assert.match(text(inspector),/Back · visible whitening/);
   const reject=all(inspector,n=>n.type==='button'&&text(n)==='Reject original observation')[0];
   await reject.props.onClick();await flush();f.render();
   assert.deepEqual(JSON.parse(JSON.stringify(f.actions)),[{type:'REJECT_FINAL_OBSERVATION',reportHash:'observed-report',proposalId:'front-unmeasured',reviewed:true}]);
   f.focusedGeometry().onEditingChange(true);f.render();
   assert.ok(all(f.focusedGeometry().reviewObservations,n=>n.type==='button').every(n=>n.props.disabled),'draft geometry blocks observation navigation and decisions');
+  f.dispose();
+});
+
+
+test('original-observation inspector binds redraw to the exact report and remains unresolved until its saved measurement',async()=>{
+  const f=harness({rapid:true,finalReview:true});await flush();f.render();
+  const observation={id:'front-original',side:'FRONT',defectType:'VISIBLE_WHITENING'};
+  const original={reportHash:'exact-original-report',report:{analysisId:'original-analysis',findings:[],unmeasurableProposals:[observation]}};
+  f.publish({...f.current,finalReview:original});
+  await approveGeometry(f);const actionCount=f.actions.length;
+  let selected;
+  const render=()=>f.overview().renderObservations({side:'FRONT',onTrace:value=>{selected=value;},onlySide:true});
+  const trace=all(render(),node=>node.type==='button'&&text(node)==='Trace visible damage')[0];
+  trace.props.onClick();
+  assert.deepEqual(JSON.parse(JSON.stringify(selected)),{reportHash:'exact-original-report',proposalId:'front-original',defectType:'VISIBLE_WHITENING'});
+  assert.equal(f.actions.length,actionCount,'opening redraw does not reject or resolve the proposal');
+  assert.match(text(render()),/1 to resolve/);
+  const review={analysisId:'original-analysis',proposalId:observation.id,side:'FRONT',action:'TRACE_SAVE',findingId:'human-replacement'};
+  const finding={id:'human-replacement',side:'FRONT',defectType:'VISIBLE_WHITENING',reviewResult:'SMART_MARKED',measurementRegions:[{measurement:{pixelCount:8,areaMm2:.02}}]};
+  const sides={FRONT:{findings:[finding],humanEditedIds:[finding.id],pending:{type:'TRACE_SAVE'},measurement:{receipt:{fixture:'previous saved measurement'}}},BACK:{findings:[],humanEditedIds:[],pending:null}};
+  f.publish({...f.current,assistance:{reviews:[review]},defects:{sides}});
+  assert.match(text(render()),/1 to resolve/,'pending or failed measurement remains unresolved even with an earlier receipt');
+  f.publish({...f.current,defects:{sides:{...sides,FRONT:{...sides.FRONT,pending:null,measurement:{receipt:{fixture:'saved replacement measurement'}}}}}});
+  assert.doesNotMatch(text(render()),/to resolve|No measurable trace/);
+  assert.match(text(render()),/Reviewed/);
+  assert.equal(all(render(),node=>node.type==='button'&&text(node)==='Reject original observation').length,0);
+  assert.equal(f.actions.length,actionCount,'a saved-state read cannot create a human decision');
   f.dispose();
 });
 

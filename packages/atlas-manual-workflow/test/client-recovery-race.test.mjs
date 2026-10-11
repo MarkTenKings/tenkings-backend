@@ -65,15 +65,19 @@ test('definite send refusal clears only its exact journal; same-ID changed revis
   }
 });
 
-test('definite recovery refusal preserves a newer journal but removes the exact refused command', async () => {
+test('definite recovery refusal resumes the latest view, preserving a newer journal but removing the exact refused command', async () => {
   for (const replace of [true, false]) {
-    const storage = memory(); storage.setItem(key, JSON.stringify(initial)); let replacement;
-    const c = client(storage, async url => {
-      if (url.endsWith('/view')) return response(current(2));
+    const storage = memory(); storage.setItem(key, JSON.stringify(initial)); let replacement, views = 0;
+    const sent = [], c = client(storage, async (url, options) => {
+      if (url.endsWith('/view')) return response(current(++views + 1));
+      if (options.method !== 'POST') return response({ state: 'NOT_FOUND' });
+      sent.push(options.body);
       if (replace) { replacement = JSON.stringify({ ...initial, actionId: 'new-action' }); storage.setItem(key, replacement); }
       return response({ error: 'MANUAL_REVISION_CONFLICT' }, 409);
     });
-    await assert.rejects(c.recover(), { status: 409 });
+    assert.deepEqual(await c.recover(), current(3));
+    assert.equal(views, 2); assert.deepEqual(sent, [JSON.stringify(initial)]);
+    assert.deepEqual(c.current(), current(3)); assert.equal(c.hasPending(), replace);
     assert.equal(storage.getItem(key), replace ? replacement : null);
   }
 });
