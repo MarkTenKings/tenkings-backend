@@ -85,6 +85,13 @@ export function rapidReviewStatus(view) {
   const proposals = view.defects ? collectiveProposalReview(view.defects, view.astra) : null;
   return { geometry: geometry.canConfirmBoth, findings: Boolean(!variantFindingsBlocked(view) && geometry.confirmed && view.defects && defectStatus(view.defects).settled && proposals?.ready && !unresolved.length), unresolved: unresolved.length };
 }
+/** Resume the unfinished human step without replaying any approval. */
+export function rapidResumeStage(view) {
+  if (!geometryStatus(view.geometry).confirmed) return 'geometry-review';
+  const status = rapidReviewStatus(view);
+  return status.findings && defectStatus(view.defects).confirmed
+    && collectiveProposalReview(view.defects, view.astra).unresolvedCount === 0 ? 'report' : 'findings-review';
+}
 // Only an explicit Approve gesture calls this function. Navigation never does.
 // Every sequential save uses the returned current revision, including recovery.
 export async function approveRapidStage(stage, view, execute) {

@@ -33,7 +33,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
     useCallback: callback => callback,
     useEffect(callback, deps) { const i = cursor++, prior = slots[i]; if (!prior || deps.some((value, n) => value !== prior[n])) { slots[i] = deps; effects.push(callback); } },
   };
-  const f = { calls: [], actions: [], popups: [], closedPopups: 0, pending: false, current: { card: { revision: 1, contentHash: 'one' }, geometry: { confirmed: true },
+  const f = { calls: [], actions: [], popups: [], closedPopups: 0, pending: false, current: { card: { revision: 1, contentHash: 'one' }, geometry: { confirmed: !rapid },
     defects: { marker: 'saved-original-defects' }, images: { marker: 'original-grants' }, identity: {}, astra: { enabled: true, status: 'IDLE', proposals: [] }, reviewedMemory: { enabled: true, status: 'UNSAVED' } } };
   if (finalReview) Object.assign(f.current, { finalReview: { report: { proposedGrade: 9.5, findings: [] } },
     provisional: { state: 'READY', report: { proposedGrade: 9.5 }, reportHash: 'first-current' } });
@@ -72,7 +72,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace', reviewImagePreview };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace',FindingsOverview:'FindingsOverview',reviewedMemoryState };
       if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview',CompletedReviewCard:'CompletedReviewCard',reportAwardedGrade };
-      if (name === '@atlas/manual-workspace/rapid-review') return {variantFindingsBlocked,rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage}),approveRapidGeometrySide:async(view,input,execute)=>execute({type:'EXPLICIT_SIDE',side:input.side}),confirmRapidGeometryPair:async(view,approvals,execute)=>{assert.ok(approvals.FRONT);assert.ok(approvals.BACK);return execute({type:'EXPLICIT_STAGE',stage:'geometry'});},approveRapidFinding:async(view,id,execute)=>{if(id){const side=Object.keys(view.defects.sides).find(side=>view.defects.sides[side].findings.some(f=>f.id===id));view=await execute({type:'REVIEW_FINDING',side,findingId:id});}const next=Object.values(view.defects.sides??{}).flatMap(slot=>slot.findings??[]).find(f=>!Object.values(view.defects.sides).some(slot=>slot.findingReviews?.decisions.some(value=>value.findingId===f.id)));if(next)return {view,nextFindingId:next.id,complete:false};return {view:await execute({type:'EXPLICIT_STAGE',stage:'findings'}),complete:true};}};
+      if (name === '@atlas/manual-workspace/rapid-review') return {variantFindingsBlocked,rapidResumeStage:view=>!view.geometry.confirmed?'geometry-review':view.defects?.confirmed&&!variantFindingsBlocked(view)&&!view.astra?.proposals?.some(p=>p.reviewStatus==='UNREVIEWED')?'report':'findings-review',rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage}),approveRapidGeometrySide:async(view,input,execute)=>execute({type:'EXPLICIT_SIDE',side:input.side}),confirmRapidGeometryPair:async(view,approvals,execute)=>{assert.ok(approvals.FRONT);assert.ok(approvals.BACK);return execute({type:'EXPLICIT_STAGE',stage:'geometry'});},approveRapidFinding:async(view,id,execute)=>{if(id){const side=Object.keys(view.defects.sides).find(side=>view.defects.sides[side].findings.some(f=>f.id===id));view=await execute({type:'REVIEW_FINDING',side,findingId:id});}const next=Object.values(view.defects.sides??{}).flatMap(slot=>slot.findings??[]).find(f=>!Object.values(view.defects.sides).some(slot=>slot.findingReviews?.decisions.some(value=>value.findingId===f.id)));if(next)return {view,nextFindingId:next.id,complete:false};return {view:await execute({type:'EXPLICIT_STAGE',stage:'findings'}),complete:true};}};
       if (name === '@atlas/manual-workspace/defect-actions') return {defectBase:(_value,side)=>base[side],reviewedDefectFindingIds:(value,side)=>value.sides?.[side]?.findingReviews?.decisions?.map(item=>item.findingId)??[]};
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value,geometryBase:(_geometry,side)=>({side}) };
       if (name.startsWith('@atlas/')) return {};
@@ -638,7 +638,7 @@ test('variant recheck polls saved status only, exposes fresh request-bound propo
   assert.match(f.text(),/Checking the confirmed variant/);const before=f.current.defects;
   f.respond=async()=>({...f.current,variantVerification:{enabled:true,confirmation:{...confirmation,recheckState:'READY'},approvalReady:true},astra:{enabled:true,status:'READY',analysisId:'result-id',requestActionId:'variant-request',proposals:[{id:'fresh',reviewStatus:'PENDING'}]}});
   await f.tick(5500);assert.equal(f.defects().astra.requestActionId,'variant-request');assert.equal(f.defects().astra.proposals[0].id,'fresh');assert.equal(f.defects().workspace,before);
-  assert.match(f.text(),/Review the new proposals before final approval/);assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));
+  assert.doesNotMatch(f.text(),/Fresh findings are available/);assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));
   f.publish({...f.current,variantVerification:{enabled:true,confirmation:{...confirmation,recheckState:'UNKNOWN'},approvalReady:false}});
   const count=f.calls.length;await f.tick(5500);assert.equal(f.calls.length,count);assert.match(f.text(),/check needs attention/);f.dispose();
 });
@@ -797,7 +797,7 @@ test('incomplete geometry can preview references and return without a report rea
 
 
 test('confirmed variant blocks findings approval while pending, then exposes its fresh roster without auto-approving',async()=>{
- const f=harness({rapid:true,finalReview:true});await flush();f.render();
+ const f=harness({rapid:true,finalReview:true,initialView:{geometry:{confirmed:true}}});await flush();f.render();
  f.button('03Findings').props.onClick();await flush();f.render();f.overview().onReadyChange(true);f.render();
  const prior=f.current.defects,staleApprove=f.button('Approve all findings on Front and Back').props.onClick;
  const confirmation={decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED',analysisActionId:'variant-recheck'};
@@ -811,4 +811,19 @@ test('confirmed variant blocks findings approval while pending, then exposes its
  assert.equal(f.actions.length,0,'READY polling cannot create any human decision');
  assert.equal(f.button('Approve all findings on Front and Back').props.disabled,false);
  f.dispose();
+});
+
+
+test('reopening rapid review resumes Findings after saved geometry and Grade after saved findings without approvals',async()=>{
+ for(const confirmed of [false,true]){
+  const f=harness({rapid:true,initialView:{geometry:{confirmed:true},defects:{confirmed,marker:'retained'}}});
+  await flush();f.render();assert.equal(f.focusedGeometry(),undefined);
+  if(confirmed)assert.ok(f.report());else assert.ok(f.overview());
+  assert.equal(f.actions.length,0);f.dispose();
+ }
+});
+test('explicit geometry correction remains accessible when saved findings are complete',async()=>{
+ const f=harness({rapid:true,initialGeometrySide:'BACK',initialView:{geometry:{confirmed:true},defects:{confirmed:true}}});
+ await flush();f.render();assert.equal(f.focusedGeometry().side,'BACK');assert.equal(f.report(),undefined);
+ assert.equal(f.actions.length,0);f.dispose();
 });

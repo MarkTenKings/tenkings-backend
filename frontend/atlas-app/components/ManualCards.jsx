@@ -12,7 +12,7 @@ import {PairedGeometryWorkspace,reviewImagePreview} from '@atlas/manual-workspac
 import {FocusedGeometryWorkspace,sourceQuadToPrepared} from '@atlas/manual-workspace/focused-geometry';
 import {DefectReviewWorkspace,FindingsOverview,reviewedMemoryState} from '@atlas/manual-workspace/defects';
 import {FinalReportReview,MachineReportReview,CompletedReviewCard,reportAwardedGrade} from '@atlas/manual-workspace/report-review';
-import {approveRapidStage,approveRapidGeometrySide,confirmRapidGeometryPair,approveRapidFinding as approveFindingSequence,inspectBothDefectSides,rapidReviewStatus,variantFindingsBlocked} from '@atlas/manual-workspace/rapid-review';
+import {approveRapidStage,approveRapidGeometrySide,confirmRapidGeometryPair,approveRapidFinding as approveFindingSequence,inspectBothDefectSides,rapidReviewStatus,rapidResumeStage,variantFindingsBlocked} from '@atlas/manual-workspace/rapid-review';
 import {defectBase,reviewedDefectFindingIds} from '@atlas/manual-workspace/defect-actions';
 import {geometryBase,geometryStatus} from '@atlas/manual-workspace/geometry-actions';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
@@ -391,9 +391,11 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
         const updated={...viewRef.current,astra};viewRef.current=updated;setView(updated);
       }});
     analysisClient.current=ownedAnalysis;
-    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(variantGeometryReviewNeeded(value)?(rapid?'geometry-review':'geometry'):initialReviewStage??(rapid?'geometry-review':initialGeometrySide?'geometry':reviewMode&&geometryCorrectionAttention(value.geometry).length?'geometry':reviewMode&&analysisCorrectionAttention(value.astra).length?'defects':value.finalReview?'geometry-review':geometryStatus(value.geometry).confirmed?'defects':'geometry'));
+    void ownedClient.recover().then(async value=>{if(stopped)return;
+      const resume=variantGeometryReviewNeeded(value)?(rapid?'geometry-review':'geometry'):initialReviewStage??(initialGeometrySide?(rapid?'geometry-review':'geometry'):rapid?rapidResumeStage(value):reviewMode&&geometryCorrectionAttention(value.geometry).length?'geometry':reviewMode&&analysisCorrectionAttention(value.astra).length?'defects':value.finalReview?'geometry-review':geometryStatus(value.geometry).confirmed?'defects':'geometry');
+      setScreen(resume==='report'?'findings-review':resume);
       if(value.variantVerification?.confirmation?.decision==='UNRESOLVED')setShowVariantReview(true);
-      if(!initialGeometrySide&&value.approval?.sourceHash===value.card.contentHash)await openReport();
+      if(!initialGeometrySide&&(value.approval?.sourceHash===value.card.contentHash||resume==='report')&&value.variantVerification?.confirmation?.decision!=='UNRESOLVED')await openReport();
       else if(value.astra?.enabled)await ownedAnalysis.refresh();
     }).catch(error=>{if(!stopped)setError(manualMessage(error));});
     const timer=setInterval(()=>{const current=viewRef.current;if(!ownedClient.hasPending()&&current?.approval?.sourceHash!==current?.card.contentHash)void attempt(refreshImages);},240000);

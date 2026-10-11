@@ -29,7 +29,9 @@ export function variantRecheckMessage(value) {
   if (value.confirmation.recheckReason === 'VARIANT_ANALYSIS_STALE') return 'Border geometry changed after the saved variant check. Review the confirmed identity to start a fresh check against the updated geometry. Your saved findings stay in place.';
   const state = value.confirmation.recheckState;
   if (['QUEUED','PREPARED','DISPATCHED'].includes(state)) return 'Checking the confirmed variant… Your saved photographs and human findings stay in place.';
-  if (state === 'READY') return 'Fresh findings are available for the confirmed variant. Review the new proposals before final approval; nothing is approved automatically.';
+  // The Findings workspace owns the current proposal roster and review state.
+  // READY describes a finished analysis, not unfinished human review.
+  if (state === 'READY') return null;
   if (state === 'FAILED' || state === 'UNKNOWN' || state === 'REFUSED') return 'The variant check needs attention. Your saved photographs and findings are retained. Check its saved status before continuing.';
   return value.approvalReady ? null : 'The confirmed variant needs a grading check. Your saved photographs and human findings stay in place.';
 }

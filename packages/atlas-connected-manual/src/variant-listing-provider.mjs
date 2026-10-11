@@ -11,6 +11,7 @@ import { boundedProviderOperation, readBoundedProviderBody } from '../../card-ca
 // The caller MUST durably journal fetchSource before dispatch. Seller photos
 // never establish catalog authority or select the physical card's variant.
 export const VARIANT_LISTING_REVISION = 'variant-listing-2026-10-10-v2';
+export const VARIANT_GRADED_LISTING_REVISION = 'variant-listing-graded-label-2026-10-10-v1';
 const concisePokemonRequestRevision = 'variant-listing-pokemon-query-2026-10-10-v1';
 export const VARIANT_LISTING_LIMITS = Object.freeze({ results: 40, responseResults: 60, sourceBytes: 1024 * 1024,
   imageBytes: 2 * 1024 * 1024, imagePixels: 16000000, imageRequests: 8, images: 8,
@@ -58,7 +59,7 @@ function engineInput(identity, printing = null) {
 }
 /** One public identity => one request key. No physical photo, grade, approval,
  * generation or time bucket changes its billing identity. */
-function prepareListingRequest(input, printing = null, legacy = false) {
+function prepareListingRequest(input, printing = null, legacy = false, graded = false) {
   const fields = ['category', 'name', 'year', 'setName', 'cardNumber', 'manufacturer', 'language'];
   check(input && Object.keys(input).every(k => fields.includes(k)), 'VARIANT_LISTING_IDENTITY');
   const normalized = normalizeVariantIdentity(Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === 'string' ? normalize(v) : v])));
@@ -76,23 +77,27 @@ function prepareListingRequest(input, printing = null, legacy = false) {
   // official set names. Search with the card's strong public anchors; projection
   // still checks the full saved set/year/number identity before using a photo.
   const concisePokemon = !legacy && identity.category === 'POKEMON' && printing;
+  const searchPrinting = graded && /^(?:normal|base|base cards?)$/i.test(printing?.name ?? '') ? null : printing;
   const query = [concisePokemon
-    ? ['pokemon', identity.name, identity.cardNumber, listingSearchLabel(identity, printing.name)].join(' ')
-    : buildEbaySoldCompsV2Query(engineInput(identity, printing)), printing?.language && printing.language !== 'en' ? languageNames[printing.language] ?? printing.language : null].filter(Boolean).join(' ');
+    ? ['pokemon', identity.name, identity.cardNumber, searchPrinting ? listingSearchLabel(identity, searchPrinting.name) : null].filter(Boolean).join(' ')
+    : buildEbaySoldCompsV2Query(engineInput(identity, searchPrinting)), printing?.language && printing.language !== 'en' ? languageNames[printing.language] ?? printing.language : null,
+    graded ? '(PSA,CGC,BGS,SGC)' : null].filter(Boolean).join(' ');
   const url = new URL(endpoint);
   url.search = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(VARIANT_LISTING_LIMITS.results),
     page: '1', sold: 'true', includeCompleteListing: 'true', exactMatch: 'true', hydrateBoa: 'false' }).toString();
-  const request = { schemaVersion: 'variant-listing-request/v1', revision: concisePokemon ? concisePokemonRequestRevision : VARIANT_LISTING_REVISION,
+  const request = { schemaVersion: 'variant-listing-request/v1', revision: graded ? VARIANT_GRADED_LISTING_REVISION : concisePokemon ? concisePokemonRequestRevision : VARIANT_LISTING_REVISION,
     parserRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, identity, ...(printing ? { printing } : {}), query, url: url.href };
   return { ...request, requestKey: `variant-listing-source:v1:${hash(canonicalJson(request))}` };
 }
-export function prepareVariantListingRequest(input, printing = null) {
-  return prepareListingRequest(input, printing);
+export function prepareVariantListingRequest(input, printing = null, { graded = false } = {}) {
+  check(typeof graded === 'boolean', 'VARIANT_LISTING_REQUEST_CHANGED');
+  return prepareListingRequest(input, printing, false, graded);
 }
 function validateRequest(request) {
   // Retained paid responses remain readable under their original request key.
-  check([VARIANT_LISTING_REVISION, concisePokemonRequestRevision].includes(request?.revision)
-    && same(prepareListingRequest(request?.identity, request?.printing ?? null, request.revision === VARIANT_LISTING_REVISION), request), 'VARIANT_LISTING_REQUEST_CHANGED');
+  check([VARIANT_LISTING_REVISION, concisePokemonRequestRevision, VARIANT_GRADED_LISTING_REVISION].includes(request?.revision)
+    && same(prepareListingRequest(request?.identity, request?.printing ?? null, request.revision === VARIANT_LISTING_REVISION,
+      request.revision === VARIANT_GRADED_LISTING_REVISION), request), 'VARIANT_LISTING_REQUEST_CHANGED');
   return request;
 }
 function validateSource(request, source) {
@@ -262,6 +267,7 @@ export function composeVariantListingCandidates({ identity, candidates = [], evi
  * deliberately contains none. A seller's title is a claim, never publication. */
 export function projectVariantListingSource(request, source, { catalogCandidates = [] } = {}) {
   const payload = validateSource(request, source), input = engineInput(request.identity, request.printing), listings = [], excluded = [];
+  const graded = request.revision === VARIANT_GRADED_LISTING_REVISION;
   check(Array.isArray(catalogCandidates) && catalogCandidates.length <= VARIANT_REVIEW_LIMITS.candidates);
   const setAliases = request.identity.category === 'POKEMON' && request.printing
     ? [...new Set(catalogCandidates.map(validateVariantCandidate).filter(c => c.source.provider === 'scrydex'
@@ -293,15 +299,15 @@ export function projectVariantListingSource(request, source, { catalogCandidates
     if (researchSaleEvidence(raw).sale_evidence.status !== 'sold') { reject('SOLD_EVENT_UNVERIFIED'); continue; }
     if (!inspectStaffInventoryResearchSale(candidate).supported) { reject('UNSUPPORTED_SINGLE_CARD_LISTING'); continue; }
     const identityEvidence = inspectIdentity(request.identity, candidate, setAliases);
-    if (!identityEvidence.research_anchored || !identityEvidence.number_anchored
-      || identityEvidence.reason_codes.includes('insert_anchor_missing') || candidate.variantEvidence?.status === 'CONTRADICTORY') {
+    if (!graded && (!identityEvidence.research_anchored || !identityEvidence.number_anchored
+      || identityEvidence.reason_codes.includes('insert_anchor_missing') || candidate.variantEvidence?.status === 'CONTRADICTORY')) {
       reject('IDENTITY_CONFLICT_OR_MISSING_ANCHOR'); continue;
     }
     const facts = candidate.variantEvidence.observed;
-    if (facts.language.length > 1 || facts.serialDenominators.length > 1
+    if (!graded && (facts.language.length > 1 || facts.serialDenominators.length > 1
       || facts.edition.includes('first edition') && facts.edition.includes('unlimited')
       || facts.finish.includes('non holo') && facts.finish.length > 1
-      || /\b(?:custom|proxy|replica|reprint|digital|stock photo|possibly|maybe)\b|\?/i.test(candidate.title)) {
+      || /\b(?:custom|proxy|replica|reprint|digital|stock photo|possibly|maybe)\b|\?/i.test(candidate.title))) {
       reject('AMBIGUOUS_OR_UNSUPPORTED_LISTING_CLAIM'); continue;
     }
     const imageOptions = researchImageOptions(raw, true).image_options;
@@ -309,6 +315,10 @@ export function projectVariantListingSource(request, source, { catalogCandidates
       soldAt: candidate.soldDate, identityEvidence, variantEvidence: candidate.variantEvidence,
       claimedParallel: claimedParallel(candidate.variantEvidence.observed), imageOptions, image: null });
   }
+  // A title helps order search results; the visible slab label establishes the
+  // reference association. Missing title words must not hide usable label photos.
+  if (graded) listings.sort((a, b) => Number(/\b(?:PSA|CGC|BGS|SGC)\b/i.test(b.listing.title))
+    - Number(/\b(?:PSA|CGC|BGS|SGC)\b/i.test(a.listing.title)));
   return { schemaVersion: 'variant-listing-evidence/v1', revision: VARIANT_LISTING_REVISION, requestKey: request.requestKey,
     identity: request.identity, query: request.query, source: { url: source.url, sha256: source.sha256, capturedAt: source.capturedAt },
     authority: 'provider_candidate', coverage: 'partial', requiresReview: true, listings, excluded,
@@ -377,21 +387,22 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
           httpStatus: response.status, contentType, bodyText, sha256: hash(bytes), capturedAt: new Date(now()).toISOString() };
       });
     },
-    async acquireImages({ request, source, catalogCandidates = [] }, { signal } = {}) {
+    async acquireImages({ request, source, catalogCandidates = [] }, { signal, imageLimit = VARIANT_LISTING_LIMITS.images } = {}) {
       requireCache();
+      check(Number.isInteger(imageLimit) && imageLimit > 0 && imageLimit <= VARIANT_LISTING_LIMITS.images, 'VARIANT_LISTING_IMAGE_BUDGET');
       const result = projectVariantListingSource(request, source, { catalogCandidates }), byUrl = new Map(), byHash = new Set();
       let requests = 0, totalBytes = 0, images = 0;
       return boundedProviderOperation(signal, timeoutMs, async active => {
         for (const listing of result.listings) {
-          if (images >= VARIANT_LISTING_LIMITS.images) break;
+          if (images >= imageLimit) break;
           const options = [...new Set([listing.imageOptions.full_resolution_url, listing.imageOptions.thumbnail_url].filter(Boolean))];
           for (const url of options) {
             active.throwIfAborted();
             if (!byUrl.has(url)) {
               let media = null;
               try {
-                const saved = await cache.get(imageKey(url));
-                if (saved && Date.parse(saved.expiresAt) > now() && Date.parse(saved.capturedAt) <= now()) media = verifyImage(saved, url);
+                const saved = await cache.getRetained(imageKey(url));
+                if (saved && Date.parse(saved.capturedAt) <= now()) media = verifyImage(saved, url);
                 else if (requests < VARIANT_LISTING_LIMITS.imageRequests) {
                   requests++;
                   media = await boundedProviderOperation(active, Math.min(timeoutMs, VARIANT_LISTING_LIMITS.imageTimeoutMs), async imageSignal => {
@@ -428,7 +439,9 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
             listing.image = image; images++; break;
           }
         }
-        return { ...result, acquisition: { requests, images, uniqueImages: byHash.size, bytes: totalBytes },
+        return { ...result, ...(request.revision === VARIANT_GRADED_LISTING_REVISION ? {
+          referencePhotos: result.listings.filter(v => v.image).map(v => catalogListingImage(v.image, result.source)),
+        } : {}), acquisition: { requests, images, uniqueImages: byHash.size, bytes: totalBytes },
           warnings: [...result.warnings, ...(result.listings.some(v => !v.image) ? ['LISTING_IMAGES_INCOMPLETE'] : [])] };
       });
     },

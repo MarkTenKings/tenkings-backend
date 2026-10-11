@@ -289,8 +289,8 @@ test('verified Scrydex expansion alias recovers Together photos from the same pa
  assert.equal(project(request,saved).listings.length,0);
  const before=structuredClone(request),bytes=await png(),calls=[];
  const p=provider({cache:cacheFixture(),now,fetchImpl:async url=>{assert(url.startsWith('https://i.ebayimg.com/'));calls.push(url);return new Response(bytes,{headers:{'content-type':'image/png'}});}});
- const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:choices,problems:[],truncated:false})}],listingProvider:p,now});
- const result=await service.prepare({identity:target},{executeListingSource:async(actual,dispatch)=>{assert.deepEqual(actual,request);return {state:'REUSED',source:saved};}});
+ const evidence=await p.acquireImages({request,source:saved,catalogCandidates:choices});
+ const result=compose({identity:target,candidates:choices,evidence,printing});
  assert.deepEqual(request,before);assert.equal(result.candidates.length,1);
  const photos=result.candidates[0].images.filter(i=>i.relationship==='listing_photo');
  assert.equal(photos.length,1);assert.equal(photos[0].listing.id,item(1).itemId);assert(calls.length>=1);
@@ -372,4 +372,30 @@ test('production-style 151 identity accepts a single matching reverse-holo title
  const result=project(request,source(request,[item(1,'Pikachu 025/165 Reverse Holo Pokemon Scarlet & Violet 151'),
   item(2,'Pokemon TCG Scarlet & Violet 151 ENGLISH REVERSE HOLO - Choose your card!')]));
  assert.deepEqual(result.listings.map(v=>v.listing.id),['123456780001']);
+});
+
+
+test('graded search includes base, preserves old request keys, and retains title-incomplete slab photos for label reading',async()=>{
+ const printing={name:'Normal',language:'en'},request=prepare(identity,printing,{graded:true});
+ assert.match(request.query,/\(PSA,CGC,BGS,SGC\)/);assert.doesNotMatch(request.query,/normal/i);
+ assert.notEqual(request.requestKey,prepare(identity,printing).requestKey);
+ const saved=source(request,[item(1,'Mewtwo PSA 9'),item(2,'Mewtwo PSA 9 pick your card'),item(3,'Mewtwo PSA 9 lot of 2'),
+  item(4,'Mewtwo PSA 9',{listingType:'active'})]);
+ const projected=project(request,saved);assert.deepEqual(projected.listings.map(v=>v.listing.id),['123456780001']);
+ const cache=cacheFixture(),bytes=await png();let reads=0;
+ const first=await provider({cache,now,fetchImpl:async()=>{reads++;return new Response(bytes,{headers:{'content-type':'image/png'}});}}).acquireImages({request,source:saved});
+ assert.equal(first.referencePhotos.length,1);assert.equal(first.referencePhotos[0].relationship,'listing_photo');assert.equal(reads,1);
+ const retained=provider({cache,now:()=>now()+1000*limits.ttlMs,fetchImpl:noNetwork,inspectImage:noNetwork});
+ const second=await retained.acquireImages({request,source:saved});
+ assert.equal(second.acquisition.requests,0);assert.deepEqual(second.referencePhotos,first.referencePhotos);
+ assert.equal((await retained.readImage(second.referencePhotos[0])).sha256,sha(bytes));
+});
+test('graded photos remain outside catalog choices until the slab label is read',async()=>{
+ const choices=scrydexChoices(),cache=cacheFixture(),bytes=await png(),requests=[];
+ const p=provider({cache,now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});
+ const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:choices,problems:[],truncated:false})}],listingProvider:p,now});
+ const result=await service.prepare({identity},{executeListingSource:async request=>{requests.push(request);return {state:'REUSED',source:source(request,[item(1,'Mewtwo PSA 9')])};}});
+ assert.equal(requests.length,choices.length);assert(requests.every(r=>r.query.includes('(PSA,CGC,BGS,SGC)')));
+ assert.equal(result.referencePhotos.length,1);assert.equal(result.candidates.length,choices.length);
+ assert(result.candidates.every(c=>c.images.every(i=>i.relationship!=='listing_photo')));
 });

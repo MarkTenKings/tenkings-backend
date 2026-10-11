@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createVariantReviewClient, variantApprovalReady, variantStatus } from '../lib/variant-review-client.mjs';
+import { createVariantReviewClient, variantApprovalReady, variantStatus, variantRecheckMessage } from '../lib/variant-review-client.mjs';
 const hash = char => char.repeat(64);
 export const catalogFixture = () => ({schemaVersion:'atlas-variant-catalog/v1',snapshotHash:hash('d'),candidates:[{candidateId:'exact',label:'Pikachu · Reverse holo',identity:{name:'Pikachu',setName:'151',cardNumber:'025/165',language:'English'},parallel:'Reverse holo',applicability:'supported',diagnostics:[{id:'foil',description:'Compare the foil pattern outside the artwork.'}],images:[]}]});
 export const statusFixture = () => ({enabled:true,state:'READY',revision:9,sourceHash:hash('a'),identityRevision:1,identityHash:hash('b'),jobId:randomUUID(),resultHash:hash('c'),result:{catalog:catalogFixture(),suggestion:{candidateId:'exact',confidence:'high',reason:'Printed name and number match.'}},confirmation:null,approvalReady:false});
@@ -79,4 +79,12 @@ test('denied access retains exact opted-in permission through reload and replay;
 test('a changed source or identity cannot reuse a prepared photo-permission confirmation',async()=>{
  for(const field of ['sourceHash','identityHash','identityRevision']){const f=fixture();await f.client.read();f.client.choose('exact',null,null,photoPermission);f.status[field]=field==='identityRevision'?2:hash('f');
  await assert.rejects(f.client.confirm({candidateId:'exact',referencePermission:photoPermission}),{code:'VARIANT_REVIEW_CHANGED'});assert.equal(f.requests.filter(r=>r.method).length,0);}
+});
+
+
+test('a finished variant analysis does not show a stale review warning; pending and stale checks stay visible',()=>{
+ const confirmation={decision:'SELECTED',reprocessRequired:true,recheckState:'READY'};
+ assert.equal(variantRecheckMessage({confirmation}),null);
+ assert.match(variantRecheckMessage({confirmation:{...confirmation,recheckState:'DISPATCHED'}}),/Checking the confirmed variant/);
+ assert.match(variantRecheckMessage({confirmation:{...confirmation,recheckReason:'VARIANT_ANALYSIS_STALE'}}),/Border geometry changed/);
 });

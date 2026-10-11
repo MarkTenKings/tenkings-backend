@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { approveRapidStage, rapidReviewStatus, approveRapidGeometrySide, confirmRapidGeometryPair, approveRapidFinding } from '../src/rapid-review.mjs';
+import { approveRapidStage, rapidResumeStage, rapidReviewStatus, approveRapidGeometrySide, confirmRapidGeometryPair, approveRapidFinding } from '../src/rapid-review.mjs';
 import { createGeometryWorkspace, geometryBase, preparationBase, applyGeometryEdit, applyPreparedFrame, confirmBothGeometry } from '../src/geometry-actions.mjs';
 import { markDefectSideInspected, confirmDefectFindings, defectBase, markDefectFindingReviewed } from '../src/defect-actions.mjs';
 import { workspace } from './defect-fixtures.mjs';
@@ -125,4 +125,14 @@ test('variant recheck gates both findings approval paths until its exact result 
  await approveRapidStage('findings',f.view,f.execute);
  assert.deepEqual(f.actions.map(action=>action.type),['CONFIRM_FINDINGS']);assert.deepEqual(f.actions[0].proposalReview,f.view.astra.proposalReview);
  f.view.variantVerification.confirmation.recheckReason='VARIANT_ANALYSIS_STALE';assert.equal(rapidReviewStatus(f.view).findings,false);
+});
+
+
+test('resume follows saved human checkpoints and never replays decisions',async()=>{
+ const f=fixture();assert.equal(rapidResumeStage(f.view),'geometry-review');
+ await approveRapidStage('geometry',f.view,f.execute);assert.equal(rapidResumeStage(f.view),'findings-review');
+ await approveRapidStage('findings',f.view,f.execute);const count=f.actions.length;
+ assert.equal(rapidResumeStage(f.view),'report');assert.equal(f.actions.length,count);
+ f.view={...f.view,variantVerification:{confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'DISPATCHED'}}};
+ assert.equal(rapidResumeStage(f.view),'findings-review');assert.equal(f.actions.length,count);
 });
