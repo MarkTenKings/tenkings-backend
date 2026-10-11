@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { parseEbaySoldCompsV2Candidate, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarketService } from '../src/presentation-market-service.mjs';
-import { createPresentationMarket, publishedMarketQuery } from '../src/presentation-market.mjs';
+import { projectResearchMarketPreview, publishedMarketQuery } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 import { canonical, digest } from '@atlas/manual-service/contract';
 
@@ -34,7 +34,7 @@ async function setup() {
   const service = createPresentationMarketService(options), input = { requestId: randomUUID(), approvalActionId: f.actionId, expectedRevision: 0 };
   async function saveReady() {
     await service.preview({}, f.cardId, input);
-    const ready = createPresentationMarket().project(source, { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
+    const ready = projectResearchMarketPreview(source, { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
       query: context.query, retrievedAt: '2020-09-22T16:00:00.000Z', candidates: [candidate] });
     const artifactHash = digest(JSON.stringify(ready.preview)), ref = await f.artifacts.write(ready.preview, { cardId: f.cardId, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
     Object.assign(requests.get(input.requestId), { state: 'READY', saved: { state: 'READY', ref, artifactHash, sourceHash: ready.sourceHash } });
@@ -73,7 +73,7 @@ test('configured provider without durable jobs cannot execute the obsolete synch
 });
 test('OCR failure status directs retained-response recovery while an unknown listing dispatch stays fenced', async () => {
   const f = await setup(); await f.service.preview({}, f.cardId, f.input);
-  Object.assign(f.jobs.get(f.input.requestId), { state: 'FAILED', code: 'MARKET_LABEL_OUTCOME_UNKNOWN', response: { items: [] } });
+  Object.assign(f.jobs.get(f.input.requestId), { state: 'FAILED', code: 'MARKET_LABEL_OUTCOME_UNKNOWN', response: { responsePolicy: 'ATLAS_SLAB_V1', items: [] } });
   const failed = await f.service.status({}, f.cardId);
   assert.equal(failed.reason, 'MARKET_LABEL_OUTCOME_UNKNOWN'); assert.equal(failed.refreshAction, 'RETRY_SAVED_RESPONSE');
   assert.equal(failed.response, undefined); assert.equal(failed.refreshable, true);

@@ -3,7 +3,7 @@ import { isScrydexMetadataUrl, compareVariantCardNumber } from '@tenkings/card-c
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { projectSelectedSoldReferences, projectSelectedSlabReferences } from '@atlas/report-view/sold-reference-projection';
 import { inspectStaffInventoryResearchSale, inspectStaffInventoryResearchTitle } from '@tenkings/card-research-core/decisions';
-import { buildEbaySoldCompsV2Query, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
+import { buildEbaySoldCompsV2Query, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
 
 export const MARKET_UNAVAILABLE_REASONS = Object.freeze(['PROVIDER_NOT_CONFIGURED', 'PROVIDER_CONFIGURATION_ERROR', 'PROVIDER_QUOTA_REACHED', 'PROVIDER_REQUEST_LIMITED']);
 
@@ -245,35 +245,21 @@ function preparePreview(context, result) {
  * The staff request supplies only its saved preview id and chosen candidate ids.
  * No endpoint, live credential, persistence or automatic pricing is enabled here.
  */
-export function createPresentationMarket({ provider = null } = {}) {
-  requireThat(provider === null || typeof provider === 'function', 500, 'MARKET_CONFIGURATION_INVALID');
-  function project(source, result) {
-    const context = publishedMarketQuery(source, { savedQuery: result?.query, queryContext: result?.marketQueryContext });
-    const preview = result?.responsePolicy === 'ATLAS_SLAB_V1' ? prepareSlabPreview(context, result) : preparePreview(context, result);
-    return { state: 'READY', preview, sourceHash: marketPreviewHash(preview) };
-  }
+// Explicit research projects its separately journaled result. This helper has
+// no provider capability and is never an automatic-market fallback.
+export function projectResearchMarketPreview(source, result) {
+  const context = publishedMarketQuery(source, { savedQuery: result?.query, queryContext: result?.marketQueryContext });
+  const preview = preparePreview(context, result);
+  return { state: 'READY', preview, sourceHash: marketPreviewHash(preview) };
+}
+
+export function createPresentationMarket() {
   return Object.freeze({
-    project,
-    async preview(source) {
-      const context = publishedMarketQuery(source);
-      if (!provider) return { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED' };
-      requireThat(provider.requiresSlabLabels !== true, 503, 'MARKET_DURABLE_LABEL_WORKER_REQUIRED');
-      let result;
-      try { result = await provider(structuredClone(context.input)); }
-      // A timeout/transport failure may follow a billed dispatch. It is not
-      // proof of an unstarted lookup and must retain the caller's exact intent.
-      catch (error) {
-        // A typed authentication/quota/rate refusal proves the request did not
-        // produce sales. Transport failures and server failures stay unknown.
-        if (error instanceof EbaySoldCompsV2Error) {
-          if (error.code === 'SOLDCOMPS_CREDENTIAL_MISSING') return { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED' };
-          if (error.statusCode === 401 && error.code === 'SOLDCOMPS_CONFIGURATION_ERROR') return { state: 'UNAVAILABLE', reason: 'PROVIDER_CONFIGURATION_ERROR' };
-          if ([403, 429].includes(error.statusCode) && error.code === 'SOLDCOMPS_QUOTA_REACHED') return { state: 'UNAVAILABLE', reason: 'PROVIDER_QUOTA_REACHED' };
-          if (error.statusCode === 429 && error.code === 'SOLDCOMPS_TEMPORARY_UNAVAILABLE') return { state: 'UNAVAILABLE', reason: 'PROVIDER_REQUEST_LIMITED' };
-        }
-        return { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN' };
-      }
-      return project(source, result);
+    project(source, result) {
+      requireThat(result?.responsePolicy === 'ATLAS_SLAB_V1', 502, 'MARKET_PROVIDER_POLICY_INVALID');
+      const context = publishedMarketQuery(source, { savedQuery: result.query, queryContext: result.marketQueryContext });
+      const preview = prepareSlabPreview(context, result);
+      return { state: 'READY', preview, sourceHash: marketPreviewHash(preview) };
     },
     select({ packet, publicHash, preview, sourceHash, selectedIds }) {
       requireThat(['atlas-market-preview-v1', 'atlas-market-preview-v2'].includes(preview?.version) && /^[a-f0-9]{64}$/.test(sourceHash ?? '')

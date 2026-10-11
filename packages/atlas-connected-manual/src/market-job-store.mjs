@@ -1,18 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
-import { EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION } from '@tenkings/ebay-sold-comps-v2';
 
 const refreshRequestId = (actionId, previewId) => { const h=digest(`atlas-market-refresh-v1:${actionId}:${previewId}`); return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`; };
-const reclassificationId = (sourceId, responseHash) => refreshRequestId(sourceId,`${responseHash}:${EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION}`);
-export function marketReclassification(row) {
-  const markers=(row?.audit??[]).filter(v=>v.event==='RECLASSIFY');if(!markers.length)return null;
-  requireThat(markers.length===1&&row.origin==='REFRESH',503,'MARKET_RECLASSIFICATION_INVALID');const value=markers[0];
-  object(value,['event','version','sourceRequestId','responseHash','originalDispatchId','classificationRevision','sourceHash','reportHash','publicHash']);
-  uuid(value.sourceRequestId);uuid(value.originalDispatchId);
-  requireThat(value.version==='atlas-market-reclassification-v1'&&typeof value.classificationRevision==='string'&&value.classificationRevision.length<=100
-    &&['responseHash','sourceHash','reportHash','publicHash'].every(k=>/^[a-f0-9]{64}$/.test(value[k]))
-    &&value.sourceHash===row.source_hash&&value.reportHash===row.report_hash,503,'MARKET_RECLASSIFICATION_INVALID');return value;
-}
+// Recognition only: retired jobs can never regain a provider or projection path.
+export const marketHasRetiredReclassification = row => (row?.audit ?? []).some(value => value.event === 'RECLASSIFY');
 const table = 'atlas_manual_connected.market_job';
 const live = `EXISTS(SELECT 1 FROM atlas_manual.publication p JOIN atlas_manual.approval a USING(card_id,action_id)
  JOIN atlas_manual.card c ON c.id=p.card_id WHERE p.card_id=j.card_id AND p.action_id=j.approval_action_id
@@ -49,11 +40,12 @@ const stored = row => {
 export function marketJobStatus(row) {
   if (!row) return { state: 'NOT_REQUESTED', refreshable: true };
   const state = ['RUNNING','REQUESTED'].includes(row.state) ? 'SEARCHING' : row.state;
-  const local=marketReclassification(row);
+  const retired = state !== 'READY' && (marketHasRetiredReclassification(row) ? 'MARKET_RECLASSIFICATION_RETIRED'
+    : row.response && row.response.responsePolicy !== 'ATLAS_SLAB_V1' ? 'MARKET_PROVIDER_POLICY_INVALID' : null);
   return { state, previewId: row.request_id, approvalActionId: row.approval_action_id,
-    updatedAt: new Date(row.updated_at ?? row.created_at).toISOString(), ...(row.code ? { reason: row.code } : {}),
-    refreshable: !['QUEUED','SEARCHING','UNKNOWN'].includes(state),
-    ...(state === 'FAILED' && (row.response||local) ? { refreshAction: 'RETRY_SAVED_RESPONSE' } : {}) };
+    updatedAt: new Date(row.updated_at ?? row.created_at).toISOString(), ...((retired ?? row.code) ? { reason: retired ?? row.code } : {}),
+    refreshable: !retired && !['QUEUED','SEARCHING','UNKNOWN'].includes(state),
+    ...(state === 'FAILED' && !retired && row.response ? { refreshAction: 'RETRY_SAVED_RESPONSE' } : {}) };
 }
 
 /** Runs in the existing human-approval transaction, after publication intent.
@@ -116,46 +108,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
     const plan = { version: 'atlas-market-backfill-v1', mode, refreshLegacyApprovalIds: [...refreshLegacyApprovalIds].sort(), entries };
     return { ...plan, planHash: digest(canonical(plan, { maxBytes: 1048576 })) };
   }
-  async function reclassificationPlan(tx,mode,sourceRequestIds) {
-    requireThat(Array.isArray(sourceRequestIds)&&sourceRequestIds.length>0&&new Set(sourceRequestIds).size===sourceRequestIds.length);sourceRequestIds.forEach(uuid);
-    const rows=await tx.$queryRawUnsafe(`SELECT j.request_id,j.card_id,j.approval_action_id,j.actor_id,j.access_version,j.source_hash,j.report_hash,j.public_hash,j.response_hash,j.dispatch_id,j.state,
-      j.response::jsonb->>'responsePolicy' response_policy, (${live}) current,
-      (SELECT COALESCE(MAX(revision),0)::int FROM atlas_manual.presentation s WHERE s.card_id=j.card_id AND s.approval_action_id=j.approval_action_id) revision,
-      (SELECT m.request_id FROM atlas_manual.presentation_market m WHERE m.card_id=j.card_id AND m.approval_action_id=j.approval_action_id ORDER BY m.created_at DESC,m.request_id DESC LIMIT 1) latest
-      FROM ${table} j WHERE j.request_id=ANY($1::uuid[]) AND j.mode=$2 ORDER BY j.request_id`,sourceRequestIds,mode);
-    const entries=[];
-    for(const sourceId of [...sourceRequestIds].sort()) {
-      const row=rows.find(v=>v.request_id===sourceId);if(!row){entries.push({sourceRequestId:sourceId,disposition:'SOURCE_UNAVAILABLE'});continue;}
-      const requestId=reclassificationId(sourceId,row.response_hash);
-      const [existing]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE request_id=$1::uuid`,requestId);
-      if(existing){const marker=marketReclassification(existing);requireThat(marker?.sourceRequestId===sourceId&&marker.responseHash===row.response_hash&&marker.classificationRevision===EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,409,'MARKET_RECLASSIFICATION_CONFLICT');}
-      const [busy]=await tx.$queryRawUnsafe(`SELECT request_id FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid AND request_id<>$3::uuid AND state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN') LIMIT 1`,row.card_id,row.approval_action_id,requestId);
-      entries.push({sourceRequestId:sourceId,requestId,cardId:row.card_id,approvalActionId:row.approval_action_id,actorId:row.actor_id,accessVersion:row.access_version,
-        sourceHash:row.source_hash,reportHash:row.report_hash,publicHash:row.public_hash,responseHash:row.response_hash,originalDispatchId:row.dispatch_id,expectedRevision:row.revision,
-        disposition:existing?'RETAIN_RECLASSIFICATION':row.state!=='READY'||!row.response_hash||!row.dispatch_id?'SOURCE_UNAVAILABLE':row.response_policy==='ATLAS_SLAB_V1'?'SOURCE_POLICY_NOT_LEGACY':!row.current||row.latest!==sourceId?'SOURCE_STALE':busy?'SEARCH_IN_PROGRESS':'RECLASSIFY_READY'});
-    }
-    const plan={version:'atlas-market-reclassification-plan-v1',mode,classificationRevision:EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,sourceRequestIds:[...sourceRequestIds].sort(),entries};
-    return {...plan,planHash:digest(canonical(plan,{maxBytes:1048576}))};
-  }
-  async function insertReclassification(tx,args,marker) {
-    const job=await insert(tx,{...args,origin:'REFRESH'});
-    const existing=marketReclassification(job);if(existing){requireThat(canonical(existing)===canonical(marker),409,'MARKET_RECLASSIFICATION_CONFLICT');return job;}
-    requireThat(job.state==='QUEUED'&&job.origin==='REFRESH'&&job.audit.length===0,409,'MARKET_RECLASSIFICATION_CONFLICT');
-    return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET audit=audit||$2::jsonb,updated_at=clock_timestamp() WHERE request_id=$1::uuid AND state='QUEUED' AND audit='[]'::jsonb RETURNING *`,job.request_id,canonical([marker])))[0]);
-  }
   return Object.freeze({
-    reclassificationPlan({sourceRequestIds}) {return machine(({tx,principal})=>reclassificationPlan(tx,principal.mode,sourceRequestIds));},
-    reclassify(expectedPlanHash,{sourceRequestIds}) {return machine(async({tx,principal})=>{
-      requireThat(/^[a-f0-9]{64}$/.test(expectedPlanHash??''),400,'MARKET_RECLASSIFICATION_PLAN_REQUIRED');
-      await tx.$queryRawUnsafe(`SELECT c.id FROM atlas_manual.card c WHERE EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.request_id=ANY($1::uuid[]) AND j.mode=$2) ORDER BY c.id FOR UPDATE`,sourceRequestIds,principal.mode);
-      const plan=await reclassificationPlan(tx,principal.mode,sourceRequestIds);requireThat(plan.planHash===expectedPlanHash,409,'MARKET_RECLASSIFICATION_PLAN_CHANGED');const queued=[];
-      for(const e of plan.entries.filter(e=>e.disposition==='RECLASSIFY_READY')) {
-        const marker={event:'RECLASSIFY',version:'atlas-market-reclassification-v1',sourceRequestId:e.sourceRequestId,responseHash:e.responseHash,originalDispatchId:e.originalDispatchId,
-          classificationRevision:plan.classificationRevision,sourceHash:e.sourceHash,reportHash:e.reportHash,publicHash:e.publicHash};
-        queued.push(marketJobStatus(await insertReclassification(tx,{cardId:e.cardId,actionId:e.approvalActionId,requestId:e.requestId,actorId:e.actorId,accessVersion:e.accessVersion,mode:principal.mode,expectedRevision:e.expectedRevision},marker)));
-      }
-      return {planHash:plan.planHash,queued};
-    });},
     // Server-only maintenance. First return the exact read-only impact; applying
     // the reviewed hash cannot purchase searches or replace existing previews.
     backfillPlan({ refreshLegacyApprovalIds = [] } = {}) { return machine(({ tx, principal }) => backfillPlan(tx, principal.mode, refreshLegacyApprovalIds)); },
@@ -201,13 +154,15 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         requireThat(revision.revision === input.expectedRevision, 409, 'PRESENTATION_REVISION_STALE');
         const [recoverable]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid
           ORDER BY created_at DESC,request_id DESC LIMIT 1`,cardId,input.approvalActionId);
-        const local=marketReclassification(recoverable);
+        if (recoverable?.state === 'FAILED') {
+          requireThat(!marketHasRetiredReclassification(recoverable), 409, 'MARKET_RECLASSIFICATION_RETIRED');
+          requireThat(!recoverable.response || JSON.parse(recoverable.response).responsePolicy === 'ATLAS_SLAB_V1', 409, 'MARKET_PROVIDER_POLICY_INVALID');
+        }
         if(recoverable?.state==='FAILED'&&recoverable.response){
           return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET state='QUEUED',attempts=0,recoveries=recoveries+1,code='MARKET_RESPONSE_RECOVERED',
             available_at=clock_timestamp(),updated_at=clock_timestamp(),audit=audit||jsonb_build_array(jsonb_build_object('event','RECOVERY','requestId',$2::text,'requestHash',$3::text,'actorId',$4::text,'at',clock_timestamp()))
             WHERE request_id=$1::uuid RETURNING *`,recoverable.request_id,input.requestId,digest(canonical(input)),principal.id))[0]);
         }
-        if(recoverable?.state==='FAILED'&&local)return insertReclassification(tx,{cardId,actionId:publication.action_id,requestId:input.requestId,actorId:principal.id,accessVersion:principal.accessVersion,mode:principal.mode,expectedRevision:input.expectedRevision},local);
         return insert(tx, { cardId, actionId: publication.action_id, requestId: input.requestId, actorId: principal.id,
           accessVersion: principal.accessVersion, mode: principal.mode, expectedRevision: input.expectedRevision, origin: 'REFRESH' });
       });
@@ -247,19 +202,10 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       return machine(async ({ tx }) => (await tx.$executeRawUnsafe(`UPDATE ${table} j SET public_hash=$3,updated_at=clock_timestamp()
         WHERE ${active} AND (public_hash IS NULL OR public_hash=$3)`, job.request_id, job.claim_id, source.publicHash)) === 1);
     },
-    dispatch(job) { requireThat(!marketReclassification(job),409,'MARKET_RECLASSIFICATION_NO_PROVIDER');return machine(async ({ tx }) => (await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='REQUESTED',dispatch_id=$2::uuid,audit=audit||jsonb_build_array(jsonb_build_object('event','DISPATCH','dispatchId',$2::text,'at',clock_timestamp())),updated_at=clock_timestamp()
+    dispatch(job) { requireThat(!marketHasRetiredReclassification(job),409,'MARKET_RECLASSIFICATION_RETIRED');return machine(async ({ tx }) => (await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='REQUESTED',dispatch_id=$2::uuid,audit=audit||jsonb_build_array(jsonb_build_object('event','DISPATCH','dispatchId',$2::text,'at',clock_timestamp())),updated_at=clock_timestamp()
       WHERE ${active} AND state='RUNNING' AND public_hash IS NOT NULL AND response IS NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(j.audit) a WHERE a->>'event'='RECLASSIFY')`, job.request_id, job.claim_id)) === 1); },
-    reclassificationSource(job) {const marker=marketReclassification(job);requireThat(marker&&marker.classificationRevision===EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,409,'MARKET_RECLASSIFICATION_POLICY_CHANGED');return machine(async({tx})=>{
-      const [activeJob]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} j WHERE ${active}`,job.request_id,job.claim_id);requireThat(activeJob&&canonical(marketReclassification(activeJob))===canonical(marker)&&activeJob.public_hash===marker.publicHash,409,'MARKET_RECLASSIFICATION_STALE');
-      const row=stored((await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE request_id=$1::uuid`,marker.sourceRequestId))[0]);
-      requireThat(row?.state==='READY'&&row.response&&row.response_hash===marker.responseHash&&row.dispatch_id===marker.originalDispatchId&&row.card_id===job.card_id&&row.approval_action_id===job.approval_action_id&&row.source_hash===marker.sourceHash&&row.report_hash===marker.reportHash&&row.public_hash===marker.publicHash,409,'MARKET_RECLASSIFICATION_SOURCE_CHANGED');return row.response;
-    });},
-    recordReclassification(job,response) {const marker=marketReclassification(job);requireThat(marker&&marker.classificationRevision===EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,409,'MARKET_RECLASSIFICATION_POLICY_CHANGED');const value=canonical(response,{maxBytes:524288});return machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE ${table} j SET response=$3,response_hash=$4,dispatch_id=$5::uuid,updated_at=clock_timestamp(),
-      audit=audit||jsonb_build_array(jsonb_build_object('event','RECLASSIFY_RESPONSE','sourceRequestId',$6::text,'sourceResponseHash',$7::text,'responseHash',$4::text,'originalDispatchId',$5::text,'classificationRevision',$8::text,'at',clock_timestamp()))
-      WHERE ${active} AND j.state='RUNNING' AND j.response IS NULL AND j.public_hash=$9 AND j.audit @> $10::jsonb
-      AND EXISTS(SELECT 1 FROM ${table} s WHERE s.request_id=$6::uuid AND s.state='READY' AND s.response_hash=$7 AND s.dispatch_id=$5::uuid AND s.card_id=j.card_id AND s.approval_action_id=j.approval_action_id AND s.source_hash=j.source_hash AND s.report_hash=j.report_hash AND s.public_hash=j.public_hash)`,job.request_id,job.claim_id,value,digest(value),marker.originalDispatchId,marker.sourceRequestId,marker.responseHash,marker.classificationRevision,marker.publicHash,canonical([marker])))===1);},
     recordResponse(job, response) {
-      requireThat(!marketReclassification(job),409,'MARKET_RECLASSIFICATION_NO_PROVIDER');
+      requireThat(!marketHasRetiredReclassification(job),409,'MARKET_RECLASSIFICATION_RETIRED');
       const value = responseText(response);
       // A late paid response survives retirement and lease loss. Only its exact
       // persisted dispatch can append it; immutable evidence cannot be replaced.
@@ -274,6 +220,8 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         const state = result ? 'READY' : disposition === 'RETRY' && row.attempts < 6 ? 'QUEUED' : ['UNKNOWN','UNAVAILABLE'].includes(disposition) ? disposition : 'FAILED';
         if (result) {
           requireThat(row.response && row.public_hash, 409, 'MARKET_RESPONSE_REQUIRED');
+          requireThat(!marketHasRetiredReclassification(row), 409, 'MARKET_RECLASSIFICATION_RETIRED');
+          requireThat(JSON.parse(row.response).responsePolicy === 'ATLAS_SLAB_V1', 409, 'MARKET_PROVIDER_POLICY_INVALID');
           const value = canonical(result);
           const changed = await tx.$executeRawUnsafe(`UPDATE atlas_manual.presentation_market SET state='READY',result=$3,result_hash=$4 WHERE card_id=$1::uuid AND request_id=$2::uuid AND state='STARTED'`, row.card_id, row.request_id, value, digest(value));
           requireThat(changed === 1, 409, 'MARKET_RESULT_CONFLICT');

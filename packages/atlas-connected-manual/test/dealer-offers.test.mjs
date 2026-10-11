@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { createDealerOfferService } from '../src/dealer-offers.mjs';
 import { createPresentationMarketService } from '../src/presentation-market-service.mjs';
-import { createPresentationMarket, publishedMarketQuery } from '../src/presentation-market.mjs';
+import { projectResearchMarketPreview, publishedMarketQuery } from '../src/presentation-market.mjs';
 import { parseEbaySoldCompsV2Candidate, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { createDealerOffersClient } from '../../../frontend/atlas-app/lib/dealer-offers-client.mjs';
 import { createReportMarketClient } from '../../../frontend/atlas-app/lib/report-market-client.mjs';
@@ -26,7 +26,7 @@ async function fixture() {
 }
 async function savedMarket(f, candidates) {
   const context = publishedMarketQuery(f.source), input = f.command();
-  const ready = createPresentationMarket().project(f.source, { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
+  const ready = projectResearchMarketPreview(f.source, { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
     query: context.query, retrievedAt: f.now.toISOString(), candidates });
   await f.repository.reserveMarket(f.staff, f.cardId, input);
   const artifactHash = digest(JSON.stringify(ready.preview)), ref = await f.artifacts.write(ready.preview, { cardId: f.cardId, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });

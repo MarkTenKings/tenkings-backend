@@ -1,7 +1,7 @@
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {researchCardSubject,createResearchCatalogAdapter,researchCatalogScopeResolver,StaffInventoryResearchResultSchema,inspectStaffInventoryResearchTitle} from '@tenkings/card-research-core';
 import {EBAY_SOLD_COMPS_V2_ENGINE_VERSION,EBAY_SOLD_COMPS_V2_SOURCE} from '@tenkings/ebay-sold-comps-v2';
-import {createPresentationMarket,publishedMarketQuery} from './presentation-market.mjs';
+import {projectResearchMarketPreview,publishedMarketQuery} from './presentation-market.mjs';
 import {createAtlasCatalogClient} from './research-catalog.mjs';
 import {createResearchJournal} from './research-journal.mjs';
 import {createResearchEffects} from './research-effects.mjs';
@@ -90,7 +90,7 @@ export function createAtlasResearchService({boundary,repository,approved,intake,
       Object.assign(deps,{loadCatalog:catalog.load,isCatalogCurrent:catalog.current,loadReferenceImage:catalog.image});
     }
     const result=await researchCardSubject(saved.input,deps);
-    const market=await createPresentationMarket({provider:async()=>marketResult(result,saved.context)}).preview(source);
+    const market=projectResearchMarketPreview(source,marketResult(result,saved.context));
     fail(market.state==='READY','RESEARCH_PREVIEW_INVALID');
     const events=await journal.read(staff,cardId,input.requestId),effectsUnknown=events.filter(e=>e.event==='DISPATCH'&&!events.some(r=>r.sequence===e.sequence&&r.event==='RESPONSE')).length;
     const researchValue={version:'atlas-research-result-v1',policy,input:saved.input,context:saved.context,result,effectsUnknown};

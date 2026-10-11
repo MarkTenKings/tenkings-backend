@@ -1,5 +1,7 @@
 # ATLAS fresh lead handoff — October 10, 2026, Pacific
 
+> **Superseding owner instructions — October 10 Pacific / October 11 UTC:** The owner authorized a comprehensive cleanup and explicitly requested deletion of every current test card. LaMelo, Pikachu, Magmar and Jaxson have now been removed from the active production workspace; Grading, Review and Label queues show zero. Do not restore or reapprove them. Earlier instructions below to preserve Pikachu or refresh its sales are historical and superseded. ATLAS Codex/catalog architecture and shared references remain required. Current cleanup is being qualified; R8 remains live until a later verified release receipt. Follow the latest `SESSION_LOG.md` entries and actual runtime evidence rather than replaying any release/recovery commands in this historical handoff.
+
 ## Start here: owner is finding new production issues
 
 Mark's latest request is to hand this work to a fresh agent because he is finding issues while testing production. The specific new symptoms have not yet been supplied in this handoff. Make those issues the first priority. Ask for the symptoms/screenshots if they are not included in the new chat, while reading the current code and retained evidence. Reproduce on the actual affected route and card before changing it. Earlier passing tests and the previous percentage estimates are not proof that these new issues are fixed.

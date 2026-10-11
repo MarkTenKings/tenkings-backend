@@ -1,7 +1,7 @@
 import { digest, requireThat } from '@atlas/manual-service/contract';
-import { EbaySoldCompsV2Error, reclassifyEbaySoldCompsV2Result, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION } from '@tenkings/ebay-sold-comps-v2';
+import { EbaySoldCompsV2Error } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarket, publishedMarketQuery, marketPreviewHash } from './presentation-market.mjs';
-import { marketReclassification } from './market-job-store.mjs';
+import { marketHasRetiredReclassification } from './market-job-store.mjs';
 
 // Only typed provider refusals prove there was no successful paid result.
 export function marketProviderFailure(error) {
@@ -25,12 +25,12 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
   const tasks = new Set(); let stopped = true, cycling = null, timer = null;
   const emit = error => { try { onError({ code: /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'MARKET_WORKER_INTERRUPTED' }); } catch { /* Logging cannot change receipts. */ } };
   async function execute(job) {
-    const local = (job.audit??[]).some(value=>value.event==='RECLASSIFY');
     let dispatched = false, responseSaved = Boolean(job.response), providerFailed = null, leaseLost = false, renewing = Promise.resolve();
     const heartbeat = timers.setInterval(() => { renewing = renewing.then(async () => {
       if (!await store.renew(job)) leaseLost = true;
     }).catch(error => { leaseLost = true; emit(error); }); }, heartbeatMs); heartbeat.unref?.();
     try {
+      requireThat(!marketHasRetiredReclassification(job), 409, 'MARKET_RECLASSIFICATION_RETIRED');
       const staff = await authorityFor(job);
       // This is delivery of the exact already human-approved snapshot. It
       // cannot create an approval or alter approved grade/report bytes.
@@ -38,21 +38,10 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       const source = await approved.loadPacket(staff, job.card_id, job.approval_action_id);
       requireThat(!leaseLost && await store.bind(job, source), 409, 'MARKET_LEASE_LOST');
       let response = job.response;
-      const queryContext = response?.marketQueryContext ?? (!response && !local && queryContextResolver
+      const queryContext = response?.marketQueryContext ?? (!response && queryContextResolver
         ? await queryContextResolver({ source, staff, job }) : null);
       const context = publishedMarketQuery(source, { ...(response ? { savedQuery: response.query } : {}), queryContext });
-      if(local) {
-        const marker=marketReclassification(job);
-        requireThat(marker.classificationRevision===EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,409,'MARKET_RECLASSIFICATION_POLICY_CHANGED');
-        if(!response) {
-          const original=await store.reclassificationSource(job);
-          const replayContext=publishedMarketQuery(source,{savedQuery:original?.query,queryContext:original?.marketQueryContext});
-          response=reclassifyEbaySoldCompsV2Result(structuredClone(replayContext.input),original);
-          requireThat(await store.recordReclassification(job,response),503,'MARKET_RECLASSIFICATION_NOT_SAVED');responseSaved=true;
-        }
-      }
       if (!response) {
-        requireThat(!local,409,'MARKET_RECLASSIFICATION_NO_PROVIDER');
         // An uncertain dispatch-transaction reply is itself a no-repeat fence.
         dispatched = true;
         requireThat(!leaseLost && await store.dispatch(job), 409, 'MARKET_LEASE_LOST');
@@ -61,15 +50,12 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
         if (context.marketQueryContext) response = { ...response, marketQueryContext: context.marketQueryContext };
         requireThat(await store.recordResponse(job, response), 503, 'MARKET_RESPONSE_NOT_SAVED');
         responseSaved = true;
-        requireThat(response.responsePolicy === 'ATLAS_SLAB_V1', 502, 'MARKET_PROVIDER_POLICY_INVALID');
       }
+      requireThat(response.responsePolicy === 'ATLAS_SLAB_V1', 502, 'MARKET_PROVIDER_POLICY_INVALID');
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
-      let evidence = response;
-      if (response.responsePolicy === 'ATLAS_SLAB_V1') {
-        requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
-        evidence = await labelMarket({ source, response: structuredClone(response), job });
-        requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
-      }
+      requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
+      const evidence = await labelMarket({ source, response: structuredClone(response), job });
+      requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       const result = market.project(source, evidence);
       const artifactHash = digest(JSON.stringify(result.preview));
       const ref = await artifacts.write(result.preview, { cardId: job.card_id, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
@@ -77,8 +63,8 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       await store.finish(job, { result: { state: 'READY', ref, artifactHash, sourceHash: result.sourceHash } });
     } catch (error) {
       emit(error);
-      const terminal = /^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE|MARKET_PROVIDER_POLICY_INVALID)$/.test(error?.code ?? '');
-      const failure = providerFailed ?? (terminal ? { code: error.code, disposition: 'FAILED' } : error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'RETRY' } : local ? {code:'MARKET_RECLASSIFICATION_INTERRUPTED',disposition:'RETRY'} : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
+      const terminal = /^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE|MARKET_PROVIDER_POLICY_INVALID|MARKET_RECLASSIFICATION_RETIRED)$/.test(error?.code ?? '');
+      const failure = providerFailed ?? (terminal ? { code: error.code, disposition: 'FAILED' } : error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'RETRY' } : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
         : dispatched ? { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' }
         : { code: 'MARKET_PREPARATION_INTERRUPTED', disposition: 'RETRY' });
       try { await store.finish(job, failure); } catch (saveError) { emit(saveError); }

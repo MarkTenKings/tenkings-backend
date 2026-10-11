@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, digest } from '@atlas/manual-service/contract';
-import { buildEbaySoldCompsV2Query, parseEbaySoldCompsV2Candidate, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
-import { createPresentationMarket, publishedMarketQuery, createRetainedMarketQueryResolver, marketPreviewHash } from '../src/presentation-market.mjs';
+import { buildEbaySoldCompsV2Query, parseEbaySoldCompsV2Candidate, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
+import { createPresentationMarket, projectResearchMarketPreview, publishedMarketQuery, createRetainedMarketQueryResolver, marketPreviewHash } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
 const now = () => new Date('2026-09-22T16:00:00.000Z');
@@ -19,12 +19,11 @@ function source(context, overrides = {}) {
   return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: context.query,
     retrievedAt: now().toISOString(), candidates: [candidate({}), candidate({ itemId: '123456789013', url: 'https://www.ebay.com/itm/123456789013', bestOfferAccepted: true })], ...overrides };
 }
-test('published identity drives query; ATLAS award is context without a PSA grade translation or raw packet mutation', async () => {
-  const f = await fixture(), before = structuredClone(f.packet), context = publishedMarketQuery(f), calls = [];
-  const market = createPresentationMarket({ now, provider: async input => { calls.push(input); return source(context); } });
-  const saved = await market.preview(f);
-  assert.equal(saved.state, 'READY'); assert.equal(calls.length, 1); assert.equal(Object.hasOwn(calls[0], 'targetGrade'), false);
-  assert.equal(calls[0].queryOverride, context.query); assert.doesNotMatch(context.query, /PSA/);
+test('explicit research published identity drives query; ATLAS award is context without a PSA grade translation or raw packet mutation', async () => {
+  const f = await fixture(), before = structuredClone(f.packet), context = publishedMarketQuery(f), market = createPresentationMarket();
+  const saved = projectResearchMarketPreview(f, source(context));
+  assert.equal(saved.state, 'READY'); assert.equal(Object.hasOwn(context.input, 'targetGrade'), false);
+  assert.equal(context.input.queryOverride, context.query); assert.doesNotMatch(context.query, /PSA/);
   assert.equal(saved.preview.atlasGrade, f.packet.report.finalGrade); assert.equal(saved.preview.candidates.length, 1);
   assert.equal(saved.preview.candidates[0].requiresReview, true); assert.equal(saved.preview.excluded.undisclosedOrUnsupported, 1);
   assert.equal(saved.sourceHash, digest(canonical(saved.preview))); assert.deepEqual(f.packet, before);
@@ -32,22 +31,21 @@ test('published identity drives query; ATLAS award is context without a PSA grad
   assert.equal(selected.sales[0].priceMinor, 4000); assert.equal(selected.sales[0].grade, '9'); assert.equal(selected.sales[0].currency, 'USD');
   assert.equal(Object.hasOwn(selected, 'estimate'), false); assert.equal(market.select({ ...f, ...saved, selectedIds: [] }), null);
 });
-test('provider absence is unavailable while a transport failure retains an unknown paid outcome', async () => {
-  const f = await fixture();
-  assert.deepEqual(await createPresentationMarket({ now }).preview(f), { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED' });
-  assert.deepEqual(await createPresentationMarket({ now, provider: async () => { throw new Error('secret provider response'); } }).preview(f),
-    { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN' });
+test('automatic market has no synchronous provider dispatcher and rejects title-only projection', async () => {
+  let calls=0;const f=await fixture(),market=createPresentationMarket({provider:async()=>{calls++;}});
+  assert.equal('preview' in market,false);assert.equal(calls,0);
+  assert.throws(()=>market.project(f,source(publishedMarketQuery(f))),{code:'MARKET_PROVIDER_POLICY_INVALID'});
 });
 test('malformed provider source, wrong query, duplicate ids and invalid observation dates fail closed', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
   for (const change of [{ query: 'different card' }, { engineVersion: 'unknown' }, { source: 'ASKING_PRICES' },
     { candidates: [result.candidates[0], result.candidates[0]] }, { retrievedAt: 'not-a-date' }]) {
-    await assert.rejects(createPresentationMarket({ now, provider: async () => ({ ...result, ...change }) }).preview(f));
+    assert.throws(() => projectResearchMarketPreview(f, { ...result, ...change }));
   }
 });
 test('selection requires retained source hash, same exact publication and explicit eligible ids at any retained observation age', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
-  const market = createPresentationMarket({ now, provider: async () => result }), saved = await market.preview(f), id = saved.preview.candidates[0].sale.id;
+  const market = createPresentationMarket(), saved = projectResearchMarketPreview(f, result), id = saved.preview.candidates[0].sale.id;
   for (const alter of [v => { v.sourceHash = 'a'.repeat(64); }, v => { v.preview.query = 'different'; },
     v => { v.publicHash = 'b'.repeat(64); }, v => { v.selectedIds = [result.candidates[1].id]; },
     v => { v.selectedIds = [id, id]; }, v => { v.packet.approvalVersion++; v.publicHash = digest(JSON.stringify(v.packet)); }]) {
@@ -58,28 +56,11 @@ test('selection requires retained source hash, same exact publication and explic
 test('unknown identity match requires explicit review and contradictory variant cannot become a reference', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
   result.candidates[0].parallelMatch = 'UNKNOWN';
-  const market = createPresentationMarket({ now, provider: async () => result });
-  const saved = await market.preview(f); assert.equal(saved.preview.candidates[0].requiresReview, true); assert.equal(saved.preview.candidates[0].match, 'UNKNOWN');
-  result.candidates[0].parallelMatch = 'CONTRADICTORY'; const contradicted = await market.preview(f);
+  const saved = projectResearchMarketPreview(f, result); assert.equal(saved.preview.candidates[0].requiresReview, true); assert.equal(saved.preview.candidates[0].match, 'UNKNOWN');
+  result.candidates[0].parallelMatch = 'CONTRADICTORY'; const contradicted = projectResearchMarketPreview(f, result);
   assert.equal(contradicted.preview.candidates.length, 0); assert.equal(contradicted.preview.excluded.contradictory, 1);
 });
 
-
-test('only definitive typed provider refusals become recoverable unavailable results', async () => {
-  const f = await fixture();
-  for (const [code, statusCode, state, reason] of [
-    ['SOLDCOMPS_CONFIGURATION_ERROR', 401, 'UNAVAILABLE', 'PROVIDER_CONFIGURATION_ERROR'],
-    ['SOLDCOMPS_QUOTA_REACHED', 429, 'UNAVAILABLE', 'PROVIDER_QUOTA_REACHED'],
-    ['SOLDCOMPS_QUOTA_REACHED', 403, 'UNAVAILABLE', 'PROVIDER_QUOTA_REACHED'],
-    ['SOLDCOMPS_TEMPORARY_UNAVAILABLE', 429, 'UNAVAILABLE', 'PROVIDER_REQUEST_LIMITED'],
-    ['SOLDCOMPS_TEMPORARY_UNAVAILABLE', 502, 'UNKNOWN', 'PROVIDER_OUTCOME_UNKNOWN'],
-    ['SOLDCOMPS_TIMEOUT', null, 'UNKNOWN', 'PROVIDER_OUTCOME_UNKNOWN'],
-  ]) {
-    const result = await createPresentationMarket({ now, provider: async () => { throw new EbaySoldCompsV2Error(code, 'private provider text', { statusCode }); } }).preview(f);
-    assert.deepEqual(result, { state, reason }); assert.doesNotMatch(JSON.stringify(result), /private provider/);
-  }
-  assert.equal((await createPresentationMarket({ now, provider: async () => { throw { code: 'SOLDCOMPS_QUOTA_REACHED', statusCode: 429 }; } }).preview(f)).state, 'UNKNOWN');
-});
 
 async function pokemonFixture(identity) {
   const value = await fixture(); value.packet.report.cardProfile = 'POKEMON';
@@ -93,10 +74,10 @@ function titleResult(context, titles) {
       url: `https://www.ebay.com/itm/${123456789010 + i}`, soldPrice: '40.00', soldCurrency: 'USD', bestOfferAccepted: false,
       endedAt: '2026-09-21' }, context.input)) };
 }
-test('paid response can be reprojected locally and raw/special grades survive exact selection without relabeling', async () => {
+test('explicit research result can be projected locally and raw/special grades survive exact selection without relabeling', async () => {
   const f = await pokemonFixture(), context = publishedMarketQuery(f), prefix = '2023 Pikachu Scarlet & Violet 151 025/165';
   const result = titleResult(context, [`${prefix} Ungraded`, `${prefix} CGC 10 Pristine`, `${prefix} CGC 10`, `${prefix} BGS 10 Black Label`]);
-  const market = createPresentationMarket({ now }), ready = market.project(f, result);
+  const market = createPresentationMarket({ now }), ready = projectResearchMarketPreview(f, result);
   assert.equal(ready.preview.candidates.length, 4);
   const selected = market.select({ ...f, ...ready, selectedIds: ready.preview.candidates.map(value => value.sale.id) });
   const raw = selected.sales.find(value => value.raw); assert.equal(raw.grader, null); assert.equal(raw.grade, null);
@@ -109,20 +90,20 @@ test('paid response can be reprojected locally and raw/special grades survive ex
 test('collector zero typography is equivalent; omitted denominator stays unknown; explicit different denominator is excluded', async () => {
   const f = await pokemonFixture(), context = publishedMarketQuery(f), prefix = '2023 Pikachu Scarlet & Violet 151';
   const result = titleResult(context, [`${prefix} #25/165 PSA 9`, `${prefix} #025 PSA 9`, `${prefix} #25/189 PSA 9`]);
-  const ready = createPresentationMarket({ now }).project(f, result);
+  const ready = projectResearchMarketPreview(f, result);
   assert.equal(ready.preview.candidates.length, 2); assert.equal(ready.preview.excluded.contradictory, 1);
   assert.equal(ready.preview.candidates[1].identityEvidence.status, 'UNKNOWN');
   assert.ok(ready.preview.candidates[1].identityEvidence.reasonCodes.includes('collector_denominator_missing'));
 });
 test('explicit identity conflicts and card lots never enter selectable references', async () => {
   const f = await pokemonFixture(), context = publishedMarketQuery(f), prefix = 'Pikachu Scarlet & Violet 151 025/165 PSA 9';
-  const ready = createPresentationMarket({ now }).project(f, titleResult(context, [`2021 ${prefix}`, `2023 ${prefix} lot of 3 cards`]));
+  const ready = projectResearchMarketPreview(f, titleResult(context, [`2021 ${prefix}`, `2023 ${prefix} lot of 3 cards`]));
   assert.equal(ready.preview.candidates.length, 0); assert.equal(ready.preview.excluded.contradictory, 1);
   assert.equal(ready.preview.excluded.undisclosedOrUnsupported, 1);
 });
 test('retained legacy preview remains explicitly selectable; unrelated input changes still fail', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), market = createPresentationMarket({ now });
-  const ready = market.project(f, source(context));
+  const ready = projectResearchMarketPreview(f, source(context));
   delete ready.preview.input.matchingPolicy; ready.sourceHash = digest(canonical(ready.preview));
   const input = { ...f, ...ready, selectedIds: [ready.preview.candidates[0].sale.id] };
   assert.equal(market.select(input).sales.length, 1);
@@ -130,12 +111,12 @@ test('retained legacy preview remains explicitly selectable; unrelated input cha
   assert.throws(() => market.select({ ...input, ...ready }), { code: 'MARKET_PUBLICATION_MISMATCH' });
 });
 
-test('local title reclassification retains exclusion evidence, original capture age and sale amounts', async () => {
+test('explicit research projection retains exclusion evidence, original capture age and sale amounts', async () => {
   const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
   const metadata = { classificationRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,
     classificationExcluded: [{ id: 'ebay:123456789099', reason: 'UNANCHORED_MULTI_CARD_LISTING' }] };
   const market = createPresentationMarket({ now });
-  const ready = market.project(f, { ...result, ...metadata });
+  const ready = projectResearchMarketPreview(f, { ...result, ...metadata });
   assert.equal(ready.preview.excluded.undisclosedOrUnsupported, 2);
   assert.deepEqual(ready.preview.classificationExcluded, metadata.classificationExcluded);
   assert.notEqual(ready.preview.classificationExcluded, metadata.classificationExcluded);
@@ -144,8 +125,7 @@ test('local title reclassification retains exclusion evidence, original capture 
   const selected = market.select({ ...f, ...ready, selectedIds: [ready.preview.candidates[0].sale.id] });
   assert.equal(selected.sales[0].priceMinor, 4000);
   assert.throws(() => market.select({ ...f, ...ready, selectedIds: ['ebay:123456789099'] }));
-  assert.deepEqual(createPresentationMarket({ now: () => new Date('2030-09-24T16:00:00Z') })
-    .project(f, { ...result, ...metadata }), ready);
+  assert.deepEqual(projectResearchMarketPreview(f, { ...result, ...metadata }), ready);
 });
 
 test('malformed or double-counted reclassification exclusions cannot become trusted preview evidence', async () => {
@@ -158,7 +138,7 @@ test('malformed or double-counted reclassification exclusions cannot become trus
     ...[null, [row, row], [{ ...row, id: result.candidates[0].id }], [{ ...row, reason: 'UNVERIFIED' }],
       [{ ...row, inventedPrice: 100 }], Array.from({ length: 59 }, (_, i) => ({ ...row, id: `ebay:excluded-${i}` }))]
       .map(classificationExcluded => ({ classificationRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, classificationExcluded })),
-  ]) assert.throws(() => market.project(f, { ...result, ...metadata }), { code: 'MARKET_PROVIDER_RESULT_INVALID' });
+  ]) assert.throws(() => projectResearchMarketPreview(f, { ...result, ...metadata }), { code: 'MARKET_PROVIDER_RESULT_INVALID' });
 });
 
 
@@ -192,13 +172,13 @@ test('sports retrieval deduplicates product and printing phrases without losing 
   assert.equal(publishedMarketQuery(f).query, '1990 Fleer Basketball Alex English 1 grade 10');
 });
 
-test('exact historical paid queries reproject without altering their response and old signed input shapes remain selectable', async () => {
+test('explicit research preserves historical paid query and signed preview remains selectable', async () => {
   const f = await pokemonFixture({ productSet: '151', parallel: 'English Cosmos Holofoil' }), context = publishedMarketQuery(f);
   const legacyInput = { ...context.input }; delete legacyInput.queryOverride;
   const oldQuery = buildEbaySoldCompsV2Query(legacyInput);
   assert.equal(oldQuery, '2023 151 Pikachu English Cosmos Holofoil #025/165');
   const response = titleResult({ ...context, query: oldQuery }, ['2023 Pokemon 151 Pikachu 025/165 English Cosmos Holofoil PSA 9']);
-  const original = structuredClone(response), market = createPresentationMarket({ now }), ready = market.project(f, response);
+  const original = structuredClone(response), market = createPresentationMarket(), ready = projectResearchMarketPreview(f, response);
   assert.equal(ready.preview.query, oldQuery); assert.equal(ready.preview.input.queryOverride, oldQuery);
   assert.deepEqual(response, original); assert.equal(ready.preview.candidates.length, 1);
   for (const matchingPolicy of [true, false]) {
@@ -232,7 +212,9 @@ test('retained Scrydex expansion supplies the exact full-set query and remains s
   assert.equal(context.query, '2023 Scarlet & Violet 151 Pikachu Cosmo Holo 25/165 grade 8.5');
   assert.equal(context.input.productSet, '151'); assert.equal(context.input.parallel, 'English Cosmos Holofoil');
   assert.equal(Object.hasOwn(context.input, 'targetGrade'), false); assert.deepEqual(f.packet, before); assert.equal(reads, 1);
-  const result = { ...titleResult(context, ['2023 Pokemon 151 Pikachu 25/165 English Cosmos Holofoil PSA 9']), marketQueryContext: queryContext };
+  const item={id:'atlas-sale:0',sourceIndex:0,title:null,listingUrl:null,providerItemId:null,imageUrl:'https://i.ebayimg.com/images/g/fixture/s-l1600.jpg',soldDate:'2026-09-21',reportedPrice:null,soldPriceCents:null,currency:null,priceBasis:'UNKNOWN'};
+  const result = {responsePolicy:'ATLAS_SLAB_V1',source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:context.query,retrievedAt:now().toISOString(),items:[item],marketQueryContext:queryContext,
+    acquisitionDiagnostics:{returnedItemCount:1,retainedItemCount:1,missingImageCount:0},imageMatch:{policy:'atlas-market-slab-label-v1',counts:{},readings:[{rowId:item.id,sha256:'a'.repeat(64),imageUrl:item.imageUrl,gradingCompany:'PSA',numericGrade:9,labelText:'Pikachu Cosmo Holo',identityMatch:'MATCH',reason:'Photographed label',canonicalCardKey:null,canonicalPrintingKey:null}]}};
   const ready = createPresentationMarket({ now }).project(f, result);
   assert.equal(ready.preview.query, context.query); assert.equal(reads, 1);
   assert.equal(createPresentationMarket({ now }).select({ ...f, ...ready, selectedIds: [ready.preview.candidates[0].sale.id] }).sales.length, 1);
@@ -268,14 +250,6 @@ test('slab preview uses image readings, retains uncertain abbreviations and unkn
   assert.equal(selected.sales[1].reportedPrice, '40.00'); assert.equal(selected.sales[1].currency, 'EUR');
   assert.match(selected.sales[1].labelText, /\n/); assert.deepEqual(result, original);
   assert.throws(() => market.select({ ...f, ...ready, selectedIds: ['atlas-sale:2'] }));
-});
-
-
-test('new slab provider is refused before a nondurable preview can spend a search', async () => {
-  let calls = 0;
-  const provider = Object.assign(async () => { calls++; }, { requiresSlabLabels: true });
-  await assert.rejects(createPresentationMarket({ provider, now }).preview(await fixture()), { code: 'MARKET_DURABLE_LABEL_WORKER_REQUIRED' });
-  assert.equal(calls, 0);
 });
 
 

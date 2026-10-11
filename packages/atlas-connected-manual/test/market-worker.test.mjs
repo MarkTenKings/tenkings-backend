@@ -1,21 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { buildEbaySoldCompsV2Query, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION } from '@tenkings/ebay-sold-comps-v2';
+import { buildEbaySoldCompsV2Query, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { createMarketWorker, marketProviderFailure } from '../src/market-worker.mjs';
 import { marketJobStatus, marketJobGrantSQL, createMarketJobStore } from '../src/market-job-store.mjs';
 import { publishedMarketQuery } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
-async function setup({ providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1, now, reclassify=false, failSource=false, loseLocalReceipt=false, legacyResponse=false, labelMarket=async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}}), queryContextResolver=null } = {}) {
+async function setup({ providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1, now, reclassify=false, legacyResponse=false, labelMarket=async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}}), queryContextResolver=null } = {}) {
   const fixture = await publicationFixture(); await fixture.publication.publish({}, fixture.cardId, fixture.actionId);
   const manifest = JSON.parse(fixture.row.manifest);
   const packet = await fixture.artifacts.read(manifest.packet.ref, { cardId: fixture.cardId, kind: 'PUBLIC_REPORT', sourceHash: manifest.packet.sourceHash });
   const source = { packet, publicHash: fixture.row.public_hash, row: fixture.row }, context = publishedMarketQuery(source);
-  let calls = 0, writes = 0, maxActive = 0, active = 0, publicationCalls = 0,localWrites=0,sourceReads=0;
+  let calls = 0, writes = 0, maxActive = 0, active = 0, publicationCalls = 0;
   const priorInput = { ...context.input }; delete priorInput.queryOverride;
   const original={source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:legacyResponse ? buildEbaySoldCompsV2Query(priorInput) : context.query,retrievedAt:new Date().toISOString(),offset:0,nextOffset:0,requestedResultCount:legacyResponse||reclassify?60:240,hasMore:false,...(legacyResponse||reclassify?{candidates:[]}:{responsePolicy:'ATLAS_SLAB_V1',items:[],acquisitionDiagnostics:{returnedItemCount:0,retainedItemCount:0,missingImageCount:0}})};
-  const marker={event:'RECLASSIFY',version:'atlas-market-reclassification-v1',sourceRequestId:randomUUID(),responseHash:'c'.repeat(64),originalDispatchId:randomUUID(),classificationRevision:EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,sourceHash:fixture.row.source_hash,reportHash:fixture.row.report_hash,publicHash:fixture.row.public_hash};
+  const marker={event:'RECLASSIFY',version:'atlas-market-reclassification-v1'};
   const rows = Array.from({ length: jobs }, () => ({ request_id: randomUUID(), card_id: fixture.cardId, approval_action_id: fixture.actionId,
     state: 'QUEUED', created_at: new Date().toISOString(), attempts: 0, response: null, source_hash: fixture.row.source_hash, report_hash: fixture.row.report_hash,
     origin:reclassify?'REFRESH':'APPROVAL',audit:reclassify?[structuredClone(marker)]:[] }));
@@ -27,9 +27,6 @@ async function setup({ providerError = null, failArtifact = false, loseResponseR
     async dispatch(job) { const row = rows.find(row => row.request_id === job.request_id); assert.equal(row.state, 'RUNNING'); assert.equal(row.response, null); row.state = 'REQUESTED'; return true; },
     async recordResponse(job, response) { const row = rows.find(row => row.request_id === job.request_id); row.response = structuredClone(response);
       if (loseResponseReceipt) { loseResponseReceipt = false; throw Error('Commit acknowledgement lost'); } return true; },
-    async reclassificationSource(){sourceReads++;if(failSource)throw Error('Source read unavailable');return structuredClone(original);},
-    async recordReclassification(job,response){localWrites++;const row=rows.find(row=>row.request_id===job.request_id);row.response=structuredClone(response);row.dispatch_id=marker.originalDispatchId;
-      if(loseLocalReceipt){loseLocalReceipt=false;throw Error('Local response acknowledgement lost');}return true;},
     async finish(job, outcome) { const row = rows.find(row => row.request_id === job.request_id);
       row.state = outcome.result ? 'READY' : outcome.disposition === 'RETRY' ? 'QUEUED' : outcome.disposition;
       row.result = outcome.result ?? null; row.code = outcome.code; return true; },
@@ -39,7 +36,7 @@ async function setup({ providerError = null, failArtifact = false, loseResponseR
     provider: async () => { calls++; active++; maxActive = Math.max(maxActive, active); await new Promise(resolve => setImmediate(resolve)); active--;
       if (providerError) throw providerError; return structuredClone(original); },
     authorityFor: () => ({ machine: true }), concurrency: 2, now, labelMarket, queryContextResolver });
-  return { worker, rows, before, fixture,original, calls: () => calls, writes: () => writes, maxActive: () => maxActive, publicationCalls: () => publicationCalls,localWrites:()=>localWrites,sourceReads:()=>sourceReads };
+  return { worker, rows, before, fixture,original, calls: () => calls, writes: () => writes, maxActive: () => maxActive, publicationCalls: () => publicationCalls };
 }
 test('construction and GET status stay cold; automatic jobs run independently and save exact response before preview', async () => {
   const f = await setup({ jobs: 23 }); assert.equal(f.calls(), 0);
@@ -49,19 +46,16 @@ test('construction and GET status stay cold; automatic jobs run independently an
   assert(f.rows.every(row => row.response && row.result.ref.kind === 'MARKET_PREVIEW'));
   assert.deepEqual(f.fixture.row, f.before);
 });
-test('READY source reclassification saves a distinct local response/preview with zero provider dispatch',async()=>{
-  const f=await setup({reclassify:true});const original=structuredClone(f.original);await f.worker.drainOnce();
-  assert.equal(f.rows[0].state,'READY');assert.equal(f.calls(),0);assert.equal(f.localWrites(),1);assert.equal(f.sourceReads(),1);
-  assert.equal(f.rows[0].response.classificationRevision,EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION);assert.deepEqual(f.original,original);assert.deepEqual(f.fixture.row,f.before);
-});
-test('local replay retries storage or lost local-response acknowledgements without provider fallback',async()=>{
-  for(const options of [{failArtifact:true},{loseLocalReceipt:true}]){const f=await setup({reclassify:true,...options});await f.worker.drainOnce();assert.equal(f.rows[0].state,'QUEUED');await f.worker.drainOnce();assert.equal(f.rows[0].state,'READY');assert.equal(f.calls(),0);assert.equal(f.localWrites(),1);assert.equal(f.sourceReads(),1);}
-});
-test('replay source unavailable, invalid marker, revision drift cannot purchase a search and old retained source remains usable',async()=>{
-  const absent=await setup({reclassify:true,failSource:true});await absent.worker.drainOnce();await absent.worker.drainOnce();assert.equal(absent.calls(),0);assert.equal(absent.rows[0].state,'QUEUED');assert.equal(absent.rows[0].response,null);
-  absent.rows[0].state='FAILED';assert.equal(marketJobStatus(absent.rows[0]).refreshAction,'RETRY_SAVED_RESPONSE');
-  for(const change of [row=>row.audit[0].classificationRevision='old-policy',row=>row.audit.push({...row.audit[0]})]){const f=await setup({reclassify:true});change(f.rows[0]);await f.worker.drainOnce();assert.equal(f.calls(),0);assert.equal(f.localWrites(),0);}
-  const aged=await setup({reclassify:true,now:()=>new Date(Date.now()+48*3600000)});await aged.worker.drainOnce();assert.equal(aged.rows[0].state,'READY');assert.equal(aged.calls(),0);
+test('retired reclassification jobs fail without publication, projection or provider effects, even with saved responses',async()=>{
+  for(const response of [null,{responsePolicy:'ATLAS_SLAB_V1',items:[]}]){
+    const f=await setup({reclassify:true});f.rows[0].response=response;const before=structuredClone(f.rows[0].response);
+    await f.worker.drainOnce();await f.worker.drainOnce();
+    assert.equal(f.rows[0].state,'FAILED');assert.equal(f.rows[0].code,'MARKET_RECLASSIFICATION_RETIRED');
+    assert.equal(f.calls(),0);assert.equal(f.writes(),0);assert.equal(f.publicationCalls(),0);assert.deepEqual(f.rows[0].response,before);
+    const status=marketJobStatus(f.rows[0]);assert.equal(status.refreshable,false);assert.equal(status.refreshAction,undefined);
+  }
+  const store=createMarketJobStore({boundary:{machineTransaction(){throw Error('must remain cold');}}});
+  for(const name of ['reclassificationPlan','reclassify','reclassificationSource','recordReclassification'])assert.equal(name in store,false);
 });
 test('artifact failure resumes from durable provider response without another search', async () => {
   const f = await setup({ failArtifact: true });
@@ -104,22 +98,13 @@ test('retained response recovery survives elapsed days without a new search', as
 });
 
 
-test('historical response retries and local reclassification keep the exact paid query with no replacement purchase', async () => {
-  for (const reclassify of [false, true]) {
-    const f = await setup({ legacyResponse: true, reclassify, failArtifact: true });
-    if (!reclassify) f.rows[0].response = structuredClone(f.original);
-    const original = structuredClone(f.original);
-    await f.worker.drainOnce(); assert.equal(f.rows[0].state, 'QUEUED');
-    await f.worker.drainOnce(); assert.equal(f.rows[0].state, 'READY');
-    assert.equal(f.calls(), 0); assert.equal(f.rows[0].response.query, original.query);
-    assert.equal(f.rows[0].response.retrievedAt, original.retrievedAt); assert.deepEqual(f.original, original);
-    const result = f.rows[0].result;
-    const preview = await f.fixture.artifacts.read(result.ref, { cardId: f.fixture.cardId, kind: 'MARKET_PREVIEW', sourceHash: result.artifactHash });
-    assert.equal(preview.query, original.query); assert.equal(preview.input.queryOverride, original.query);
-    assert.deepEqual(f.fixture.row, f.before);
-  }
+test('unprocessed historical responses are retained without executing the retired title-only classifier', async () => {
+  const f=await setup({legacyResponse:true});f.rows[0].response=structuredClone(f.original);
+  await f.worker.drainOnce();await f.worker.drainOnce();
+  assert.equal(f.rows[0].state,'FAILED');assert.equal(f.rows[0].code,'MARKET_PROVIDER_POLICY_INVALID');
+  assert.equal(f.calls(),0);assert.equal(f.writes(),0);assert.deepEqual(f.rows[0].response,f.original);
+  assert.equal(marketJobStatus(f.rows[0]).refreshable,false);assert.equal(marketJobStatus(f.rows[0]).refreshAction,undefined);
 });
-
 
 test('new raw market pool is saved before labels; label retry and artifact retry reuse the one paid response', async () => {
   let labels = 0, queries = 0, f;
@@ -174,7 +159,11 @@ test('label processing failures stay FAILED with their real reason and retained-
   }
 });
 test('fresh provider cannot execute the historical title-only path while its exact response remains retained', async () => {
-  const f = await setup({ legacyResponse: true }); await f.worker.drainOnce(); await f.worker.drainOnce();
+  const f = await setup({ legacyResponse: true }); await f.worker.drainOnce();
+  assert.equal(f.rows[0].state, 'FAILED');
+  // A historical/manual recovery can clear the last code; the saved payload is still not a slab pool.
+  Object.assign(f.rows[0],{state:'QUEUED',attempts:0,code:'MARKET_RESPONSE_RECOVERED'});
+  await f.worker.drainOnce();
   assert.equal(f.rows[0].state, 'FAILED'); assert.equal(f.rows[0].code, 'MARKET_PROVIDER_POLICY_INVALID');
   assert.equal(f.calls(), 1); assert.equal(f.writes(), 0); assert.deepEqual(f.rows[0].response, f.original);
 });
