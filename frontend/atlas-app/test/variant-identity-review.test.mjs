@@ -306,3 +306,22 @@ test('retained listing photograph takes priority over a provider exact image',()
  const f=fixture(),exact={...artworkImage,relationship:'exact'},listing=listingImage();
  assert.equal(f.exports.variantReference({authority:'provider_candidate',images:[exact,listing]},f.props.cardId).relationship,'listing_photo');f.dispose();
 });
+
+
+test('Codex slab references join only the exact catalog printing and photo bytes, including base',async()=>{
+ const f=fixture(),image=listingImage(),candidate={...f.status.result.catalog.candidates[0],candidateId:'base',label:'Normal',parallel:'Normal',images:[]};
+ f.status.result.catalog.candidates=[candidate];f.status.result.catalog.referencePhotos=[image];f.status.result.suggestion=null;
+ const reading={imageId:image.imageId,sha256:image.sha256,candidateId:'base',gradingCompany:'PSA',labelText:'2023 POKEMON MEW EN 025 PIKACHU',reason:'Base printing label'};
+ f.status.result.referenceLabels={version:'atlas-slab-label-associations/v1',catalogHash:f.status.result.catalog.snapshotHash,readings:[reading]};
+ await flush();f.render();const reference=f.exports.variantReference(candidate,f.props.cardId,{artwork:false,result:f.status.result});
+ assert.equal(reference.labelReading.text,reading.labelText);assert.equal(reference.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${image.sha256}`);
+ assert.match(f.text(),/PSA slab · saved in ATLAS Codex/);assert.ok(f.text().includes(reading.labelText));
+ assert(f.radios().every(v=>!v.props.checked));assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);
+ for(const change of [{candidateId:'other'},{sha256:hash('f')},{imageId:'other'},{labelText:null},{gradingCompany:null}]){
+  const result={...f.status.result,referenceLabels:{...f.status.result.referenceLabels,readings:[{...reading,...change}]}};
+  assert.equal(f.exports.variantReference(candidate,f.props.cardId,{artwork:false,result}),null);
+ }
+ const changed={...f.status.result,referenceLabels:{...f.status.result.referenceLabels,catalogHash:hash('f')}};
+ assert.equal(f.exports.variantReference(candidate,f.props.cardId,{artwork:false,result:changed}),null);
+ assert.deepEqual(candidate.images,[],'rendering does not rewrite the authoritative catalog');f.dispose();
+});
