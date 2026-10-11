@@ -5,7 +5,7 @@ import {readSavedListingPhoto} from '../src/variant-listing-provider.mjs';
 import {publicationFixture} from './publication-fixture.mjs';
 import {labelCatalog,labelPhoto} from './variant-label-fixture.mjs';
 import {CODEX_LABEL_POLICY,CODEX_LABEL_MODEL,codexReadingKey,variantCodexChoice} from '../src/variant-codex.mjs';
-async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false}={}){
+async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,priorReferenceGrade,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false}={}){
  const f=await publicationFixture();await f.publication.publish({},f.cardId,f.actionId);const manifest=JSON.parse(f.row.manifest),packet=await f.artifacts.read(manifest.packet.ref,{cardId:f.cardId,kind:'PUBLIC_REPORT',sourceHash:manifest.packet.sourceHash});
  packet.report.cardProfile='POKEMON';packet.report.identity={cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:'Base'};
  const source={packet,publicHash:digest(JSON.stringify(packet))},catalog=labelCatalog(),rows=new Map(),calls={images:0,model:0},requests=[];let tail=Promise.resolve(),drop=failPublication,loseAck=loseResponseAcknowledgement;
@@ -17,7 +17,7 @@ async function fixture({photos=2,failSend=false,failPublication=false,priorRefer
    const list=rows.get(key)??[];list.push({snapshot,snapshot_hash});rows.set(key,list);if(loseAck&&key.endsWith(':response')){loseAck=false;throw Error('response acknowledgement lost');}return 1;}assert.fail(sql);}};
  const boundary={machineTransaction(_scope,fn){const next=tail.then(()=>fn({tx}));tail=next.catch(()=>{});return next;}};
  const imageUrl=i=>`https://i.ebayimg.com/images/g/market${i}/s-l1600.jpg`;
- if(priorReference){const image=labelPhoto(0).media,key=codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},image.sha256),value={schemaVersion:'atlas-codex-reading/v1',policy:CODEX_LABEL_POLICY,reading:{sha256:image.sha256,candidateKey:variantCodexChoice(catalog.candidates[0]).key,gradingCompany:'PSA',labelText:'2020 POKEMON\nMAGIKARP\nGEM MT 9',reason:'Matching base label'},responseHash:digest('prior response'),requestKey:'prior'};const snapshot=JSON.stringify(value);rows.set(key,[{snapshot,snapshot_hash:digest(snapshot)}]);}
+ if(priorReference){const image=labelPhoto(0).media,key=codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},image.sha256),value={schemaVersion:'atlas-codex-reading/v1',policy:CODEX_LABEL_POLICY,reading:{sha256:image.sha256,candidateKey:variantCodexChoice(catalog.candidates[0]).key,gradingCompany:'PSA',labelText:'2020 POKEMON\nMAGIKARP\nAUTOGRAPH GEM MT 10\nMINT 9',...(priorReferenceGrade===undefined?{}:{numericGrade:priorReferenceGrade}),reason:'Matching base label'},responseHash:digest('prior response'),requestKey:'prior'};const snapshot=JSON.stringify(value);rows.set(key,[{snapshot,snapshot_hash:digest(snapshot)}]);}
  const fetchImpl=async(url,options)=>{if(url.startsWith('https://i.ebayimg.com/')){calls.images++;assert.equal(options.redirect,'error');const i=Number(/market(\d+)/.exec(url)[1]);return new Response(labelPhoto(i).media.bytes,{headers:{'content-type':'image/png'}});}
   assert.equal(url,'https://api.openai.com/v1/responses');calls.model++;requests.push(JSON.parse(options.body));onModel();if(modelGate)await modelGate;if(failSend)throw Error('unknown network outcome');
   const body=JSON.parse(options.body);assert.doesNotMatch(options.body,/private submitted/);assert.match(body.input[0].content,/Any grading company/);assert.match(body.input[0].content,/C\. Holo/);
@@ -45,8 +45,12 @@ test('unknown label dispatch never repeats on another physical copy; rows remain
  const f=await fixture({failSend:true}),first=await f.label(f),again=await f.label({...f,job:{...f.job,card_id:'another'}});
  assert.equal(f.calls.model,1);assert.equal(first.imageMatch.counts.uncertain,2);assert.deepEqual(again,first);assert(first.imageMatch.readings.every(r=>r.numericGrade===null&&r.reason.includes('not be charged again')));
 });
-test('previous canonical reference label with literal grade is reused without a model call',async()=>{
- const f=await fixture({photos:1,priorReference:true});const out=await f.label(f);assert.equal(f.calls.model,0);assert.equal(out.imageMatch.readings[0].numericGrade,9);assert.equal(out.imageMatch.readings[0].gradingCompany,'PSA');
+test('previous canonical reference with an explicitly read overall grade is reused without a model call',async()=>{
+ const f=await fixture({photos:1,priorReference:true,priorReferenceGrade:9});const out=await f.label(f);assert.equal(f.calls.model,0);assert.equal(out.imageMatch.readings[0].numericGrade,9);assert.equal(out.imageMatch.readings[0].gradingCompany,'PSA');
+});
+test('legacy literal autograph/card grade text is read once rather than inferred as the overall grade',async()=>{
+ const f=await fixture({photos:1,priorReference:true}),out=await f.label(f);assert.equal(f.calls.model,1);assert.equal(out.imageMatch.readings[0].numericGrade,8.5);
+ assert.deepEqual(await f.label(f),out);assert.equal(f.calls.model,1);
 });
 test('missing photos and duplicate rows remain visible while identical photo bytes cost one reading',async()=>{
  const f=await fixture({photos:1});f.response.items.push({...f.response.items[0],id:'atlas-sale:1',sourceIndex:1});f.response.items.push({...f.response.items[0],id:'atlas-sale:2',sourceIndex:2,imageUrl:null});

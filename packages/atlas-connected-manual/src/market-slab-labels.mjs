@@ -88,14 +88,13 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     return readings;
   }
   async function retained(target,photo){return machine(async({tx})=>{const saved=await read(tx,readingKey(target,photo.sha256));if(saved){requireThat(saved.schemaVersion==='atlas-codex-market-reading/v1'&&saved.policy===MARKET_SLAB_POLICY&&saved.target.key===target.key&&saved.image.sha256===photo.sha256&&saved.reading.sha256===photo.sha256,503,'MARKET_LABEL_READING_INVALID');return saved.reading;}
-    // Prior reference readings are reusable when their exact visible numeric
-    // grade was retained or can be read from a conventional literal grade line.
+    // Reuse only a previously read overall grade. Legacy literal text may
+    // contain autograph/subgrades and cannot establish the card's grade.
     const previous=await read(tx,codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},photo.sha256));
     const r=previous?.reading;if(!r||previous.schemaVersion!=='atlas-codex-reading/v1'||previous.policy!==CODEX_LABEL_POLICY||r.sha256!==photo.sha256||!target.canonicalPrintingKey||r.candidateKey!==target.canonicalPrintingKey)return null;
-    const line=typeof r.labelText==='string'?/(?:GEM\s*(?:MT|MINT)|PRISTINE|MINT|NM[- ]MT|NEAR MINT|EXCELLENT)\s*(10|[1-9](?:\.\d)?)\b/i.exec(r.labelText):null;
-    const grade=Number.isFinite(r.numericGrade)?r.numericGrade:line?Number(line[1]):null;
+    const grade=Number.isFinite(r.numericGrade)?r.numericGrade:null;
     if(grade===null)return null;
-    const reading={sha256:photo.sha256,gradingCompany:r.gradingCompany,numericGrade:grade,labelText:r.labelText,identityMatch:'MATCH',reason:'Reused the saved matching reference slab label and its literal numeric grade.'};
+    const reading={sha256:photo.sha256,gradingCompany:r.gradingCompany,numericGrade:grade,labelText:r.labelText,identityMatch:'MATCH',reason:'Reused the saved matching reference slab label and its previously read overall numeric grade.'};
     await lock(tx,readingKey(target,photo.sha256));const concurrent=await read(tx,readingKey(target,photo.sha256));if(concurrent)return concurrent.reading;
     await write(tx,readingKey(target,photo.sha256),{schemaVersion:'atlas-codex-market-reading/v1',policy:MARKET_SLAB_POLICY,target,image:{sha256:photo.sha256,url:photo.url,mimeType:photo.mimeType,width:photo.width,height:photo.height},reading,responseHash:previous.responseHash,requestKey:previous.requestKey});return reading;});}
   async function batch(target,photos,job){const request={policy:MARKET_SLAB_POLICY,model:CODEX_LABEL_MODEL,target,photos:photos.map(({sha256,mimeType})=>({sha256,mimeType})).sort((a,b)=>a.sha256.localeCompare(b.sha256))};
