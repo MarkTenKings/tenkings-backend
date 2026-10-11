@@ -1,4 +1,5 @@
 import {variantUpgradePreservation} from './variant-upgrade-preservation.mjs';
+import {validateCodexJournal} from './variant-codex-postgres.mjs';
 import {validateListingSourceJournal} from './variant-listing-postgres.mjs';
 import {createVariantAdmission} from '../src/variant-admission.mjs';
 import {variantCatalog as catalog,variantCandidate as candidate} from '../test/variant-fixture.mjs';
@@ -108,6 +109,7 @@ try{
  assert.deepEqual(await review.confirm(staff,firstVariant,firstInput),firstSaved);
  const firstPreview=await service.previewReport(staff,firstVariant);await service.execute(staff,firstVariant,{actionId:randomUUID(),expectedRevision:firstSaved.revision,action:{type:'APPROVE_REPORT',reportHash:firstPreview.reportHash,reviewed:true}});
  checks.push('initial unknown finish confirmation permits exact approval without recheck; known-printing correction cases above still require their bound analysis');
+ checks.push(...await validateCodexJournal({fixture,connection,store,staff,seed,review}));
  checks.push(...await validateListingSourceJournal({fixture,connection,store,staff,seed,review,catalog}));
- await writeFile(join(output,'result.json'),JSON.stringify({status:'PASS',checks,providerCalls:calls,productionCalls:0,fixtureDirectory:fixture.cluster.directory},null,2));console.log(JSON.stringify({status:'PASS',groups:checks.length,providerCalls:calls}));
+ await writeFile(join(output,'result.json'),JSON.stringify({status:'PASS',checks,providerCalls:calls,labelFixtureCalls:2,productionCalls:0,fixtureDirectory:fixture.cluster.directory},null,2));console.log(JSON.stringify({status:'PASS',groups:checks.length,providerCalls:calls}));
 }finally{await workerClient?.$disconnect();await connection.close();await fixture.stop();}

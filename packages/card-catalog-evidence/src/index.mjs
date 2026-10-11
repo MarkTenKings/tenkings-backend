@@ -435,7 +435,7 @@ export function observationRetryDisposition(existingReceipt, proposal) {
 
 export { VARIANT_REVIEW_VERSION, VARIANT_CATALOG_REVISION, VARIANT_REVIEW_LIMITS, VARIANT_WARNING_CODES, VARIANT_PROBLEM_CODES,
   normalizeVariantIdentity, variantDemandKey, compareVariantCardNumber, compareVariantIdentity, isVariantProviderImageUrl, isVariantPhotoComparable,
-  variantCandidateId, variantSelectionParallel, validateVariantCandidate, variantSnapshotHash, createVariantReviewSnapshot, validateVariantReviewSnapshot,
+  variantCandidateId, variantSelectionParallel, validateVariantCandidate, validateVariantReferencePhoto, variantSnapshotHash, createVariantReviewSnapshot, validateVariantReviewSnapshot,
   variantChoicesFromPublishedLookup } from './variant-review.mjs';
 export { SCRYDEX_METADATA_LIMITS, isScrydexMetadataUrl, createScrydexMetadataReader } from './scrydex-reader.mjs';
 export { SCRYDEX_VARIANT_PROVIDER_REVISION, importScrydexVariantCandidates, scrydexVariantSearchUrl, createScrydexVariantProvider } from './scrydex.mjs';

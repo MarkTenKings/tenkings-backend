@@ -57,9 +57,11 @@ function engineInput(identity, printing = null) {
     cardNumber: identity.cardNumber, parallel: printing ? listingSearchLabel(identity, printing.name) : null,
     variantIdentity: { language: languageNames[printing?.language ?? identity.language] ?? printing?.language ?? identity.language } };
 }
-/** One public identity => one request key. No physical photo, grade, approval,
- * generation or time bucket changes its billing identity. */
-function prepareListingRequest(input, printing = null, legacy = false, graded = false) {
+/** Ordinary copies share one permanent request. Only an explicit reference
+ * refresh may create another search generation for a still-missing printing. */
+function prepareListingRequest(input, printing = null, legacy = false, graded = false, generation = null) {
+  check(generation === null || graded && typeof generation === 'string'
+    && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(generation), 'VARIANT_LISTING_REFRESH_GENERATION');
   const fields = ['category', 'name', 'year', 'setName', 'cardNumber', 'manufacturer', 'language'];
   check(input && Object.keys(input).every(k => fields.includes(k)), 'VARIANT_LISTING_IDENTITY');
   const normalized = normalizeVariantIdentity(Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === 'string' ? normalize(v) : v])));
@@ -86,18 +88,19 @@ function prepareListingRequest(input, printing = null, legacy = false, graded = 
   url.search = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(VARIANT_LISTING_LIMITS.results),
     page: '1', sold: 'true', includeCompleteListing: 'true', exactMatch: 'true', hydrateBoa: 'false' }).toString();
   const request = { schemaVersion: 'variant-listing-request/v1', revision: graded ? VARIANT_GRADED_LISTING_REVISION : concisePokemon ? concisePokemonRequestRevision : VARIANT_LISTING_REVISION,
-    parserRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, identity, ...(printing ? { printing } : {}), query, url: url.href };
+    parserRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, identity, ...(printing ? { printing } : {}),
+    ...(generation !== null ? { generation } : {}), query, url: url.href };
   return { ...request, requestKey: `variant-listing-source:v1:${hash(canonicalJson(request))}` };
 }
-export function prepareVariantListingRequest(input, printing = null, { graded = false } = {}) {
+export function prepareVariantListingRequest(input, printing = null, { graded = false, generation = null } = {}) {
   check(typeof graded === 'boolean', 'VARIANT_LISTING_REQUEST_CHANGED');
-  return prepareListingRequest(input, printing, false, graded);
+  return prepareListingRequest(input, printing, false, graded, generation);
 }
 function validateRequest(request) {
   // Retained paid responses remain readable under their original request key.
   check([VARIANT_LISTING_REVISION, concisePokemonRequestRevision, VARIANT_GRADED_LISTING_REVISION].includes(request?.revision)
     && same(prepareListingRequest(request?.identity, request?.printing ?? null, request.revision === VARIANT_LISTING_REVISION,
-      request.revision === VARIANT_GRADED_LISTING_REVISION), request), 'VARIANT_LISTING_REQUEST_CHANGED');
+      request.revision === VARIANT_GRADED_LISTING_REVISION, request.generation ?? null), request), 'VARIANT_LISTING_REQUEST_CHANGED');
   return request;
 }
 function validateSource(request, source) {
@@ -387,9 +390,11 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
           httpStatus: response.status, contentType, bodyText, sha256: hash(bytes), capturedAt: new Date(now()).toISOString() };
       });
     },
-    async acquireImages({ request, source, catalogCandidates = [] }, { signal, imageLimit = VARIANT_LISTING_LIMITS.images } = {}) {
+    async acquireImages({ request, source, catalogCandidates = [] }, { signal, imageLimit = VARIANT_LISTING_LIMITS.images, isKnownReference = null } = {}) {
       requireCache();
       check(Number.isInteger(imageLimit) && imageLimit > 0 && imageLimit <= VARIANT_LISTING_LIMITS.images, 'VARIANT_LISTING_IMAGE_BUDGET');
+      check(isKnownReference === null || typeof isKnownReference === 'function' && request.generation,
+        'VARIANT_LISTING_REFRESH_GENERATION');
       const result = projectVariantListingSource(request, source, { catalogCandidates }), byUrl = new Map(), byHash = new Set();
       let requests = 0, totalBytes = 0, images = 0;
       return boundedProviderOperation(signal, timeoutMs, async active => {
@@ -426,6 +431,10 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
               byUrl.set(url, media);
             }
             const media = byUrl.get(url); if (!media) continue;
+            // Refresh searches seek new evidence, including after unreadable
+            // labels. Retained readings are immutable and are never rebilled.
+            if (isKnownReference && await isKnownReference(media.sha256)) continue;
+            if (request.revision === VARIANT_GRADED_LISTING_REVISION && byHash.has(media.sha256)) continue;
             if (!byHash.has(media.sha256)) {
               if (totalBytes + media.bytes.length > VARIANT_LISTING_LIMITS.totalImageBytes) continue;
               byHash.add(media.sha256); totalBytes += media.bytes.length;

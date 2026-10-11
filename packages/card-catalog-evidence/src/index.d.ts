@@ -94,7 +94,7 @@ export function observationRetryDisposition(existingReceipt: ProposalReceipt | n
 
 export const VARIANT_REVIEW_VERSION: 'atlas-variant-catalog/v1';
 export const VARIANT_CATALOG_REVISION: 'variant-catalog-2026-10-09-v1';
-export const VARIANT_REVIEW_LIMITS: Readonly<{ candidates: 48; imagesPerCandidate: 4; diagnostics: 16; bytes: number }>;
+export const VARIANT_REVIEW_LIMITS: Readonly<{ candidates: 48; imagesPerCandidate: 4; referencePhotos: 96; diagnostics: 16; bytes: number }>;
 export const VARIANT_WARNING_CODES: readonly string[];
 export const VARIANT_PROBLEM_CODES: readonly string[];
 export type VariantIdentity = { category: Category; name: string | null; year: string | null; setName: string | null;
@@ -109,8 +109,12 @@ export type VariantCandidate = { candidateId: string; authority: 'reviewed_catal
   identity: VariantIdentity; parallel: string | null; canonical: { publication: PublicationPin; cardId: string; printingId: string } | null;
   applicability: 'supported' | 'unknown'; diagnostics: { id: string; description: string }[]; images: VariantImage[];
   source: { provider: string; recordId: string; url: string | null; sha256: string; references: { url: string | null; sha256: string }[] }; warnings: string[] };
+export type VariantReferencePhoto = Extract<VariantImage, { relationship: 'listing_photo' }>;
+export type VariantReferenceLabels = { version: 'atlas-slab-label-associations/v1'; catalogHash: string;
+  readings: { imageId: string; sha256: string; candidateId: string | null; canonicalCardKey: string | null;
+    canonicalPrintingKey: string | null; gradingCompany: string | null; labelText: string | null; reason: string }[] };
 export type VariantReviewSnapshot = { schemaVersion: typeof VARIANT_REVIEW_VERSION; demandKey: string; snapshotHash: string; capturedAt: string;
-  coverage: Record<'metadata' | 'applicability' | 'images', 'partial' | 'unknown' | 'truncated'>; candidates: VariantCandidate[]; problems: string[] };
+  coverage: Record<'metadata' | 'applicability' | 'images', 'partial' | 'unknown' | 'truncated'>; candidates: VariantCandidate[]; problems: string[]; referencePhotos?: VariantReferencePhoto[] };
 export function normalizeVariantIdentity(input: Partial<VariantIdentity> & { category: Category }): DeepReadonly<VariantIdentity>;
 export function variantDemandKey(identity: Partial<VariantIdentity> & { category: Category }): string;
 export function compareVariantCardNumber(a: string | null, b: string | null): 'match' | 'conflict' | 'unknown';
@@ -120,9 +124,10 @@ export function isVariantPhotoComparable(candidate: unknown, image: unknown): bo
 export function variantCandidateId(candidate: Omit<VariantCandidate, 'candidateId'> | VariantCandidate): string;
 export function variantSelectionParallel(candidate: unknown): string;
 export function validateVariantCandidate(input: unknown): DeepReadonly<VariantCandidate>;
+export function validateVariantReferencePhoto(input: unknown): DeepReadonly<VariantReferencePhoto>;
 export function variantSnapshotHash(input: unknown): string;
 export function createVariantReviewSnapshot(input: { identity: Partial<VariantIdentity> & { category: Category }; candidates?: readonly DeepReadonly<VariantCandidate>[];
-  problems?: string[]; capturedAt: string; truncated?: boolean }): DeepReadonly<VariantReviewSnapshot>;
+  problems?: string[]; capturedAt: string; truncated?: boolean; referencePhotos?: readonly DeepReadonly<VariantReferencePhoto>[] }): DeepReadonly<VariantReviewSnapshot>;
 export function validateVariantReviewSnapshot(input: unknown): DeepReadonly<VariantReviewSnapshot>;
 /** Server-only: use results from the authenticated current SetOps publication reader. */
 export function variantChoicesFromPublishedLookup(result: DeepReadonly<LookupResult>): readonly DeepReadonly<VariantCandidate>[];

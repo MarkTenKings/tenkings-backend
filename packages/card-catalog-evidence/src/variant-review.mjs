@@ -3,7 +3,7 @@ import { canonicalJson, CatalogContractError } from './index.mjs';
 
 export const VARIANT_REVIEW_VERSION = 'atlas-variant-catalog/v1';
 export const VARIANT_CATALOG_REVISION = 'variant-catalog-2026-10-09-v1';
-export const VARIANT_REVIEW_LIMITS = Object.freeze({ candidates: 48, imagesPerCandidate: 4, diagnostics: 16, bytes: 768 * 1024 });
+export const VARIANT_REVIEW_LIMITS = Object.freeze({ candidates: 48, imagesPerCandidate: 4, referencePhotos: 96, diagnostics: 16, bytes: 768 * 1024 });
 export const VARIANT_WARNING_CODES = Object.freeze(['LANGUAGE_UNCONFIRMED', 'DENOMINATOR_UNVERIFIED', 'FINISH_UNVERIFIED',
   'SET_NAME_REQUIRES_REVIEW', 'REFERENCE_IMAGE_MISSING', 'CARD_ART_ONLY', 'APPLICABILITY_UNCONFIRMED', 'SCOPE_UNCONFIRMED',
   'LISTING_CLAIMS_UNREVIEWED', 'REFERENCE_USAGE_NOT_REVIEWED']);
@@ -196,12 +196,35 @@ export function validateVariantCandidate(input) {
   return freeze(c);
 }
 
+/** A retained listing photograph awaiting label reading; it names no printing. */
+export function validateVariantReferencePhoto(input) {
+  const i = clone(input);
+  fail(keys(i, ['imageId', 'relationship', 'url', 'sha256', 'mimeType', 'width', 'height', 'publication', 'provenance',
+    'visibleDiagnosticIds', 'sourceResponseSha256', 'listing']) && i.relationship === 'listing_photo', 'referencePhoto.fields');
+  fail(i.publication === null && Array.isArray(i.visibleDiagnosticIds) && i.visibleDiagnosticIds.length === 0
+    && keys(i.provenance, ['provider', 'sourceUrl', 'sourceSha256', 'usage'])
+    && i.provenance.provider === 'ebay_sold_comps_v2' && i.provenance.usage === 'provider_reference'
+    && HASH.test(i.sourceResponseSha256) && i.sourceResponseSha256 === i.provenance.sourceSha256
+    && isVariantProviderImageUrl(i.url, 'ebay_sold_comps_v2') && HASH.test(i.sha256)
+    && ['image/jpeg', 'image/png', 'image/webp'].includes(i.mimeType)
+    && Number.isSafeInteger(i.width) && i.width > 0 && i.width <= 8000
+    && Number.isSafeInteger(i.height) && i.height > 0 && i.height <= 8000 && i.width * i.height <= 16000000
+    && keys(i.listing, ['id', 'title', 'url']) && /^\d{6,20}$/.test(i.listing.id)
+    && text(i.listing.title, 500) && i.listing.url === `https://www.ebay.com/itm/${i.listing.id}`
+    && i.imageId === `listing-image:${digest({ listing: i.listing, sha256: i.sha256, sourceResponseSha256: i.sourceResponseSha256 })}`,
+  'referencePhoto.binding');
+  let source; try { source = new URL(i.provenance.sourceUrl); } catch {}
+  fail(source?.origin === 'https://api.sold-comps.com' && source.pathname === '/v1/scrape'
+    && !source.username && !source.password && !source.hash, 'referencePhoto.source');
+  return freeze(i);
+}
+
 export function variantSnapshotHash(value) {
   const { capturedAt: _time, snapshotHash: _hash, ...evidence } = value;
   return digest(evidence);
 }
 
-export function createVariantReviewSnapshot({ identity, candidates = [], problems = [], capturedAt, truncated = false }) {
+export function createVariantReviewSnapshot({ identity, candidates = [], problems = [], capturedAt, truncated = false, referencePhotos }) {
   const seen = new Map();
   for (const c of candidates) {
     const candidate = validateVariantCandidate(c), old = seen.get(candidate.candidateId);
@@ -219,20 +242,26 @@ export function createVariantReviewSnapshot({ identity, candidates = [], problem
   const result = { schemaVersion: VARIANT_REVIEW_VERSION, demandKey: variantDemandKey(identity), capturedAt,
     coverage: { metadata: truncated ? 'truncated' : selected.length ? 'partial' : 'unknown',
       applicability: selected.some(c => c.applicability === 'supported') ? 'partial' : 'unknown',
-      images: selected.some(c => c.images.some(i => i.relationship !== 'card_art_only')) ? 'partial' : 'unknown' },
-    candidates: selected, problems: [...new Set(problems)].sort() };
+      images: referencePhotos?.length || selected.some(c => c.images.some(i => i.relationship !== 'card_art_only')) ? 'partial' : 'unknown' },
+    candidates: selected, problems: [...new Set(problems)].sort(), ...(referencePhotos === undefined ? {} : { referencePhotos }) };
   return validateVariantReviewSnapshot({ ...result, snapshotHash: variantSnapshotHash(result) });
 }
 
 export function validateVariantReviewSnapshot(input) {
   const s = clone(input);
-  fail(keys(s, ['schemaVersion', 'demandKey', 'snapshotHash', 'capturedAt', 'coverage', 'candidates', 'problems'])
+  fail(keys(s, ['schemaVersion', 'demandKey', 'snapshotHash', 'capturedAt', 'coverage', 'candidates', 'problems',
+    ...(Object.hasOwn(s, 'referencePhotos') ? ['referencePhotos'] : [])])
     && s.schemaVersion === VARIANT_REVIEW_VERSION && /^variant-demand:v1:[a-f0-9]{64}$/.test(s.demandKey), 'snapshot.fields');
   fail(typeof s.capturedAt === 'string' && Number.isFinite(Date.parse(s.capturedAt)) && new Date(s.capturedAt).toISOString() === s.capturedAt, 'snapshot.capturedAt');
   fail(keys(s.coverage, ['metadata', 'applicability', 'images']) && Object.values(s.coverage).every(v => ['partial', 'unknown', 'truncated'].includes(v)), 'snapshot.coverage');
   fail(list(s.problems, 16) && unique(s.problems) && s.problems.every(v => VARIANT_PROBLEM_CODES.includes(v)), 'snapshot.problems');
   fail(list(s.candidates, VARIANT_REVIEW_LIMITS.candidates) && unique(s.candidates.map(c => c.candidateId)), 'snapshot.candidates');
   s.candidates.forEach(validateVariantCandidate);
+  if (Object.hasOwn(s, 'referencePhotos')) {
+    fail(list(s.referencePhotos, VARIANT_REVIEW_LIMITS.referencePhotos) && unique(s.referencePhotos.map(i => i.imageId))
+      && unique(s.referencePhotos.map(i => i.sha256)), 'snapshot.referencePhotos');
+    s.referencePhotos.forEach(validateVariantReferencePhoto);
+  }
   fail(Buffer.byteLength(canonicalJson(s)) <= VARIANT_REVIEW_LIMITS.bytes && s.snapshotHash === variantSnapshotHash(s), 'snapshot.hash');
   return freeze(s);
 }

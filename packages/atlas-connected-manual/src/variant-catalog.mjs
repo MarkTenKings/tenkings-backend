@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, normalizeVariantIdentity, compareVariantCardNumber, variantChoicesFromPublishedLookup,
-  createVariantReviewSnapshot, validateVariantCandidate, validateVariantReviewSnapshot,
+  createVariantReviewSnapshot, validateVariantCandidate, validateVariantReviewSnapshot, validateVariantReferencePhoto,
   createScrydexVariantProvider, createScrydexMetadataReader, createVariantProviderImageReader, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
+import { variantCodexChoice, codexLibraryKey, validateCodexLibrary, codexReadingKey, CODEX_LABEL_POLICY, CODEX_LABEL_MODEL } from './variant-codex.mjs';
 import { prepareVariantCatalogObservation } from './variant-catalog-proposal.mjs';
-import {prepareVariantListingRequest,composeVariantListingCandidates} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest} from './variant-listing-provider.mjs';
 
 const abort = signal => signal?.throwIfAborted();
 const fail = code => Object.assign(new Error(code), { code });
@@ -127,7 +128,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       }
       if(!listingProvider||base.problems.includes('IDENTITY_INCOMPLETE'))return base;
       const identity=normalizeVariantIdentity(input.identity),problems=base.problems.filter(p=>!['NO_VARIANTS_FOUND','NO_DIAGNOSTIC_PHOTOS'].includes(p));
-      let candidates=base.candidates,truncated=base.coverage.metadata==='truncated';
+      let candidates=base.candidates,truncated=base.coverage.metadata==='truncated';const referencePhotos=new Map();let labelPool=false;
       // Metadata discovery, billed source retrieval and photo downloads have
       // separate bounded windows. Discovery cannot consume the paid send's
       // deadline. Only the worker can supply this durable dispatch capability.
@@ -135,35 +136,58 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       else {
         // One durable, shared request for each catalog printing, never for each
         // staff visit. Bound fan-out; absent photos do not hide known choices.
-        const named = candidates.filter(c => ['scrydex', 'manufacturer_checklist'].includes(c.source.provider)
-          && c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'));
+        const named = candidates.filter(c => c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'));
         const searches = [...new Map(named.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language}),
           {name:c.label,language:c.identity.language}])).values()];
+        const populated=new Set();
+        // Permanent Codex references belong to the catalog printing, not this submission.
+        for(const candidate of named) {
+          const choice=variantCodexChoice(candidate),saved=await cache?.getRetained?.(codexLibraryKey(choice));
+          if(saved) {
+            const entry=validateCodexLibrary(saved,choice); labelPool=true;
+            for(const {image} of entry.references) referencePhotos.set(image.sha256,image);
+            populated.add(choice.key);
+          }
+        }
         const pending = searches.filter(printing => !named.some(c => c.label === printing.name && c.identity.language === printing.language
-          && c.images.some(i => i.relationship === 'listing_photo')));
+          && populated.has(variantCodexChoice(c).key)));
         // Snapshot validation already caps this at 48 known choices. Every
-        // printing gets one journaled search; repeated cards and refreshes reuse it.
+        // printing gets one permanent ordinary search; only explicit missing-reference
+        // refresh generations may authorize another bounded search.
         for (const printing of pending) try {
           abort(signal);
-          const request=prepareVariantListingRequest(identity,printing);
+          const request=prepareVariantListingRequest(identity,printing,{graded:true,...(input.generation?{generation:input.generation}:{})});
           const saved=await bounded(signal,timeoutMs,active=>executeListingSource(request,()=>listingProvider.fetchSource(request,{signal:active})));
           if(saved.state==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
           else {
             if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
-            const evidence=await bounded(signal,timeoutMs,active=>listingProvider.acquireImages({request,source:saved.source,catalogCandidates:named},{signal:active}));
-            const composed=composeVariantListingCandidates({identity,candidates,evidence,printing});
-            candidates=composed.candidates;problems.push(...composed.problems);truncated||=composed.truncated;
+            const isKnownReference=input.generation?async sha256=>{
+              const reading=await cache?.getRetained?.(codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},sha256));
+              if(!reading)return false;
+              if(reading.schemaVersion!=='atlas-codex-reading/v1'||reading.policy!==CODEX_LABEL_POLICY||reading.reading?.sha256!==sha256)throw fail('VARIANT_CODEX_READING_INVALID');
+              return true;
+            }:undefined;
+            const evidence=await bounded(signal,timeoutMs,active=>listingProvider.acquireImages({request,source:saved.source,catalogCandidates:named},{signal:active,imageLimit:2,...(isKnownReference?{isKnownReference}:{})}));
+            if(Object.hasOwn(evidence,'referencePhotos')){
+              labelPool=true;
+              if(!Array.isArray(evidence.referencePhotos)||evidence.referencePhotos.length>2)throw fail('VARIANT_LISTING_SOURCE_INVALID');
+              for(const raw of evidence.referencePhotos){const image=validateVariantReferencePhoto(raw);
+                if(image.sourceResponseSha256!==saved.source.sha256)throw fail('VARIANT_LISTING_SOURCE_INVALID');
+                if(!referencePhotos.has(image.sha256))referencePhotos.set(image.sha256,image);
+              }
+            }
           }
         } catch(error) { abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;problems.push('LISTING_SOURCE_UNAVAILABLE'); }
       }
-      abort(signal);return createVariantReviewSnapshot({identity,candidates,problems,truncated,capturedAt:new Date(now()).toISOString()});
+      abort(signal);return createVariantReviewSnapshot({identity,candidates,problems,truncated,capturedAt:new Date(now()).toISOString(),...(labelPool?{referencePhotos:[...referencePhotos.values()]}:{})});
     },
     /** Reauthorize publication and resolve images again after a process restart.
      * The saved descriptor is a hash pin, never a raw storage capability. */
     async readImage({ snapshot, candidateId, imageId }, { signal } = {}) {
       return bounded(signal, Math.min(timeoutMs, 15000), async signal => {
-      const valid = validateVariantReviewSnapshot(snapshot), candidate = valid.candidates.find(c => c.candidateId === candidateId), image = candidate?.images.find(i => i.imageId === imageId);
-      if (!candidate || !image) throw fail('VARIANT_REFERENCE_UNAVAILABLE');
+      const valid = validateVariantReviewSnapshot(snapshot), candidate = valid.candidates.find(c => c.candidateId === candidateId),
+        image = candidateId == null ? valid.referencePhotos?.find(i => i.imageId === imageId) : candidate?.images.find(i => i.imageId === imageId);
+      if (!image) throw fail('VARIANT_REFERENCE_UNAVAILABLE');
       if(image.relationship==='listing_photo'){
         if(!listingProvider||typeof listingProvider.readImage!=='function')throw fail('VARIANT_REFERENCE_UNAVAILABLE');
         const acquired=await listingProvider.readImage(image,{signal});

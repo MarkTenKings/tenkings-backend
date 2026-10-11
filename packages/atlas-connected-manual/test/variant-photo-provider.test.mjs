@@ -1,75 +1,50 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { variantCandidateId, createVariantReviewSnapshot } from '@tenkings/card-catalog-evidence';
-import { createVariantPhotoProvider, projectVariantPhotoResponse, VARIANT_PHOTO_MODEL } from '../src/variant-photo-provider.mjs';
-import { variantCandidate, variantIdentity } from './variant-fixture.mjs';
-import { VARIANT_SOURCE_PHOTO_POLICY } from '../src/variant-source-photos.mjs';
-const hash = x => createHash('sha256').update(x).digest('hex');
-const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aOv8AAAAASUVORK5CYII=', 'base64');
-const photo = { bytes, sha256: hash(bytes), mimeType: 'image/png', originalSha256: hash('original photo'), frameSha256: hash('working frame') };
-const input = { sourceHash: hash('source'), identityHash: hash('identity'), identityRevision: 2, identity: variantIdentity };
-const photos = { sourceHash: input.sourceHash, policy: VARIANT_SOURCE_PHOTO_POLICY, FRONT: photo, BACK: photo };
-function catalogFixture() {
-  const raw = structuredClone(variantCandidate); delete raw.candidateId;
-  raw.images[0] = { ...raw.images[0], sha256: photo.sha256, mimeType: photo.mimeType, width: 1, height: 1 };
-  return createVariantReviewSnapshot({ identity: variantIdentity, candidates: [{ ...raw, candidateId: variantCandidateId(raw) }], capturedAt: '2026-10-09T00:00:00.000Z' });
-}
-const answer = candidateId => ({ candidateId, confidence: candidateId ? .84 : null, reason: 'Synthetic comparison fixture.',
-  evidence: candidateId ? [{ side: 'FRONT', sha256: photo.sha256, observation: 'Synthetic feature for contract qualification only.' }] : [] });
-const response = output => Response.json({ model: VARIANT_PHOTO_MODEL, status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(output) }] }] });
-
-test('preparation binds exact source/reference evidence; one paid dispatch cannot replay', async () => {
-  const catalog = catalogFixture(), id = catalog.candidates[0].candidateId; let calls = 0, referenceCalls = 0;
-  const provider = createVariantPhotoProvider({ apiKey: 'synthetic-secret-not-a-key',
-    readReferenceImage: async request => { referenceCalls++; assert.equal(request.snapshot.snapshotHash, catalog.snapshotHash); assert.equal(request.candidateId, id); return photo; },
-    fetchImpl: async (url, options) => { calls++; assert.equal(url, 'https://api.openai.com/v1/responses'); assert.equal(options.redirect, 'error');
-      const body = JSON.parse(options.body); assert.equal(body.store, false); assert.equal(body.text.format.strict, true);
-      assert.equal(body.input[1].content.filter(c => c.type === 'input_image').length, 3); return response(answer(id)); } });
-  const prepared = await provider.prepare({ input, photos, catalog });
-  assert.equal(calls, 0); assert.equal(referenceCalls, 1); assert.equal(prepared.evidence.requestSha256, hash(prepared.body));
-  assert.equal(prepared.evidence.photoDerivation.sides.FRONT.originalSha256, photo.originalSha256);
-  assert.throws(() => { prepared.evidence.references[0].sha256 = hash('wrong'); }, TypeError);
-  const saved = await provider({ prepared }); assert.deepEqual(projectVariantPhotoResponse(saved, catalog, input), answer(id));
-  await assert.rejects(provider({ prepared }), { code: 'VARIANT_REQUEST_UNPREPARED' }); assert.equal(calls, 1);
+import {createVariantPhotoProvider,prepareVariantLabelRequest,projectVariantPhotoResponse,VARIANT_PHOTO_MODEL,VARIANT_PHOTO_POLICY} from '../src/variant-photo-provider.mjs';
+import {variantCodexChoice,codexReadingKey} from '../src/variant-codex.mjs';
+import {labelCatalog,labelPhoto,labelHash,labelResponse} from './variant-label-fixture.mjs';
+import {variantCatalog} from './variant-fixture.mjs';
+import {VARIANT_SOURCE_PHOTO_POLICY} from '../src/variant-source-photos.mjs';
+const secret='synthetic-secret-not-a-key';
+function providerFor(catalog,fetchImpl){return createVariantPhotoProvider({apiKey:secret,readReferenceImage:async r=>{assert.equal(r.candidateId,null);assert.equal(r.snapshot.snapshotHash,catalog.snapshotHash);const i=catalog.referencePhotos.findIndex(p=>p.imageId===r.imageId);return labelPhoto(i).media;},fetchImpl});}
+test('labels reference slabs only, with bounded strict output and one-shot dispatch; never reads physical uploads',async()=>{
+ const catalog=labelCatalog(),request=prepareVariantLabelRequest(catalog);let calls=0;
+ const provider=providerFor(catalog,async(_url,options)=>{calls++;const body=JSON.parse(options.body);assert.equal(body.store,false);assert.equal(body.text.format.strict,true);assert.equal(body.max_output_tokens,6000);
+  assert.equal(body.input[1].content.filter(p=>p.type==='input_image').length,2);assert.match(body.input[0].content,/base-card label may omit/);assert.doesNotMatch(options.body,/physical-source-secret/);return Response.json(labelResponse(request));});
+ const prepared=await provider.prepare({catalog,input:{sourceHash:'physical-source-secret'},photos:{get FRONT(){assert.fail('private photos');}}});assert.equal(calls,0);
+ assert.equal(prepared.evidence.requestSha256,labelHash(prepared.body));const saved=await provider({prepared});const result=projectVariantPhotoResponse(saved,catalog);
+ assert.equal(result.readings.length,2);assert.equal(result.readings[0].candidateId,catalog.candidates[0].candidateId);assert.equal(result.readings[0].canonicalPrintingKey,variantCodexChoice(catalog.candidates[0]).key);
+ await assert.rejects(provider({prepared}),{code:'VARIANT_REQUEST_UNPREPARED'});assert.equal(calls,1);
 });
-
-test('reference mismatch and changed original stop before provider dispatch', async () => {
-  let calls = 0;
-  const provider = createVariantPhotoProvider({ apiKey: 'synthetic-secret-not-a-key', readReferenceImage: async () => ({ ...photo, sha256: hash('wrong') }), fetchImpl: async () => { calls++; } });
-  await assert.rejects(provider.prepare({ input, photos, catalog: catalogFixture() }), { code: 'VARIANT_IMAGE_CHANGED' });
-  await assert.rejects(provider.prepare({ input, photos: { ...photos, sourceHash: hash('new source') }, catalog: catalogFixture() }), { code: 'VARIANT_SOURCE_STALE' });
-  await assert.rejects(provider.prepare({ input, photos: { ...photos, FRONT: { ...photo, bytes: Buffer.from('not an image') } }, catalog: catalogFixture() }), { code: 'VARIANT_IMAGE_INVALID' });
-  assert.equal(calls, 0);
+test('shared requests ignore physical identity, capture/source evidence changes, case and padded collectors',()=>{
+ const a=labelCatalog(),b=labelCatalog({capturedAt:'2026-10-11T00:00:00.000Z',source:'updated source',candidateTransform:c=>{c.identity.cardNumber='39/192';c.identity.name='MAGIKARP';}});
+ assert.notEqual(a.snapshotHash,b.snapshotHash);assert.notEqual(a.candidates[0].candidateId,b.candidates[0].candidateId);assert.deepEqual(prepareVariantLabelRequest(a),prepareVariantLabelRequest(b));
+ const expanded=labelCatalog({count:3,photos:2});assert.equal(codexReadingKey(prepareVariantLabelRequest(a),a.referencePhotos[0].sha256),codexReadingKey(prepareVariantLabelRequest(expanded),a.referencePhotos[0].sha256),'new known variants do not re-bill a previously read photo');
 });
-
-test('no diagnostic image means no paid request; transport failure never automatically replays', async () => {
-  let calls = 0;
-  const provider = createVariantPhotoProvider({ apiKey: 'synthetic-secret-not-a-key', readReferenceImage: async () => photo,
-    fetchImpl: async () => { calls++; throw Error('synthetic network failure'); } });
-  const empty = createVariantReviewSnapshot({ identity: variantIdentity, candidates: [], capturedAt: '2026-10-09T00:00:00.000Z' });
-  await assert.rejects(provider.prepare({ input, photos, catalog: empty }), { code: 'VARIANT_DIAGNOSTIC_REFERENCE_REQUIRED' });
-  assert.equal(calls, 0); const prepared = await provider.prepare({ input, photos, catalog: catalogFixture() });
-  await assert.rejects(provider({ prepared }), /synthetic network failure/);
-  await assert.rejects(provider({ prepared }), { code: 'VARIANT_REQUEST_UNPREPARED' }); assert.equal(calls, 1);
+test('96 retained photos remain available, but every model call is bounded to eight exact hashes',async()=>{
+ const catalog=labelCatalog({count:48}),provider=providerFor(catalog,()=>assert.fail('no dispatch'));assert.equal(catalog.referencePhotos.length,96);
+ await assert.rejects(provider.prepare({catalog}),{code:'VARIANT_DIAGNOSTIC_REFERENCE_REQUIRED'});
+ const prepared=await provider.prepare({catalog,photoShas:catalog.referencePhotos.slice(88).map(i=>i.sha256)});assert.equal(prepared.evidence.request.photos.length,8);
+ assert.throws(()=>prepareVariantLabelRequest(catalog,['f'.repeat(64)]),{code:'VARIANT_LABEL_REQUEST_CHANGED'});
 });
-
-test('retained output rejects hallucinated choices, foreign image evidence, refusals, truncation and rebound catalog', async () => {
-  const catalog = catalogFixture(), id = catalog.candidates[0].candidateId;
-  const provider = createVariantPhotoProvider({ apiKey: 'synthetic-secret-not-a-key', readReferenceImage: async () => photo, fetchImpl: async () => response(answer(id)) });
-  const saved = await provider({ prepared: await provider.prepare({ input, photos, catalog }) });
-  for (const result of [{ ...answer(id), candidateId: 'made-up' }, { ...answer(id), confidence: 1.01 },
-    { ...answer(id), evidence: [{ side: 'FRONT', sha256: hash('foreign'), observation: 'wrong image' }] }, { ...answer(null), confidence: .9 }]) {
-    const bodyText = await response(result).text(); assert.throws(() => projectVariantPhotoResponse({ ...saved, bodyText }, catalog, input));
-  }
-  const incomplete = JSON.parse(saved.bodyText); incomplete.status = 'incomplete';
-  assert.throws(() => projectVariantPhotoResponse({ ...saved, bodyText: JSON.stringify(incomplete) }, catalog, input), { code: 'VARIANT_RESPONSE_INCOMPLETE' });
-  const refusal = JSON.parse(saved.bodyText); refusal.output[0].content = [{ type: 'refusal', refusal: 'fixture' }];
-  assert.throws(() => projectVariantPhotoResponse({ ...saved, bodyText: JSON.stringify(refusal) }, catalog, input), { code: 'VARIANT_RESPONSE_INVALID' });
-  assert.throws(() => projectVariantPhotoResponse({ ...saved, requestEvidence: { ...saved.requestEvidence, references: [] } }, catalog, input), { code: 'VARIANT_RESPONSE_BINDING_INVALID' });
-  assert.throws(() => projectVariantPhotoResponse({ ...saved, requestEvidence: { ...saved.requestEvidence, photoDerivation: null } }, catalog, input), { code: 'VARIANT_RESPONSE_BINDING_INVALID' });
-  for (const changed of [{ sourceHash: hash('another card') }, { identityHash: hash('another identity') }, { identityRevision: input.identityRevision + 1 }]) {
-    assert.throws(() => projectVariantPhotoResponse(saved, catalog, { ...input, ...changed }), { code: 'VARIANT_RESPONSE_BINDING_INVALID' });
-  }
-  assert.throws(() => projectVariantPhotoResponse({ ...saved, bodyText: '{' }, catalog, input));
+test('hash mismatch and non-image bytes stop before a model call; failed dispatch cannot replay',async()=>{
+ const catalog=labelCatalog();let calls=0;const provider=createVariantPhotoProvider({apiKey:secret,readReferenceImage:async()=>({...labelPhoto().media,sha256:'f'.repeat(64)}),fetchImpl:()=>calls++});
+ await assert.rejects(provider.prepare({catalog}),{code:'VARIANT_IMAGE_CHANGED'});assert.equal(calls,0);
+ const failed=providerFor(catalog,async()=>{calls++;throw Error('uncertain');}),prepared=await failed.prepare({catalog});await assert.rejects(failed({prepared}),/uncertain/);await assert.rejects(failed({prepared}),{code:'VARIANT_REQUEST_UNPREPARED'});assert.equal(calls,1);
+});
+test('retained labels reject invented printing IDs, duplicate/foreign images, missing text, refusal and changed bytes',async()=>{
+ const catalog=labelCatalog(),request=prepareVariantLabelRequest(catalog),provider=providerFor(catalog,async()=>Response.json(labelResponse(request))),saved=await provider({prepared:await provider.prepare({catalog})});
+ const original=JSON.parse(JSON.parse(saved.bodyText).output[0].content[0].text).readings;
+ for(const edit of [r=>r[0].candidateKey='invented',r=>r[0].sha256='f'.repeat(64),r=>r[0].labelText=null,r=>r[1]=r[0]]){
+  const readings=structuredClone(original);edit(readings);assert.throws(()=>projectVariantPhotoResponse({...saved,bodyText:JSON.stringify(labelResponse(request,readings))},catalog));
+ }
+ const incomplete=JSON.parse(saved.bodyText);incomplete.status='incomplete';assert.throws(()=>projectVariantPhotoResponse({...saved,bodyText:JSON.stringify(incomplete)},catalog),{code:'VARIANT_RESPONSE_INCOMPLETE'});
+ const altered=labelCatalog({photos:1});assert.throws(()=>projectVariantPhotoResponse(saved,altered));
+});
+test('historical physical-card model responses retain their original strict binding and projector',()=>{
+ const image=variantCatalog.candidates[0].images[0],sha=labelHash('original'),input={sourceHash:labelHash('source'),identityHash:labelHash('identity'),identityRevision:1};
+ const evidence={policy:VARIANT_PHOTO_POLICY,model:VARIANT_PHOTO_MODEL,...input,catalogHash:variantCatalog.snapshotHash,requestSha256:labelHash('request'),originals:{FRONT:sha,BACK:sha},photoDerivation:{policy:VARIANT_SOURCE_PHOTO_POLICY,sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{originalSha256:sha,frameSha256:sha,comparisonSha256:sha}]))},references:[{candidateId:variantCatalog.candidates[0].candidateId,imageId:image.imageId,sha256:image.sha256}],candidateIds:[variantCatalog.candidates[0].candidateId]};
+ const answer={candidateId:variantCatalog.candidates[0].candidateId,confidence:.9,reason:'Historical physical observation.',evidence:[{side:'FRONT',sha256:sha,observation:'Recorded visible feature.'}]};
+ const body=labelResponse({photos:[],choices:[]});body.output[0].content[0].text=JSON.stringify(answer);const saved={version:VARIANT_PHOTO_POLICY,requestEvidence:evidence,httpStatus:200,bodyText:JSON.stringify(body)};
+ assert.deepEqual(projectVariantPhotoResponse(saved,variantCatalog,input),answer);assert.throws(()=>projectVariantPhotoResponse(saved,variantCatalog,{...input,sourceHash:labelHash('different')}),{code:'VARIANT_RESPONSE_BINDING_INVALID'});
 });

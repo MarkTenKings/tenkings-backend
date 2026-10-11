@@ -12,8 +12,8 @@ const date='2026-10-10T10:00:00.000Z',now=()=>Date.parse(date),sha=v=>createHash
 const noNetwork=()=>assert.fail('Saved image GET must never acquire source, images or model output');
 const responseFor=(request,status=200)=>{
  const bodyText=status===200?JSON.stringify({keyword:request.query,page:1,totalItems:1,hasNextPage:false,items:[{
-  itemId:'123456780001',title:'2016 Pokemon Evolutions Mewtwo #51/108 English Reverse Holo',url:'https://www.ebay.com/itm/123456780001',
-  thumbnailUrl:'https://i.ebayimg.com/images/g/fixture1/s-l300.jpg',listingType:'sold',condition:'Ungraded',endedAt:'2026-10-09',soldPrice:'99.95',soldCurrency:'USD',bestOfferAccepted:false
+  itemId:'123456780001',title:'2016 Pokemon Evolutions Mewtwo #51/108 PSA 9',url:'https://www.ebay.com/itm/123456780001',
+  thumbnailUrl:'https://i.ebayimg.com/images/g/fixture1/s-l300.jpg',listingType:'sold',condition:'PSA 9',endedAt:'2026-10-09',soldPrice:'99.95',soldCurrency:'USD',bestOfferAccepted:false
  }]}):'{"message":"retained failure"}';
  return {schemaVersion:'variant-listing-response/v1',requestKey:request.requestKey,url:request.url,httpStatus:status,contentType:'application/json',bodyText,sha256:sha(bodyText),capturedAt:date};
 };
@@ -47,19 +47,19 @@ test('one saved source supplies separate physical cards and refreshed photos; au
  let paid=0,images=0,writes=0;
  const cache={get:async k=>entries.get(k),getRetained:async k=>entries.get(k),put:async(k,v)=>{writes++;entries.set(k,structuredClone(v));}};
  const provider=createVariantListingProvider({apiKey:'synthetic-credential',cache,now,fetchImpl:async url=>{
-  if(url.startsWith('https://api.sold-comps.com/')){paid++;return new Response(responseFor(prepareVariantListingRequest(identity,printing)).bodyText,{headers:{'content-type':'application/json'}});}
+  if(url.startsWith('https://api.sold-comps.com/')){paid++;return new Response(responseFor(prepareVariantListingRequest(identity,printing,{graded:true})).bodyText,{headers:{'content-type':'application/json'}});}
   images++;return new Response(bytes,{headers:{'content-type':'image/png'}});
  }});
  const executeListingSource=async(request,dispatch)=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};const source=await dispatch();journal.set(request.requestKey,source);return {state:'SAVED',source};};
  const catalogClient={findCurrentSetCatalogPublications:async()=>[],prepareSetDemand:async()=>({state:'QUEUED',coverage:'unknown',candidates:[]})};
  const service=createVariantCatalogService({providers:[metadata],catalogClient,listingProvider:provider,now});
  const snapshot=await service.prepare({identity,cardId:'physical-a'},{executeListingSource});
- const again=await service.prepare({identity,cardId:'physical-b',generation:'another-refresh'},{executeListingSource});
+ const again=await service.prepare({identity,cardId:'physical-b'},{executeListingSource});
  assert.equal(paid,1);assert.equal(images,1);assert.equal(again.snapshotHash,snapshot.snapshotHash);
- const candidate=snapshot.candidates.find(c=>c.images.some(i=>i.relationship==='listing_photo')),image=candidate?.images.find(i=>i.relationship==='listing_photo');assert(image);
- assert.equal(image.listing.title,'2016 Pokemon Evolutions Mewtwo #51/108 English Reverse Holo');assert.doesNotMatch(JSON.stringify(snapshot),/99\.95|soldPrice|soldCurrency/);
+ const image=snapshot.referencePhotos[0];assert(image);assert(snapshot.candidates.every(c=>c.images.every(i=>i.relationship!=='listing_photo')),'seller titles never attach photos to a printing');
+ assert.equal(image.listing.title,'2016 Pokemon Evolutions Mewtwo #51/108 PSA 9');assert.doesNotMatch(JSON.stringify(snapshot),/99\.95|soldPrice|soldCurrency/);
  const beforeWrites=writes,restarted=createVariantCatalogService({providers:[{prepare:noNetwork}],listingProvider:createVariantListingProvider({cache,now:()=>now()+3*86400000,fetchImpl:noNetwork,inspectImage:noNetwork}),now});
- assert.equal((await restarted.readImage({snapshot,candidateId:candidate.candidateId,imageId:image.imageId})).sha256,sha(bytes));assert.equal(writes,beforeWrites);
+ assert.equal((await restarted.readImage({snapshot,candidateId:null,imageId:image.imageId})).sha256,sha(bytes));assert.equal(writes,beforeWrites);
  const card={cardId:'physical-a',draft:{source:{sourceHash:'a'.repeat(64)},identityRevision:1,identity:{cardName:'Mewtwo',year:'2016',productSet:'Evolutions',cardNumber:'051/108',parallel:null}}};
  let reads=0,stale=false;const saved={card,job:{key:'job-a',result_hash:'result-a',result:{catalog:snapshot}}};
  const review=createVariantReviewService({store:{read:async()=>{reads++;return stale&&reads%2===0?{...saved,job:{...saved.job,result_hash:'new-result'}}:saved;}},workflow:{},readReferenceImage:restarted.readImage});

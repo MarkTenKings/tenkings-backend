@@ -1,5 +1,6 @@
 import {isVariantPhotoComparable} from '@tenkings/card-catalog-evidence';
 import {requireThat} from '@atlas/manual-service/contract';
+import {VARIANT_PHOTO_POLICY} from './variant-photo-provider.mjs';
 /** Separate-process only: no grading limiter, grading reservation, browser or approval capability. */
 export function createVariantWorker({store,catalog,loadPhotos,provider,projectResponse,concurrency=1,intervalMs=5000,heartbeatMs=30000,timers=globalThis,onError=()=>{},recheck=null,admitDispatch=null}){
  requireThat(store&&catalog&&typeof loadPhotos==='function'&&typeof provider==='function'&&typeof projectResponse==='function'&&Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,500,'VARIANT_CONFIG_INVALID');
@@ -18,7 +19,38 @@ export function createVariantWorker({store,catalog,loadPhotos,provider,projectRe
    }catch(e){emit(e);return {state:'UNKNOWN',code:'LISTING_SOURCE_OUTCOME_UNKNOWN'};}
   };
   try{let snapshot=job.catalog;if(!snapshot){snapshot=await catalog.prepare(job.input,{signal:controller.signal,executeListingSource});requireThat(!lost&&await store.saveCatalog(job,snapshot),409,'VARIANT_LEASE_LOST');}
-   const reused=await store.reusableResult?.(job,snapshot);if(reused){requireThat(!lost,409,'VARIANT_LEASE_LOST');await store.finish(job,{result:{catalog:snapshot,suggestion:reused.suggestion}});return;}
+   const reused=await store.reusableResult?.(job,snapshot);if(reused){requireThat(!lost,409,'VARIANT_LEASE_LOST');await store.finish(job,{result:{...reused,catalog:snapshot}});return;}
+   if(typeof provider.labelRequest==='function'&&!job.dispatch_id&&job.response?.version!==VARIANT_PHOTO_POLICY){
+    requireThat(typeof store.codexReadings==='function'&&typeof store.publishLabelSource==='function',503,'VARIANT_LABEL_JOURNAL_UNAVAILABLE');
+    let referenceLabels=await store.codexReadings(job);
+    const all=provider.labelRequest(snapshot);
+    const missing=all.photos.filter(p=>!referenceLabels.readings.some(r=>r.sha256===p.sha256));
+    for(let offset=0;all.choices.length&&offset<missing.length;offset+=8){
+     const photoShas=missing.slice(offset,offset+8).map(p=>p.sha256),request=provider.labelRequest(snapshot,photoShas);
+     let reserved=await store.labelSource(job,request);
+     if(reserved.state==='MISSING'){
+      const prepared=await provider.prepare({catalog:snapshot,photoShas,signal:controller.signal});
+      if(admitDispatch&&!await admitDispatch()){requireThat(await store.defer(job),409,'VARIANT_LEASE_LOST');return;}
+      reserved=await store.labelSource(job,request,prepared.evidence);
+      if(reserved.state==='RESERVED'){
+       dispatched=true;saved=false;requireThat(!lost&&!controller.signal.aborted,409,'VARIANT_LEASE_LOST');
+       const response=await provider({prepared,signal:controller.signal});
+       requireThat(await store.saveLabelSource(reserved.reservation,response),503,'VARIANT_RESPONSE_NOT_SAVED');saved=true;
+      }
+     }
+     if(reserved.state==='RECOVER'){await store.publishLabelSource(job,reserved.request);requireThat(await store.defer(job,'VARIANT_LABEL_PENDING'),409,'VARIANT_LEASE_LOST');return;}
+     if(reserved.state==='PENDING'){requireThat(await store.defer(job,'VARIANT_LABEL_PENDING'),409,'VARIANT_LEASE_LOST');return;}
+     if(reserved.state==='UNKNOWN'){await store.finish(job,{state:'UNKNOWN',code:'VARIANT_PROVIDER_OUTCOME_UNKNOWN'});return;}
+     // The raw response and each image reading remain globally reusable even
+     // when a job loses its lease between this projection and final READY.
+     requireThat(!lost,409,'VARIANT_LEASE_LOST');
+     await store.publishLabelSource(job,request);dispatched=false;saved=false;
+    }
+    referenceLabels=await store.codexReadings(job);
+    requireThat(!lost,409,'VARIANT_LEASE_LOST');
+    await store.finish(job,{result:{catalog:snapshot,referenceLabels,suggestion:{candidateId:null,confidence:null,
+      reason:'Compare the saved reference labels and choose the variant you can verify on your card.',evidence:[]}}});return;
+   }
    let response=job.response;let suggestion={candidateId:null,confidence:null,reason:'No verified reference images are available for visual comparison.',evidence:[]};
    const comparable=snapshot.candidates.some(c=>c.images.some(i=>isVariantPhotoComparable(c,i)));
    if(comparable){if(!response){requireThat(!dispatched,409,'VARIANT_PROVIDER_OUTCOME_UNKNOWN');const photos=await loadPhotos(job,{signal:controller.signal});

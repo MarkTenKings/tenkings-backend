@@ -399,3 +399,33 @@ test('graded photos remain outside catalog choices until the slab label is read'
  assert.equal(result.referencePhotos.length,1);assert.equal(result.candidates.length,choices.length);
  assert(result.candidates.every(c=>c.images.every(i=>i.relationship!=='listing_photo')));
 });
+
+test('explicit missing-reference refresh has a new durable key without changing the search or historical keys',()=>{
+ const printing={name:'Normal',language:'en'},ordinary=prepare(identity,printing,{graded:true});
+ const generation='eaf7aeb8-b65a-4737-954a-08003c35d271';
+ const refresh=prepare(identity,printing,{graded:true,generation});
+ assert.equal(refresh.query,ordinary.query);assert.equal(refresh.url,ordinary.url);
+ assert.notEqual(refresh.requestKey,ordinary.requestKey);assert.equal(refresh.generation,generation);
+ assert.deepEqual(prepare(identity,printing,{graded:true,generation}),refresh);
+ assert.deepEqual(prepare(identity,printing,{graded:true,generation:null}),ordinary);
+ assert.equal(project(refresh,source(refresh,[])).listings.length,0);
+ assert.throws(()=>project({...refresh,generation:'13febeb4-2b94-4a6e-8e44-a7e6d1f42442'},source(refresh,[])),/REQUEST_CHANGED/);
+ assert.throws(()=>prepare(identity,printing,{generation}),/REFRESH_GENERATION/);
+ assert.throws(()=>prepare(identity,printing,{graded:true,generation:'automatic'}),/REFRESH_GENERATION/);
+});
+
+test('explicit refresh skips retained readings and duplicate slab bytes to find new photos',async()=>{
+ const generation='eaf7aeb8-b65a-4737-954a-08003c35d271',printing={name:'Normal',language:'en'};
+ const request=prepare(identity,printing,{graded:true,generation}),cache=cacheFixture(),known=await png();
+ const fresh=await sharp({create:{width:12,height:16,channels:3,background:'#fc4820'}}).png().toBuffer();
+ const seen=[],p=provider({cache,now,fetchImpl:async url=>new Response(url===imageUrl(1)?known:fresh,{headers:{'content-type':'image/png'}})});
+ const saved=source(request,[item(1,'Mewtwo PSA 9'),item(2,'Mewtwo PSA 10'),item(3,'Mewtwo CGC 10')]);
+ const result=await p.acquireImages({request,source:saved},{imageLimit:2,isKnownReference:async digest=>{seen.push(digest);return digest===sha(known);}});
+ assert(seen.includes(sha(known)));assert.equal(result.referencePhotos.length,1);
+ assert.equal(result.referencePhotos[0].sha256,sha(fresh));assert.equal(result.acquisition.uniqueImages,1);
+ const ordinary=prepare(identity,printing,{graded:true});
+ await assert.rejects(p.acquireImages({request:ordinary,source:source(ordinary,[])},{isKnownReference:async()=>true}),/REFRESH_GENERATION/);
+ const later=provider({cache,now:()=>now()+1000*limits.ttlMs,fetchImpl:noNetwork,inspectImage:noNetwork});
+ const reused=await later.acquireImages({request,source:saved},{imageLimit:2,isKnownReference:async digest=>digest===sha(known)});
+ assert.deepEqual(reused.referencePhotos,result.referencePhotos);assert.equal(reused.acquisition.requests,0);
+});
