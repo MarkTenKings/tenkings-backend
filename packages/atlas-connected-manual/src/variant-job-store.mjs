@@ -1,9 +1,9 @@
-import {variantSelectionParallel,validateVariantReviewSnapshot,variantSnapshotHash} from '@tenkings/card-catalog-evidence';
+import {variantSelectionParallel,validateVariantReviewSnapshot,variantSnapshotHash,createManufacturerChecklistVariantProvider} from '@tenkings/card-catalog-evidence';
 import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
-import {prepareVariantListingRequest,prepareRetainedVariantListingRequest,VARIANT_GRADED_LISTING_REVISION} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest,prepareRetainedVariantListingRequest,variantChecklistListingIdentity,VARIANT_GRADED_LISTING_REVISION} from './variant-listing-provider.mjs';
 import {codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
 import {prepareVariantLabelRequest,projectVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from './variant-photo-provider.mjs';
 
@@ -94,6 +94,8 @@ export function validateVariantAction(action){
 export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=180000}){
   requireThat(typeof boundary.machineTransaction==='function'&&Number.isInteger(leaseMs)&&leaseMs>=1000&&leaseMs<=300000,500,'VARIANT_CONFIG_INVALID');
   const machine=work=>boundary.machineTransaction(null,work);
+  const checklist=createManufacturerChecklistVariantProvider();
+  async function preparationLock(tx,cardId){await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1,721931))',`atlas-variant-preparation:${cardId}`);}
   // The retained cache is append-only. A transaction-scoped lock and a strict
   // one-record read make these names a permanent request journal, not a TTL
   // acquisition cache. All source writers take the same public-identity lock.
@@ -136,13 +138,19 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
        AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND j.identity_revision=(c.content::jsonb->>'identityRevision')::int AND j.policy=$1)
        ORDER BY c.id LIMIT $2`,VARIANT_POLICY,limit);
       let count=0;for(const row of rows){const d=JSON.parse(row.content),input={...variantBinding({cardId:row.id,draft:d}),identity:variantCatalogIdentity('playerName'in d.identity?'SPORTS':'POKEMON',d.identity)};const value=canonical(input);
+       // Serialize with explicit initial preparation. A new statement after
+       // the lock sees a job committed while this discovery scan was pending.
+       await preparationLock(tx,row.id);
+       const [existing]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND policy=$4 LIMIT 1`,row.id,input.sourceHash,input.identityRevision,VARIANT_POLICY);
+       if(existing)continue;
        count+=await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,source_hash,identity_revision,identity_hash,input,input_hash) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,variantJobKey(input),row.id,row.owner_id,row.access_version,VARIANT_POLICY,input.sourceHash,input.identityRevision,input.identityHash,value,digest(value));}return count;});},
     async read(staff,cardId){uuid(cardId);const savedRead=await boundary.transaction(staff,async({tx,principal})=>{const card=await authorized(tx,principal,cardId);const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);const saved=await confirmation(tx,card);let latest=row;if(!latest&&saved?.job_key){[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
       const [approved]=await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual.approval WHERE card_id=$1::uuid AND source_hash=$2 LIMIT 1',cardId,card.contentHash);
       let approvalReady=Boolean(approved),reason=null;try{if(!approved)await approvalCheck(tx,card);approvalReady=true;}catch(e){if(e.code!=='VARIANT_CONFIRMATION_REQUIRED')throw e;reason=e.code;}
       return {card,job:unpack(latest),confirmation:saved,approvalReady,reason,legacyApproved:Boolean(approved)};});
       return savedRead;},
-    async refresh(staff,cardId,input){object(input,['requestId','sourceHash','identityRevision','identityHash','jobId']);uuid(input.requestId);requireThat(/^[a-f0-9]{64}$/.test(input.jobId),400,'VARIANT_REFRESH_INVALID');return boundary.transaction(staff,async({tx,principal})=>{
+    async refresh(staff,cardId,input){object(input,['requestId','sourceHash','identityRevision','identityHash','jobId']);uuid(input.requestId);requireThat(input.jobId===null||/^[a-f0-9]{64}$/.test(input.jobId),400,'VARIANT_REFRESH_INVALID');return boundary.transaction(staff,async({tx,principal})=>{
+      await preparationLock(tx,cardId);
       await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid FOR UPDATE',cardId);
       const card=await authorized(tx,principal,cardId,true),b=variantBinding(card);
       // Exact saved generations remain acknowledgeable after another session
@@ -155,7 +163,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       if(existing){requireThat(canonical(unpack(existing).input)===canonical(nextInput),409,'VARIANT_REFRESH_CONFLICT');return key;}
       let [latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);
       if(!latest){const saved=await confirmation(tx,card);if(saved?.job_key)[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
-      requireThat(latest?.key===input.jobId&&variantRefreshable(latest),409,'VARIANT_REFRESH_UNAVAILABLE');
+      requireThat(input.jobId===null?!latest:latest?.key===input.jobId&&variantRefreshable(latest),409,'VARIANT_REFRESH_UNAVAILABLE');
       const [owner]=await tx.$queryRawUnsafe('SELECT owner_id,atlas_manual_connected.display_owner_version(owner_id) access_version FROM atlas_manual.card WHERE id=$1::uuid',cardId);requireThat(owner?.access_version,409,'VARIANT_SOURCE_STALE');
       const value=canonical(nextInput);await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,generation,source_hash,identity_revision,identity_hash,input,input_hash) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7,$8,$9,$10,$11)`,key,cardId,owner.owner_id,owner.access_version,VARIANT_POLICY,input.requestId,b.sourceHash,b.identityRevision,b.identityHash,value,digest(value));return key;
     });},
@@ -274,11 +282,20 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
         await listingWrite(tx,labelResponseKey(key),value);return true;
       });
     },
-    async reserveListingSource(job,request,{retainedOnly=false}={}){requireThat(typeof retainedOnly==='boolean'&&request.revision===VARIANT_GRADED_LISTING_REVISION&&(!request.generation||request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(job.input.identity,request.printing??null,{graded:true,...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
+    async reserveListingSource(job,request,{retainedOnly=false}={}){
+      // Only immutable local manufacturer evidence may fill a missing year
+      // for a reference request. Never trust a supplied catalog or request year.
+      const discovered=job.input.identity.year?null:await checklist.prepare(job.input.identity);
+      const listingIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year):job.input.identity;
+      const identityEvidence=discovered?discovered.candidates.filter(c=>c.identity.year===listingIdentity.year
+        &&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,{name:c.label,language:c.identity.language},{graded:true,...(request.generation?{generation:request.generation}:{})})))
+        .map(c=>({candidateId:c.candidateId,source:c.source})):null;
+      requireThat(!identityEvidence||identityEvidence.length>0,409,'VARIANT_LISTING_REQUEST_CHANGED');
+      requireThat(typeof retainedOnly==='boolean'&&request.revision===VARIANT_GRADED_LISTING_REVISION&&(!request.generation||job.input.reuseJobKey!==null&&request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,request.printing??null,{graded:true,...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
       await listingLock(tx,request.requestKey);
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} AND j.state='RUNNING' FOR UPDATE`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');
-      requireThat((!request.generation||request.generation===unpack(live).input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(unpack(live).input.identity,request.printing??null,{graded:request.revision===VARIANT_GRADED_LISTING_REVISION,...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');
+      requireThat(canonical(unpack(live).input.identity)===canonical(job.input.identity)&&(!request.generation||unpack(live).input.reuseJobKey!==null&&request.generation===unpack(live).input.generation),409,'VARIANT_LISTING_REQUEST_CHANGED');
       const retained=await listingRead(tx,listingDispatchKey(request.requestKey)),response=await listingRead(tx,listingResponseKey(request.requestKey));
       requireThat(!response||retained,503,'VARIANT_LISTING_JOURNAL_CONFLICT');
       if(retained){requireThat(retained.schemaVersion==='variant-listing-dispatch/v1'&&canonical(retained.request)===canonical(request),503,'VARIANT_LISTING_JOURNAL_CONFLICT');
@@ -302,7 +319,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
         }
       }
       if(retainedOnly)return {state:'MISSING'};
-      const reservation={schemaVersion:'variant-listing-dispatch/v1',request,dispatchId:randomUUID(),jobKey:job.key,claimId:job.claim_id,reservedAt:new Date().toISOString()};
+      const reservation={schemaVersion:'variant-listing-dispatch/v1',request,dispatchId:randomUUID(),jobKey:job.key,claimId:job.claim_id,reservedAt:new Date().toISOString(),...(identityEvidence?{identityEvidence}:{})};
       await listingWrite(tx,listingDispatchKey(request.requestKey),canonical(reservation));
       requireThat(await tx.$executeRawUnsafe(`UPDATE ${table} j SET audit=audit||jsonb_build_array(jsonb_build_object('event','LISTING_DISPATCH','requestKey',$3::text,'dispatchId',$4::text)),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,request.requestKey,reservation.dispatchId)===1,409,'VARIANT_LEASE_LOST');
       return {state:'RESERVED',reservation};});},

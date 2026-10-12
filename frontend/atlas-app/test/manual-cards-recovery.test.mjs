@@ -1,4 +1,5 @@
 import {reviewImagePreview} from '@atlas/manual-workspace';
+import * as reviewIdentity from '../lib/review-identity.mjs';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,6 +45,8 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === 'react') return react;
       if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
+      if (name === '../lib/review-identity.mjs') return reviewIdentity;
+      if (name === './ReviewIdentityPanel') return {__esModule:true,default:'ReviewIdentityPanel'};
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};
       if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock',DirectCardReviewShell:'DirectCardReviewShell'};

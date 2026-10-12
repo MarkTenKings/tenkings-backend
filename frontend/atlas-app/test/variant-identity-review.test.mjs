@@ -102,6 +102,24 @@ test('historical automatic recheck metadata cannot block a saved human confirmat
 });
 test('reference library refresh is explicit and an uncertain request keeps choices locked until saved acknowledgement',async()=>{const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await flush();f.render();assert.equal(f.writes.length,0);f.save=input=>{f.status={...f.status,state:'QUEUED',refreshable:false,refreshRequestId:input.requestId,jobId:hash('f'),result:null};throw Error('lost refresh');};f.button('Refresh reference library').props.onClick();await flush();f.render();assert.ok(f.button('Check retained reference request'));assert.ok(f.radios().every(node=>node.props.disabled));f.button('Check retained reference request').props.onClick();await flush();f.render();assert.equal(f.writes.length,1);assert.equal(f.saved,0,'library refresh is not a human confirmation or grade refresh');assert.match(f.text(),/queued/);assert.equal(f.button('Refresh reference library'),undefined);f.dispose();});
 
+test('a physically confirmed card can prepare its first references without repeating confirmation',async()=>{
+ const f=fixture();f.status={...f.status,state:'NOT_REQUESTED',jobId:null,result:null,resultHash:null,refreshable:true,approvalReady:true};
+ const confirmation={decision:'MANUAL',sourceHash:f.status.sourceHash,identityRevision:1,identityHash:f.status.identityHash};f.status.confirmation=confirmation;
+ await flush();f.render();assert.equal(f.gates.at(-1),true);assert.equal(f.writes.length,0);assert.equal(f.button('Prepare references').props.disabled,false);
+ f.save=input=>(f.status={...f.status,state:'QUEUED',jobId:hash('e'),refreshable:false,refreshRequestId:input.requestId});
+ f.button('Prepare references').props.onClick();await flush();f.render();
+ assert.equal(f.writes.length,1);assert.equal(f.writes[0].jobId,null);assert.deepEqual(f.status.confirmation,confirmation);
+ assert.equal(f.gates.at(-1),true);assert.equal(f.saved,0);assert.match(f.text(),/queued/);f.dispose();
+});
+
+test('missing-year search choices show each source year without filling or confirming the saved identity',async()=>{
+ const f=fixture(),base=f.status.result.catalog.candidates[0];f.props.identity.year=null;f.status.result.suggestion=null;
+ f.status.result.catalog.candidates=['2024-25','2025-26'].map((year,index)=>({...base,candidateId:`year-${index}`,label:'Base',identity:{...base.identity,year}}));
+ await flush();f.render();const choices=f.find(node=>node.type==='label'&&node.props['data-selected']!==undefined);
+ assert.deepEqual(choices.map(choice=>all(choice,node=>node.type==='small').map(text)),[['2024-25'],['2025-26']]);assert.ok(f.radios().every(radio=>!radio.props.checked));
+ assert.equal(f.props.identity.year,null);assert.equal(f.writes.length,0);f.dispose();
+});
+
 
 test('retained reviewed and provider reference bytes use the authenticated staff route, including null catalog URLs',()=>{const f=fixture(),pick=f.exports.variantReference;for(const authority of ['reviewed_catalog','provider_candidate']){const result=pick({authority,images:[{url:null,sha256:hash('a'),relationship:'exact',publication:authority==='reviewed_catalog'?'publication':null,provenance:{usage:authority==='reviewed_catalog'?'reviewed_catalog':'provider_reference'}}]},f.props.cardId);assert.equal(result.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${hash('a')}`);}f.dispose();});
 

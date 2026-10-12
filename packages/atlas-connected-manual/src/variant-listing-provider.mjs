@@ -27,6 +27,17 @@ const HASH = /^[a-f0-9]{64}$/;
 const keys = (v, fields) => v && typeof v === 'object' && !Array.isArray(v)
   && Object.keys(v).sort().join('|') === [...fields].sort().join('|');
 const same = (a, b) => canonicalJson(a) === canonicalJson(b);
+/** A missing year may be used for reference acquisition only when a retained
+ * manufacturer row supplies it for every other exact saved identity anchor.
+ * The caller independently loads those rows; this does not edit the card. */
+export function variantChecklistListingIdentity(input, candidates, year) {
+  const identity = normalizeVariantIdentity(input);
+  if (identity.year) return identity;
+  check(identity.category === 'SPORTS' && typeof year === 'string' && candidates.some(candidate =>
+    candidate.source.provider === 'manufacturer_checklist' && candidate.identity.year === year
+    && same({ ...candidate.identity, year: null }, identity)), 'VARIANT_LISTING_REQUEST_CHANGED');
+  return { ...identity, year };
+}
 const date = v => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(v).toISOString() === v;
 const normalize = v => v.normalize('NFC').trim().replace(/\s+/gu, ' ');
 const canonicalNumber = v => v.toLowerCase().replace(/^#\s*/, '').split('/').map(p => p.trim().replace(/^([a-z]*)0+(\d+)$/, '$1$2')).join('/');

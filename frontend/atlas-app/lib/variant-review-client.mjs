@@ -108,7 +108,7 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
       check(latest && !retained()?.pending, 'VARIANT_SAVE_PENDING');
       const basis = latest, current = await read();
       check(variantBindingKey(basis) === variantBindingKey(current), 'VARIANT_REVIEW_CHANGED');
-      check(current.refreshable === true && sha(current.jobId), 'VARIANT_REFRESH_UNAVAILABLE');
+      check(current.refreshable === true && (sha(current.jobId) || current.jobId === null && current.state === 'NOT_REQUESTED'), 'VARIANT_REFRESH_UNAVAILABLE');
       const input = { requestId: cryptoImpl.randomUUID(), sourceHash: current.sourceHash, identityRevision: current.identityRevision,
         identityHash: current.identityHash, jobId: current.jobId };
       store({ operation: 'REFRESH', pending: input }); return send(input, 'REFRESH');

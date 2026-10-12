@@ -265,3 +265,36 @@ test('numeric checklist positions are advisory only for a unique explicit athlet
  const ambiguous={...data,rows:[...data.rows,[0,'Donruss Threads Black','5','Jaxson Dart','row:5']]};
  assert.equal((await createManufacturerChecklistVariantProvider({catalog:ambiguous}).prepare(input)).candidates.length,0);
 });
+
+
+test('unknown year discovers exact source-backed seasons and preserves competing years without inferring a variant',async()=>{
+ const data={...lameloCatalog,sources:[lameloSource,{...lameloSource,year:'2024-25',sha256:'b'.repeat(64)}],
+  rows:[...lameloCatalog.rows,[1,'BALL OF DUTY','BD-13','LaMelo Ball','row:1']]};
+ const input={...lameloIdentity,year:null},original=structuredClone(input);
+ for(const options of [{catalog:data},shardsFor(data)]){
+  const result=await createManufacturerChecklistVariantProvider(options).prepare(input);
+  assert.equal(result.candidates.length,2);
+  assert.deepEqual(new Set(result.candidates.map(c=>c.identity.year)),new Set(['2025-26','2024-25']));
+  assert.equal(new Set(result.candidates.map(c=>c.candidateId)).size,2);
+  assert.ok(result.candidates.every(c=>c.applicability==='unknown'&&c.warnings.includes('SCOPE_UNCONFIRMED')&&c.diagnostics.some(d=>d.id==='manufacturer-checklist-year')));
+  assert.deepEqual(input,original);
+  for(const patch of [{cardNumber:'BD-14'},{name:'Lonzo Ball'},{manufacturer:'Panini'},{setName:'Topps Cosmic Chrome — Ball of Duty'}])
+   assert.equal((await createManufacturerChecklistVariantProvider(options).prepare({...input,...patch})).candidates.length,0);
+ }
+ const numeric={...lameloCatalog,rows:[[0,'BALL OF DUTY','13','LaMelo Ball','row:1']]};
+ for(const options of [{catalog:numeric},shardsFor(numeric)])assert.equal((await createManufacturerChecklistVariantProvider(options).prepare(input)).candidates.length,0,'unknown year cannot use numeric insert fallback');
+});
+test('unknown year can find an oldest exact card beyond sixteen matching seasons',async()=>{
+ const sources=Array.from({length:20},(_,i)=>({...source,year:String(1990+i),sha256:i.toString(16).padStart(64,'0')}));
+ const data={...catalog,sources,rows:sources.map((_,i)=>[i,'Base',i===0?'203':'999','Drake Maye','row:1'])};
+ for(const options of [{catalog:data},shardsFor(data)]){
+  const result=await createManufacturerChecklistVariantProvider(options).prepare({...identity,year:null});
+  assert.deepEqual(result.candidates.map(c=>c.identity.year),['1990']);assert.equal(result.truncated,false);
+ }
+});
+test('frozen manufacturer source identifies the unknown-year LaMelo number as a candidate only',async()=>{
+ const input={...lameloIdentity,year:null},result=await createManufacturerChecklistVariantProvider().prepare(input);
+ assert.equal(result.candidates.length,1);assert.equal(result.candidates[0].identity.year,'2025-26');
+ assert.equal(result.candidates[0].identity.cardNumber,'BD-13');assert.equal(result.candidates[0].source.sha256,lameloSource.sha256);
+ assert.equal(input.year,null);assert.equal(result.candidates[0].applicability,'unknown');
+});

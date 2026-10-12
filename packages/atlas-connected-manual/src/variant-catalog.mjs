@@ -5,7 +5,7 @@ import { canonicalJson, normalizeVariantIdentity, compareVariantCardNumber, vari
 import { variantCodexChoice, codexLibraryKey, validateCodexLibrary, codexPhotoPoolKey, validateCodexPhotoPool,
   codexReadingKey, reassociateCodexReading, CODEX_LABEL_POLICY, CODEX_LABEL_MODEL } from './variant-codex.mjs';
 import { prepareVariantCatalogObservation } from './variant-catalog-proposal.mjs';
-import {prepareVariantListingRequest} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest,variantChecklistListingIdentity} from './variant-listing-provider.mjs';
 
 const abort = signal => signal?.throwIfAborted();
 const fail = code => Object.assign(new Error(code), { code });
@@ -99,11 +99,16 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       return bounded(signal, timeoutMs, active => catalogClient.submit(prepared.proposal, active));
     },
     async prepare(input, { signal, executeListingSource } = {}) {
+      // Initial preparation has a durable browser request ID, but it still
+      // reuses ordinary paid journals. Only an explicit refresh of a prior
+      // job authorizes a fresh missing-reference acquisition generation.
+      const listingGeneration = input.reuseJobKey === null ? null : input.generation;
       let base;
       try{base = await bounded(signal, timeoutMs, async signal => {
       abort(signal);
       const identity = normalizeVariantIdentity(input.identity), candidates = [], problems = [];
-      if (!identity.name || !identity.setName || !identity.cardNumber || !identity.year) {
+      if (!identity.name || !identity.setName || !identity.cardNumber
+        || !identity.year && (identity.category === 'POKEMON' || !identity.manufacturer)) {
         return createVariantReviewSnapshot({ identity, candidates, problems: ['IDENTITY_INCOMPLETE'], capturedAt: new Date(now()).toISOString() });
       }
       let truncated = false;
@@ -137,8 +142,17 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         // One durable, shared request for each catalog printing, never for each
         // staff visit. Bound fan-out; absent photos do not hide known choices.
         const named = candidates.filter(c => c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'));
-        const searches = [...new Map(named.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language}),
-          {name:c.label,language:c.identity.language}])).values()];
+        // Known-year requests retain their exact historic keys. When year is
+        // unknown, each exact manufacturer row is a separate search identity;
+        // the store verifies that row independently before any reservation.
+        const searchable = identity.year ? named : named.filter(c => {
+          try { variantChecklistListingIdentity(identity, [c], c.identity.year); return true; } catch { return false; }
+        });
+        const searches = [...new Map(searchable.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language,
+          ...(!identity.year?{year:c.identity.year}:{})}), {name:c.label,language:c.identity.language,...(!identity.year?{year:c.identity.year}:{})}])).values()];
+        const listingRequest = (printing, generation = null) => prepareVariantListingRequest(
+          identity.year ? identity : variantChecklistListingIdentity(identity, searchable, printing.year),
+          {name:printing.name,language:printing.language},{graded:true,...(generation?{generation}:{})});
         const populated=new Set(),choiceKeys=new Set(named.map(candidate=>variantCodexChoice(candidate).key)),readings=new Map();
         const revisitReadings=async photos=>{
           for(const image of photos){
@@ -169,6 +183,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
           await revisitReadings(pool.photos);
         }
         const hasReference=printing=>named.some(candidate=>candidate.label===printing.name&&candidate.identity.language===printing.language
+          &&(!printing.year||candidate.identity.year===printing.year)
           &&populated.has(variantCodexChoice(candidate).key));
         const acquireRetainedPhotos=async(request,saved,{retainedOnly=false}={})=>{
             if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
@@ -192,7 +207,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         // printing acquires a source. A probe cannot reserve or dispatch.
         const retained=new Map();let bootstrapFailed=false;
         for(const printing of searches)try{
-          abort(signal);const request=prepareVariantListingRequest(identity,printing,{graded:true});
+          abort(signal);const request=listingRequest(printing);
           const saved=await executeListingSource(request,()=>{throw fail('VARIANT_LISTING_READ_ONLY');},{retainedOnly:true});
           if(!['MISSING','UNKNOWN','REUSED'].includes(saved.state))throw fail('VARIANT_LISTING_READ_ONLY');
           retained.set(printing,saved.state);
@@ -200,14 +215,14 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         }catch(error){abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;bootstrapFailed=true;problems.push('LISTING_SOURCE_UNAVAILABLE');}
         for(const printing of searches){
           if(hasReference(printing))continue;
-          if(!input.generation&&retained.get(printing)==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
+          if(!listingGeneration&&retained.get(printing)==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
         }
         // One permanent ordinary request; deliberate missing-reference
         // generations retain their separate authority for a fresh search.
-        const pending=searches.filter(printing=>!hasReference(printing)&&(input.generation||retained.get(printing)==='MISSING'));
-        if(!bootstrapFailed||input.generation)for (const printing of pending) try {
+        const pending=searches.filter(printing=>!hasReference(printing)&&(listingGeneration||retained.get(printing)==='MISSING'));
+        if(!bootstrapFailed||listingGeneration)for (const printing of pending) try {
           abort(signal);if(hasReference(printing))continue;
-          const request=prepareVariantListingRequest(identity,printing,{graded:true,...(input.generation?{generation:input.generation}:{})});
+          const request=listingRequest(printing,listingGeneration);
           const saved=await executeListingSource(request,()=>listingProvider.fetchSource(request,{signal}));
           if(saved.state==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
           else await acquireRetainedPhotos(request,saved);

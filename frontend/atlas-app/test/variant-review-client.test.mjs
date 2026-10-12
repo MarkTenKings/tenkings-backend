@@ -34,6 +34,24 @@ test('explicit library refresh retains request identity and reconciles a lost re
 test('unacknowledged library request resumes exact payload and clears a known refusal only',async()=>{const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await f.client.read();f.save=()=>{throw {status:503};};await assert.rejects(f.client.refresh());const first=f.requests.at(-1).body;f.save=input=>({...f.status,state:'QUEUED',refreshable:false,refreshRequestId:input.requestId});await f.client.resume();assert.deepEqual(f.requests.filter(r=>r.method).map(r=>r.body),[first,first]);const g=fixture();g.status.jobId=hash('e');g.status.refreshable=true;await g.client.read();g.save=()=>{throw {status:409,code:'VARIANT_REFRESH_CONFLICT'};};await assert.rejects(g.client.refresh(),{code:'VARIANT_REFRESH_UNAVAILABLE'});assert.equal(g.client.retained(),null);});
 test('pending, unknown, or not-requested library preparation cannot be refreshed by inference',async()=>{for(const state of ['QUEUED','SEARCHING','UNKNOWN','NOT_REQUESTED']){const f=fixture();f.status={...f.status,state,refreshable:false};await f.client.read();await assert.rejects(f.client.refresh(),{code:'VARIANT_REFRESH_UNAVAILABLE'});assert.equal(f.requests.filter(r=>r.method).length,0);}});
 
+test('explicit first reference preparation preserves a current physical confirmation and reconciles a lost reply',async()=>{
+ const f=fixture();f.status={...f.status,state:'NOT_REQUESTED',jobId:null,result:null,resultHash:null,refreshable:true,approvalReady:true};
+ const confirmation={decision:'MANUAL',sourceHash:f.status.sourceHash,identityRevision:1,identityHash:f.status.identityHash};f.status.confirmation=confirmation;
+ await f.client.read();assert.equal(f.requests.filter(r=>r.method).length,0);
+ f.save=input=>{f.status={...f.status,state:'QUEUED',jobId:hash('e'),refreshable:false,refreshRequestId:input.requestId};throw Error('lost initial request reply');};
+ await assert.rejects(f.client.refresh());assert.equal(f.requests.at(-1).body.jobId,null);
+ const reopened=createVariantReviewClient(f.options),result=await reopened.resume();
+ assert.equal(f.requests.filter(r=>r.method).length,1);assert.equal(reopened.retained(),null);
+ assert.deepEqual(result.confirmation,confirmation);assert.equal(variantApprovalReady(result),true);
+});
+
+test('an absent job only permits initial preparation in an explicitly refreshable not-requested state',async()=>{
+ for(const state of ['READY','FAILED','STALE','QUEUED','SEARCHING','UNKNOWN']){
+  const f=fixture();f.status={...f.status,state,jobId:null,refreshable:true};await f.client.read();
+  await assert.rejects(f.client.refresh(),{code:'VARIANT_REFRESH_UNAVAILABLE'});assert.equal(f.requests.filter(r=>r.method).length,0);
+ }
+});
+
 test('exact replay acknowledges a superseded save independently of the newer current confirmation or reference job',async()=>{
  for(const operation of ['CONFIRM','REFRESH']){
   const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await f.client.read();f.save=()=>{throw Error('lost reply');};

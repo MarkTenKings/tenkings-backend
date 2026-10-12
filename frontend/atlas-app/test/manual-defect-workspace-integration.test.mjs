@@ -1,6 +1,7 @@
 import {reviewImagePreview} from '@atlas/manual-workspace';
 import {reportAwardedGrade} from '../../../packages/atlas-manual-workspace/src/report-review-ui.mjs';
 import {reviewedMemoryState} from '../../../packages/atlas-manual-workspace/src/astra-review-ui.mjs';
+import * as reviewIdentity from '../lib/review-identity.mjs';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,6 +43,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
     sourceHash: f.current.card.contentHash, canCertify: true, report: {}, review: {} });
   const client = { recover: async () => { viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
     execute: async action => { f.actions.push(action); await f.onExecute?.(action);
+      if (action.type === 'IDENTITY_EDIT') f.current = {...f.current,identity:action.identity,card:{...f.current.card,revision:f.current.card.revision+1,contentHash:`identity-${f.current.card.revision+1}`}};
       if (action.type === 'INSPECT_SIDE') f.current = {...f.current,defects:{...f.current.defects,inspected:[...(f.current.defects.inspected ?? []),action.side]}};
       if (action.type === 'CONFIRM_FINDINGS') f.current = {...f.current,defects:{...f.current.defects,confirmed:true}};
       if (action.type === 'EXPLICIT_STAGE' && action.stage === 'geometry') f.current = {...f.current,geometry:{...f.current.geometry,confirmed:true}};
@@ -55,6 +57,8 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === 'react') return react;
       if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
+      if (name === '../lib/review-identity.mjs') return reviewIdentity;
+      if (name === './ReviewIdentityPanel') return {__esModule:true,default:'ReviewIdentityPanel'};
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};
       if (name === '@atlas/manual-workspace/focused-geometry') return {FocusedGeometryWorkspace:'FocusedGeometryWorkspace',sourceQuadToPrepared:(_g,_s,quad)=>quad};
@@ -114,6 +118,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   f.completion = () => all(tree, node => node.type === 'CompletionNextSteps')[0]?.props;
   f.geometry = () => all(tree, node => node.type === 'FocusedGeometryWorkspace')[0]?.props;
   f.finishing = () => all(tree, node => node.type === 'ManualFinishing')[0]?.props;
+  f.identity = () => all(tree, node => node.type === 'ReviewIdentityPanel')[0]?.props;
   f.variant = () => all(tree, node => node.type === 'VariantIdentityReview')[0]?.props;
   f.report = () => all(tree, node => node.type === 'FinalReportReview')[0]?.props;
   f.machine = () => all(tree,node=>node.type==='MachineReportReview')[0]?.props;
@@ -582,14 +587,13 @@ test('a retained unresolved hold reopens identity review on reload and remains r
  assert.ok(f.variant());assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
 });
 
-test('card correction exits the variant panel into its visible editor and retains pending-save navigation locks',async()=>{
+test('card correction stays above the mounted variant panel and retains pending-save navigation locks',async()=>{
  const f=harness({initialView:{identity:{cardName:'Saved card',parallel:'Saved printing'},variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'UNRESOLVED'}}}});
  await flush();f.render();assert.ok(f.variant());const edit=f.button('Edit card details').props.onClick;
  f.variant().onActivityChange(true);f.render();edit();f.render();assert.ok(f.variant(),'a stale edit handler cannot leave pending variant recovery');
  f.variant().onActivityChange(false);f.render();f.button('Edit card details').props.onClick();await flush();f.render();
- assert.equal(f.variant(),undefined);assert.match(f.text(),/Correct card details/);assert.ok(f.button('Save details'));assert.equal(f.actions.length,0);
- f.button('Discard changes').props.onClick();f.render();assert.ok(f.geometry());assert.ok(f.button('Review card variant'));
- f.button('Review card variant').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.actions.length,0);f.dispose();
+ assert.ok(f.variant());assert.equal(f.variant().disabled,true);assert.equal(f.identity().draft.cardName,'Saved card');assert.equal(f.actions.length,0);
+ f.identity().onCancel();f.render();assert.ok(f.variant());assert.equal(f.identity().draft,null);assert.equal(f.actions.length,0);f.dispose();
 });
 
 
@@ -724,4 +728,57 @@ test('explicit retry after a refused provider call starts one new journaled requ
   finish(); await pending; f.render();
   assert.equal(f.defects().workspace, before); assert.equal(f.actions.length, 0);
   assert.equal(f.defects().astra.status, 'RUNNING'); f.dispose();
+});
+
+const editableIdentity={cardName:'Pikachu',year:null,productSet:'Scarlet & Violet Promo',cardNumber:'027',parallel:'English Cosmos Holofoil',layoutType:'POKEMON'};
+
+for(const side of ['FRONT','BACK'])test(`inline identity correction preserves the mounted ${side} geometry workspace and saved findings`,async()=>{
+ const f=harness({initialGeometrySide:side,initialView:{identity:editableIdentity}});await flush();f.render();
+ const workspace=f.geometry().workspace,defects=f.current.defects,images=f.geometry().images,key=f.geometry().key,scrolls=f.scroll.resets;
+ f.identity().onEdit();f.render();assert.equal(f.identity().draft.year,null);assert.equal(f.geometry().key,key);assert.equal(f.geometry().workspace,workspace);assert.equal(f.geometry().busy,true);
+ f.identity().onChange('year','2023');f.render();await f.identity().onSave();await flush();f.render();
+ assert.equal(f.geometry().side,side);assert.equal(f.geometry().key,key);assert.equal(f.geometry().workspace,workspace);assert.equal(f.geometry().images,images);assert.equal(f.current.defects,defects);
+ assert.equal(f.identity().draft,null);assert.equal(f.current.identity.year,'2023');assert.equal(f.current.card.revision,2);assert.equal(f.scroll.resets,scrolls);
+ assert.deepEqual(f.actions.map(action=>action.type),['IDENTITY_EDIT']);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
+});
+
+test('saving details during Back findings keeps the selected finding, mounted workspace and variant stage',async()=>{
+ const f=harness({initialView:{identity:editableIdentity,variantVerification:{enabled:true}}});await flush();f.render();
+ f.defects().onSideChange('BACK');f.render();f.defects().onSelectFinding({id:'back-scratch'});f.render();const workspace=f.defects().workspace,key=f.defects().key;
+ f.identity().onEdit();f.render();assert.equal(f.defects().disabled,true);f.identity().onChange('year','2023');f.render();await f.identity().onSave();f.render();
+ assert.equal(f.defects().side,'BACK');assert.equal(f.defects().findingId,'back-scratch');assert.equal(f.defects().key,key);assert.equal(f.defects().workspace,workspace);
+ f.button('View references').props.onClick();f.render();assert.ok(f.variant());const savedKey=f.variant().key;
+ f.identity().onEdit();f.render();assert.equal(f.variant().key,savedKey);f.identity().onChange('manufacturer','Pokémon');f.render();await f.identity().onSave();f.render();
+ assert.ok(f.variant());assert.equal(f.variant().identity.manufacturer,'Pokémon');assert.equal(f.report(),undefined);assert.equal(f.geometry(),undefined);
+ f.button('Back to grading review').props.onClick();f.render();assert.equal(f.defects().side,'BACK');assert.equal(f.defects().findingId,'back-scratch');
+ assert.deepEqual(f.actions.map(action=>action.type),['IDENTITY_EDIT','IDENTITY_EDIT']);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
+});
+
+test('unchanged details close without a command, revision or variant invalidation',async()=>{
+ const f=harness({initialView:{identity:editableIdentity,variantVerification:{enabled:true}}});await flush();f.render();await f.openGrade();f.variant().onGateChange(true);f.report().onReadyChange(true);f.render();
+ f.identity().onEdit();f.render();f.identity().onChange('cardName','  Pikachu  ');f.render();await f.identity().onSave();f.render();
+ assert.equal(f.identity().draft,null);assert.equal(f.current.card.revision,1);assert.equal(f.actions.length,0);assert.equal(f.button('Approve final grade and queue label').props.disabled,false);f.dispose();
+});
+
+test('identity failures retain the draft, validation prevents requests and duplicate saves share one command',async()=>{
+ const f=harness({initialGeometrySide:'FRONT',initialView:{identity:editableIdentity}});await flush();f.render();f.identity().onEdit();f.render();
+ f.identity().onChange('cardName','');f.render();await f.identity().onSave();f.render();assert.ok(f.identity().errors.cardName);assert.equal(f.actions.length,0);
+ f.identity().onChange('cardName','Pikachu');f.identity().onChange('year','2023');f.render();let reject;
+ f.onExecute=()=>new Promise((_resolve,no)=>{reject=no;});const save=f.identity().onSave;const work=save();await save();f.render();
+ assert.equal(f.actions.length,1);assert.equal(f.identity().saving,true);f.identity().onCancel();f.render();assert.ok(f.identity().draft);
+ reject({code:'MANUAL_REVISION_CONFLICT'});await work;f.render();assert.equal(f.identity().draft.year,'2023');assert.equal(f.identity().saving,false);assert.match(f.text(),/MANUAL_REVISION_CONFLICT/);assert.equal(f.geometry().side,'FRONT');f.dispose();
+});
+
+test('a changed card head cannot silently receive an older full identity draft',async()=>{
+ const f=harness({initialView:{identity:editableIdentity}});await flush();f.render();f.identity().onEdit();f.render();f.identity().onChange('year','2023');f.render();
+ f.publish({...f.current,identity:{...editableIdentity,cardName:'Newer saved name'},card:{revision:2,contentHash:'newer'}});await f.identity().onSave();f.render();
+ assert.match(f.identity().errors.identity,/changed while you were editing/);assert.equal(f.identity().draft.year,'2023');assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('identity correction on Grade keeps Grade and refreshes only its report preview',async()=>{
+ const f=harness({initialView:{identity:editableIdentity,variantVerification:{enabled:true}}});await flush();f.render();await f.openGrade();f.report().onReadyChange(true);f.variant().onGateChange(true);f.render();
+ const staleApprove=f.button('Approve final grade and queue label').props.onClick;f.identity().onEdit();await staleApprove();f.render();assert.equal(f.actions.length,0);
+ assert.equal(f.button('Approve final grade and queue label').props.disabled,true);f.identity().onChange('year','2023');f.render();await f.identity().onSave();f.render();
+ assert.ok(f.report());assert.equal(f.report().preview.sourceRevision,2);assert.equal(f.report().current,true);assert.equal(f.identity().draft,null);assert.equal(f.geometry(),undefined);assert.equal(f.button('Approve final grade and queue label'),undefined,'new identity must pass variant verification again');
+ assert.deepEqual(f.actions.map(action=>action.type),['IDENTITY_EDIT']);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
 });

@@ -118,8 +118,8 @@ function Comparison({ photo, reference, candidate, side, onClose }) {
   </dialog>;
 }
 
-/** All page-open and polling work reads saved status. Only explicit confirmation
- * writes; a suggested image never stands in for the reviewer’s decision. */
+/** Page-open and polling work reads saved status. Explicit reference preparation
+ * is independent of confirmation; an image never stands in for a human decision. */
 export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, sourceHash, identityRevision, revision, identity, savedIdentification,
   geometry, images, disabled = false, previewOnly = false, onGateChange, onSaved, onActivityChange, onReloadImages, renderReviewActions,
   createClient = createVariantReviewClient, pollIntervalMs = 3000 }) {
@@ -265,7 +265,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
           return <label className={styles.tileChoice} data-selected={chosen} key={candidate.candidateId}>
             <input type="radio" name={`variant-${cardId}`} checked={chosen} disabled={unavailable || status.state !== 'READY' || !candidate.parallel?.trim()}
               onChange={() => { setPreviewId(candidate.candidateId); if (!previewOnly) choose(candidate.candidateId); }}/>
-            <span><strong>{candidate.label}</strong>{group.key === 'language' && <small>{candidate.identity.language}</small>}</span>
+            <span><strong>{candidate.label}</strong>{!identity?.year && candidate.identity.year && <small>{candidate.identity.year}</small>}{group.key === 'language' && <small>{candidate.identity.language}</small>}</span>
           </label>;
         })}</div>;
         return group.key === 'same' ? <fieldset className={styles.group} key={group.key}><legend>Variants for this card <span>{entries.length}</span></legend>{entries.length > 8 && <label className={styles.variantSearch}>Find a variant<input type="search" value={variantFilter} onChange={event=>setVariantFilter(event.target.value)} placeholder="Search variant names"/></label>}{contents}{!visibleEntries.length && <p>No variant names match this search.</p>}</fieldset>
@@ -320,7 +320,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
       <p>For internal ATLAS and Ten Kings reference review. This submits your original photos for review; it does not publish them automatically.</p>
       {referencePermission && <div className={styles.contributionFields}><label>Photo rights basis<select aria-label="Photo rights basis" value={referencePermission.basis} onChange={event => choose(choice, null, manual, {...referencePermission,basis:event.target.value})}><option value="">Choose the rights basis</option><option value="owned_original">I own these original photos</option><option value="permission">I have permission to share them</option><option value="licensed">A license allows this use</option></select></label></div>}
     </fieldset>}
-    {status?.refreshable === true && (!previewOnly || !drafted) && <div><p><button type="button" disabled={unavailable} onClick={() => void refresh()}>{drafted ? 'Discard unsaved choice and refresh reference library' : 'Refresh reference library'}</button></p>{drafted && <p className={styles.photoHelp}>This discards only your unsaved variant choice. Your saved variant and grading work stay unchanged.</p>}</div>}
+    {status?.refreshable === true && (!previewOnly || !drafted) && <div><p><button type="button" disabled={unavailable} onClick={() => void refresh()}>{drafted ? 'Discard unsaved choice and refresh reference library' : status.jobId === null ? 'Prepare references' : 'Refresh reference library'}</button></p>{drafted && <p className={styles.photoHelp}>This discards only your unsaved variant choice. Your saved variant and grading work stay unchanged.</p>}</div>}
     {error && <p className={styles.error} role="alert">{error}</p>}{(!status || stateText || error || reloadNeeded || pending) && <button type="button" disabled={busy} onClick={() => void check()}>Check saved matches</button>}
     {comparison && <Comparison photo={photograph.url} reference={variantReference(comparison, cardId, { artwork: false, result: status?.result })} candidate={comparison} side={side} onClose={() => { setComparison(null); comparisonOpener.current?.focus(); }}/>}
   </section>;

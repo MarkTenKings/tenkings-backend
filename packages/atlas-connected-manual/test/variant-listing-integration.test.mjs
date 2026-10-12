@@ -6,7 +6,8 @@ import {createVariantCatalogService} from '../src/variant-catalog.mjs';
 import {createVariantListingProvider,prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
 import {importScrydexVariantCandidates,scrydexVariantSearchUrl} from '@tenkings/card-catalog-evidence';
 import {createVariantReviewService} from '../src/variant-service.mjs';
-import {codexChoices,codexReadingKey} from '../src/variant-codex.mjs';
+import {codexChoices,codexReadingKey,reassociateCodexReading,projectCodexReading,validateVariantReferenceLabels} from '../src/variant-codex.mjs';
+import {variantSelectedIdentity} from '../src/variant-job-store.mjs';
 import {VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from '../src/variant-photo-provider.mjs';
 
 const identity={category:'POKEMON',name:'Mewtwo',year:'2016',setName:'Evolutions',cardNumber:'051/108',manufacturer:null,language:'en'};
@@ -84,4 +85,54 @@ test('official sports metadata bypasses alternate acquisition and searches every
  const executeListingSource=async(request,_dispatch,{retainedOnly=false}={})=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};if(retainedOnly)return {state:'MISSING'};const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});const source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};};
  const first=await service.prepare({identity:target},{executeListingSource}),second=await service.prepare({identity:target},{executeListingSource});
  assert.equal(journal.size,9);assert.equal(first.candidates.length,9);assert.deepEqual(first,second);assert(first.candidates.every(c=>c.images.length===0&&c.source.provider==='manufacturer_checklist'));
+});
+
+
+test('unknown year prepares manufacturer-backed reference searches before confirmation and reuses known-year journals',async()=>{
+ const target={category:'SPORTS',name:'LaMelo Ball',year:null,setName:'Topps Chrome — Ball of Duty',cardNumber:'BD-13',manufacturer:'Topps',language:null};
+ const original=structuredClone(target),journal=new Map(),calls=[];
+ const provider=createVariantListingProvider({fetchImpl:noNetwork,now});
+ const service=createVariantCatalogService({listingProvider:provider,now,catalogClient:{findCurrentSetCatalogPublications:noNetwork}});
+ const executeListingSource=async(request,_dispatch,{retainedOnly=false}={})=>{
+  calls.push({request,retainedOnly});if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};
+  if(retainedOnly)return {state:'MISSING'};
+  const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});
+  const source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};
+ };
+ const first=await service.prepare({identity:target},{executeListingSource});
+ assert.equal(target.year,null);assert.equal(first.candidates.length,1);assert.equal(first.candidates[0].identity.year,'2025-26');
+ assert.equal(calls.length,2);assert.equal(journal.size,1);assert.equal(calls[0].request.identity.year,'2025-26');
+ const known={...target,year:'2025-26'},ordinary=prepareVariantListingRequest(known,{name:'BALL OF DUTY',language:null},{graded:true});
+ assert.equal(calls[0].request.requestKey,ordinary.requestKey);assert.deepEqual(target,original);
+ await service.prepare({identity:known,generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});
+ assert.equal(journal.size,1);assert.equal(calls.filter(c=>!c.retainedOnly).length,1);
+ assert(calls.every(c=>!Object.hasOwn(c.request,'generation')));
+});
+
+
+test('unknown-year photos and literal Codex readings retain source-year printing keys through human selection',async()=>{
+ const identity={category:'SPORTS',name:'LaMelo Ball',year:null,setName:'Topps Chrome — Ball of Duty',cardNumber:'BD-13',manufacturer:'Topps',language:null};
+ const bytes=await sharp({create:{width:12,height:16,channels:3,background:'#927024'}}).png().toBuffer(),entries=new Map(),journal=new Map();let listingCalls=0,imageCalls=0;
+ const cache={get:async k=>entries.get(k),getRetained:async k=>entries.get(k),put:async(k,v)=>entries.set(k,structuredClone(v))};
+ const provider=createVariantListingProvider({cache,now,fetchImpl:async url=>{assert.match(url,/^https:\/\/i\.ebayimg\.com\//);imageCalls++;return new Response(bytes,{headers:{'content-type':'image/png'}});}});
+ const executeListingSource=async(request,_dispatch,{retainedOnly=false}={})=>{
+  if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};
+  if(retainedOnly)return {state:'MISSING'};
+  listingCalls++;const body=JSON.parse(responseFor(request).bodyText);body.items[0].title='2025-26 Topps Chrome LaMelo Ball BD-13 Ball of Duty PSA 9';
+  const bodyText=JSON.stringify(body),source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};
+ };
+ const service=createVariantCatalogService({listingProvider:provider,cache,now}),first=await service.prepare({identity},{executeListingSource});
+ assert.equal(first.referencePhotos.length,1);const image=first.referencePhotos[0],choice=codexChoices(first)[0];assert.equal(choice.identity.year,'2025-26');
+ const reading={sha256:image.sha256,candidateKey:null,gradingCompany:'PSA',labelText:'2025-26\nTopps Chrome\nLaMelo Ball\nBD-13\nBALL OF DUTY',reason:'Retained literal slab label'};
+ const matched=reassociateCodexReading(reading,first,[]);assert.equal(matched.candidateKey,choice.key);
+ const projected=projectCodexReading(reading,first,[]);assert.equal(projected.candidateId,first.candidates[0].candidateId);
+ validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',catalogHash:first.snapshotHash,readings:[projected]},first);
+ entries.set(codexReadingKey({policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL},image.sha256),{schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices:[],catalogContext:[],reading});
+ const card={draft:{identity:{playerName:identity.name,year:null,manufacturer:identity.manufacturer,productSet:identity.setName,cardNumber:identity.cardNumber,parallel:null,insert:null}}};
+ const selected=variantSelectedIdentity(card,{decision:'SELECTED',candidateId:first.candidates[0].candidateId},{catalog:first});assert.equal(selected.year,'2025-26');assert.equal(card.draft.identity.year,null);
+ const restarted=createVariantCatalogService({listingProvider:createVariantListingProvider({cache,now,fetchImpl:noNetwork}),cache,now});
+ const again=await restarted.prepare({identity:{...identity,year:selected.year},generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});
+ assert.equal(codexChoices(again)[0].key,choice.key);assert.equal(again.referencePhotos.length,1);assert.equal(again.referencePhotos[0].sha256,image.sha256);
+ const reprojected=projectCodexReading(reading,again,[]);assert.equal(reprojected.canonicalPrintingKey,choice.key);assert.equal(reprojected.candidateId,again.candidates[0].candidateId);
+ assert.equal(listingCalls,1);assert.equal(imageCalls,1);assert.equal(journal.size,1);assert.equal(identity.year,null);
 });

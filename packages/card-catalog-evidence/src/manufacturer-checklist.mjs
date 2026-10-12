@@ -157,7 +157,7 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       signal?.throwIfAborted();
       const identity = normalizeVariantIdentity(input), empty = { candidates: [], problems: [], truncated: false };
       if (identity.category !== 'SPORTS') return empty;
-      if (!identity.name || !identity.year || !identity.setName || !identity.cardNumber || !identity.manufacturer)
+      if (!identity.name || !identity.setName || !identity.cardNumber || !identity.manufacturer)
         return { ...empty, problems: ['IDENTITY_INCOMPLETE'] };
       const archive = await load(); signal?.throwIfAborted();
       const { sources, index, cell } = archive;
@@ -178,6 +178,9 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       function reviewableRows(rows, readCell) {
         const numbered = rows.filter(row => compareVariantCardNumber(identity.cardNumber, readCell(row,2)) === 'match');
         if (numbered.length) return numbered;
+        // Without a year, only an exact printed number can establish a
+        // source-backed candidate. The numeric insert fallback needs a year.
+        if (!identity.year) return [];
         // Some manufacturer inserts list a numeric checklist position while
         // the physical card prints a letter code. Show the explicit variants
         // for one athlete/insert/number; never turn those numbers into aliases
@@ -210,7 +213,27 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
         if (seasons.size !== 1) return { ...empty, problems: seasons.size ? ['PROVIDER_NOT_SUPPORTED'] : [] };
         lookupYear = [...seasons][0];
       }
-      let rows = await matchingRows(lookupYear), seasonFallback = false;
+      let rows = [], seasonFallback = false;
+      if (!identity.year) {
+        // Discover candidate years from explicit sources, never from a date
+        // pivot or player career. Read matching shards sequentially under the
+        // caller's cancellation/deadline and retain competing years.
+        const scoped = sources.map((source, sourceIndex) => ({ source, sourceIndex }))
+          .filter(({ source }) => matchesProduct(source))
+          .sort((a, b) => checklistYear(b.source.year).localeCompare(checklistYear(a.source.year)) || a.source.sha256.localeCompare(b.source.sha256));
+        for (const { source, sourceIndex } of scoped) {
+          signal?.throwIfAborted();
+          const key = `${checklistYear(source.year)}|${athlete}`;
+          if (archive.kind === 'rows') {
+            rows.push(...(index.get(key) ?? []).filter(row => row[0] === sourceIndex && matchesSubset(row, cell)));
+          } else {
+            const shard = await rowsFor(source); signal?.throwIfAborted();
+            rows.push(...(shard.index.get(key) ?? []).filter(row => matchesSubset(row, shard.cell))
+              .map(row => [sourceIndex, ...row.slice(1).map((_, i) => shard.cell(row, i + 1))]));
+          }
+        }
+        rows = reviewableRows(rows, cell);
+      } else rows = await matchingRows(lookupYear);
       // A bare starting year is a constrained lookup alias for basketball
       // only. An explicit season never falls back, and exact-year rows win.
       if (!rows.length && /^\d{4}$/.test(identity.year)) {
@@ -226,19 +249,21 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       const candidates = [], seen = new Set();
       for (const row of rows) {
         const source = sources[row[0]];
-        const parallel = cell(row,1), key = norm(parallel);
+        const parallel = cell(row,1), key = identity.year ? norm(parallel)
+          : canonical([checklistYear(source.year), productName(source.setName, source.manufacturer), norm(parallel)]);
         const numberDiffers = compareVariantCardNumber(identity.cardNumber, cell(row,2)) !== 'match';
         if (seen.has(key)) continue;
         seen.add(key);
-        const candidate = { authority: 'provider_candidate', label: parallel, identity,
+        const candidate = { authority: 'provider_candidate', label: parallel, identity: identity.year ? identity : { ...identity, year: source.year },
           parallel, canonical: null, applicability: 'unknown',
-          diagnostics: [...(seasonFallback ? [{ id: 'manufacturer-checklist-season',
+          diagnostics: [...(!identity.year ? [{ id: 'manufacturer-checklist-year',
+            description: `Official checklist year: ${source.year}. The saved year is unknown; confirm this source-backed identity. Source locator: ${cell(row,4)}.` }] : []), ...(seasonFallback ? [{ id: 'manufacturer-checklist-season',
             description: `Official checklist season: ${source.year}. Requested starting year: ${identity.year}. Source locator: ${cell(row,4)}.` }] : []),
             ...(numberDiffers ? [{ id: 'manufacturer-checklist-number',
               description: `Manufacturer checklist number: ${cell(row,2)}. Photographed card number: ${identity.cardNumber}. Same set, player and insert; confirm the physical printing. Source locator: ${cell(row,4)}.` }] : [])], images: [],
           source: { provider: 'manufacturer_checklist', recordId: `manufacturer-row:v1:${digest([source.sha256, row.slice(1).map((_,i) => cell(row,i+1))])}`,
             url: source.url, sha256: source.sha256, references: [] },
-          warnings: ['APPLICABILITY_UNCONFIRMED', 'REFERENCE_IMAGE_MISSING', ...(numberDiffers ? ['SCOPE_UNCONFIRMED'] : [])] };
+          warnings: ['APPLICABILITY_UNCONFIRMED', 'REFERENCE_IMAGE_MISSING', ...(numberDiffers || !identity.year ? ['SCOPE_UNCONFIRMED'] : [])] };
         candidates.push(validateVariantCandidate({ ...candidate, candidateId: variantCandidateId(candidate) }));
       }
       candidates.sort((a,b) => Number(!/^(base|rookie|rated rookies?)( cards? [ivx]+)?$/i.test(a.label)) - Number(!/^(base|rookie|rated rookies?)( cards? [ivx]+)?$/i.test(b.label)) || a.label.localeCompare(b.label));

@@ -93,3 +93,20 @@ test('Pokémon uses configured Scrydex only: no shared demand or secondary metad
  const service=createVariantCatalogService({catalogClient:{findCurrentSetCatalogPublications:fail,prepareSetDemand:fail},fetchImpl:fail,now});
  const result=await service.prepare({identity:clientFixture('POKEMON').identity});assert.equal(calls,0);assert.equal(result.candidates.length,0);
 });
+
+
+test('unknown sports year searches published evidence without adopting its year or dispatching an unsupported listing',async()=>{
+ const f=clientFixture(),identity={...f.identity,year:null},original=structuredClone(identity);
+ const service=createVariantCatalogService({catalogClient:f.client,providers:[],now,
+  listingProvider:{fetchSource:()=>assert.fail('published candidates alone do not authorize another listing identity')}});
+ const result=await service.prepare({identity},{executeListingSource:()=>assert.fail('no manufacturer row authorizes a listing year')});
+ assert.ok(result.candidates.length>0);assert.equal(identity.year,null);assert.deepEqual(identity,original);
+ assert.ok(f.calls.filter(([kind])=>['discover','lookup'].includes(kind)).every(([,value])=>!Object.hasOwn(value.query,'year')));
+ assert.ok(result.candidates.every(c=>c.identity.year===f.manifest.set.year));assert(!result.problems.includes('IDENTITY_INCOMPLETE'));
+});
+test('unknown Pokémon year never falls through to secondary shared metadata',async()=>{
+ const noCall=()=>assert.fail('incomplete Pokémon identity must stay within its existing provider contract');
+ const result=await createVariantCatalogService({catalogClient:{findCurrentSetCatalogPublications:noCall},providers:[{prepare:noCall}],now})
+  .prepare({identity:{...clientFixture('POKEMON').identity,year:null}});
+ assert(result.problems.includes('IDENTITY_INCOMPLETE'));
+});
