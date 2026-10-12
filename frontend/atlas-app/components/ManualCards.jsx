@@ -42,10 +42,11 @@ function detailErrors(details,changes){
     :{cardName:f.name,year:f.year,productSet:f.set_name,parallel:value.parallel,cardNumber:f.card_number,layoutType:value.layoutType});return {};}
   catch(error){return Object.fromEntries(Object.entries(error.fields??{identity:'Complete the required card details.'}).map(([key,message])=>[({playerName:'name',cardName:'name',productSet:'set_name',cardNumber:'card_number'})[key]??key,message]));}
 }
-export default function ManualCards({staff,cardId=null,embedded=false,reviewSession,onBusyChange,onQueued}){
+export default function ManualCards({staff,cardId=null,embedded=false,reviewSession,onBusyChange,onQueued,onNameChange}){
   const router=useRouter(),client=useRef(null),session=useRef(null),auto=useRef(new Set()),generation=useRef(0);
   const savedRef=useRef(null),changesRef=useRef({}),activity=useRef(null),uploadLocks=useRef({}),reads=useRef({next:0,applied:0}),pendingRead=useRef(0);
   const [cards,setCards]=useState([]),[saved,setSaved]=useState(null),[pending,setPending]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(''),[screen,setScreen]=useState('intake');
+  useEffect(()=>{if(saved?.details?.sourceHash===saved?.card?.sourceHash&&saved?.details?.fields?.name)onNameChange?.(saved.details.fields.name);},[saved?.details?.sourceHash,saved?.card?.sourceHash,saved?.details?.fields?.name,onNameChange]);
   const [identifying,setIdentifying]=useState(false),[changes,setChanges]=useState({}),[localReady,setLocalReady]=useState(false);
   const [commandPending,setCommandPending]=useState(null);
   const [geometryEntrySide,setGeometryEntrySide]=useState(null);
@@ -287,7 +288,7 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
       <div className="mc-section-title"><h2>Your cards</h2><span>{cards.length}{nextCursor?'+':''} in this view</span></div>
       <div className="mc-card-list">{cards.map(card=><Link href={`/manual/${card.cardId}`} key={card.cardId}><span className="mc-card-monogram" aria-hidden="true">A<span>↗</span></span><strong>{card.label||'Untitled card'}</strong><span className="mc-card-photostatus"><i data-ready={Boolean(card.sides.FRONT.upload?.source)}>Front {card.sides.FRONT.upload?.source?'ready':'needed'}</i><i data-ready={Boolean(card.sides.BACK.upload?.source)}>Back {card.sides.BACK.upload?.source?'ready':'needed'}</i></span><small>{new Date(card.createdAt).toLocaleString()}</small></Link>)}{localReady&&!cards.length&&<div className="mc-empty-collection"><span aria-hidden="true">✧</span><h3>Your next discovery starts here.</h3><p>Add Front and Back photos to the queue. ATLAS starts preparing and grading each card automatically.</p></div>}</div>
       {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
-    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:workspaceBusy,onExit:()=>router.push('/manual')})}><ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} reviewSession={reviewSession} onBusyChange={workspaceBusyChanged} onQueued={onQueued} initialGeometrySide={geometryEntrySide} onPhotos={()=>{setScreen('intake');setGeometryEntrySide(null);perform(()=>refresh(),'Loading saved photos…');}}/></WorkspaceShell>:<>
+    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:workspaceBusy,onExit:()=>router.push('/manual')})}><ManualWorkspace key={`${staff.id}:${cardId}`} onNameChange={onNameChange} staff={staff} cardId={cardId} csrf={session.current.csrf} reviewSession={reviewSession} onBusyChange={workspaceBusyChanged} onQueued={onQueued} initialGeometrySide={geometryEntrySide} onPhotos={()=>{setScreen('intake');setGeometryEntrySide(null);perform(()=>refresh(),'Loading saved photos…');}}/></WorkspaceShell>:<>
       <header className="mc-heading"><div><Link className="mc-back" href="/manual">← All cards</Link>{staff.role==='REVIEWER'&&<button className="mc-delete-card" disabled={Boolean(busy)||uploading} onClick={()=>void removeCards(cardId)}>Delete this card</button>}<p className="mc-kicker">01 / PHOTOGRAPHS &amp; IDENTITY</p><h1>{saved.card.label||'New card'}</h1><p>Choose the original Front and Back photographs. Edge detection starts automatically as each photo becomes ready.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
       <ol className="mc-journey" aria-label="Grading journey"><li aria-current="step"><b>01</b><span>Capture<small>Original photographs</small></span></li><li><b>02</b><span>Measure<small>Edges &amp; centering</small></span></li><li><b>03</b><span>Inspect<small>Every finding</small></span></li><li><b>04</b><span>Explain<small>The final report</small></span></li></ol>
       {geometryError&&<div className="mc-notice" role="status">Geometry status could not be refreshed. {geometryError} <button onClick={()=>perform(()=>refresh(),'Checking geometry…')}>Refresh geometry status</button></div>}
@@ -336,7 +337,7 @@ function finalFindingsAvailable(view){
   }));
 }
 
-export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusyChange,onQueued,initialGeometrySide=null,initialInspection=null,initialReviewStage=null}){
+export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusyChange,onQueued,initialGeometrySide=null,initialInspection=null,initialReviewStage=null,onNameChange}){
   const imageScope=useRef('all');
   const [errorRecovery,setErrorRecovery]=useState(null);
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
@@ -351,6 +352,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
   const [publishing,setPublishing]=useState(false),[copyStatus,setCopyStatus]=useState('');
   const [variantGate,setVariantGate]=useState(null),[variantActivity,setVariantActivity]=useState(false),[showVariantReview,setShowVariantReview]=useState(false),[variantPreviewOnly,setVariantPreviewOnly]=useState(false);
   useEffect(()=>{reviewStage.current?.closest('[data-review-scroll]')?.scrollTo({top:0,left:0});},[cardId,screen,rapidSide,findingsSide,showVariantReview,Boolean(view)]);
+  useEffect(()=>{const name=view?.identity?.playerName||view?.identity?.cardName;if(name)onNameChange?.(name);},[view?.identity?.playerName,view?.identity?.cardName,onNameChange]);
   const variantScope=view?`${view.card.draft?.source?.sourceHash}:${view.card.draft?.identityRevision}:${view.card.revision}`:'';
   const variantRequired=view?.variantVerification?.enabled===true;
   const variantActivityChanged=useCallback(value=>{interaction.current.variant=value;setVariantActivity(value);},[]);
@@ -523,6 +525,13 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
   }
   useEffect(()=>{if(!editing&&!identity)return;const warn=event=>{event.preventDefault();event.returnValue='';};const block=()=>{router.events.emit('routeChangeError');throw 'Save or discard the current edit before leaving';};window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};},[editing,identity,router]);
   const execute=(action,options)=>client.current.execute(action,options);
+  async function requestAnalysis(mode='start'){
+    const owner=analysisClient.current,current=viewRef.current;
+    if(!owner||!current?.defects||navigationBlocked()||staff.role!=='REVIEWER')return;
+    // Analysis adds suggestions only. It never replaces findings or pauses review.
+    const input={base:Object.fromEntries(['FRONT','BACK'].map(side=>[side,defectBase(current.defects,side)]))};
+    return mode==='resume'?owner.resume():mode==='replace'?owner.replace(input):owner.start(input);
+  }
   async function openReport(){
     const owner=client.current,editingRevision=interaction.current.editingRevision??0;if(!owner||owner.hasPending())return;
     setLoadingReport(true);
@@ -686,6 +695,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
       findingId={rapidSelection?.side===findingsSide?rapidSelection.id:null} onSelectFinding={finding=>setRapidSelection(finding?{side:findingsSide,id:finding.id}:null)}
       readOnly={readOnly} disabled={rapidSaving||savePending||approving||loadingReport} onReadyChange={setReportImagesReady} workspace={view.defects} images={view.images} astra={view.astra}
       onEditingChange={changeEditing}
+      onAnalyzeDefects={()=>requestAnalysis()} onRefreshAnalysis={()=>analysisClient.current?.refresh()} onResumeAnalysis={()=>requestAnalysis('resume')} onReplaceAnalysis={()=>requestAnalysis('replace')}
       onEdit={editDefect} onRetry={side=>execute({type:'MEASURE_SIDE',side})} onDiscardPending={({side,base})=>execute({type:'DISCARD_PENDING',side,base})}
       onReviewProposal={async input=>{const owner=client.current;const saved=await owner.reviewProposal(input);if(client.current!==owner)throw {code:'MANUAL_REVISION_CONFLICT'};return input.action==='REJECT'?saved:owner.execute({type:'MEASURE_SIDE',side:input.side});}}
       renderEditActions={(children,side)=><RapidEditDock side={side}>{children}</RapidEditDock>}

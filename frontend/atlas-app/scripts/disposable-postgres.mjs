@@ -58,15 +58,18 @@ export function verifyDisposableDocker(container, { id, nonce, port, remote = fa
 }
 
 /** Accepts binaries or a pinned owned container, never an existing database/data directory. */
-export async function disposablePostgres(args, { beforeUpgradeFrom48, beforeUpgradeFrom78, afterUpgradeTo79, beforeUpgradeFrom79, afterUpgradeTo80 } = {}) {
+export async function disposablePostgres(args, { beforeUpgradeFrom48, beforeUpgradeFrom78, afterUpgradeTo79, beforeUpgradeFrom79, afterUpgradeTo80, beforeUpgradeFrom80, afterUpgradeTo81 } = {}) {
     assert(beforeUpgradeFrom48 === undefined || typeof beforeUpgradeFrom48 === 'function', 'Upgrade rehearsal requires an explicit fixture callback');
     assert(beforeUpgradeFrom78 === undefined || typeof beforeUpgradeFrom78 === 'function');
     assert(afterUpgradeTo79 === undefined || typeof afterUpgradeTo79 === 'function');
     assert(beforeUpgradeFrom79 === undefined || typeof beforeUpgradeFrom79 === 'function');
     assert(afterUpgradeTo80 === undefined || typeof afterUpgradeTo80 === 'function');
-    assert([beforeUpgradeFrom48, beforeUpgradeFrom78, beforeUpgradeFrom79].filter(Boolean).length <= 1);
+    assert(beforeUpgradeFrom80 === undefined || typeof beforeUpgradeFrom80 === 'function');
+    assert(afterUpgradeTo81 === undefined || typeof afterUpgradeTo81 === 'function');
+    assert([beforeUpgradeFrom48, beforeUpgradeFrom78, beforeUpgradeFrom79, beforeUpgradeFrom80].filter(Boolean).length <= 1);
     assert(!afterUpgradeTo79 || beforeUpgradeFrom78);
     assert(!afterUpgradeTo80 || beforeUpgradeFrom79);
+    assert(!afterUpgradeTo81 || beforeUpgradeFrom80);
     const seen = new Set();
     for (let i = 0; i < args.length; i++) {
         assert(!seen.has(args[i]), 'Duplicate disposable fixture argument'); seen.add(args[i]);
@@ -252,9 +255,13 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48, beforeUpgr
             await sql(customerGrantSQL(customerRole), [], 'atlas_fixture_template');
         };
         let upgradeLedger;
-        const upgradeCount = beforeUpgradeFrom79 ? 79 : beforeUpgradeFrom78 ? 78 : 48;
-        if (beforeUpgradeFrom48 || beforeUpgradeFrom78 || beforeUpgradeFrom79) {
-            if (beforeUpgradeFrom79) {
+        const upgradeCount = beforeUpgradeFrom80 ? 80 : beforeUpgradeFrom79 ? 79 : beforeUpgradeFrom78 ? 78 : 48;
+        if (beforeUpgradeFrom48 || beforeUpgradeFrom78 || beforeUpgradeFrom79 || beforeUpgradeFrom80) {
+            if (beforeUpgradeFrom80) {
+                assert.equal(source.staffMigrations.length, 81);
+                assert.equal(source.staffMigrations[79]?.name, '20261011010000_atlas_variant_human_confirmation');
+                assert.equal(source.staffMigrations[80]?.name, '20261012173000_batch_transient_analysis_retry');
+            } else if (beforeUpgradeFrom79) {
                 assert.equal(source.staffMigrations.length, 80);
                 assert.equal(source.staffMigrations[78]?.name, '20261010003000_atlas_visual_variant_review');
                 assert.equal(source.staffMigrations[79]?.name, '20261011010000_atlas_variant_human_confirmation');
@@ -288,7 +295,7 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48, beforeUpgr
             }
             await createServingRoles();
             writeFileSync(join(directory, `upgrade-through-${upgradeCount}-ledger.json`), JSON.stringify(upgradeLedger, null, 2));
-            await (beforeUpgradeFrom79 ?? beforeUpgradeFrom78 ?? beforeUpgradeFrom48)({ directory, source, name: 'atlas_fixture_template', customerRole,
+            await (beforeUpgradeFrom80 ?? beforeUpgradeFrom79 ?? beforeUpgradeFrom78 ?? beforeUpgradeFrom48)({ directory, source, name: 'atlas_fixture_template', customerRole,
                 customerUrl: url('atlas_fixture_template', 'customer', 'atlas_customer'), adminUrl: url('atlas_fixture_template'),
                 staffUrl: url('atlas_fixture_template', true), operationsUrl: url('atlas_fixture_template', 'operations'),
                 sql: (query, values = []) => sql(query, values, 'atlas_fixture_template') });
@@ -314,9 +321,10 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48, beforeUpgr
         // Upgrade acceptance must rely on migration49's existing ACL transfer;
         // regranting here would conceal a broken upgrade path. All existing
         // serving grants precede its snapshot, including the legacy staff path.
-        if (!beforeUpgradeFrom48 && !beforeUpgradeFrom78 && !beforeUpgradeFrom79) await createServingRoles();
+        if (!beforeUpgradeFrom48 && !beforeUpgradeFrom78 && !beforeUpgradeFrom79 && !beforeUpgradeFrom80) await createServingRoles();
         if (afterUpgradeTo79) await afterUpgradeTo79({ directory, source, sql:(query,values=[])=>sql(query,values,'atlas_fixture_template') });
         if (afterUpgradeTo80) await afterUpgradeTo80({ directory, source, sql:(query,values=[])=>sql(query,values,'atlas_fixture_template') });
+        if (afterUpgradeTo81) await afterUpgradeTo81({ directory, source, sql:(query,values=[])=>sql(query,values,'atlas_fixture_template') });
         let serial = 0; const released = [];
         return { directory, source, sql, url, role, safe, stop,
             async database() {

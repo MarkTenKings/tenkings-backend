@@ -1,5 +1,5 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { BATCH_POLICY, BATCH_STAGES, BATCH_RATE_LIMIT_RETRIES, batchAnalysisActionId, parseBatchInput } from './index.mjs';
+import { BATCH_POLICY, BATCH_STAGES, BATCH_RATE_LIMIT_RETRIES, BATCH_ANALYSIS_RETRY_HTTP_STATUSES, batchAnalysisActionId, parseBatchInput } from './index.mjs';
 
 function admission(card) {
   const key = digest(canonical([BATCH_POLICY, card.cardId, card.sourceHash]));
@@ -37,16 +37,16 @@ const readyReceipt = `EXISTS(SELECT 1 FROM atlas_defect_analysis.run r
   JOIN atlas_defect_analysis.receipt p ON p.analysis_id=r.id AND p.kind='RESPONSE'
   WHERE r.card_id=j.card_id AND r.action_id=j.analysis_action_id AND r.actor_id=j.actor_id
     AND p.evidence::jsonb->>'state'='READY')`;
-const rateLimitReceipt = `EXISTS(SELECT 1 FROM atlas_defect_analysis.run r
+const retryableRefusalReceipt = `EXISTS(SELECT 1 FROM atlas_defect_analysis.run r
   JOIN atlas_defect_analysis.receipt p ON p.analysis_id=r.id AND p.kind='RESPONSE'
   WHERE r.card_id=j.card_id AND r.action_id=j.analysis_action_id AND r.actor_id=j.actor_id
-    AND p.evidence::jsonb->>'state'='REFUSED' AND p.evidence::jsonb->>'httpStatus'='429'
+    AND p.evidence::jsonb->>'state'='REFUSED' AND p.evidence::jsonb->>'httpStatus' IN (${BATCH_ANALYSIS_RETRY_HTTP_STATUSES.map(status => `'${status}'`).join(',')})
     AND p.evidence::jsonb->>'code'='DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR'
     AND p.evidence::jsonb->>'responseId' IS NULL
     AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.provider_event e WHERE e.analysis_id=r.id AND e.kind='ACCEPTED'))`;
 const recoverableReceipt = `(j.state='NEEDS_ATTENTION' AND j.stage='ANALYZE'
   AND j.code NOT IN ('BATCH_HUMAN_WORK_PRESENT','BATCH_MANUAL_DRAFT_CHANGED','BATCH_PHOTOS_CHANGED','BATCH_ACCESS_CHANGED','INTAKE_CARD_DELETED')
-  AND (${readyReceipt} OR (j.analysis_attempt<${BATCH_RATE_LIMIT_RETRIES} AND ${rateLimitReceipt}))
+  AND (${readyReceipt} OR (j.analysis_attempt<${BATCH_RATE_LIMIT_RETRIES} AND ${retryableRefusalReceipt}))
   AND EXISTS(SELECT 1 FROM atlas_manual.card m WHERE m.id=j.card_id AND m.owner_id=j.actor_id
     AND m.content_hash=j.evidence::jsonb->>'manualContentHash'
     AND m.revision::text=j.evidence::jsonb->>'manualRevision')
@@ -290,7 +290,7 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         const nextEvidence = { ...old.evidence, ...(outcome.evidence ?? {}) };
         if (outcome.kind === 'RETRY_ANALYSIS') {
           requireThat(stage === 'ANALYZE' && analysisAttempt < BATCH_RATE_LIMIT_RETRIES, 409, 'BATCH_RATE_LIMIT_RETRY_EXHAUSTED');
-          const [refusal] = await tx.$queryRawUnsafe(`SELECT ${rateLimitReceipt} AS eligible
+          const [refusal] = await tx.$queryRawUnsafe(`SELECT ${retryableRefusalReceipt} AS eligible
             FROM atlas_manual_connected.batch_grading j WHERE j.key=$1`, job.key);
           requireThat(refusal?.eligible, 409, 'BATCH_RATE_LIMIT_RETRY_UNPROVEN');
           nextEvidence.analysisActions = [...(old.evidence.analysisActions ?? []), old.analysisActionId];

@@ -26,7 +26,7 @@ export function astraReviewState(workspace, astra) {
   if (status === 'READY' && !['FRONT', 'BACK'].every(side => proposalFrameMatches(workspace, astra, side))) status = 'STALE';
   const message = {
     IDLE: astra.requestAvailable === false ? 'ATLAS is unavailable for a new analysis. Saved findings and manual review remain available.'
-      : 'Let ATLAS inspect both sides first, then review and correct its findings.',
+      : 'AI inspection has not run. You can start it or review the card manually.',
     RUNNING: astra.backgroundAccepted ? 'ATLAS has accepted the card for analysis. Findings will appear here when ready; this can take several minutes.'
       : 'Sending the card to ATLAS for its initial inspection…',
     UNKNOWN: astra.backgroundAccepted ? astra.collectionStopped
@@ -35,11 +35,11 @@ export function astraReviewState(workspace, astra) {
       : astra.replacement && astra.requestAvailable !== false ? 'The earlier analysis returned no result. You can explicitly start a new analysis using the saved photos.'
         : 'No analysis result has been received. Check the saved request status.',
     REFUSED: astra.followLatest ? 'This request was not sent. Check the current saved analysis to continue.'
-      : 'ATLAS could not analyze these images. Manual inspection and tracing remain available.',
+      : astra.code === 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR' ? `AI inspection failed${Number.isInteger(astra.httpStatus) ? ` (provider error ${astra.httpStatus})` : ''}; no AI result was returned. Retry or continue manual review.` : 'AI inspection did not complete. Retry or continue manual review.',
     FAILED: 'The analysis did not finish. You can try again or continue manual review.',
     READY: astra.proposals?.length ? 'Review both sides and correct or reject suggestions as needed. Confirm findings accepts the remaining displayed suggestions together.'
       : 'ATLAS returned no suggestions. Inspect both sides before confirming your findings.',
-    STALE: 'These suggestions belong to an earlier image or card outline. Run a new analysis to use current evidence.',
+    STALE: 'The card outline changed since AI inspection. You can retry it or continue reviewing your saved findings.',
   }[status];
   return { enabled: true, status, message, mayRequest: astra.requestAvailable !== false && !['RUNNING', 'UNKNOWN'].includes(status) && !astra.followLatest };
 }

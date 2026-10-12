@@ -223,6 +223,38 @@ for (const status of ['READY', 'RUNNING', 'UNKNOWN', 'REFUSED', 'PREPARED', 'NOT
   if(status === 'REFUSED'){assert.equal(result.code,'DEFECT_ANALYSIS_OUTSIDE_CARD');assert.deepEqual(result.evidence,{analysisStatus:'REFUSED',analysisHttpStatus:200});}
 });
 
+test('definite transient refusals request only bounded successors; uncertain, accepted and edited work never does', async () => {
+  for (const variant of [429, 500, 502, 503, 504].flatMap(httpStatus => [0, 2, 3].map(analysisAttempt => ({ httpStatus, analysisAttempt })))
+    .concat([{ httpStatus: 500, state: 'UNKNOWN' }, { httpStatus: 503, backgroundAccepted: true },
+      { httpStatus: 500, unproven: true }, { httpStatus: 500, humanEdited: true }])) {
+    const f = fixture(), uploads = { FRONT: 'front', BACK: 'back' }, before = structuredClone(f.state);
+    const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage: 'ANALYZE',
+      analysisAttempt: variant.analysisAttempt ?? 0, analysisActionId: 'same-retained-analysis',
+      evidence: { manualRevision: f.card.revision, manualContentHash: f.card.contentHash } };
+    let reads = 0, dispatches = 0;
+    if (variant.humanEdited) f.card = { ...f.card, revision: f.card.revision + 1 };
+    const connected = { open: async () => ({ card: { ready: true, sourceHash: job.sourceHash,
+      sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) } }),
+      workflow: { service: { read: async () => f.card }, hydrate: async () => f.state },
+      assistance: { async status(_staff, cardId, actionId) {
+        reads++; assert.equal(cardId, job.cardId); assert.equal(actionId, job.analysisActionId);
+        return { state: variant.state ?? 'REFUSED', astra: { status: variant.state ?? 'REFUSED',
+          code: 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR', httpStatus: variant.httpStatus,
+          ...(variant.backgroundAccepted ? { backgroundAccepted: true } : {}),
+          ...(!variant.unproven ? variant.httpStatus === 429 ? { rateLimited: true } : { transientProviderFailure: true } : {}) } };
+      }, async analyzeMachine() { dispatches++; throw Error('A retained refusal must not dispatch again'); } } };
+    const work = createBatchPreparation({ connected }).run({}, job);
+    if (variant.humanEdited) { await assert.rejects(work, { code: 'BATCH_MANUAL_DRAFT_CHANGED' }); assert.equal(reads, 0); }
+    else {
+      const outcome = await work, retry = job.analysisAttempt < 3 && !variant.state && !variant.backgroundAccepted && !variant.unproven;
+      assert.equal(outcome.kind, retry ? 'RETRY_ANALYSIS' : 'ATTENTION'); assert.equal(reads, 1);
+      if (retry) assert.equal(outcome.code, variant.httpStatus === 429 ? 'BATCH_PROVIDER_RATE_LIMITED' : 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR');
+      if (job.analysisAttempt === 3) assert.deepEqual(outcome.evidence, { analysisStatus: 'REFUSED', analysisHttpStatus: variant.httpStatus });
+    }
+    assert.equal(dispatches, 0); assert.deepEqual(f.state, before);
+  }
+});
+
 for (const stage of ['PREPARE', 'ANALYZE']) test(`shutdown during real ${stage} preparation reads prevents provider admission and retains the same stage`, async () => {
   const f = fixture(), staff = { id: 'synthetic-staff' }, uploads = { FRONT: 'front', BACK: 'back' };
   const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage,

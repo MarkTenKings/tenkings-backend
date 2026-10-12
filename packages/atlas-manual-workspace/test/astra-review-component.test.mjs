@@ -311,3 +311,32 @@ test('duplicate trace saves are suppressed while the original durable save is in
   const second = save(); assert.equal(await second, false); finish(); await first; f.render();
   assert.equal(f.nodes(n => n.props['aria-label'] === 'Front trace editor').length, 0);
 });
+
+test('provider failure is visible, retry is optional, and review remains usable during retry', async () => {
+  let complete;
+  const state = workspace(false), astra = astraFor(state, 'REFUSED');
+  Object.assign(astra, { code: 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR', httpStatus: 500, proposals: [] });
+  const f = harness({ workspace: state, astra, onAnalyzeDefects: () => new Promise(resolve => { complete = resolve; }),
+    renderReviewActions: options => ({ type: 'button', props: { disabled: options.disabled, children: 'Approve findings' } }) });
+  f.ready();
+  assert.ok(f.has('provider error 500')); assert.ok(f.has('no AI result was returned'));
+  const retry = f.button('Retry AI inspection').props.onClick(); f.render();
+  assert.equal(f.button('Retry AI inspection').props.disabled, true);
+  assert.equal(f.button('Approve findings').props.disabled, false);
+  assert.equal(f.button('Add finding').props.disabled, false);
+  assert.equal(f.button('Back').props.disabled, false);
+  complete(); await retry; f.render();
+  assert.equal(f.button('Retry AI inspection').props.disabled, false);
+});
+
+test('accepted or uncertain requests offer status reads without a new dispatch and never gate review', async () => {
+  for (const status of ['RUNNING', 'UNKNOWN']) {
+    const state = workspace(false), astra = { ...astraFor(state, status), backgroundAccepted: true, proposals: [] };
+    let reads = 0;
+    const f = harness({ workspace: state, astra, onRefreshAnalysis: async () => { reads++; } });
+    f.ready(); await f.click('Check AI status');
+    assert.equal(reads, 1); assert.equal(f.calls.length, 0);
+    assert.equal(f.nodes(n => n.type === 'button' && /Retry AI|Start new AI/.test(text(n))).length, 0);
+    assert.equal(f.button('Add finding').props.disabled, false);
+  }
+});

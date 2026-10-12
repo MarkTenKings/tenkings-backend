@@ -4,6 +4,9 @@ import { safeTransactionDiagnostic } from '@atlas/manual-service/contract';
 export const BATCH_POLICY = 'atlas-astra-batch-v1';
 export const BATCH_STAGES = Object.freeze(['PREPARE', 'ANALYZE', 'REPORT']);
 export const BATCH_RATE_LIMIT_RETRIES = 3;
+// Definite HTTP refusals share the existing durable successor budget. A saved
+// response ID, acceptance, or uncertain transport outcome never qualifies.
+export const BATCH_ANALYSIS_RETRY_HTTP_STATUSES = Object.freeze([429, 500, 502, 503, 504]);
 export function batchError(code, status = 409) { return Object.assign(new Error(code), { code, status }); }
 export function assertBatch(ok, code = 'BATCH_INPUT_INVALID', status = 400) { if (!ok) throw batchError(code, status); }
 export function batchHash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }

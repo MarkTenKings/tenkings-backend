@@ -14,6 +14,8 @@ import {defectBase} from '../src/defect-actions.mjs';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),app=resolve(root,'frontend/atlas-app');
 let adapter=await createRapidPreviewAdapter({pythonExecutable:process.env.ATLAS_FIXTURE_PYTHON});
 const receipts=new Map();
+const analysisFixture=process.env.ATLAS_REVIEW_ANALYSIS==='1';
+let fixtureAnalysis={enabled:true,status:'REFUSED',analysisId:randomUUID(),code:'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR',httpStatus:500,proposals:[]},analysisPosts=0;
 const variants=process.env.ATLAS_REVIEW_VARIANTS==='1',fixtureCardId=randomUUID(),fixtureStaffId=randomUUID();
 const sha=value=>createHash('sha256').update(value).digest('hex'),variantReceipts=new Map(),variantPosts=[],referenceAssets=new Map(),referencePhotos=[];
 let variantScenario='empty',variantRevision=0,variantConfirmation=null,variantParallel=null;
@@ -21,7 +23,7 @@ const fixtureIdentity=()=>({playerName:'Jaxson Dart · SYNTHETIC UI FIXTURE',yea
 const variantIdentityHash=()=>sha(JSON.stringify(fixtureIdentity()));
 const variantCandidates=()=>variantScenario==='empty'?[]:[{candidateId:'fixture-no-photo',label:'Synthetic named printing · no assigned photo',parallel:'Synthetic named printing',identity:{category:'SPORTS',name:fixtureIdentity().playerName,year:'2025',manufacturer:'Panini',setName:fixtureIdentity().productSet,cardNumber:'DTBH-JDT',language:'English'},authority:'provider_candidate',source:{provider:'manufacturer_checklist'},images:[],diagnostics:[],applicability:'unknown'}];
 const variantStatus=()=>({enabled:true,state:'READY',revision:adapter.view().card.revision+variantRevision,sourceHash:adapter.view().card.draft.source.sourceHash,identityRevision:1+variantRevision,identityHash:variantIdentityHash(),jobId:sha('fixture-variant-job'),resultHash:sha('fixture-variant-result'),refreshable:false,confirmation:variantConfirmation,approvalReady:['SELECTED','MANUAL'].includes(variantConfirmation?.decision),result:{catalog:{schemaVersion:'atlas-variant-catalog/v1',snapshotHash:sha('fixture-catalog'),candidates:variantCandidates(),referencePhotos:variantScenario==='gallery'?referencePhotos:[]},referenceLabels:{version:'atlas-slab-label-associations/v1',catalogHash:sha('fixture-catalog'),readings:variantScenario==='gallery'?referencePhotos.map((image,index)=>({imageId:image.imageId,sha256:image.sha256,candidateId:null,gradingCompany:index?'PSA fixture':'CGC fixture',labelText:index?'SYNTHETIC 2025 PIKACHU SNOWFLAKE — layout example':'SYNTHETIC 2024 PIKACHU COSMOS HOLO COSTCO — layout example',reason:'Synthetic saved label remains unassigned to the named printing.'})):[]},suggestion:{candidateId:null}}});
-const fixtureView=()=>{const view=adapter.view();if(!variants)return view;return {...view,identity:fixtureIdentity(),card:{...view.card,id:fixtureCardId,cardId:fixtureCardId,revision:view.card.revision+variantRevision,contentHash:sha(`${view.card.contentHash}:${variantRevision}`),draft:{...view.card.draft,identity:fixtureIdentity(),identityRevision:1+variantRevision}},variantVerification:variantStatus()};};
+const fixtureView=()=>{const view=adapter.view();if(analysisFixture)view.astra=fixtureAnalysis;if(!variants)return view;return {...view,identity:fixtureIdentity(),card:{...view.card,id:fixtureCardId,cardId:fixtureCardId,revision:view.card.revision+variantRevision,contentHash:sha(`${view.card.contentHash}:${variantRevision}`),draft:{...view.card.draft,identity:fixtureIdentity(),identityRevision:1+variantRevision}},variantVerification:variantStatus()};};
 async function prepareVariantScenario(){
  variantRevision=0;variantConfirmation=null;variantParallel=null;variantReceipts.clear();variantPosts.length=0;
  await adapter.execute({type:'CONFIRM_GEOMETRY',reviewed:true,base:Object.fromEntries(['FRONT','BACK'].map(side=>[side,geometryBase(adapter.view().geometry,side,'REVIEW')]))});
@@ -49,6 +51,14 @@ const bundle=await build({logLevel:'error',stdin:{contents:source,resolveDir:app
 const js=bundle.outputFiles.find(file=>file.path.endsWith('.js')).text;
 const css=(await Promise.all(['styles/global.css','styles/grading.css','../../packages/atlas-report-view/src/report.css','../../packages/atlas-manual-workspace/src/workspace.css','../../packages/atlas-manual-workspace/src/defects.css','styles/manual.css','styles/atlas-brand.css','styles/atlas-theme.css','../../packages/atlas-manual-workspace/src/report-review.css','../../packages/atlas-manual-workspace/src/focused-geometry.css'].map(path=>readFile(resolve(app,path),'utf8')))).join('\n')+'\n'+bundle.outputFiles.find(file=>file.path.endsWith('.css')).text;
 const server=createServer(async(q,r)=>{try{
+ if(analysisFixture&&q.url.includes('/defect-analysis')){
+  if(q.method==='POST'){
+   let bytes='';for await(const chunk of q)bytes+=chunk;const input=JSON.parse(bytes);analysisPosts++;
+   fixtureAnalysis={enabled:true,status:'RUNNING',analysisId:input.actionId,base:input.base,backgroundAccepted:true,proposals:[]};
+  }
+  r.writeHead(200,{'content-type':'application/json'});r.end(JSON.stringify({astra:fixtureAnalysis}));return;
+ }
+
  const referenceMatch=/\/variants\/images\/([a-f0-9]{64})$/.exec(q.url);
  if(variants&&referenceMatch){const bytes=referenceAssets.get(referenceMatch[1]);if(!bytes){r.writeHead(404);r.end();return;}r.writeHead(200,{'content-type':'image/png'});r.end(bytes);return;}
  if(variants&&q.url.endsWith('/variants')){r.writeHead(200,{'content-type':'application/json'});r.end(JSON.stringify(variantStatus()));return;}
@@ -69,7 +79,7 @@ const server=createServer(async(q,r)=>{try{
  if(q.url==='/bundle.js'||q.url==='/style.css'){r.setHeader('content-type',q.url==='/bundle.js'?'text/javascript':'text/css');r.end(q.url==='/bundle.js'?js:css);return;}
  if(direct&&q.url?.endsWith('/api/staff/session')){r.setHeader('content-type','application/json');r.end(JSON.stringify({staff:{id:'synthetic'},csrf:'fixture'}));return;}
  if(direct&&q.url?.endsWith('/api/staff/manual-connected/cards/focused-synthetic')){const v=adapter.view();r.setHeader('content-type','application/json');r.end(JSON.stringify({revision:1,card:{cardId:'focused-synthetic',label:'Card 1',ready:true,sourceHash:v.card.contentHash,sides:{FRONT:{version:1},BACK:{version:1}}},manual:{current:true,revision:v.card.revision},identification:{state:'COMPLETE'},details:{sourceHash:v.card.contentHash,profile:'POKEMON',layoutType:'POKEMON',fields:{name:'Synthetic saved identity'}}}));return;}
- if(q.url==='/fixture/state'){r.setHeader('content-type','application/json');r.end(JSON.stringify({view:fixtureView(),actions:adapter.actions(),receipts:receipts.size,variantScenario,variantPosts,variantReceipts:variantReceipts.size,productionCalls:0,providerCalls:0}));return;}
+ if(q.url==='/fixture/state'){r.setHeader('content-type','application/json');r.end(JSON.stringify({view:fixtureView(),actions:adapter.actions(),receipts:receipts.size,variantScenario,variantPosts,analysisPosts,variantReceipts:variantReceipts.size,productionCalls:0,providerCalls:0}));return;}
  if(q.url==='/fixture/reset'||q.url==='/fixture/exclusion'||q.url==='/fixture/observation'||variants&&['/fixture/variant-empty','/fixture/variant-gallery'].includes(q.url)){
   adapter=await createRapidPreviewAdapter({pythonExecutable:process.env.ATLAS_FIXTURE_PYTHON});receipts.clear();
   if(variants){variantScenario=q.url.endsWith('/variant-gallery')?'gallery':'empty';await prepareVariantScenario();}

@@ -705,3 +705,23 @@ test('accepted background analysis uses GET only and a late response cannot repl
  assert.equal(f.defects().workspace.marker,'new-human-trace');assert.equal(f.button('Edit card details').props.disabled,true);
  assert.equal(f.actions.length,0);assert.equal(f.calls.filter(call=>call.options?.method==='POST').length,0);f.dispose();
 });
+
+test('explicit retry after a refused provider call starts one new journaled request without changing human findings', async () => {
+  const previous = '33333333-3333-4333-8333-333333333333';
+  const f = harness({ initialView: { astra: { enabled: true, status: 'REFUSED', analysisId: previous,
+    code: 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR', httpStatus: 500, proposals: [] } } });
+  await flush(); f.render();
+  const before = f.current.defects; let finish;
+  f.respond = async (_path, options) => new Promise(resolve => { finish = () => resolve({ astra: { enabled: true,
+    status: 'RUNNING', backgroundAccepted: true, analysisId: options.body.actionId, base, proposals: [] } }); });
+  const pending = f.defects().onAnalyzeDefects(); await flush(); f.render();
+  assert.equal(f.defects().disabled, false); assert.equal(f.button('Edit card details').props.disabled, false);
+  const post = f.calls.find(call => call.options.method === 'POST');
+  assert.ok(post); assert.notEqual(post.options.body.actionId, previous);
+  assert.deepEqual(post.options.body.base, base);
+  await assert.rejects(f.defects().onAnalyzeDefects(), /MANUAL_ANALYSIS_BUSY/);
+  assert.equal(f.calls.filter(call => call.options.method === 'POST').length, 1);
+  finish(); await pending; f.render();
+  assert.equal(f.defects().workspace, before); assert.equal(f.actions.length, 0);
+  assert.equal(f.defects().astra.status, 'RUNNING'); f.dispose();
+});

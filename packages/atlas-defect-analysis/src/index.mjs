@@ -193,6 +193,8 @@ function* buildRequest(input, version, cropLayoutVersion) {
   object(input.cornerShapes, SIDES); check(SIDES.every(side => ['SQUARE', 'ROUNDED_3_18_MM'].includes(input.cornerShapes[side])));
   const binding = parseBinding(input.binding), knowledge = validateRetrieval(input.knowledge);
   check(knowledge.status !== 'PUBLICATION_PENDING', 'DEFECT_ANALYSIS_MEMORY_PENDING', 409);
+  if (knowledge.status === 'BASELINE_WITHOUT_EXAMPLES') check(knowledge.freshness.category === input.profile
+    && knowledge.freshness.targetContentHash === binding.manualContentHash && !input.cleanLearning);
   check(knowledge.lessons.length <= LIMITS.lessons, 'DEFECT_ANALYSIS_LESSON_LIMIT', 413);
   check(Array.isArray(input.images) && input.images.length === 2 && Array.isArray(input.lessonImages)
     && input.lessonImages.length === knowledge.lessons.length);
@@ -322,10 +324,15 @@ export function validateRequestEvidence(value) {
   if (knowledge.freshness) validateFreshness(knowledge.freshness);
   integer(knowledge.generation, 0, Number.MAX_SAFE_INTEGER); sha(knowledge.sha256);
   check(new RegExp(`^m1:${knowledge.generation}:[a-f0-9]{64}$`).test(knowledge.revision)
-    && ['READY', 'EMPTY_REVIEWED_BANK'].includes(knowledge.status) && Array.isArray(knowledge.lessonIds)
+    && ['READY', 'EMPTY_REVIEWED_BANK', 'BASELINE_WITHOUT_EXAMPLES'].includes(knowledge.status) && Array.isArray(knowledge.lessonIds)
     && Array.isArray(knowledge.lessonImages) && knowledge.lessonIds.length <= LIMITS.lessons
     && knowledge.lessonImages.length === knowledge.lessonIds.length && new Set(knowledge.lessonIds).size === knowledge.lessonIds.length
     && (knowledge.status === 'READY') === (knowledge.lessonIds.length > 0));
+  check((knowledge.status === 'BASELINE_WITHOUT_EXAMPLES') === (knowledge.freshness?.version === 'atlas-incomplete-design-baseline-v1'));
+  if (knowledge.status === 'BASELINE_WITHOUT_EXAMPLES') check(knowledge.generation === 0
+    && knowledge.revision === `m1:0:${digest(canonical(knowledge.freshness))}`
+    && knowledge.freshness.category === evidence.profile && knowledge.freshness.targetContentHash === evidence.binding.manualContentHash
+    && !evidence.cleanLearning);
   for (const [i, item] of knowledge.lessonImages.entries()) {
     object(item, ['lessonId', 'mime', 'sha256', 'width', 'height', 'byteCount', 'traceOverlay']);
     sha(item.lessonId); check(item.lessonId === knowledge.lessonIds[i]); raster(item);

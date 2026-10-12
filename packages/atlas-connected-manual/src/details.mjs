@@ -1,4 +1,4 @@
-import {ATLAS_IDENTIFICATION_LAYOUT_VERSION} from './identification-layout.mjs';
+import {ATLAS_IDENTIFICATION_LAYOUT_VERSIONS} from './identification-layout.mjs';
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
 import {earlyGeometryGrantSQL} from './early-geometry-store.mjs';
 import {publicationGrantSQL} from './publication-repository.mjs';
@@ -46,7 +46,7 @@ export function mergeSuggestions(current, result, sourceHash) {
   if (!next.touched.includes('profile')) next.profile = ({ 'Sports cards':'SPORTS','Pokémon':'POKEMON' })[next.fields.category] ?? null;
   if (!next.touched.includes('layoutType')) {
     const proposed=result.layout;
-    const supported=result.provenance?.engine_version===ATLAS_IDENTIFICATION_LAYOUT_VERSION
+    const supported=ATLAS_IDENTIFICATION_LAYOUT_VERSIONS.includes(result.provenance?.engine_version)
       && result.provenance.subject?.revision===sourceHash && proposed?.authority==='MACHINE_PROPOSAL'
       && proposed.front_sha256===result.provenance.photos?.front?.sha256
       && proposed.confidence==='high' && /^Front\b/i.test(proposed.evidence??'')

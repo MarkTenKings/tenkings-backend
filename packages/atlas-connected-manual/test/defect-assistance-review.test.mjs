@@ -31,7 +31,7 @@ function geometry(cardId) {
   }
   return confirmBothGeometry(state, { actor: 'HUMAN', reviewed: true, base: Object.fromEntries(SIDES.map(side => [side, geometryBase(state, side, 'REVIEW')])) }).state;
 }
-async function fixture({ confirmation = false, confirmationTimeoutMs } = {}) {
+async function fixture({ confirmation = false, confirmationTimeoutMs, identity } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID() }, principal = { id: staff.id, canCertify: true };
   let card;
   const commands = new Map(), objects = new Map(), proposals = new Map(), f = { commits: [], measured: [], publications: [], publisher: async () => {}, resolve: null };
@@ -75,7 +75,7 @@ async function fixture({ confirmation = false, confirmationTimeoutMs } = {}) {
     afterConfirm: async (actor, id, actionId) => { authorize(actor, id); assert.ok(commands.has(actionId), 'publication starts only after actual commit');
       f.publications.push(actionId); return f.publisher(actionId); },
   });
-  await workflow.provision(staff, { geometry: geometry(cardId), identity: { playerName: 'Synthetic Player', year: '2026', manufacturer: 'Fixture', productSet: 'Action test' }, source: { sourceHash: digest('independent-synthetic-source') } });
+  await workflow.provision(staff, { geometry: geometry(cardId), identity: identity ?? { playerName: 'Synthetic Player', year: '2026', manufacturer: 'Fixture', productSet: 'Action test' }, source: { sourceHash: digest('independent-synthetic-source') } });
   const initial = await workflow.hydrate(card), analysisId = randomUUID();
   for (let index = 0; index < 3; index++) {
     const id = `${analysisId}:${index + 1}`, x = .2 + index * .1;
@@ -221,8 +221,10 @@ test('legacy V1/V2 and context V2 saved suggestions remain reviewable without ne
   }
 });
 
-for (const mode of ['analyze', 'analyzeMachine']) test(`new ${mode} stores its exact context request before provider work`, async () => {
-  const f = await fixture(), state = await f.state(), before = f.card();
+for (const mode of ['analyze', 'analyzeMachine']) for (const incompleteIdentity of [false, true])
+test(`new ${mode} stores its exact context request before provider work${incompleteIdentity ? ' with unknown year' : ''}`, async () => {
+  const f = await fixture(incompleteIdentity ? { identity: { cardNumber: 'BD-13', insert: null, manufacturer: 'Topps', parallel: null,
+    playerName: 'LaMelo Ball', productSet: 'Topps Chrome — Ball of Duty', year: null } } : {}), state = await f.state(), before = f.card();
   let imageCalls = 0, pendingRun;
   const stop = new Error('fixture stops at the database insert boundary');
   const tx = {
@@ -244,8 +246,9 @@ for (const mode of ['analyze', 'analyzeMachine']) test(`new ${mode} stores its e
     assert.equal(staff, f.staff);
     return work({ tx, principal, now: new Date(), refresh: async () => ({ principal, now: new Date() }) });
   } };
+  if (incompleteIdentity) boundary.machineTransaction = async () => assert.fail('No design or clean lesson worker is used to prepare the baseline');
   const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {}, assertActiveInTransaction: async () => {} },
-    workflow: f.workflow, artifacts: f.artifacts, memoryEnabled: true, receiptClient: tx,
+    workflow: f.workflow, artifacts: f.artifacts, memoryEnabled: true, learningEnabled: incompleteIdentity, receiptClient: tx,
     provider: { bindingHash: digest('connected synthetic provider'), dispatch: async () => assert.fail('Cannot dispatch before preparation commits') },
     imageEffects: {
       async currentImages(staff, card, binding, layout) {
@@ -255,13 +258,19 @@ for (const mode of ['analyze', 'analyzeMachine']) test(`new ${mode} stores its e
         for (const slot of input.images) slot.whole.sourceSha256 = binding.sides[slot.side].frame.inspectionImageSha256;
         return input.images;
       },
-      async lessonImages(knowledge) { assert.equal(knowledge.status, 'EMPTY_REVIEWED_BANK'); return []; },
+      async lessonImages(knowledge) { assert.equal(incompleteIdentity, false); assert.equal(knowledge.status, 'EMPTY_REVIEWED_BANK'); return []; },
     } });
   const actionId = randomUUID();
   const request = { actionId, base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) };
   await assert.rejects(assistance[mode](f.staff, f.cardId, request), error => error === stop);
   assert.equal(pendingRun.baseHash, digest(canonical(request)));
   assert.equal(imageCalls, 1); assert.equal(pendingRun.evidence.cropLayoutVersion, INSPECTION_CONTEXT_CROP_LAYOUT);
+  if (incompleteIdentity) {
+    assert.equal(pendingRun.evidence.knowledge.status, 'BASELINE_WITHOUT_EXAMPLES');
+    assert.deepEqual(pendingRun.evidence.knowledge.freshness.missingFields, ['year']);
+    assert.equal(pendingRun.evidence.knowledge.freshness.targetContentHash, before.contentHash);
+    assert.equal(pendingRun.evidence.cleanLearning, undefined);
+  }
   validateRequestEvidence(pendingRun.evidence);
   const stored = await readAnalysisRequest(pendingRun.requestRef, { cardId: f.cardId,
     sourceHash: pendingRun.evidence.sourceBindingSha256 }, f.artifacts);
@@ -324,14 +333,19 @@ test('only the verified no-ID legacy UNKNOWN outcome exposes an explicit replace
   assert.deepEqual(f.row,before);assert.deepEqual(f.calls,{provider:0,images:0});
 });
 
-test('only a saved definite HTTP429 refusal without provider acceptance advertises a bounded rate-limit retry', async () => {
-  for (const variant of [{ httpStatus: 429 }, { httpStatus: 503 }, { httpStatus: 429, responseId: 'resp_observed' },
-    { httpStatus: 429, accepted: true }]) {
+test('only definite retryable HTTP refusals without a response ID or acceptance advertise a bounded successor', async () => {
+  for (const variant of [429, 500, 502, 503, 504, 400, 401, 403, 408, 501, 505].map(httpStatus => ({ httpStatus }))
+    .concat([429, 500, 502, 503, 504].flatMap(httpStatus => [{ httpStatus, responseId: 'resp_observed' },
+      { httpStatus, accepted: true }, { httpStatus, state: 'UNKNOWN' }, { httpStatus, code: 'DEFECT_ANALYSIS_PROVIDER_REFUSAL' }]))) {
     const f = await savedAnalysisFixture({ background: true, accepted: variant.accepted === true });
-    Object.assign(f.receipt, { state: 'REFUSED', resultRef: null, code: 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR',
+    Object.assign(f.receipt, { state: variant.state ?? 'REFUSED', resultRef: null, code: variant.code ?? 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR',
       httpStatus: variant.httpStatus, responseId: variant.responseId ?? null });
+    const before = clone({ row: f.row, receipt: f.receipt });
     const result = await f.assistance.status(f.staff, f.cardId, f.analysisId);
-    assert.equal(result.astra.rateLimited, variant.httpStatus === 429 && !variant.responseId && !variant.accepted ? true : undefined);
+    const eligible = !variant.responseId && !variant.accepted && !variant.state && !variant.code;
+    assert.equal(result.astra.rateLimited, variant.httpStatus === 429 && eligible ? true : undefined);
+    assert.equal(result.astra.transientProviderFailure, [500, 502, 503, 504].includes(variant.httpStatus) && eligible ? true : undefined);
+    assert.deepEqual({ row: f.row, receipt: f.receipt }, before);
     assert.deepEqual(f.calls, { provider: 0, images: 0 });
   }
 });

@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": { "types": "./src/index.d.ts", "default": "./src/index.mjs" },
-    "./v2": { "types": "./src/v2.d.ts", "default": "./src/v2.mjs" }
+    "./v2": { "types": "./src/v2.d.ts", "default": "./src/v2.mjs" },
+    "./request": "./src/request.mjs",
+    "./pokemon-request-v2": "./src/pokemon-request-v2.mjs"
   },
   "scripts": { "test": "node --test test/*.test.mjs" },
   "dependencies": { "sharp": "0.33.5", "zod": "4.1.11" }

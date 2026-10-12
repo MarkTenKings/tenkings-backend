@@ -6,7 +6,8 @@ import sharp from 'sharp';
 import { identifyCard, parseCardIdentificationInput } from '@tenkings/card-identification-core';
 import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import {ATLAS_IDENTIFICATION_LAYOUT_VERSION} from '../src/identification-layout.mjs';
+import {ATLAS_IDENTIFICATION_LAYOUT_VERSION,ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,
+ ATLAS_IDENTIFICATION_XHIGH_POLICY,parseAtlasIdentificationResult} from '../src/identification-layout.mjs';
 import { createBatchPreparation } from '../src/batch-preparation.mjs';
 import { createIdentification, identificationEffects } from '../src/identification.mjs';
 import { createDetailsStore, FIELDS, gradingIdentity, geometrySideSettings } from '../src/details.mjs';
@@ -906,6 +907,102 @@ test('production default selects the ATLAS layout version while a completed hist
  const fresh=await fixture({engineVersion:null});const current=await fresh.identification.run(fresh.staff,fresh.cardId);assert.equal(current.state,'COMPLETE');assert.equal(current.result.provenance.engine_version,ATLAS_IDENTIFICATION_LAYOUT_VERSION);assert.equal(current.result.layout.value,null);
  const historical=await fixture(),prior=await historical.identification.run(historical.staff,historical.cardId);assert.equal(prior.result.provenance.engine_version,V2);
  assert.deepEqual((await historical.restartWithDefault().run(historical.staff,historical.cardId)).result,prior.result);assert.equal(historical.calls.http.length,3);
+});
+
+for(const category of ['Sports cards','Pokémon'])test(`ATLAS xhigh changes only its versioned model policy for ${category}, retaining exact photos and shared descriptive rules`,async()=>{
+ const legacy=await fixture({engineVersion:ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,category});
+ const current=await fixture({engineVersion:null,category});
+ const prior=await legacy.identification.run(legacy.staff,legacy.cardId),result=await current.identification.run(current.staff,current.cardId);
+ assert.equal(prior.state,'COMPLETE');assert.equal(result.state,'COMPLETE');
+ const request=f=>f.calls.http.find(call=>call.url.hostname==='api.openai.com').body;
+ const expected=clone(request(legacy));expected.reasoning={effort:'xhigh'};expected.max_output_tokens=32768;expected.text.format.name='atlas_card_details_layout_v2';
+ assert.deepEqual(request(current),expected);
+ const images=request(current).input[0].content.filter(part=>part.type==='input_image');
+ assert.equal(images.length,category==='Pokémon'?3:2);assert(images.every(part=>part.detail==='high'));
+ assert.equal(result.result.provenance.reasoning_effort,'xhigh');assert.equal(prior.result.provenance.reasoning_effort,'low');
+ assert.equal(result.result.provenance.engine_version,'atlas-identification-layout-v2');
+ assert.equal(JSON.parse(current.currentRow().input).engineVersion,'atlas-identification-layout-v2');
+ assert.equal(current.calls.http.length,3);
+ assert.deepEqual((await legacy.restartWithDefault().run(legacy.staff,legacy.cardId)).result,prior.result);
+ assert.equal(legacy.calls.http.length,3,'an existing v1 completion is never re-identified to adopt xhigh');
+});
+
+test('xhigh identification survives the old 25s model, 45s provenance and 120s status limits without duplicate dispatch',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.parse('2026-10-12T16:00:00.000Z')});
+ const f=await fixture({engineVersion:null,pauseModel:true});
+ try{
+  const running=f.identification.run(f.staff,f.cardId);await f.modelEntered.promise;
+  t.mock.timers.tick(150000);await nextTurn();
+  assert.equal((await f.restartWithDefault().status(f.staff,f.cardId)).state,'RUNNING');
+  assert.equal((await f.restartWithDefault().run(f.staff,f.cardId)).state,'RUNNING');
+  assert.equal(f.calls.http.length,3);
+  f.modelRelease.resolve();const result=await running;assert.equal(result.state,'COMPLETE');
+  assert.equal(result.result.provenance.stage_timings_ms.model,150000);
+  assert.equal(result.result.provenance.elapsed_ms,150000);
+  assert.deepEqual((await f.restartWithDefault().run(f.staff,f.cardId)).result,result.result);
+  assert.equal(f.db.attempts.size,1);assert.equal(f.calls.http.length,3);
+ }finally{f.modelRelease.resolve();t.mock.timers.reset();}
+});
+
+test('xhigh timeout retains a late raw response and reconciles the saved attempt without purchasing another request',async t=>{
+ const f=await fixture({engineVersion:null,pauseModel:true});t.mock.timers.enable({apis:['setTimeout']});
+ try{
+  const running=f.identification.run(f.staff,f.cardId);await f.modelEntered.promise;
+  t.mock.timers.tick(ATLAS_IDENTIFICATION_XHIGH_POLICY.deadlines.model+1);
+  assert.equal((await running).state,'UNKNOWN');assert.equal(f.db.details.size,0);
+  f.modelRelease.resolve();await f.modelReceiptSaved.promise;await nextTurn();
+  assert.equal(f.artifactsOf('IDENTIFICATION_RESPONSE').filter(row=>row.stage==='MODEL').length,1);
+  assert.equal(f.artifactsOf('IDENTIFICATION_RESULT').length,0);
+  assert.equal((await f.restartWithDefault().run(f.staff,f.cardId)).state,'UNKNOWN');
+  assert.equal(f.db.attempts.size,1);assert.equal(f.calls.http.length,3);
+ }finally{f.modelRelease.resolve();t.mock.timers.reset();}
+});
+
+test('a manual xhigh retry that outlives the frontend socket reconciles its exact action while the paid response continues',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.parse('2026-10-12T16:00:00.000Z')});
+ const f=await fixture({engineVersion:null,httpStatus:429,modelError:exhausted});
+ try{
+  const first=await f.identification.run(f.staff,f.cardId);assert.equal(first.state,'UNKNOWN');
+  f.setModel(200,null,{pause:true});const command={actionId:randomUUID(),expectedAttemptId:first.attemptId,sourceHash:f.sourceHash};
+  const running=f.identification.retry(f.staff,f.cardId,command);await waitModelCalls(f,4);
+  // Browser/proxy currently stops waiting after210s; it does not own this
+  // native paid request or make its uncertain outcome safe to resend.
+  t.mock.timers.tick(210001);await nextTurn();
+  const resumed=await f.restartWithDefault().retry(f.staff,f.cardId,command);
+  assert.equal(resumed.state,'RUNNING');assert.equal((await f.identification.status(f.staff,f.cardId)).state,'RUNNING');
+  assert.equal(f.db.attempts.size,2);assert.equal(f.calls.http.length,4);
+  f.modelRelease.resolve();assert.equal((await running).state,'COMPLETE');
+  assert.equal((await f.restartWithDefault().retry(f.staff,f.cardId,command)).state,'COMPLETE');
+  assert.equal(f.calls.http.length,4,'reconciliation cannot dispatch another model or OCR request');
+ }finally{f.modelRelease.resolve();t.mock.timers.reset();}
+});
+
+test('new default recovers a proven historical ATLAS layout v1 refusal with identical low-reasoning request bytes',async()=>{
+ const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,httpStatus:429,modelError:exhausted});
+ const first=await f.identification.run(f.staff,f.cardId);assert.equal(first.state,'UNKNOWN');f.setModel(200);
+ const command={actionId:randomUUID(),expectedAttemptId:first.attemptId,sourceHash:f.sourceHash};
+ const result=await f.restartWithDefault().retry(f.staff,f.cardId,command);assert.equal(result.state,'COMPLETE');
+ assert.equal(result.result.provenance.engine_version,ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION);
+ assert.equal(result.result.provenance.reasoning_effort,'low');
+ const models=f.calls.http.filter(call=>call.url.hostname==='api.openai.com');
+ assert.equal(models.length,2);assert.equal(models[0].init.body,models[1].init.body);
+ assert.equal(models[1].body.max_output_tokens,2400);assert.deepEqual(models[1].body.reasoning,{effort:'low'});
+ await f.restartWithDefault().retry(f.staff,f.cardId,command);assert.equal(f.calls.http.length,4);
+});
+
+test('ATLAS v2 result validation preserves real long timings and refuses cross-version, effort or timing drift',async()=>{
+ const f=await fixture({engineVersion:null}),finished=await f.identification.run(f.staff,f.cardId);
+ const input=JSON.parse(f.currentRow().input).input,result=clone(finished.result);
+ result.provenance.elapsed_ms=150000;result.provenance.stage_timings_ms={photo_read:3,ocr:7,model:149990};
+ assert.deepEqual(parseAtlasIdentificationResult(result,input),result);
+ for(const change of [
+  value=>{value.provenance.reasoning_effort='low';},
+  value=>{value.provenance.elapsed_ms=335001;},
+  value=>{value.provenance.stage_timings_ms.model=150001;},
+  value=>{value.provenance.stage_timings_ms.ocr=-1;},
+  value=>{value.provenance.stage_timings_ms.extra=1;},
+ ]){const invalid=clone(result);change(invalid);assert.throws(()=>parseAtlasIdentificationResult(invalid,input));}
+ assert.throws(()=>parseAtlasIdentificationResult(result,input,ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION));
 });
 
 test('production default reconstructs historical V2 credit recovery without adding a layout field or changing paid request bytes',async()=>{

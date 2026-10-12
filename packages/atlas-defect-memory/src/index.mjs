@@ -1,4 +1,4 @@
-import { canonical, immutable, object, requireThat, retrievalDigest, validateRetrieval, deriveDesignContext, SIDES } from './contract.mjs';
+import { canonical, digest, immutable, object, requireThat, retrievalDigest, validateRetrieval, targetDesignContext, SIDES } from './contract.mjs';
 import { buildReviewedLessons } from './lessons.mjs';
 import { buildReviewedFeedback } from './feedback.mjs';
 export { createLearningPublicationRepository, createLearningPublicationWorker, learningGrantSQL } from './publication-worker.mjs';
@@ -48,9 +48,22 @@ export function createDefectMemory({ repository, hydrate, createExemplar, create
     },
     async retrieve(staff, request) {
       object(request, ['cardId', ...Object.keys(request).filter(key => key === 'side' || key === 'limit')]);
+      const { side = null, limit = 12 } = request;
+      requireThat((side === null || SIDES.includes(side)) && Number.isSafeInteger(limit) && limit > 0 && limit <= 32,
+        400, 'MEMORY_RETRIEVAL_INVALID');
       const target = await repository.loadTarget(staff, request.cardId), hydrated = await hydrate(target);
+      const { design, missingFields } = targetDesignContext(hydrated.geometry.profile, target.draft.identity);
+      if (!design) {
+        // loadTarget has authenticated and validated the current saved source.
+        // Generation zero is a baseline marker, not a claim that the bank is empty.
+        const freshness = { version: 'atlas-incomplete-design-baseline-v1', category: hydrated.geometry.profile,
+          reason: 'INCOMPLETE_IDENTITY', missingFields, targetContentHash: target.contentHash, fallback: 'BASELINE_WITHOUT_EXAMPLES' };
+        const result = { version: 'atlas-defect-memory-retrieval-v1', revision: `m1:0:${digest(canonical(freshness))}`,
+          generation: 0, status: 'BASELINE_WITHOUT_EXAMPLES', freshness, pendingPublications: 0, lessonIds: [], lessons: [] };
+        return validateRetrieval({ ...result, sha256: retrievalDigest(result) });
+      }
       const snapshot = await repository.readRelevant(staff, { ...request, expectedContentHash: target.contentHash,
-        design: deriveDesignContext(hydrated.geometry.profile, target.draft.identity),
+        design,
         originalSha256: SIDES.map(side => hydrated.geometry.sides[side].image.originalSha256) });
       const result = { version: 'atlas-defect-memory-retrieval-v1', revision: snapshot.revision, generation: snapshot.generation,
         status: snapshot.pendingPublications > 0 ? 'PUBLICATION_PENDING' : snapshot.lessons.length ? 'READY' : 'EMPTY_REVIEWED_BANK',

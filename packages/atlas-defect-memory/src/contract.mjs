@@ -21,6 +21,25 @@ export function deriveDesignContext(profile, identity) {
     layoutType: profile === 'POKEMON' ? normalized(identity.layoutType) : null, cardNumber: normalized(identity.cardNumber) };
   validateDesign(design); return immutable(design);
 }
+/** Target metadata may be optional in the grading identity. Omit design lessons
+ * when it is absent; malformed supplied values still fail, as do invalid saved
+ * lessons. This compatibility path never creates a publishable design. */
+export function targetDesignContext(profile, identity) {
+  requireThat(['SPORTS', 'POKEMON'].includes(profile) && identity && Object.getPrototypeOf(identity) === Object.prototype,
+    400, 'MEMORY_DESIGN_REQUIRED');
+  text(identity.productSet);
+  requireThat(normalized(identity.productSet), 503, 'MEMORY_DESIGN_INVALID');
+  const fields = ['year', ...(profile === 'SPORTS' ? ['manufacturer', 'parallel', 'insert', 'cardNumber'] : ['layoutType', 'parallel', 'cardNumber'])];
+  const values = Object.fromEntries(fields.map(field => {
+    const value = identity[field];
+    if (value == null || value === '') return [field, null];
+    text(value); return [field, normalized(value)];
+  }));
+  if (profile === 'POKEMON' && values.layoutType !== null)
+    requireThat(['pokemon', 'trainer', 'energy'].includes(values.layoutType), 503, 'MEMORY_DESIGN_INVALID');
+  const missingFields = ['year', profile === 'SPORTS' ? 'manufacturer' : 'layoutType'].filter(field => values[field] === null);
+  return immutable({ design: missingFields.length ? null : deriveDesignContext(profile, identity), missingFields });
+}
 export function validateDesign(design) {
   object(design, ['version', 'category', 'year', 'manufacturer', 'productSet', 'parallel', 'insert', 'layoutType', 'cardNumber']);
   requireThat(design.version === 'atlas-defect-design-v1' && ['SPORTS', 'POKEMON'].includes(design.category), 503, 'MEMORY_DESIGN_INVALID');
@@ -82,6 +101,17 @@ export function validateLesson(lesson) {
 }
 export function retrievalDigest(value) { const { sha256: _sha, ...body } = value; return digest(canonical(body, { maxBytes: 524288 })); }
 export function validateFreshness(value) {
+  if (value?.version === 'atlas-incomplete-design-baseline-v1') {
+    object(value, ['version', 'category', 'reason', 'missingFields', 'targetContentHash', 'fallback']);
+    hash(value.targetContentHash);
+    requireThat(['SPORTS', 'POKEMON'].includes(value.category) && value.reason === 'INCOMPLETE_IDENTITY'
+      && value.fallback === 'BASELINE_WITHOUT_EXAMPLES' && Array.isArray(value.missingFields)
+      && value.missingFields.length > 0 && value.missingFields.length <= 2
+      && new Set(value.missingFields).size === value.missingFields.length
+      && value.missingFields.every(field => ['year', value.category === 'SPORTS' ? 'manufacturer' : 'layoutType'].includes(field)),
+    503, 'MEMORY_RETRIEVAL_INVALID');
+    return;
+  }
   object(value, ['version', 'activeReleaseId', 'activeReleaseSha256', 'unavailableSources', 'policy', 'role', 'fallback',
     ...(Object.hasOwn(value, 'decisions') ? ['decisions'] : []), ...(Object.hasOwn(value, 'unavailableLessons') ? ['unavailableLessons'] : []),
     ...(Object.hasOwn(value, 'roleSelection') ? ['roleSelection'] : []),
@@ -121,7 +151,7 @@ export function validateRetrieval(value) {
   if (value.freshness) validateFreshness(value.freshness);
   requireThat(value.version === 'atlas-defect-memory-retrieval-v1' && Number.isSafeInteger(value.generation) && value.generation >= 0
     && new RegExp(`^m1:${value.generation}:[a-f0-9]{64}$`).test(value.revision)
-    && ['READY', 'EMPTY_REVIEWED_BANK', 'PUBLICATION_PENDING'].includes(value.status)
+    && ['READY', 'EMPTY_REVIEWED_BANK', 'PUBLICATION_PENDING', 'BASELINE_WITHOUT_EXAMPLES'].includes(value.status)
     && Number.isSafeInteger(value.pendingPublications) && value.pendingPublications >= 0
     && Array.isArray(value.lessons) && value.lessons.length <= 32 && Array.isArray(value.lessonIds), 503, 'MEMORY_RETRIEVAL_INVALID');
   value.lessons.forEach(validateLesson);
@@ -129,6 +159,9 @@ export function validateRetrieval(value) {
     && (value.status === 'PUBLICATION_PENDING') === (value.pendingPublications > 0)
     && (value.status !== 'EMPTY_REVIEWED_BANK' || value.lessons.length === 0)
     && (value.status !== 'READY' || value.lessons.length > 0)
+    && (value.status === 'BASELINE_WITHOUT_EXAMPLES') === (value.freshness?.version === 'atlas-incomplete-design-baseline-v1')
+    && (value.status !== 'BASELINE_WITHOUT_EXAMPLES' || (value.lessons.length === 0 && value.generation === 0
+      && value.revision === `m1:0:${digest(canonical(value.freshness))}`))
     && value.sha256 === retrievalDigest(value), 503, 'MEMORY_RETRIEVAL_INVALID');
   return immutable(JSON.parse(canonical(value, { maxBytes: 524288 })));
 }

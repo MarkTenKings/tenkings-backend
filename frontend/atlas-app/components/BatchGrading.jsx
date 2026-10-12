@@ -11,7 +11,7 @@ import ManualCards, { ManualWorkspace } from './ManualCards';
 import { MachineReportReview } from '@atlas/manual-workspace/report-review';
 import { usePrefetchVerifiedImages } from '@atlas/manual-workspace/image-cache';
 import { createManualClient } from '@atlas/manual-workflow/client';
-import { createBatchReadQueue, mergeProcessingCards, queueProblemMessage } from '../lib/batch-queue.mjs';
+import { createBatchReadQueue, mergeProcessingCards, queueProblemMessage, savedReviewName } from '../lib/batch-queue.mjs';
 
 const path = '/api/staff/manual-connected/cards/batch';
 const status = { QUEUED: 'Queued up for ATLAS', RUNNING: 'ATLAS processing', REVIEW: 'Review', NEEDS_ATTENTION: 'Check card', SUPERSEDED: 'Photos changed', APPROVED: 'Approved' };
@@ -61,14 +61,18 @@ function QueuePhoto({ job, side = 'FRONT', readPreview, eager = false }) {
     : <span ref={element} className={styles.photoFallback} aria-label={failed ? 'Photo preview unavailable' : 'Loading photo preview'}>{failed ? '◇' : '·'}</span>;
 }
 function RapidReviewDialog({ job, staff, csrf, busy, error, onClose, onQueued }) {
+  const [namedCard,setNamedCard]=useState(null);
+  const cardName=namedCard?.key===job.key?namedCard.name:job.reviewName||job.evidence?.name||job.label||'Card';
+  const currentNameKey=useRef(job.key);currentNameKey.current=job.key;
+  const nameChanged=useCallback(name=>{if(currentNameKey.current===job.key)setNamedCard({key:job.key,name});},[job.key]);
   const dialog=useRef(null),[locked,setLocked]=useState(true),reviewSession=useRef(null);
   if(reviewSession.current?.staffId!==staff.id)reviewSession.current=createReviewSession(staff.id);
   useEffect(()=>{const element=dialog.current,previous=document.activeElement,overflow=document.body.style.overflow;element?.showModal();document.body.style.overflow='hidden';return()=>{element?.close();document.body.style.overflow=overflow;previous?.focus?.();};},[]);
   return <dialog className={styles.rapidDialog} ref={dialog} aria-labelledby="rapid-review-title" onCancel={event=>{event.preventDefault();if(!locked&&!busy)onClose();}}>
-    <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">Review card <span>· {job.evidence?.name||job.label||'Card'}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></div></header>
+    <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">Review card <span>· {cardName}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></div></header>
     <div className={styles.rapidBody} data-review-scroll>
     {error&&<p className={styles.error} role="alert">{error}</p>}
-    {job.needsSetup?<ManualCards key={job.key} embedded staff={staff} cardId={job.cardId} reviewSession={reviewSession.current} onBusyChange={setLocked} onQueued={onQueued}/>:<ManualWorkspace key={job.key} initialInspection={job.initialInspection} initialReviewStage={job.initialInspection?'defects':null} reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>}
+    {job.needsSetup?<ManualCards key={job.key} onNameChange={nameChanged} embedded staff={staff} cardId={job.cardId} reviewSession={reviewSession.current} onBusyChange={setLocked} onQueued={onQueued}/>:<ManualWorkspace key={job.key} onNameChange={nameChanged} initialInspection={job.initialInspection} initialReviewStage={job.initialInspection?'defects':null} reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>}
     </div><footer id="atlas-rapid-actions" className="mc-rapid-actions" aria-label="Review controls"><div id="atlas-rapid-edits" className="mc-rapid-edit-dock"/></footer>
   </dialog>;
 }
@@ -177,7 +181,7 @@ export default function BatchGrading({ staff }) {
           }
         }
       }
-      if (lifetime.current === owner) {primeReviewAudio();reviewing.current=job.key;setRapidJob({...job,initialInspection,needsSetup});}
+      if (lifetime.current === owner) {primeReviewAudio();reviewing.current=job.key;setRapidJob({...job,reviewName:savedReviewName(saved,job),initialInspection,needsSetup});}
     } catch (failure) { if (lifetime.current === owner) {
       setReviewError(messages[failure.code] ?? manualMessage(failure));
       setReviewRetry({ job, initialInspection });

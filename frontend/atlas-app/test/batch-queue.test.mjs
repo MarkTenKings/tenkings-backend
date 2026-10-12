@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createBatchReadQueue, mergeProcessingCards, queueProblemMessage } from '../lib/batch-queue.mjs';
+import { createBatchReadQueue, mergeProcessingCards, queueProblemMessage, savedReviewName } from '../lib/batch-queue.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 test('the nineteenth selected card overtakes waiting rail reads without duplicate work', async () => {
@@ -75,4 +75,13 @@ test('photo failures remain visible before grading admission and cannot resume a
   assert.equal(result[1].state, 'NEEDS_ATTENTION'); assert.equal(result[1].canResumeProcessing, false);
   assert.match(queueProblemMessage(result[1]), /Front HDR photo/);
   assert.equal(result[2].state, 'RUNNING');
+});
+
+
+test('failed analysis keeps the saved identity visible before any report exists', () => {
+  const job = { label: 'Card 1', state: 'NEEDS_ATTENTION', stage: 'ANALYZE', evidence: {} };
+  const saved = { card: { sourceHash: 'current' }, details: { sourceHash: 'current', fields: { name: 'Jaxson Dart' } } };
+  assert.equal(savedReviewName(saved, job), 'Jaxson Dart');
+  assert.match(queueProblemMessage(job), /AI inspection did not complete/);
+  assert.equal(savedReviewName({ ...saved, card: { sourceHash: 'replacement' } }, job), 'Card 1');
 });

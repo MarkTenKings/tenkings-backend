@@ -11,7 +11,8 @@ test('request captures exact current heads and original canonical identity witho
     values.playerName='Changed later';assert.equal(body.next.identity.playerName,'EXAMPLE PLAYER');
     assert.equal(body.sourceRevision,card.grading.sourceRevision);assert.equal(body.expectedReviewRevision,7);assert.equal(body.expectedEvidenceRevision,3);
     assert.equal(correctionAvailable({...card,grading:{...card.grading,sourceRevision:'local-illustration-v1'}}),false);
-    assert.throws(()=>correctionRequest(card,'SPORTS',{...identity,year:' '},'Checked',randomUUID()));
+    assert.equal(correctionRequest(card,'SPORTS',{...identity,year:' '},'Checked',randomUUID()).next.identity.year,null);
+    assert.throws(()=>correctionRequest(card,'SPORTS',{...identity,playerName:' '},'Checked',randomUUID()));
     const pokemon=correctionRequest(card,'POKEMON',{cardName:'Sample',year:'2020',productSet:'Sample',layoutType:'ENERGY',manufacturer:'must not leak',insert:'must not leak'},'Checked',randomUUID());
     assert.deepEqual(pokemon.next.identity,{cardName:'Sample',year:'2020',productSet:'Sample',parallel:null,cardNumber:null,layoutType:'ENERGY'});
 });

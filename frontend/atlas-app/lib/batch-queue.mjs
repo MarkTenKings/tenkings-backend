@@ -81,9 +81,18 @@ export function mergeProcessingCards(jobs, cards) {
 }
 
 export function queueProblemMessage(job) {
-  if (!job.intakeOnly) return null;
+  if (!job.intakeOnly) {
+    if (job.stage === 'ANALYZE' && job.state === 'NEEDS_ATTENTION') return 'AI inspection did not complete. Open the card to retry or continue manual review.';
+    return null;
+  }
   const side = job.attentionSides?.map(value => value === 'FRONT' ? 'Front' : 'Back').join(' and ');
   if (job.code === 'PHOTO_HDR_UNSUPPORTED') return `${side} HDR photo could not be prepared. The uploaded original is retained. Open card to check the photo.`;
   if (job.state === 'NEEDS_ATTENTION') return `${side} photo preparation needs attention. The uploaded original is retained. Open card for details.`;
   return 'Waiting for uploaded photos to finish verification and preparation.';
+}
+
+/** Identity is saved before analysis/report preparation; failed AI must not hide it. */
+export function savedReviewName(saved, job) {
+  const current = saved?.details?.sourceHash === saved?.card?.sourceHash;
+  return (current && saved?.details?.fields?.name) || job.evidence?.name || job.label || 'Card';
 }

@@ -1,4 +1,5 @@
 import { canonical, digest, requireThat, object, uuid } from '@atlas/manual-service/contract';
+import { BATCH_ANALYSIS_RETRY_HTTP_STATUSES } from '@atlas/batch-grading';
 import { geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { defectBase } from '@atlas/manual-workspace/defect-actions';
 import { createDefectMemory, createDefectMemoryRepository, createLearningPublicationRepository, createLearningPublicationWorker, loadAvailableLessonImages,
@@ -194,8 +195,8 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       && (Date.parse(run.acceptance.pollUntil) <= Date.now() || run.receipts.some(receipt => receipt.kind === 'OUTCOME'
         && receipt.evidence.code === 'DEFECT_ANALYSIS_POLL_WINDOW_EXHAUSTED'
         && receipt.evidence.responseId === run.acceptance.responseId));
-    const rateLimited = run.state === 'REFUSED' && !run.backgroundAccepted && run.receipts.some(receipt => receipt.kind === 'RESPONSE'
-      && receipt.evidence.state === 'REFUSED' && receipt.evidence.httpStatus === 429 && receipt.evidence.responseId === null
+    const retryableRefusal = run.state === 'REFUSED' && !run.backgroundAccepted && run.receipts.find(receipt => receipt.kind === 'RESPONSE'
+      && receipt.evidence.state === 'REFUSED' && BATCH_ANALYSIS_RETRY_HTTP_STATUSES.includes(receipt.evidence.httpStatus) && receipt.evidence.responseId === null
       && receipt.evidence.code === 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR');
     const outcome = ['REFUSED', 'UNKNOWN'].includes(status)
       ? (run.receipts.find(receipt => receipt.kind === 'RESPONSE') ?? run.receipts.find(receipt => receipt.kind === 'OUTCOME'))?.evidence : null;
@@ -206,7 +207,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       limitations: loaded?.result?.limitations ?? [],
       resumeAvailable: run.state === 'PREPARED', knowledgeRevision: run.requestEvidence.knowledge.revision,
       ...(run.backgroundAccepted ? { backgroundAccepted: true } : {}), ...(collectionStopped ? { collectionStopped: true } : {}),
-      ...(rateLimited ? { rateLimited: true } : {}),
+      ...(retryableRefusal ? retryableRefusal.evidence.httpStatus === 429 ? { rateLimited: true } : { transientProviderFailure: true } : {}),
       ...(replacement ? { replacement } : {}) } };
   }
   const api = Object.freeze({
@@ -276,7 +277,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       // lessons individually and records the fallback in immutable evidence.
       const retrieved = await memory.retrieve(staff, { cardId, limit: 12 });
       const { knowledge, lessonImages } = await loadAvailableLessonImages(retrieved, imageEffects.lessonImages);
-      const cleanScope = await roleSnapshot(staff, card, state, 'CLEAN');
+      const cleanScope = knowledge.status === 'BASELINE_WITHOUT_EXAMPLES' ? null : await roleSnapshot(staff, card, state, 'CLEAN');
       const authoritativeImageBytes = images.reduce((total, side) => total + side.whole.bytes.byteLength
         + side.crops.reduce((sum, image) => sum + image.bytes.byteLength, 0), 0)
         + lessonImages.reduce((total, image) => total + image.bytes.byteLength + image.traceOverlay.bytes.byteLength, 0);

@@ -1,4 +1,4 @@
-import {ATLAS_IDENTIFICATION_LAYOUT_VERSION,identifyAtlasCard,parseAtlasIdentificationResult} from './identification-layout.mjs';
+import {ATLAS_IDENTIFICATION_LAYOUT_VERSION,ATLAS_IDENTIFICATION_LAYOUT_VERSIONS,atlasIdentificationRunningWindow,identifyAtlasCard,parseAtlasIdentificationResult} from './identification-layout.mjs';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { CARD_IDENTIFICATION_VERSION, parseCardIdentificationInput, parseCardIdentificationResult } from '@tenkings/card-identification-core';
@@ -18,8 +18,8 @@ function storedInput(row) {
   const saved = JSON.parse(row.input);
   if (saved && Object.hasOwn(saved, 'engineVersion')) {
     object(saved, ['engineVersion', 'input']);
-    requireThat([CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(saved.engineVersion), 503, 'IDENTIFICATION_VERSION_UNSUPPORTED');
-    return { engineVersion: saved.engineVersion, input: parseCardIdentificationInput(saved.input), parseResult: saved.engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION?parseAtlasIdentificationResult:parseCardIdentificationResultV2 };
+    requireThat([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(saved.engineVersion), 503, 'IDENTIFICATION_VERSION_UNSUPPORTED');
+    return { engineVersion: saved.engineVersion, input: parseCardIdentificationInput(saved.input), parseResult: ATLAS_IDENTIFICATION_LAYOUT_VERSIONS.includes(saved.engineVersion)?(value,input)=>parseAtlasIdentificationResult(value,input,saved.engineVersion):parseCardIdentificationResultV2 };
   }
   return { engineVersion: CARD_IDENTIFICATION_VERSION, input: parseCardIdentificationInput(saved), parseResult: parseCardIdentificationResult };
 }
@@ -40,7 +40,7 @@ export function identificationEffects({ openaiKey, googleKey, fetchImpl=fetch })
   }
   return { ocr:(request,context)=>{
       const version=context.engineVersion ?? CARD_IDENTIFICATION_VERSION;
-      requireThat([CARD_IDENTIFICATION_VERSION,CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(version),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+      requireThat([CARD_IDENTIFICATION_VERSION,CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(version),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
       const url=new URL('https://vision.googleapis.com/v1/images:annotate');
       let body=request;
       if(version!==CARD_IDENTIFICATION_VERSION){
@@ -55,7 +55,7 @@ export function identificationEffects({ openaiKey, googleKey, fetchImpl=fetch })
 
 export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,
   clock = () => Date.now(), limited = work => work() }) {
-  requireThat([CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+  requireThat([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
   requireThat(!effects || typeof receiptClient?.$queryRawUnsafe==='function',503,'IDENTIFICATION_RECEIPT_STORE_REQUIRED');
   async function transaction(staff,cardId,work,{sourceHash=null,edit=false}={}) {
     return boundary.transaction(staff,async context=>{
@@ -76,11 +76,11 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
   async function project(staff,row) {
     if(!row)return {state:effects?'NOT_STARTED':'UNAVAILABLE'};
     const saved=storedInput(row);
-    const state=row.state==='RUNNING' && clock()-new Date(row.created_at).getTime()>120000?'UNKNOWN':row.state;
+    const state=row.state==='RUNNING' && clock()-new Date(row.created_at).getTime()>atlasIdentificationRunningWindow(saved.engineVersion)?'UNKNOWN':row.state;
     const value={attemptId:row.id,state,startedAt:new Date(row.created_at).toISOString()};
     if(row.result){const stored=JSON.parse(row.result); const result=await artifacts.read(stored.ref,{cardId:row.card_id,kind:'IDENTIFICATION_RESULT',sourceHash:row.source_hash});
       value.result=saved.parseResult(result,saved.input);}
-    if(state==='UNKNOWN' && row.state==='UNKNOWN' && [CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(saved.engineVersion)){
+    if(state==='UNKNOWN' && row.state==='UNKNOWN' && [CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(saved.engineVersion)){
       try{
         const access=recoveryAccess(staff,row), model=await recordedIdentificationEffect(row,'MODEL',access);
         if(model.status<200 || model.status>=300){
@@ -151,7 +151,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
     const cardId=seedRow.card_id, pair={sourceHash:seedRow.source_hash};
     let row=recovery?null:seedRow, claimError=null, claimStarted=false;
     const verifiedOcr=new Set();
-      requireThat([CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(saved.engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+      requireThat([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(saved.engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
       let dispatched=false;
       const effect=kind=>async(request,context)=>{
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
@@ -183,7 +183,8 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         }
       };
       try {
-        const identify=saved.engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION?identifyAtlasCard:identifyCardV2;
+        const atlas=ATLAS_IDENTIFICATION_LAYOUT_VERSIONS.includes(saved.engineVersion);
+        const identify=atlas?identifyAtlasCard:identifyCardV2;
         const result=await identify(saved.input,{
           readPhoto:async descriptor=>loaded.get(descriptor.ref),
           ocr:recovery?async(request,context)=>{
@@ -199,7 +200,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
             requireThat(row.won,409,'IDENTIFICATION_RETRY_REPLAY');
             return effect('model')(request,context);
           }:effect('model'),
-        });
+        },atlas?{engineVersion:saved.engineVersion}:undefined);
         const stored=await asset(cardId,'IDENTIFICATION_RESULT',result,pair.sourceHash);
         try {await details.adopt(staff,cardId,pair.sourceHash,result);}
         catch(error){if(error?.status===409){await settle(staff,row,'STALE',stored);return {attemptId:row.id,state:'STALE'};}throw error;}
@@ -298,9 +299,10 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
             // A process may die after persisting the actual rejection but before
             // settling its attempt. Only that verified refusal closes an old
             // RUNNING attempt; missing/accepted replies never authorize a resend.
-            if(clock()-new Date(row.created_at).getTime()<=120000)return current;
+            const runningWindow=atlasIdentificationRunningWindow(storedInput(row).engineVersion);
+            if(clock()-new Date(row.created_at).getTime()<=runningWindow)return current;
             await transaction(staff,cardId,async({tx,now})=>{
-              requireThat(+(now??new Date(clock()))-new Date(row.created_at).getTime()>120000,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+              requireThat(+(now??new Date(clock()))-new Date(row.created_at).getTime()>runningWindow,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
               await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.identification SET state=$1,result=$2,error=$3,finished_at=clock_timestamp() WHERE id=$4::uuid AND state='RUNNING'",'UNKNOWN',null,'IDENTIFICATION_RATE_LIMIT_REFUSED',row.id);
             },{edit:true,sourceHash:row.source_hash});
             row=await read(staff,cardId,card.sourceHash);

@@ -163,8 +163,12 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
         const astra = response.astra;
         if (astra?.status === 'READY') return { kind: 'CONTINUE', evidence: { analysisId: astra.analysisId } };
         if (['RUNNING', 'PREPARED', 'DISPATCHED'].includes(response.state) || astra?.status === 'RUNNING') return wait();
-        if (astra?.rateLimited === true) return (job.analysisAttempt ?? 0) < BATCH_RATE_LIMIT_RETRIES
-          ? { kind: 'RETRY_ANALYSIS', code: 'BATCH_PROVIDER_RATE_LIMITED' } : attention('BATCH_PROVIDER_RATE_LIMITED');
+        if (response.state === 'REFUSED' && astra?.status === 'REFUSED' && astra.backgroundAccepted !== true
+          && (astra.rateLimited === true || astra.transientProviderFailure === true)) {
+          const code = astra.rateLimited === true ? 'BATCH_PROVIDER_RATE_LIMITED' : 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR';
+          if ((job.analysisAttempt ?? 0) < BATCH_RATE_LIMIT_RETRIES) return { kind: 'RETRY_ANALYSIS', code };
+          return { ...attention(code), evidence: { analysisStatus: 'REFUSED', analysisHttpStatus: astra.httpStatus } };
+        }
         // Keep the saved refusal reason: one invalid outline or provider reply
         // must not disappear behind an undiagnosable generic batch status.
         const code = /^[A-Z][A-Z0-9_]{0,100}$/.test(astra?.code ?? '') ? astra.code

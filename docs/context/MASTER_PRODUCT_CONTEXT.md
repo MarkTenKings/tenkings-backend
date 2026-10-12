@@ -1,3 +1,5 @@
+> **R12 source work — not yet deployed (October 12 morning):** Owner approved Astra xhigh identification and nonblocking analysis recovery. New ATLAS identification layout v2 uses xhigh with a longer bounded runtime; existing saved requests retain exact historical interpretation. Current Findings shows failed/not-started/in-flight AI status and optional retry without locking human review. Incomplete optional identity metadata proceeds through normal Astra inspection without design-specific lessons. Saved names display before report completion. Definite HTTP500/502/503/504 retries require forward staff migration81; unknown/accepted requests are reconciled, not resent. Local combined tests/browser checks pass; production verification remains outstanding. Source qualification/release is in progress; R11 below remains serving until an observed deployment receipt is recorded.
+
 # Ten Kings Master Product Context
 
 ## Current ATLAS production R11 — October 12, 2026, 12:30 a.m. Pacific

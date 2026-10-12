@@ -53,3 +53,13 @@ test('upgrade checkpoint rejects non-callable configuration before creating a fi
     for (const beforeUpgradeFrom48 of [null, true, 48, 'postgresql://existing', {}])
         await assert.rejects(disposablePostgres([], { beforeUpgradeFrom48 }), /explicit fixture callback/);
 });
+
+
+test('80-to81 upgrade hooks reject invalid or conflicting checkpoints before effects', async () => {
+    for (const value of [null, true, 80, 'postgresql://existing', {}]) {
+        await assert.rejects(disposablePostgres([], { beforeUpgradeFrom80: value }));
+        await assert.rejects(disposablePostgres([], { afterUpgradeTo81: value }));
+    }
+    await assert.rejects(disposablePostgres([], { afterUpgradeTo81() {} }));
+    await assert.rejects(disposablePostgres([], { beforeUpgradeFrom79() {}, beforeUpgradeFrom80() {} }));
+});

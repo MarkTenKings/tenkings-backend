@@ -1,4 +1,4 @@
-import { ATLAS_IDENTIFICATION_LAYOUT_VERSION } from './identification-layout.mjs';
+import { ATLAS_IDENTIFICATION_LAYOUT_VERSIONS } from './identification-layout.mjs';
 import { parseCardIdentificationInput, parseCardIdentificationOcrOutput } from '@tenkings/card-identification-core';
 import { CARD_IDENTIFICATION_VERSION_V2 } from '@tenkings/card-identification-core/v2';
 import { digest, object, requireThat } from '@atlas/manual-service/contract';
@@ -16,7 +16,7 @@ function decoded(base64, maximum) {
 export async function recordedIdentificationEffect(row, stage, { events, artifact }) {
   const envelope=JSON.parse(row.input);
   const version=envelope?.engineVersion;
-  refuse([CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(version));
+  refuse([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(version));
   const rows = await events(row);
   const dispatch = rows.find(value => value.stage === stage && value.event === 'DISPATCH');
   const response = rows.find(value => value.stage === stage && value.event === 'RESPONSE');
@@ -81,7 +81,7 @@ export async function prepareIdentificationRecovery(row, access, model = null, {
     && root.card_id === row.card_id && root.source_hash === row.source_hash && root.input === row.input);
   const envelope = JSON.parse(root.input);
   object(envelope, ['engineVersion', 'input']);
-  refuse([CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(envelope.engineVersion));
+  refuse([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(envelope.engineVersion));
   const input = parseCardIdentificationInput(envelope.input);
   refuse(input.subject.id === row.card_id && input.subject.revision === row.source_hash);
   const original = root.id === row.id ? model : await recordedIdentificationEffect(root, 'MODEL', access);

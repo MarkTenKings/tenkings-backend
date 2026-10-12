@@ -6,7 +6,7 @@ import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevisi
   rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
 import { defectBase } from './defect-actions.mjs';
 import { useVerifiedImage } from './verified-image.mjs';
-import { proposalFrameMatches, validProposalContour } from './astra-review-ui.mjs';
+import { astraReviewState, proposalFrameMatches, validProposalContour } from './astra-review-ui.mjs';
 import { INSPECTION_SIZE, MAX_INSPECTION_ZOOM, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
   resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
 
@@ -330,7 +330,7 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
       <aside className="ad-review-panel" aria-label={`${name(side)} findings and corrections`}>
         <div className="ad-list-heading"><strong>All {name(side).toLowerCase()} findings</strong><button type="button" disabled={editDisabled || Boolean(editor) || !onEdit} onClick={() => start(null)}>Add finding</button></div>
         <ol className="ad-findings" aria-label={`${name(side)} findings`}>{shapes.map(({ finding: entry, number }) => <li key={entry.id}><button type="button" className="ad-finding-name" aria-pressed={entry.id === findingId} disabled={viewingDisabled || Boolean(editor)} onClick={() => choose(entry)} aria-label={`Inspect ${name(side)} finding ${number}`}><b>{number}</b><span><strong>{TYPES[entry.defectType]}</strong><small>{areaOf(entry).toLocaleString('en-US', { maximumFractionDigits: 6 })} mm² · {regionsOf(entry).map(region => region.zone.toLowerCase()).join(', ')}</small></span></button></li>)}</ol>
-        {!findings.length && <p className="ad-status">No findings recorded on {name(side).toLowerCase()}. Add any visible damage.</p>}
+        {!findings.length && <p className="ad-status">{astra?.enabled && !['READY','STALE'].includes(astra.status) ? 'AI inspection has not completed. No saved findings on this side.' : `No findings recorded on ${name(side).toLowerCase()}.`} Add any visible damage.</p>}
         {finding && !editor && <section className="ad-finding-details" aria-label="Selected finding measurements"><h3>{TYPES[finding.defectType]}</h3><dl><div><dt>Measured area</dt><dd>{areaOf(finding).toLocaleString('en-US', { maximumFractionDigits: 6 })} mm²</dd></div>{bounds && <div><dt>Region bounds</dt><dd>{(bounds.width * 63.5).toFixed(3)} × {(bounds.height * 88.9).toFixed(3)} mm</dd></div>}</dl>
           <label>Defect type<select aria-label={`${name(side)} finding type`} value={finding.defectType} disabled={editDisabled || !onEdit} onChange={event => edit({ type: 'CHANGE_TYPE', defectId: finding.id, defectType: event.target.value })}>{Object.entries(TYPES).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <div className="ad-edit-actions"><button type="button" disabled={editDisabled || !onEdit} onClick={() => start(finding)}>Edit trace</button><button type="button" disabled={editDisabled || !onEdit} onClick={() => edit({ type: 'REMOVE', defectIds: [finding.id] })}>Remove finding</button></div>
@@ -356,10 +356,29 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
 /** The host owns front/back progression and the deliberate durable approval. */
 export function DefectReviewWorkspace({ workspace, images, side = 'FRONT', onSideChange, findingId = null, onSelectFinding,
   onEdit, onRetry, onDiscardPending, onEditingChange, onReadyChange, onInspectionChange, renderEditActions, renderReviewActions,
-  readOnly = false, disabled = false, astra, onReviewProposal }) {
+  readOnly = false, disabled = false, astra, onReviewProposal, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis }) {
+  const [analysisBusy, setAnalysisBusy] = useState(false), [analysisError, setAnalysisError] = useState('');
+  const analysisInFlight = useRef(false);
+  const analysis = astraReviewState(workspace, astra);
+  async function runAnalysis(work) {
+    if (analysisInFlight.current || !work) return;
+    analysisInFlight.current = true; setAnalysisBusy(true); setAnalysisError('');
+    try { await work(); } catch { setAnalysisError('Could not update AI inspection. Check its status or continue reviewing.'); }
+    finally { analysisInFlight.current = false; setAnalysisBusy(false); }
+  }
   const [editing, setEditing] = useState(false);
   const activityChanged = React.useCallback(value => { setEditing(value); onEditingChange?.(value); }, [onEditingChange]);
   return <div className="atlas-manual ad-workspace">
+    {analysis.enabled && analysis.status !== 'READY' && <section className="ad-analysis-status" aria-label="AI inspection status">
+      <p role="status">{analysis.message}</p>
+      <div>{analysis.mayRequest && onAnalyzeDefects && <button type="button" disabled={analysisBusy || editing || disabled || readOnly} onClick={() => runAnalysis(onAnalyzeDefects)}>{analysis.status === 'IDLE' ? 'Run AI inspection' : 'Retry AI inspection'}</button>}
+        {['RUNNING','UNKNOWN'].includes(analysis.status) || astra.followLatest ? <>
+          {onRefreshAnalysis && <button type="button" disabled={analysisBusy} onClick={() => runAnalysis(onRefreshAnalysis)}>Check AI status</button>}
+          {astra.resumeAvailable && onResumeAnalysis && <button type="button" disabled={analysisBusy || editing || disabled || readOnly} onClick={() => runAnalysis(onResumeAnalysis)}>Continue AI inspection</button>}
+          {astra.replacement && !astra.backgroundAccepted && astra.requestAvailable !== false && onReplaceAnalysis && <button type="button" disabled={analysisBusy || editing || disabled || readOnly} onClick={() => runAnalysis(onReplaceAnalysis)}>Start new AI inspection</button>}
+        </> : null}</div>
+      {analysisError && <p role="alert">{analysisError}</p>}
+    </section>}
     <nav className="ad-side-navigation" aria-label="Findings side">{SIDES.map(value => <button type="button" key={value} aria-pressed={side === value} disabled={editing || disabled} onClick={() => { if (side !== value) { onReadyChange?.(false); onSideChange?.(value); } }}>{name(value)}</button>)}</nav>
     <SideReview key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]} findingId={findingId} onSelectFinding={onSelectFinding}
       onEdit={onEdit} onRetry={onRetry} onDiscardPending={onDiscardPending} onReadyChange={onReadyChange} onEditingChange={activityChanged}
