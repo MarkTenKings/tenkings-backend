@@ -1,6 +1,24 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R12 — October 12, 2026, 10:32 a.m. Pacific
+## Current ATLAS production R13 — October 12, 2026
+
+Serving application is `af2fd7cbf67e57e73f3da35928447585a8626575`; staff schema **81** / public **121**, with no migration in R13. Canonical routing and both runtime services passed verification at 18:17 UTC, with zero restarts/OOM. Earlier release sections below are historical.
+
+R13 adds optional **Card details** editing above the active review workspace, including variants. Missing year no longer prevents a manufacturer checklist search when the remaining card identity matches; candidate seasons come from explicit manufacturer rows. `2025–26` is a valid season and normalizes correctly. The actual null-year LaMelo identity resolves against the bundled official checklist to an unconfirmed **2025-26 Topps Chrome — Ball of Duty / BD-13** candidate. This does not invent the saved year or confirm a printing. Explicit first reference preparation is available for a manually confirmed card whose current identity has no job, preserving its human confirmation and approval.
+
+Qualification: frozen native **1,422/1,422**, zero skips; disposable restricted-role PostgreSQL **27 groups**, plus actual synthetic-browser identity-save/failure/no-op and responsive checks. Live canonical and independent runtime/history checks passed. No production/provider rerun or human approval was manufactured during R13 qualification or deployment.
+
+**Remaining acceptance:** authenticated production Card details/reference checks await normal staff sign-in. LaMelo's historical READY-empty snapshot needs ordinary **Refresh references** or an explicit identity correction; deployment does not rewrite that snapshot. Preserve current Jaxson Base/approval and LaMelo human work. Pikachu Cosmos still lacks an associated retained diagnostic slab photo, and Reshiram lacks diagnostic listing photos. Fresh xhigh identification, real review latency, fresh sales returned/read/displayed counts and a second physical submission's production Codex reuse remain unverified. The manufacturer bundle remains **624 sources / 1,144,344 rows**; expanded private imports and historical Fleer basketball coverage remain unfinished. No claim of complete variant/photo acceptance follows from idle queues.
+
+R13 staff: `dpl_AZSkmRX7QvbBg2xcmTHZTp3HJaQd` / `atlas-grading-staff-hwxob5j52-ten-kings.vercel.app`; public: `dpl_HTJqgJiuGSvwcxXPy77KDhi4J4SC` / `atlas-grading-public-cyp510er5-ten-kings.vercel.app`. Customer remains `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app`.
+
+Native image: `sha256:fa623d73843514aa6484683c2bfc7e838c6e3dfeaab72f0af30060bde0aa0eef`. Main `306372d6a0e7296f507c1997ea94569cc559162fdf702532cf14b33fed9936db`, started `2026-10-12T18:12:40.490216035Z`; worker `07442f78d600f43ce65bd6af6fdc82751dca285b2a5014d2a273fc62a026b369`, started `2026-10-12T18:16:59.875234582Z`. Both ready/unless-stopped, zero restarts/OOM at final observation. Main 14 CPU/28 GiB and worker 1 CPU/1 GiB/pool 1/concurrency 1 unchanged.
+
+Private packet: `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012/release-r13`. Runtime plan file SHA `b0de681f2ca5c670070a8a7f1334a003b8167be11ae453ee8e03855c988b3259`; canonical receipt SHA `bbf04e726bdb8b03233e87e39cbc4dfe61feebe8806cfd80334daa9bae87b250`; preworker receipt SHA `a9a3cdde7855b86ed0bbb37d12c634a6d65e1cac00d4f72d8b73e3c718992b65`; activation receipt SHA `283cc8391dcc13273d771a9b3059f669844eae71000b01981c955314005aced7`. Full preworker proof preserves all 64 cards, 363 manual actions, 12 approvals, 12 publications and prior analysis history, all 81/121 ledger rows and function/ACL/trigger bytes. No retry/queued-job exception was carried into R13.
+
+The first read-only main-readiness observation failed just after the boot interval. Its original failure remains saved. Explicit reconciliation verified the same running process, followed by a readiness PASS; no mutation was replayed and no restart occurred. All R13 build/create/cutover/promotion intents are consumed. Do not replay them. The source freeze is lifted after completed verification; later documentation commits are not newer deployed application code.
+
+## Historical ATLAS production R12 — October 12, 2026, 10:32 a.m. Pacific
 
 Application source: `abaabe9b6b033bf4000a5e68cf3cc0be2a237dda`. Staff `dpl_5mvfLMycqPz5LNnhbwa2R8ZHGSKj` / `atlas-grading-staff-ks0cr2il0-ten-kings.vercel.app`; public `dpl_5kbd9uSm88QqKYzaJ6rP7aJGpmyG` / `atlas-grading-public-kul1e8uce-ten-kings.vercel.app`; retained customer `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app`. Canonical routing/assets/CSP: PASS at `2026-10-12T17:19:09.870Z`; `web/canonical-result.json` SHA256 `e32e3f0c17388341d1f19e1f51c8e4ef0d482fe6d05bd1da286d5401bbb21f63`. Canonical staff/customer HTML and CSS returned HTTP 200; public alias routing and catalog-image CSP matched.
 

@@ -1,6 +1,16 @@
 # Set Ops Handoff (Living)
 
-## Current ATLAS authority — October 12, 2026, 10:32 a.m. Pacific
+## Current ATLAS production R13 — October 12, 2026
+
+Serving application is `af2fd7cbf67e57e73f3da35928447585a8626575`; staff schema **81** / public **121**, with no migration in R13. Canonical routing and both runtime services passed verification at 18:17 UTC, with zero restarts/OOM. Earlier release sections below are historical.
+
+R13 adds optional **Card details** editing above the active review workspace, including variants. Missing year no longer prevents a manufacturer checklist search when the remaining card identity matches; candidate seasons come from explicit manufacturer rows. `2025–26` is a valid season and normalizes correctly. The actual null-year LaMelo identity resolves against the bundled official checklist to an unconfirmed **2025-26 Topps Chrome — Ball of Duty / BD-13** candidate. This does not invent the saved year or confirm a printing. Explicit first reference preparation is available for a manually confirmed card whose current identity has no job, preserving its human confirmation and approval.
+
+Qualification: frozen native **1,422/1,422**, zero skips; disposable restricted-role PostgreSQL **27 groups**, plus actual synthetic-browser identity-save/failure/no-op and responsive checks. Live canonical and independent runtime/history checks passed. No production/provider rerun or human approval was manufactured during R13 qualification or deployment.
+
+**Remaining acceptance:** authenticated production Card details/reference checks await normal staff sign-in. LaMelo's historical READY-empty snapshot needs ordinary **Refresh references** or an explicit identity correction; deployment does not rewrite that snapshot. Preserve current Jaxson Base/approval and LaMelo human work. Pikachu Cosmos still lacks an associated retained diagnostic slab photo, and Reshiram lacks diagnostic listing photos. Fresh xhigh identification, real review latency, fresh sales returned/read/displayed counts and a second physical submission's production Codex reuse remain unverified. The manufacturer bundle remains **624 sources / 1,144,344 rows**; expanded private imports and historical Fleer basketball coverage remain unfinished. No claim of complete variant/photo acceptance follows from idle queues.
+
+## Historical ATLAS R12 authority — October 12, 2026, 10:32 a.m. Pacific
 
 R12 serves `abaabe9b6b033bf4000a5e68cf3cc0be2a237dda`, staff 81/public 121. Canonical routing and both runtime services passed; worker activation is complete. [DEPLOY_RUNBOOK](runbooks/DEPLOY_RUNBOOK.md) holds live IDs/receipts; [SET_OPS_RUNBOOK](runbooks/SET_OPS_RUNBOOK.md) holds review operations and exact four-card outcomes.
 
