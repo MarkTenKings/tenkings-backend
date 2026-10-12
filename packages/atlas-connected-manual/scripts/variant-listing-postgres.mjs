@@ -78,6 +78,11 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   const revokedCard=await seed();await store.discover();const revoked=await store.claim(1);assert.equal(revoked.card_id,revokedCard);
   await fixture.admin.$executeRawUnsafe('UPDATE atlas_staff."StaffIdentity" SET "accessVersion"="accessVersion"+1 WHERE id=$1::uuid',revoked.actor_id);
   await assert.rejects(store.reserveListingSource(revoked,prepareVariantListingRequest(revoked.input.identity,null,{graded:true})),{code:'VARIANT_LEASE_LOST'});
+  // End only this test's deliberately revoked lease before the independent
+  // cap-one fixture case. Production retains its ordinary timed lease rule.
+  await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_job SET lease_until=clock_timestamp()-interval '1 second' WHERE key=$1",revoked.key);
+  assert.equal(await store.claim(1),null);
+  assert.equal((await fixture.admin.$queryRawUnsafe('SELECT state FROM atlas_manual_connected.variant_job WHERE key=$1',revoked.key))[0].state,'STALE');
   return ['two cap-one restricted PostgreSQL clients probe MISSING/REUSED without reservations or audit changes, then reserve one shared named-printing request per canonical identity despite case/collector aliases; expired/uncertain journal never repurchases',
    'late exact raw response survives lease expiry, duplicate save is idempotent, conflicting/oversized/forged completion refuses',
    'same-identity physical card and explicit refresh reuse retained source; model fields stay empty; changed identity, forged input, revoked access and expired lease reject dispatch'];

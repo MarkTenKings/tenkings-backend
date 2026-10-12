@@ -124,7 +124,8 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
 
 export function earlyGeometryGrantSQL(role) {
   requireThat(/^[a-z][a-z0-9_]{0,62}$/.test(role));
-  return `GRANT EXECUTE ON FUNCTION atlas_manual_connected.read_geometry_model(text),atlas_manual_connected.retry_geometry_model(text,uuid,integer),atlas_manual_connected.dispatch_geometry_model(text,uuid,text,text),atlas_manual_connected.receive_geometry_model(text,text,text) TO "${role}";
+  return `REVOKE ALL ON atlas_manual_connected.geometry_model_action FROM "${role}";
+GRANT EXECUTE ON FUNCTION atlas_manual_connected.read_geometry_model(text),atlas_manual_connected.retry_geometry_model(text,uuid,integer),atlas_manual_connected.dispatch_geometry_model(text,uuid,text,text),atlas_manual_connected.receive_geometry_model(text,text,text) TO "${role}";
 GRANT SELECT,INSERT ON atlas_manual_connected.early_geometry TO "${role}";
 GRANT SELECT,INSERT ON atlas_manual_connected.early_geometry_intent TO "${role}";
 GRANT UPDATE(access_version) ON atlas_manual_connected.early_geometry_intent TO "${role}";
