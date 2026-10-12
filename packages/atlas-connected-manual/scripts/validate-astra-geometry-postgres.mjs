@@ -31,8 +31,8 @@ try{
  const verified=await auth.verify(browser,boot.csrf,{challengeId:challenge.challengeId,code:'424242'},'astra-geometry-journal-fixture');
  const staff=await auth.authenticate(`${browser}; ${fixture.config.cookies.session}=${verified.token}`,verified.csrf);
  const principal=await boundary.transaction(staff,async({principal})=>principal),{storage}=memoryPhotoStorage();
- const repository=createIntakeRepository({boundary,keyPrefix:'geometry-proof',maxOriginalBytes:1000000,sourceCommitted:recordEarlyGeometryIntent});
- const processPhoto=createPhotoProcessor({storage,keyPrefix:'geometry-proof',decodeLimits:{maxInputBytes:1000000,maxPixels:1000000,maxRasterBytes:8000000,maxOutputBytes:1000000,timeoutMs:10000}});
+ const repository=createIntakeRepository({boundary,keyPrefix:'intake',maxOriginalBytes:1000000,sourceCommitted:recordEarlyGeometryIntent});
+ const processPhoto=createPhotoProcessor({storage,keyPrefix:'intake',decodeLimits:{maxInputBytes:1000000,maxPixels:1000000,maxRasterBytes:8000000,maxOutputBytes:1000000,timeoutMs:10000}});
  const intake=createManualIntake({repository,storage,artifacts:fixture.artifacts,processPhoto}),details=createDetailsStore({boundary,intakeRepository:repository});
  const store=createEarlyGeometryStore({boundary,intakeRepository:repository,receiptClient:manualClient});
  const engine={policy:'atlas-early-photo-geometry-v1',runtime:{identity:{sources:{},opencv:'synthetic-only'}},limits:{}},engineHash=digest(canonical(engine));

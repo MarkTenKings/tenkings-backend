@@ -1,6 +1,22 @@
 # Set Ops Handoff (Living)
 
-## Current ATLAS production R13 — October 12, 2026
+## Current ATLAS production R14 — October 12, 2026, 4:43 p.m. Pacific
+
+Application `331415b09a21b2cfc2be495f11853a7c35cabcce` is deployed; staff schema **83** / public **121**. Canonical staff/public/customer routing and both runtime services passed verification. Independent postflight at23:43:29UTC verified zero restarts/OOM and preservation of64manual cards,401actions,14approvals/publications, existing image and analysis records, and customer settings. The only historical-table change was three new ordinary local-only reference generations; old jobs and human choices remain byte-identical.
+
+The approved repair moves OpenAI generative background removal to verified-source intake. New clean image bytes are saved once and reused in staff presentation, Astra inputs and reports. Astra receives clean views alongside originals; physical coordinates, measurements and human markings remain tied to the originals. Missing/pending/failed image work never prevents human review. New geometry now uses Astra/xhigh for the outer material silhouette and printed quadrilateral; the superseded native geometry proposer was deleted. New identification, defect proposals and reference/market label interpretation use Astra/xhigh; supplemental identity OCR remains Google Vision. The cutout uses the separately configured OpenAI image model.
+
+Variant discovery uses catalog-backed printings with concise per-printing SoldComps queries, source-backed season aliases and permanent saved photo/label reuse. Raw, unread and unassigned evidence remains visible. Automatic sales uses a broad name-plus-printed-number query, retains the returned pool and allows cumulative same-query pagination; nearby grade is a recommendation, not a selectable-result exclusion. Superseded query/physical-comparison execution paths were removed. No AI/reference approval gate or historical approval rewrite was introduced.
+
+Production local refresh verified: **LaMelo16choices/2savedphotos/2matches; Pikachu5choices/7photos/4matches+3unassigned; Reshiram ex3choices/0photos**. Exactly3new READY/localOnly jobs ran with **zero listing or model dispatches**, preserving old jobs and human records. This is real backend acceptance of retained evidence, not fresh paid acquisition or authenticated visual acceptance.
+
+Corner drawing now avoids the finding hit-target conflict, preserves raw human traces, and measures against the physical material contour. Uncertainty and per-finding category impact are visible. The grade-5 Reshiram arithmetic was reproducible; the existing area thresholds are unusually harsh. Thresholds and its saved approval remain unchanged; grading calibration still needs validated photo/trace examples.
+
+Qualification: **1,844/1,844 native checks, zero skips; 867 frontend checks; 30 variant and7geometry PostgreSQL groups**, plus image/market storage and synthetic corner-drawing checks. Registered81→83 preserved the full prior ledger and a second deploy was a no-op. Packet: `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012/release-r14b`.
+
+**Remaining acceptance:** normal staff sign-in is required. Fresh upload→upfront cutout→Astra geometry/identification/defects, actual corner gestures/visual quality, and fresh sold-search returned/read/shown counts remain unverified in authenticated production. Reshiram needs ordinary fresh reference acquisition; Pikachu Cosmos still has no proven associated saved slab. Do not force associations, fabricate human approval, or replay historical recovery. Manufacturer coverage expansion remains out of this repair's scope. All executed R14 release intents are consumed; later documentation/qualification-fixture commits do not change the deployed application source.
+
+## Historical ATLAS production R13 — October 12, 2026
 
 Serving application is `af2fd7cbf67e57e73f3da35928447585a8626575`; staff schema **81** / public **121**, with no migration in R13. Canonical routing and both runtime services passed verification at 18:17 UTC, with zero restarts/OOM. Earlier release sections below are historical.
 

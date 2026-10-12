@@ -1,6 +1,36 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R13 — October 12, 2026
+## Current ATLAS production R14 — October 12, 2026, 4:43 p.m. Pacific
+
+Application `331415b09a21b2cfc2be495f11853a7c35cabcce` is deployed; staff schema **83** / public **121**. Canonical staff/public/customer routing and both runtime services passed verification. Independent postflight at23:43:29UTC verified zero restarts/OOM and preservation of64manual cards,401actions,14approvals/publications, existing image and analysis records, and customer settings. The only historical-table change was three new ordinary local-only reference generations; old jobs and human choices remain byte-identical.
+
+The approved repair moves OpenAI generative background removal to verified-source intake. New clean image bytes are saved once and reused in staff presentation, Astra inputs and reports. Astra receives clean views alongside originals; physical coordinates, measurements and human markings remain tied to the originals. Missing/pending/failed image work never prevents human review. New geometry now uses Astra/xhigh for the outer material silhouette and printed quadrilateral; the superseded native geometry proposer was deleted. New identification, defect proposals and reference/market label interpretation use Astra/xhigh; supplemental identity OCR remains Google Vision. The cutout uses the separately configured OpenAI image model.
+
+Variant discovery uses catalog-backed printings with concise per-printing SoldComps queries, source-backed season aliases and permanent saved photo/label reuse. Raw, unread and unassigned evidence remains visible. Automatic sales uses a broad name-plus-printed-number query, retains the returned pool and allows cumulative same-query pagination; nearby grade is a recommendation, not a selectable-result exclusion. Superseded query/physical-comparison execution paths were removed. No AI/reference approval gate or historical approval rewrite was introduced.
+
+Production local refresh verified: **LaMelo16choices/2savedphotos/2matches; Pikachu5choices/7photos/4matches+3unassigned; Reshiram ex3choices/0photos**. Exactly3new READY/localOnly jobs ran with **zero listing or model dispatches**, preserving old jobs and human records. This is real backend acceptance of retained evidence, not fresh paid acquisition or authenticated visual acceptance.
+
+Corner drawing now avoids the finding hit-target conflict, preserves raw human traces, and measures against the physical material contour. Uncertainty and per-finding category impact are visible. The grade-5 Reshiram arithmetic was reproducible; the existing area thresholds are unusually harsh. Thresholds and its saved approval remain unchanged; grading calibration still needs validated photo/trace examples.
+
+Qualification: **1,844/1,844 native checks, zero skips; 867 frontend checks; 30 variant and7geometry PostgreSQL groups**, plus image/market storage and synthetic corner-drawing checks. Registered81→83 preserved the full prior ledger and a second deploy was a no-op. Packet: `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012/release-r14b`.
+
+**Remaining acceptance:** normal staff sign-in is required. Fresh upload→upfront cutout→Astra geometry/identification/defects, actual corner gestures/visual quality, and fresh sold-search returned/read/shown counts remain unverified in authenticated production. Reshiram needs ordinary fresh reference acquisition; Pikachu Cosmos still has no proven associated saved slab. Do not force associations, fabricate human approval, or replay historical recovery. Manufacturer coverage expansion remains out of this repair's scope. All executed R14 release intents are consumed; later documentation/qualification-fixture commits do not change the deployed application source.
+
+### R14 deployment identity and receipts
+
+- Staff: `dpl_eURJiLDbasgbkE4og8GaAD66SVyA` / `atlas-grading-staff-jluntvp9r-ten-kings.vercel.app`.
+- Public: `dpl_6R3xauZtuf3trJ25cxmAnqiXjXTR` / `atlas-grading-public-rlg1p9efu-ten-kings.vercel.app`.
+- Retained customer: `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app`.
+- Native image: `sha256:21e3cfc81f3266310067b6cb37fd44d73d79f526d24d7e4417062324446dbe0c`.
+- Main: `54d8d0a816fbc558ea81f720e22f06211309d3e1fa7eea820aed7387a37353da`, started `2026-10-12T23:39:13.74087121Z`,14CPU/28GiB.
+- Variant worker: `5a07ecf4c17210858f4a93ebbcd431ee3f4436c80984c392ce662bf8d639af8c`, started `2026-10-12T23:42:02.172637723Z`,1CPU/1GiB/pool1/concurrency1.
+- Runtime plan file SHA256 `b77ed86ef324b810865b7a984cec78f4ce578f8f85c374bb2d0cf63495b42a9e`; schema plan `d1c355cfe608d3ecb609039f03dea3803e6034802768a570ed0e391c4b44f3ed`.
+- Migrations82/83: `20261012230000_astra_geometry_evidence` SHA256 `30516ea6d4625b9350355e71ad0914fe0ceb73e51ae02bb00180935b6699bfb1`; `20261012231000_card_image_intake` SHA256 `01c06a35ef39f842ee4cd8d3a9926e6890756d6b2b60e6188e57d01ecd099fc4`.
+- Key receipts under release-r14b: `native-r2/qualified.json`, `schema/schema-proof.json`, `runtime/restart-result.json`, `web/canonical-result.json`, `readonly/independent-postflight-summary.json`, `affected-card-acceptance/production-result.json`.
+
+First isolated packages omitted an unchanged comparison fixture and were never qualified/promoted as native images. Fresh native-r2 adds only that exact frozen fixture and passes all1,844checks; no application test was skipped. Geometry owned qualification privately corrected two synthetic storage prefixes with an exact retained transform before successful behavioral verification. R14 production app bytes remain331415. All old build/cutover intents are consumed; use a fresh reviewed plan for future changes.
+
+## Historical ATLAS production R13 — October 12, 2026
 
 Serving application is `af2fd7cbf67e57e73f3da35928447585a8626575`; staff schema **81** / public **121**, with no migration in R13. Canonical routing and both runtime services passed verification at 18:17 UTC, with zero restarts/OOM. Earlier release sections below are historical.
 
