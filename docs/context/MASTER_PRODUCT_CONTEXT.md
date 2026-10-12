@@ -1,5 +1,12 @@
 # Ten Kings Master Product Context
 
+### October 11, 2026 — owner-directed removal of obsolete review restrictions (implementation in progress)
+
+Mark's latest direction supersedes the October 10 combined Front/Back findings default and historical original-observation/variant-recheck gates. The current target is geometry Front → Back, then findings Front → Back with marked and clean photographs of the same side shown side by side by default. Explicit human side review approves current measured findings; unselected or unmeasurable machine suggestions are excluded honestly, without a separate required redraw/rejection checklist. Historical model state and variant reference availability must not veto human review. Mandatory review notes are removed entirely. Humans still explicitly confirm Base or another named printing, including without catalog results; background catalog completion does not invalidate physical confirmation drafts. Delete superseded execution/UI branches rather than retain fallback modes. Preserve actual photographs, measured scoring, ATLAS Codex/reference data, durable saves and final explicit grade approval. All catalog gaps must be reported honestly; the serving 618-source bundle has no Fleer sources. Fleer acquisition and season matching repair are authorized alongside review repair.
+
+This is the newly authorized implementation direction, not a deployed release or an acceptance claim. R9 remains serving until a separately qualified release. Newly submitted cards are outside prior consumed test-card retirements.
+
+
 > **Owner-directed test-card deletion:** LaMelo, Pikachu, Magmar and Jaxson were removed from the active production workspace before this release. The authenticated queues showed Grading 0 / Review 0 / Label 0. Do not restore, reapprove or run sales acceptance against those deleted test cards. Earlier preservation and Pikachu-refresh instructions are superseded. ATLAS Codex/catalog architecture and reusable references remain required.
 
 ## Current ATLAS cleanup release R9 — October 10, 2026, 9:17 p.m. Pacific

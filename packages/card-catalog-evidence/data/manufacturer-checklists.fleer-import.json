@@ -1,0 +1,284 @@
+{
+  "schemaVersion": "manufacturer-checklist-supplement/v1",
+  "parser": "fleer-upperdeck-explicit-dom/v1",
+  "complete": false,
+  "baseManifest": {
+    "schemaVersion": "manufacturer-checklist/v1",
+    "capturedAt": "2026-10-10T22:04:42.466Z",
+    "complete": false,
+    "sources": 618,
+    "explicitRows": 1131964,
+    "gzipBytes": 6054311,
+    "jsonBytes": 38417790,
+    "sha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0",
+    "decodedSha256": "57eb56b4cc13378cf6a2c4b96f4154bc58c94e71387de4042e2ee4e2489be300",
+    "sourceManifestSha256": "227d91c67fc575e67548a21f4ecaa2764b37aaf1555b002675b58875509baba0"
+  },
+  "sources": [
+    {
+      "url": "https://upperdeck.com/checklist/2016-17-fleer-showcase-checklist/",
+      "title": "2016-17 Fleer Showcase Checklist",
+      "capturedAt": "2026-10-12T05:29:21.012Z",
+      "sha256": "027d35b0de78e1559cc675e0a27618a687374fb3c07119fc5322b46f6e566d8c",
+      "bytes": 177337,
+      "path": "raw/027d35b0de78e1559cc675e0a27618a687374fb3c07119fc5322b46f6e566d8c.json",
+      "rowCounts": [
+        1438
+      ],
+      "completeTableCapture": true,
+      "source": {
+        "manufacturer": "Fleer",
+        "manufacturerAliases": [
+          "Upper Deck"
+        ],
+        "sport": "hockey",
+        "year": "2016-17",
+        "setName": "2016-17 Fleer Showcase",
+        "aliases": [],
+        "url": "https://upperdeck.com/checklist/2016-17-fleer-showcase-checklist/",
+        "sha256": "027d35b0de78e1559cc675e0a27618a687374fb3c07119fc5322b46f6e566d8c"
+      },
+      "normalizedRows": 1437,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2015-16-fleer-showcase-checklist/",
+      "title": "2015-16 Fleer Showcase Checklist",
+      "capturedAt": "2026-10-12T05:29:25.149Z",
+      "sha256": "b55c88fc5aecd6db156f3d94e0103e948782d3bb1187474b113fc8e2d4fc97d7",
+      "bytes": 151683,
+      "path": "raw/b55c88fc5aecd6db156f3d94e0103e948782d3bb1187474b113fc8e2d4fc97d7.json",
+      "rowCounts": [
+        1213
+      ],
+      "completeTableCapture": true,
+      "source": {
+        "manufacturer": "Fleer",
+        "manufacturerAliases": [
+          "Upper Deck"
+        ],
+        "sport": "hockey",
+        "year": "2015-16",
+        "setName": "2015-16 Fleer Showcase",
+        "aliases": [],
+        "url": "https://upperdeck.com/checklist/2015-16-fleer-showcase-checklist/",
+        "sha256": "b55c88fc5aecd6db156f3d94e0103e948782d3bb1187474b113fc8e2d4fc97d7"
+      },
+      "normalizedRows": 1212,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2025-26-fleer-ultra-pwhl-checklist/",
+      "title": "2025-26 Fleer Ultra PWHL Checklist",
+      "capturedAt": "2026-10-12T05:29:30.951Z",
+      "sha256": "e1fcdebcc2f267ae52343737b5bb1111e325101aeed97fb36c486c2a0fabd873",
+      "bytes": 251938,
+      "path": "raw/e1fcdebcc2f267ae52343737b5bb1111e325101aeed97fb36c486c2a0fabd873.json",
+      "rowCounts": [
+        1980
+      ],
+      "completeTableCapture": true,
+      "source": {
+        "manufacturer": "Fleer",
+        "manufacturerAliases": [
+          "Upper Deck"
+        ],
+        "sport": "hockey",
+        "year": "2025-26",
+        "setName": "2025-26 Fleer Ultra PWHL",
+        "aliases": [],
+        "url": "https://upperdeck.com/checklist/2025-26-fleer-ultra-pwhl-checklist/",
+        "sha256": "e1fcdebcc2f267ae52343737b5bb1111e325101aeed97fb36c486c2a0fabd873"
+      },
+      "normalizedRows": 1979,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2025-2026-fleer-ultra-checklist/",
+      "title": "2025-2026 Fleer Ultra Checklist",
+      "capturedAt": "2026-10-12T05:32:14.350Z",
+      "sha256": "2e50693569938c0692b36659279f6b16f78703e1d8dab0baf18858ddd405afa5",
+      "bytes": 390197,
+      "path": "raw/2e50693569938c0692b36659279f6b16f78703e1d8dab0baf18858ddd405afa5.json",
+      "rowCounts": [
+        3140
+      ],
+      "completeTableCapture": true,
+      "source": {
+        "manufacturer": "Fleer",
+        "manufacturerAliases": [
+          "Upper Deck"
+        ],
+        "sport": "hockey",
+        "year": "2025-26",
+        "setName": "2025-2026 Fleer Ultra",
+        "aliases": [],
+        "url": "https://upperdeck.com/checklist/2025-2026-fleer-ultra-checklist/",
+        "sha256": "2e50693569938c0692b36659279f6b16f78703e1d8dab0baf18858ddd405afa5"
+      },
+      "normalizedRows": 3139,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2026-fleer-ultra-golf/",
+      "title": "2026 Fleer Ultra Golf Checklist",
+      "capturedAt": "2026-10-12T05:29:45.044Z",
+      "sha256": "71ddcc63ba36eb3d60f91407f27ff900e52faf94c05b2bfbea2c5b86e3b651c4",
+      "bytes": 213570,
+      "path": "raw/71ddcc63ba36eb3d60f91407f27ff900e52faf94c05b2bfbea2c5b86e3b651c4.json",
+      "rowCounts": [
+        1882
+      ],
+      "completeTableCapture": true,
+      "source": {
+        "manufacturer": "Fleer",
+        "manufacturerAliases": [
+          "Upper Deck"
+        ],
+        "sport": "golf",
+        "year": "2026",
+        "setName": "2026 Fleer Ultra Golf",
+        "aliases": [],
+        "url": "https://upperdeck.com/checklist/2026-fleer-ultra-golf/",
+        "sha256": "71ddcc63ba36eb3d60f91407f27ff900e52faf94c05b2bfbea2c5b86e3b651c4"
+      },
+      "normalizedRows": 1861,
+      "rejectedRows": [
+        {
+          "table": 1,
+          "row": 1310,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1311,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1312,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1313,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1314,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1315,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1316,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1317,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1318,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1319,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1320,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1321,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1322,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1323,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1324,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1325,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1326,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1327,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1328,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1329,
+          "reason": "missing_explicit_identity"
+        }
+      ]
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2023-fleer-ultra-golf-checklist/",
+      "title": "2023 Fleer Ultra Golf Checklist",
+      "capturedAt": "2026-10-12T05:32:18.078Z",
+      "sha256": "1b5295411d09202d0a0e9489862ffe657ead012a692037c3355ddaa438301c5a",
+      "bytes": 170691,
+      "path": "raw/1b5295411d09202d0a0e9489862ffe657ead012a692037c3355ddaa438301c5a.json",
+      "rowCounts": [
+        2753
+      ],
+      "completeTableCapture": true,
+      "source": {
+        "manufacturer": "Fleer",
+        "manufacturerAliases": [
+          "Upper Deck"
+        ],
+        "sport": "golf",
+        "year": "2023",
+        "setName": "2023 Fleer Ultra Golf",
+        "aliases": [],
+        "url": "https://upperdeck.com/checklist/2023-fleer-ultra-golf-checklist/",
+        "sha256": "1b5295411d09202d0a0e9489862ffe657ead012a692037c3355ddaa438301c5a"
+      },
+      "normalizedRows": 2752,
+      "rejectedRows": []
+    }
+  ],
+  "addedSources": 6,
+  "addedRows": 12380,
+  "authority": "Official Upper Deck checklists for the Fleer brand",
+  "limitations": [
+    "Partial archive coverage only.",
+    "No family-wide variants inferred.",
+    "Entertainment and historical Fleer basketball/baseball/football remain outside this import."
+  ]
+}

@@ -1,4 +1,4 @@
-import {variantSelectionParallel,validateVariantReviewSnapshot,variantSnapshotHash,compareVariantCardNumber} from '@tenkings/card-catalog-evidence';
+import {variantSelectionParallel,validateVariantReviewSnapshot,variantSnapshotHash} from '@tenkings/card-catalog-evidence';
 import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
@@ -7,7 +7,6 @@ import {prepareVariantListingRequest,prepareRetainedVariantListingRequest,VARIAN
 import {codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
 import {prepareVariantLabelRequest,projectVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from './variant-photo-provider.mjs';
 
-export const variantAnalysisActionId=actionId=>{const h=digest(`atlas-variant-recheck-v1:${actionId}`);return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`;};
 export const VARIANT_POLICY='atlas-visual-variant-v1';
 const table='atlas_manual_connected.variant_job';
 const listingDispatchKey=key=>`variant-listing-dispatch:v1:${key}`;
@@ -30,28 +29,6 @@ function evidenceText(value,field,bodyLimit){
  requireThat(Buffer.byteLength(text)<=8388608,413,'VARIANT_EVIDENCE_TOO_LARGE');return text;
 }
 export const variantIdentityHash=identity=>digest(canonical(identity));
-const identityText=value=>typeof value==='string'?value.normalize('NFC').trim().replace(/\s+/gu,' ').toLowerCase():value??null;
-const printingParts=value=>{
- const text=identityText(value),match=/^(traditional chinese|simplified chinese|english|french|german|spanish|italian|portuguese|japanese|korean|chinese) (.+)$/.exec(text??'');
- const finish=match?match[2]:text;
- return {language:match?.[1]??null,finish:({'holofoil':'holo','reverse holofoil':'reverse holo'})[finish]??finish};
-};
-/** First specifying an unknown finish does not contradict the grading already
- * reviewed from these photos. Only exact formatting/collector aliases and
- * documented Pokémon foil synonyms are equivalent; other changes still recheck. */
-export function variantCorrectionRequiresRecheck(previous,next){
- for(const key of new Set([...Object.keys(previous),...Object.keys(next)])){
-  if(key==='parallel')continue;
-  if(identityText(previous[key])===identityText(next[key]))continue;
-  if(key==='cardNumber'&&compareVariantCardNumber(previous[key]??null,next[key]??null)==='match')continue;
-  return true;
- }
- if(identityText(previous.parallel)===null)return false;
- if(identityText(previous.parallel)===identityText(next.parallel))return false;
- if(!Object.hasOwn(previous,'cardName')||!Object.hasOwn(next,'cardName'))return true;
- const a=printingParts(previous.parallel),b=printingParts(next.parallel);
- return a.finish!==b.finish||Boolean(a.language&&a.language!==b.language);
-}
 export const variantJobKey=input=>digest(canonical([VARIANT_POLICY,input.cardId,input.sourceHash,input.identityRevision,input.identityHash,input.generation??null]));
 export const variantRefreshable=job=>Boolean(job&&(job.state==='READY'||['FAILED','STALE'].includes(job.state)&&!job.dispatch_id));
 const unpack=row=>{
@@ -81,7 +58,7 @@ export function variantSelectedIdentity(card,action,result){
   requireThat(i.category===profile,409,'VARIANT_IDENTITY_STALE');
   // Scrydex already checked the saved set against its expansion and series
   // names before admitting this candidate. Keep that accepted spelling: e.g.
-  // Scarlet & Violet—151 -> 151 is not a new card requiring paid reanalysis.
+  // Keep the saved Scarlet & Violet—151 label when the provider returns 151.
   // Unverified provider aliases still adopt the reviewed candidate identity.
   const pokemonSet= candidate.source.provider==='scrydex' && old.productSet
     && !candidate.warnings.includes('SET_NAME_REQUIRES_REVIEW') ? old.productSet : i.setName;
@@ -90,9 +67,8 @@ export function variantSelectedIdentity(card,action,result){
     :{...old,cardName:i.name,year:i.year,productSet:pokemonSet,cardNumber:i.cardNumber,parallel:variantSelectionParallel(candidate)});
 }
 export function validateVariantReferencePermission(permission){
-  object(permission,['basis','detail','consumers']);
-  requireThat(['owned_original','licensed','permission'].includes(permission.basis)&&typeof permission.detail==='string'
-    &&permission.detail.trim()===permission.detail&&permission.detail.length>=1&&permission.detail.length<=1000&&!/[\x00-\x1f\x7f]/.test(permission.detail)
+  object(permission,['basis','consumers',...(permission&&Object.hasOwn(permission,'detail')?['detail']:[])]);
+  requireThat(['owned_original','licensed','permission'].includes(permission.basis)
     &&Array.isArray(permission.consumers)&&permission.consumers.length===2&&permission.consumers[0]==='inventory'&&permission.consumers[1]==='atlas',400,'VARIANT_REFERENCE_PERMISSION_INVALID');
   return permission;
 }
@@ -107,15 +83,15 @@ export function validateVariantContributionPacket(job,packet){
   return packet;
 }
 export function validateVariantAction(action){
-  object(action,['type','sourceHash','identityRevision','identityHash','jobId','resultHash','decision','candidateId','reviewed',...(action.decision==='MANUAL'?['manualParallel','observedFeatures']:[]),...(Object.hasOwn(action,'referencePermission')?['referencePermission']:[])]);
+  object(action,['type','sourceHash','identityRevision','identityHash','jobId','resultHash','decision','candidateId','reviewed',...(action.decision==='MANUAL'?['manualParallel']:[]),...(Object.hasOwn(action,'referencePermission')?['referencePermission']:[])]);
   requireThat(action.type==='VARIANT_CONFIRM'&&action.reviewed===true&&['SELECTED','MANUAL','UNRESOLVED'].includes(action.decision),400,'VARIANT_CONFIRMATION_INVALID');
   if(Object.hasOwn(action,'referencePermission')){requireThat(action.decision!=='UNRESOLVED',400,'VARIANT_REFERENCE_PERMISSION_INVALID');validateVariantReferencePermission(action.referencePermission);}
   requireThat(/^[a-f0-9]{64}$/.test(action.sourceHash)&&/^[a-f0-9]{64}$/.test(action.identityHash)&&Number.isSafeInteger(action.identityRevision)&&action.identityRevision>0,400,'VARIANT_CONFIRMATION_INVALID');
-  if(action.decision==='MANUAL')requireThat(typeof action.manualParallel==='string'&&action.manualParallel.trim().length>0&&action.manualParallel.length<=120&&typeof action.observedFeatures==='string'&&action.observedFeatures.trim().length>0&&action.observedFeatures.length<=1000,400,'VARIANT_CONFIRMATION_INVALID');
+  if(action.decision==='MANUAL')requireThat(typeof action.manualParallel==='string'&&action.manualParallel.trim().length>0&&action.manualParallel.length<=120,400,'VARIANT_CONFIRMATION_INVALID');
   requireThat((action.jobId===null&&action.resultHash===null)||/^[a-f0-9]{64}$/.test(action.jobId)&&/^[a-f0-9]{64}$/.test(action.resultHash),400,'VARIANT_CONFIRMATION_INVALID');
   requireThat(action.decision==='SELECTED'?/^[a-f0-9]{64}$/.test(action.jobId)&&/^[a-f0-9]{64}$/.test(action.resultHash)&&typeof action.candidateId==='string'&&action.candidateId.length<=240:action.candidateId===null,400,'VARIANT_CONFIRMATION_INVALID');
 }
-export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=180000,analysisCompatible=null}){
+export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=180000}){
   requireThat(typeof boundary.machineTransaction==='function'&&Number.isInteger(leaseMs)&&leaseMs>=1000&&leaseMs<=300000,500,'VARIANT_CONFIG_INVALID');
   const machine=work=>boundary.machineTransaction(null,work);
   // The retained cache is append-only. A transaction-scoped lock and a strict
@@ -141,38 +117,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
   function listingResponse(saved,reservation){requireThat(saved?.schemaVersion==='variant-listing-source-journal/v1'&&saved.requestKey===reservation.request.requestKey&&saved.dispatchId===reservation.dispatchId&&saved.reservationHash===digest(canonical(reservation)),503,'VARIANT_LISTING_JOURNAL_CONFLICT');
     const {schemaVersion,dispatchId,reservationHash,sourceSchemaVersion,...source}=saved;requireThat(typeof source.bodyText==='string'&&Buffer.byteLength(source.bodyText)<=1048576&&digest(source.bodyText)===source.sha256,503,'VARIANT_LISTING_SOURCE_INVALID');return {schemaVersion:sourceSchemaVersion,...source};}
   async function authorized(tx,principal,cardId,edit=false){const card=await authorizeManualCard(tx,principal,cardId,{edit});if(intakeRepository)await intakeRepository.assertActiveInTransaction(tx,cardId);return card;}
-  async function recheck(tx,cardId,actionId){
-    const [refused]=await tx.$queryRawUnsafe('SELECT analysis_id FROM atlas_defect_analysis.request_refusal WHERE card_id=$1::uuid AND action_id=$2::uuid',cardId,actionId);
-    if(refused)return {state:'REFUSED',retryable:true,analysisId:refused.analysis_id,binding:null};
-    const [run]=await tx.$queryRawUnsafe(`SELECT r.*,response.evidence response_evidence,outcome.evidence outcome_evidence,
-      EXISTS(SELECT 1 FROM atlas_defect_analysis.provider_event p WHERE p.analysis_id=r.id AND p.kind='ACCEPTED') accepted,
-      (SELECT p.evidence FROM atlas_defect_analysis.provider_event p WHERE p.analysis_id=r.id AND p.kind='ACCEPTED') acceptance_evidence
-      FROM atlas_defect_analysis.run r LEFT JOIN atlas_defect_analysis.receipt response ON response.analysis_id=r.id AND response.kind='RESPONSE'
-      LEFT JOIN atlas_defect_analysis.receipt outcome ON outcome.analysis_id=r.id AND outcome.kind='OUTCOME'
-      WHERE r.card_id=$1::uuid AND r.action_id=$2::uuid`,cardId,actionId);
-    if(!run)return {state:'QUEUED',retryable:false,analysisId:null,binding:null};
-    const response=run.response_evidence?JSON.parse(run.response_evidence):null,outcome=run.outcome_evidence?JSON.parse(run.outcome_evidence):null,acceptance=run.acceptance_evidence?JSON.parse(run.acceptance_evidence):null;
-    const state=response?.state??(acceptance?(Date.parse(acceptance.pollUntil)>Date.now()?'DISPATCHED':'UNKNOWN'):outcome?.state??(run.state==='DISPATCHED'&&Date.parse(run.expires_at)<=Date.now()?'UNKNOWN':run.state));
-    requireThat(digest(run.binding)===run.binding_hash&&digest(run.request_evidence)===run.evidence_hash,503,'VARIANT_STORED_CONTENT_INVALID');
-    return {state,retryable:state==='REFUSED'&&!run.accepted&&Boolean(response),analysisId:run.id,binding:JSON.parse(run.binding),
-      run:{analysisId:run.id,cardId,actionId,requestHash:run.request_hash,binding:JSON.parse(run.binding),requestEvidence:JSON.parse(run.request_evidence),responseEvidenceHash:run.response_evidence?digest(run.response_evidence):null}};
-  }
-  async function confirmation(tx,card){const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_connected.variant_confirmation WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,action_id DESC LIMIT 1`,card.cardId,b.sourceHash,b.identityRevision,b.identityHash);if(row){const run=row.reprocess_required?await recheck(tx,card.cardId,row.analysis_action_id):{state:'NOT_REQUIRED',retryable:false,analysisId:null,binding:null};return {...row,recheck_state:run.state,recheck_retryable:run.retryable,recheck_analysis_id:run.analysisId,recheck_binding:run.binding,recheck_run:run.run??null};}return null;}
-  // Hydration may read immutable artifacts. Keep it outside every database
-  // transaction; the manual CAS and a compact evidence fence bind its result.
-  async function compatibleConfirmation(card,row){
-    if(!row||row.recheck_state!=='READY'||!analysisCompatible)return row;
-    const compatible=await analysisCompatible({card,run:row.recheck_run});
-    return {...row,recheck_compatible:compatible===true,recheck_retryable:compatible===false,
-      recheck_reason:compatible===false?'VARIANT_ANALYSIS_STALE':null};
-  }
-  async function loadConfirmation(staff,card){
-    const row=await boundary.transaction(staff,async({tx,principal})=>{await authorized(tx,principal,card.cardId);return confirmation(tx,card);});
-    return compatibleConfirmation(card,row);
-  }
-  function recheckFence(card,row){return {version:'atlas-variant-recheck-fence-v1',cardId:card.cardId,contentHash:card.contentHash,
-    analysisActionId:row.analysis_action_id,analysisId:row.recheck_analysis_id,requestHash:row.recheck_run.requestHash,
-    responseEvidenceHash:row.recheck_run.responseEvidenceHash,compatible:false};}
+  async function confirmation(tx,card){const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_connected.variant_confirmation WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,action_id DESC LIMIT 1`,card.cardId,b.sourceHash,b.identityRevision,b.identityHash);return row??null;}
   async function checkAction(tx,card,action){validateVariantAction(action);const b=variantBinding(card);
     requireThat(b.sourceHash===action.sourceHash,409,'VARIANT_SOURCE_STALE');requireThat(b.identityRevision===action.identityRevision&&b.identityHash===action.identityHash,409,'VARIANT_IDENTITY_STALE');
     let job=null;if(action.jobId!==null){const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid`,action.jobId,card.cardId);job=unpack(row);
@@ -180,7 +125,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     return {job,identity:variantSelectedIdentity(card,action,job?.result)};
   }
   async function approvalCheck(tx,card){const row=await confirmation(tx,card);requireThat(['SELECTED','MANUAL'].includes(row?.decision),409,'VARIANT_CONFIRMATION_REQUIRED');
-    if(row.reprocess_required)requireThat(row.recheck_state==='READY'&&row.recheck_binding?.sourceHash===row.source_hash&&row.recheck_binding?.identityRevision===row.identity_revision,409,'VARIANT_REPROCESS_REQUIRED');return row;}
+    return row;}
   return Object.freeze({
     async discover(limit=25){requireThat(Number.isInteger(limit)&&limit>=1&&limit<=100,500,'VARIANT_CONFIG_INVALID');return machine(async({tx})=>{
       const rows=await tx.$queryRawUnsafe(`SELECT c.id,c.owner_id,c.content,atlas_manual_connected.display_owner_version(c.owner_id) access_version FROM atlas_manual.card c
@@ -194,9 +139,9 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
        count+=await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,source_hash,identity_revision,identity_hash,input,input_hash) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,variantJobKey(input),row.id,row.owner_id,row.access_version,VARIANT_POLICY,input.sourceHash,input.identityRevision,input.identityHash,value,digest(value));}return count;});},
     async read(staff,cardId){uuid(cardId);const savedRead=await boundary.transaction(staff,async({tx,principal})=>{const card=await authorized(tx,principal,cardId);const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);const saved=await confirmation(tx,card);let latest=row;if(!latest&&saved?.job_key){[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
       const [approved]=await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual.approval WHERE card_id=$1::uuid AND source_hash=$2 LIMIT 1',cardId,card.contentHash);
-      let approvalReady=Boolean(approved),reason=null;try{if(!approved)await approvalCheck(tx,card);approvalReady=true;}catch(e){if(!['VARIANT_CONFIRMATION_REQUIRED','VARIANT_REPROCESS_REQUIRED'].includes(e.code))throw e;reason=e.code;}
+      let approvalReady=Boolean(approved),reason=null;try{if(!approved)await approvalCheck(tx,card);approvalReady=true;}catch(e){if(e.code!=='VARIANT_CONFIRMATION_REQUIRED')throw e;reason=e.code;}
       return {card,job:unpack(latest),confirmation:saved,approvalReady,reason,legacyApproved:Boolean(approved)};});
-      const checked=await compatibleConfirmation(savedRead.card,savedRead.confirmation);return {...savedRead,confirmation:checked,...(!savedRead.legacyApproved&&checked?.recheck_compatible===false?{approvalReady:false,reason:'VARIANT_REPROCESS_REQUIRED'}:{})};},
+      return savedRead;},
     async refresh(staff,cardId,input){object(input,['requestId','sourceHash','identityRevision','identityHash','jobId']);uuid(input.requestId);requireThat(/^[a-f0-9]{64}$/.test(input.jobId),400,'VARIANT_REFRESH_INVALID');return boundary.transaction(staff,async({tx,principal})=>{
       await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid FOR UPDATE',cardId);
       const card=await authorized(tx,principal,cardId,true),b=variantBinding(card);
@@ -216,22 +161,12 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     });},
     async reusableResult(job,snapshot){if(!job.input.reuseJobKey)return null;return machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT source.* FROM ${table} source JOIN ${table} j ON j.key=$1 WHERE source.key=$2 AND source.card_id=j.card_id AND source.source_hash=j.source_hash AND source.identity_revision=j.identity_revision AND source.identity_hash=j.identity_hash AND source.state='READY' AND source.catalog_hash=$3 AND ${current}`,job.key,job.input.reuseJobKey,snapshot.snapshotHash);const prior=unpack(row);return prior?.result?.catalog?.snapshotHash===snapshot.snapshotHash?prior.result:null;});},
     async resolve(staff,card,action){return boundary.transaction(staff,async({tx,principal})=>{const actual=await authorized(tx,principal,card.cardId,true);requireThat(actual.contentHash===card.contentHash,409,'MANUAL_DRAFT_STALE');return checkAction(tx,card,action);});},
-    currentConfirmation:loadConfirmation,
-    async prepareConfirmation({staff,card,action}){if(action.type!=='VARIANT_CONFIRM'||action.decision==='UNRESOLVED')return null;const row=await loadConfirmation(staff,card);return row?.recheck_compatible===false?recheckFence(card,row):null;},
-    async pendingRechecks(limit=4){return machine(async({tx})=>tx.$queryRawUnsafe(`SELECT v.*,c.owner_id,atlas_manual_connected.display_owner_version(c.owner_id) access_version FROM atlas_manual_connected.variant_confirmation v JOIN atlas_manual.card c ON c.id=v.card_id JOIN atlas_manual.action a ON a.card_id=v.card_id AND a.action_id=v.action_id WHERE atlas_manual_connected.display_owner_version(c.owner_id) IS NOT NULL AND a.result::jsonb->'card'->'draft'->'identity'=c.content::jsonb->'identity' AND v.action_id=(SELECT latest.action_id FROM atlas_manual_connected.variant_confirmation latest WHERE latest.card_id=c.id AND latest.source_hash=v.source_hash AND latest.identity_revision=v.identity_revision AND latest.identity_hash=v.identity_hash ORDER BY latest.created_at DESC,latest.action_id DESC LIMIT 1) AND v.reprocess_required AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int AND v.source_hash=c.content::jsonb->'source'->>'sourceHash' AND v.decision IN('SELECTED','MANUAL') AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=c.id) AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.request_refusal f WHERE f.card_id=c.id AND f.action_id=v.analysis_action_id) AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.run r WHERE r.card_id=c.id AND r.action_id=v.analysis_action_id AND (r.state<>'PREPARED' OR EXISTS(SELECT 1 FROM atlas_defect_analysis.receipt receipt WHERE receipt.analysis_id=r.id))) ORDER BY v.created_at LIMIT $1`,limit));},
     async assertApproval(staff,card){return boundary.transaction(staff,async({tx,principal})=>{await authorized(tx,principal,card.cardId);return approvalCheck(tx,card);});},
-    async validateCommit({tx,principal,cardId,input,draft,commitGuard=null}){if(input.action.type==='APPROVE_REPORT'){await approvalCheck(tx,{cardId,draft});return;}if(input.action.type!=='VARIANT_CONFIRM')return;
-      const card=await authorized(tx,principal,cardId,true),{job,identity}=await checkAction(tx,card,input.action),changed=variantIdentityHash(identity)!==variantIdentityHash(card.draft.identity),revision=card.draft.identityRevision+(changed?1:0),previous=await confirmation(tx,card);
-      const staleReady=commitGuard?.version==='atlas-variant-recheck-fence-v1';
-      if(staleReady)requireThat(previous?.recheck_state==='READY'&&canonical(commitGuard)===canonical(recheckFence(card,previous)),409,'VARIANT_RECHECK_STALE');
-      const correction=variantCorrectionRequiresRecheck(card.draft.identity,identity);
-      // Keep any genuine outstanding recheck bound to its original request.
-      // An alias edit during that check still needs a newly bound result, while
-      // ordinary first-time clarification alone creates no paid grading work.
-      const needsRecheck=correction||previous?.reprocess_required===true,analysisActionId=needsRecheck&&(changed||previous?.recheck_retryable===true||staleReady)?variantAnalysisActionId(input.actionId):previous?.analysis_action_id??variantAnalysisActionId(input.actionId);
+    async validateCommit({tx,principal,cardId,input,draft}){if(input.action.type==='APPROVE_REPORT'){await approvalCheck(tx,{cardId,draft});return;}if(input.action.type!=='VARIANT_CONFIRM')return;
+      const card=await authorized(tx,principal,cardId,true),{job,identity}=await checkAction(tx,card,input.action),changed=variantIdentityHash(identity)!==variantIdentityHash(card.draft.identity),revision=card.draft.identityRevision+(changed?1:0);
       requireThat(variantIdentityHash(draft.identity)===variantIdentityHash(identity)&&draft.identityRevision===revision,409,'VARIANT_IDENTITY_STALE');
-      await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,job_key,result_hash,catalog_hash,candidate_id,decision,reprocess_required,analysis_action_id,observed_features) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::uuid,$14)`,cardId,input.actionId,principal.id,input.action.sourceHash,revision,variantIdentityHash(identity),job?.key??null,job?.result_hash??null,job?.catalog_hash??null,input.action.candidateId,input.action.decision,needsRecheck,analysisActionId,input.action.observedFeatures??null);
-      if(['SELECTED','MANUAL'].includes(input.action.decision)){const candidate=job?.result?.catalog?.candidates.find(c=>c.candidateId===input.action.candidateId);const observedAt=new Date().toISOString(),payload={decision:input.action.decision,cardId,actionId:input.actionId,sourceHash:input.action.sourceHash,identityRevision:revision,identityHash:variantIdentityHash(identity),identity:{...variantCatalogIdentity('playerName'in identity?'SPORTS':'POKEMON',identity),language:candidate?.identity.language??null},parallel:identity.parallel,observedFeatures:input.action.observedFeatures??null,catalog:job?.catalog??null,candidateId:input.action.candidateId,observedAt,referencePermission:input.action.referencePermission??null},text=canonical(payload,{maxBytes:2097152});
+      await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,job_key,result_hash,catalog_hash,candidate_id,decision,reprocess_required) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,false)`,cardId,input.actionId,principal.id,input.action.sourceHash,revision,variantIdentityHash(identity),job?.key??null,job?.result_hash??null,job?.catalog_hash??null,input.action.candidateId,input.action.decision);
+      if(['SELECTED','MANUAL'].includes(input.action.decision)){const candidate=job?.result?.catalog?.candidates.find(c=>c.candidateId===input.action.candidateId);const observedAt=new Date().toISOString(),payload={decision:input.action.decision,cardId,actionId:input.actionId,sourceHash:input.action.sourceHash,identityRevision:revision,identityHash:variantIdentityHash(identity),identity:{...variantCatalogIdentity('playerName'in identity?'SPORTS':'POKEMON',identity),language:candidate?.identity.language??null},parallel:identity.parallel,catalog:job?.catalog??null,candidateId:input.action.candidateId,observedAt,referencePermission:input.action.referencePermission??null},text=canonical(payload,{maxBytes:2097152});
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_contribution(action_id,card_id,actor_id,access_version,payload,payload_hash) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6)`,input.actionId,cardId,principal.id,principal.accessVersion,text,digest(text));}
     },
     async codexReadings(job){return machine(async({tx})=>{

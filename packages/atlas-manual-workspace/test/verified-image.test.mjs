@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,webcrypto} from 'node:crypto';
 import {loadVerifiedImage,createVerifiedImageResource,verifiedImageContentKey,MAX_VERIFIED_IMAGE_BYTES} from '../src/verified-image.mjs';
-import {geometryImage,geometryImageBinding,reviewImageDisplay,reviewImagePreview} from '../dist/PairedGeometryWorkspace.js';
+import {geometryImage,geometryImageBinding,reviewImageDisplay,reviewImagePreview} from '../src/geometry-image.mjs';
 import {inspectionImageBinding} from '../dist/DefectReviewWorkspace.js';
 
 const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64');

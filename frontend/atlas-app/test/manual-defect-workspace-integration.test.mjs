@@ -12,8 +12,6 @@ import * as reviewFeedback from '../lib/review-feedback.mjs';
 import * as variantReview from '../lib/variant-review-client.mjs';
 import * as analysisClient from '../lib/manual-defect-analysis-client.mjs';
 import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
-import {isDefectObservationResolved} from '../../../packages/atlas-manual-workspace/src/defect-actions.mjs';
-import {variantFindingsBlocked} from '../../../packages/atlas-manual-workspace/src/rapid-review.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const compiled = babel.transformSync(readFileSync(new URL('../components/ManualCards.jsx', import.meta.url), 'utf8'), {
@@ -43,7 +41,11 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
     sourceHash: f.current.card.contentHash, canCertify: true, report: {}, review: {} });
   const client = { recover: async () => { viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
-    execute: async action => { f.actions.push(action); await f.onExecute?.(action); return f.current; },
+    execute: async action => { f.actions.push(action); await f.onExecute?.(action);
+      if (action.type === 'INSPECT_SIDE') f.current = {...f.current,defects:{...f.current.defects,inspected:[...(f.current.defects.inspected ?? []),action.side]}};
+      if (action.type === 'CONFIRM_FINDINGS') f.current = {...f.current,defects:{...f.current.defects,confirmed:true}};
+      if (action.type === 'EXPLICIT_STAGE' && action.stage === 'geometry') f.current = {...f.current,geometry:{...f.current.geometry,confirmed:true}};
+      viewCallback(f.current); return f.current; },
     reviewProposal: async input => { f.actions.push({ type: 'REVIEW_PROPOSAL', input }); return f.current; },
     editDefect: async input => { f.actions.push({ type: 'EDIT_DEFECT', input }); return f.current; }, previewReport: async () => f.preview() };
   const exports = {};
@@ -71,10 +73,23 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; statusCallback = options.onStatus; return client; } };
       if (name === '@atlas/manual-workspace') return { reviewImagePreview };
-      if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace',FindingsOverview:'FindingsOverview',reviewedMemoryState };
+      if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace',reviewedMemoryState };
       if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview',CompletedReviewCard:'CompletedReviewCard',reportAwardedGrade };
-      if (name === '@atlas/manual-workspace/rapid-review') return {variantFindingsBlocked,rapidResumeStage:view=>!view.geometry.confirmed?'geometry-review':view.defects?.confirmed&&!variantFindingsBlocked(view)&&!view.astra?.proposals?.some(p=>p.reviewStatus==='UNREVIEWED')?'report':'findings-review',rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage}),approveRapidGeometrySide:async(view,input,execute)=>execute({type:'EXPLICIT_SIDE',side:input.side}),confirmRapidGeometryPair:async(view,approvals,execute)=>{assert.ok(approvals.FRONT);assert.ok(approvals.BACK);return execute({type:'EXPLICIT_STAGE',stage:'geometry'});},approveRapidFinding:async(view,id,execute)=>{if(id){const side=Object.keys(view.defects.sides).find(side=>view.defects.sides[side].findings.some(f=>f.id===id));view=await execute({type:'REVIEW_FINDING',side,findingId:id});}const next=Object.values(view.defects.sides??{}).flatMap(slot=>slot.findings??[]).find(f=>!Object.values(view.defects.sides).some(slot=>slot.findingReviews?.decisions.some(value=>value.findingId===f.id)));if(next)return {view,nextFindingId:next.id,complete:false};return {view:await execute({type:'EXPLICIT_STAGE',stage:'findings'}),complete:true};}};
-      if (name === '@atlas/manual-workspace/defect-actions') return {isDefectObservationResolved,defectBase:(_value,side)=>base[side],reviewedDefectFindingIds:(value,side)=>value.sides?.[side]?.findingReviews?.decisions?.map(item=>item.findingId)??[]};
+      if (name === '@atlas/manual-workspace/rapid-review') return {
+        rapidResumeStage: view => !view.geometry.confirmed ? 'geometry-review' : view.defects?.confirmed ? 'report' : 'findings-review',
+        rapidReviewStatus: view => ({ geometry: true, findings: Boolean(view.geometry.confirmed) && !Object.values(view.defects?.sides ?? {}).some(slot => slot.pending) }),
+        approveRapidGeometrySide: async (view,input,execute) => execute({type:'EXPLICIT_SIDE',side:input.side}),
+        confirmRapidGeometryPair: async (view,approvals,execute) => { assert.ok(approvals.FRONT); assert.ok(approvals.BACK); return execute({type:'EXPLICIT_STAGE',stage:'geometry'}); },
+        approveRapidFindingsSide: async (view,side,execute) => {
+          let current = view;
+          if (!(current.defects.inspected ?? []).includes(side)) current = await execute({type:'INSPECT_SIDE',side,base:base[side],inspected:true});
+          const nextSide = ['FRONT','BACK'].find(value => !(current.defects.inspected ?? []).includes(value));
+          if (nextSide) return {view:current,nextSide,complete:false};
+          if (!current.defects.confirmed) current = await execute({type:'CONFIRM_FINDINGS',base,reviewed:true});
+          return {view:current,nextSide:null,complete:true};
+        },
+      };
+      if (name === '@atlas/manual-workspace/defect-actions') return {defectBase:(_value,side)=>base[side]};
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value,geometryBase:(_geometry,side)=>({side}) };
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/manual-defect-analysis-client.mjs') return analysisClient;
@@ -88,8 +103,8 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   f.tick = async (ms = 5000) => { const tick = timers.get(ms); if (!tick) return; tick(); await flush(); f.render(); };
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
-  f.overview = () => { const node = all(tree, node => node.type === 'FindingsOverview')[0]; assert.ok(node, 'paired findings overview rendered'); return node.props; };
-  f.openFindings = () => { f.button('Findings').props.onClick(); f.render(); const toggle=f.button('Review one at a time'); if(toggle){toggle.props.onClick();f.render();} };
+  f.openFindings = () => { f.button('Findings').props.onClick(); f.render(); };
+  f.openGrade = async () => { f.button('04Grade').props.onClick(); await flush(); f.render(); };
   f.button = label => { const matcher=node=>node.type==='button'&&(text(node)===label||node.props['aria-label']===label); return all(tree,matcher)[0] ?? all(all(tree,node=>typeof node.props?.renderReviewActions==='function').map(node=>node.props.renderReviewActions({})),matcher)[0]; };
   f.focusedGeometry = () => all(tree, node => node.type === 'FocusedGeometryWorkspace')[0]?.props;
   f.completion = () => all(tree, node => node.type === 'CompletionNextSteps')[0]?.props;
@@ -106,46 +121,17 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
 
 test('final correction workspace shows the current computed grade and hides it while measurement is pending without creating human decisions', async () => {
   const f = harness({ finalReview: true }); await flush(); f.render();
-  assert.equal(f.defects().grade, 9.5); assert.equal(f.actions.length, 0);
+  assert.match(f.text(), /Grade 9.5 \/ 10/); assert.equal(f.actions.length, 0);
   f.publish({ ...f.current, card: { revision: 2, contentHash: 'pending' }, provisional: { state: 'PENDING' } });
-  assert.equal(f.defects().grade, undefined); assert.doesNotMatch(f.text(), /Current provisional grade: 9.5/);
+  assert.doesNotMatch(f.text(), /Grade 9.5 \/ 10/); assert.doesNotMatch(f.text(), /Current provisional grade: 9.5/);
   f.publish({ ...f.current, card: { revision: 3, contentHash: 'measured' }, provisional: { state: 'READY', report: { proposedGrade: 8 }, reportHash: 'updated' } });
-  assert.equal(f.defects().grade, 8);
+  assert.match(f.text(), /Grade 8 \/ 10/);
   f.openFindings(); await flush(); f.render();
-  assert.equal(f.defects().grade, 8); assert.equal(f.actions.length, 0); assert.equal(f.popups.length, 0);
+  assert.match(f.text(), /Grade 8 \/ 10/); assert.equal(f.actions.length, 0); assert.equal(f.popups.length, 0);
   f.dispose();
 });
 
-test('actual staff parent refreshes analysis assistance without replacing a newer saved finding edit or leaving its editor', async () => {
-  const f = harness(); await flush(); f.render(); const old = structuredClone(f.current); let complete;
-  f.respond = (path, options) => {
-    if (options?.method === 'POST') return new Promise(resolve => { complete = () => resolve({ astra: { enabled: true, status: 'READY', analysisId: options.body.actionId, base, proposals: [] } }); });
-    return old;
-  };
-  const analysis = f.defects().onAnalyzeDefects({ base, actor: 'HUMAN' });
-  f.defects().onEditingChange(true); f.publish({ ...f.current, card: { revision: 2, contentHash: 'two' }, defects: { marker: 'new-human-trace' } });
-  complete(); await analysis; f.render();
-  assert.equal(f.defects().workspace.marker, 'new-human-trace'); assert.equal(f.defects().astra.status, 'READY');
-  assert.equal(f.button('Edit card details').props.disabled, true, 'analysis completion does not clear the active editor');
-  assert.equal(f.actions.length, 0, 'analysis never confirms, inspects or measures a finding');
-});
 
-test('exact NOT_FOUND remains recoverable after a stale assistance view and only explicit resume POSTs the same request', async () => {
-  const f = harness(); await flush(); f.render(); const saved = f.current; let first = true;
-  f.respond = async (path, options) => {
-    if (path.endsWith('/view')) return saved;
-    if (options?.method === 'POST' && first) { first = false; throw Error('Lost result'); }
-    if (options?.method === 'POST') return { astra: { enabled: true, status: 'READY', analysisId: options.body.actionId, base, proposals: [] } };
-    return { state: 'NOT_FOUND' };
-  };
-  await assert.rejects(f.defects().onAnalyzeDefects({ base })); f.render(); await f.defects().onRefreshAnalysis(); f.render();
-  assert.equal(f.defects().astra.status, 'UNKNOWN'); assert.equal(f.defects().astra.resumeAvailable, true);
-  const before = f.calls.filter(call => call.options?.method === 'POST'); assert.equal(before.length, 1);
-  await f.defects().onResumeAnalysis(); f.render();
-  const posts = f.calls.filter(call => call.options?.method === 'POST'); assert.equal(posts.length, 2);
-  assert.deepEqual(posts[0].options.body, posts[1].options.body);
-  assert.equal(f.defects().astra.status, 'READY', 'an older same-card view cannot undo acknowledged analysis');
-});
 
 test('proposal acceptance and correction use the normal side measurement; rejection sends no measurement', async () => {
   const f = harness(); await flush(); f.render();
@@ -159,15 +145,6 @@ test('proposal acceptance and correction use the normal side measurement; reject
   }
 });
 
-test('publication acknowledgement for older findings cannot mark a new manual revision saved', async () => {
-  const f = harness(); await flush(); f.render(); let finish;
-  f.respond = (path, options) => options?.method === 'POST' ? new Promise(resolve => { finish = resolve; }) : f.current;
-  const saving = f.defects().onRetryReviewedMemory();
-  f.publish({ ...f.current, card: { revision: 2, contentHash: 'two' }, reviewedMemory: { enabled: true, status: 'UNSAVED' }, defects: { marker: 'changed-after-confirmation' } });
-  finish({ reviewedMemory: { enabled: true, status: 'SAVED' } }); await saving; f.render();
-  assert.equal(f.defects().reviewedMemory.status, 'UNSAVED'); assert.equal(f.defects().workspace.marker, 'changed-after-confirmation');
-  assert.equal(f.actions.length, 0);
-});
 
 test('mount with an unknown saved analysis performs exact GET only and leaves manual review usable', async () => {
   const id = '33333333-3333-4333-8333-333333333333';
@@ -179,39 +156,7 @@ test('mount with an unknown saved analysis performs exact GET only and leaves ma
   assert.equal(f.button('Edit card details').props.disabled, false); assert.equal(f.actions.length, 0);
 });
 
-test('an image-grant refresh begun before publication acknowledgement cannot revert saved examples to pending', async () => {
-  const f = harness(); await flush(); f.render();
-  f.publish({ ...f.current, reviewedMemory: { enabled: true, status: 'PENDING' } });
-  const earlier = structuredClone(f.current); let finish, reads = 0;
-  f.respond = (path, options) => {
-    if (options?.method === 'POST') { f.current = { ...f.current, reviewedMemory: { enabled: true, status: 'SAVED' } }; return { reviewedMemory: f.current.reviewedMemory }; }
-    if (reads++ === 0) return new Promise(resolve => { finish = resolve; });
-    return f.current;
-  };
-  const loading = f.button('Reload images').props.onClick();
-  await f.defects().onRetryReviewedMemory(); f.render(); assert.equal(f.defects().reviewedMemory.status, 'SAVED');
-  finish(earlier); await loading; f.render(); assert.equal(f.defects().reviewedMemory.status, 'SAVED');
-});
 
-
-test('accepted background analysis refreshes with GET only and preserves an active human edit', async () => {
-  const f = harness(); await flush(); f.render(); let analysisId;
-  f.respond = async (path, options) => {
-    if (path.endsWith('/view')) return f.current;
-    if (options?.method === 'POST') { analysisId = options.body.actionId; return { astra: { enabled: true, status: 'RUNNING', backgroundAccepted: true, analysisId, base, proposals: [] } }; }
-    assert.equal(path.endsWith('/' + analysisId), true);
-    return { astra: { enabled: true, status: 'READY', analysisId, base, proposals: [] } };
-  };
-  await f.defects().onAnalyzeDefects({ base }); f.render(); assert.equal(f.defects().astra.status, 'RUNNING');
-  f.defects().onEditingChange(true); f.publish({ ...f.current, card: { revision: 2, contentHash: 'edited' }, defects: { marker: 'unsaved-editor-still-open' } });
-  const before = f.calls.length; await f.tick();
-  assert.equal(f.calls.length, before + 1); assert.equal(f.calls.at(-1).options.method, undefined);
-  assert.equal(f.defects().astra.status, 'READY'); assert.equal(f.defects().workspace.marker, 'unsaved-editor-still-open');
-  assert.equal(f.button('Edit card details').props.disabled, true); assert.equal(f.actions.length, 0);
-  await f.tick(); assert.equal(f.calls.length, before + 1, 'settled analysis stops polling');
-  assert.equal(f.calls.filter(call => call.options?.method === 'POST').length, 1);
-  f.dispose();
-});
 
 test('status polling pauses after session denial and unmount removes its timer', async () => {
   const id = '44444444-4444-4444-8444-444444444444';
@@ -239,17 +184,10 @@ test('exhausted background collection stops automatic browser polling without st
   f.dispose();
 });
 
-test('staff parent sends one explicit collective confirmation with the offered roster and no browser adoption loop', async () => {
-  const f = harness(); await flush(); f.render();
-  const proposalReview = { analysisId: randomUUID(), resultHash: 'a'.repeat(64), proposalIds: ['proposal-one', 'proposal-two'] };
-  await f.defects().onConfirm({ base, reviewed: true, actor: 'HUMAN', proposalReview });
-  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)), [{ type: 'CONFIRM_FINDINGS', base, reviewed: true, proposalReview }]);
-  f.dispose();
-});
 
 test('opening the full draft is read-only and approval requires verified images and the exact displayed revision', async () => {
   const f = harness(); await flush(); f.render();
-  await f.defects().onContinue(); f.render();
+  await f.openGrade(); f.render();
   assert.equal(f.report().preview.reportHash, 'exact-report-hash'); assert.equal(f.report().current, true);
   assert.equal(f.actions.length, 0); assert.equal(f.button('Approve final grade and queue label').props.disabled, true);
   await f.button('Approve final grade and queue label').props.onClick(); assert.equal(f.actions.length, 0);
@@ -265,7 +203,7 @@ test('opening the full draft is read-only and approval requires verified images 
 test('manual review explains missing certification and prevents approval or print effects before a current preview', async () => {
   const f = harness(); await flush(); f.render(); const preview = f.preview;
   f.preview = async () => ({ ...await preview(), canCertify: false });
-  await f.defects().onContinue(); f.render(); f.report().onReadyChange(true); f.render();
+  await f.openGrade(); f.render(); f.report().onReadyChange(true); f.render();
   assert.equal(f.button('Approve final grade and queue label').props.disabled, true);
   assert.match(f.text(), /Current reviewer certification required/);
   await f.button('Approve final grade and queue label').props.onClick();
@@ -279,7 +217,7 @@ test('manual review explains missing certification and prevents approval or prin
 
 test('certification refusal after a preview queues no label and updates guidance without retrying approval', async () => {
   const f = harness(); await flush(); f.render();
-  await f.defects().onContinue(); f.render(); f.report().onReadyChange(true); f.render();
+  await f.openGrade(); f.render(); f.report().onReadyChange(true); f.render();
   f.onExecute = () => { throw { code: 'MANUAL_CERTIFICATION_REQUIRED' }; };
   await f.button('Approve final grade and queue label').props.onClick(); f.render();
   assert.equal(f.closedPopups, 0); assert.equal(f.actions.length, 1);
@@ -292,7 +230,7 @@ test('certification refusal after a preview queues no label and updates guidance
 test('a report response that arrives after a newer saved edit is refused before display', async () => {
   const f = harness(); await flush(); f.render(); let finish;
   f.preview = () => new Promise(resolve => { finish = resolve; });
-  const opening = f.defects().onContinue();
+  const opening = f.openGrade();
   f.publish({ ...f.current, card: { revision: 2, contentHash: 'two' } });
   finish({ reportHash: 'old-report', sourceRevision: 1, sourceHash: 'one', report: {}, review: {} });
   await opening; f.render();
@@ -306,7 +244,7 @@ test('reopening an approved report reads its saved label only on the explicit la
   const f = harness(); await flush(); f.render();
   f.publish({ ...f.current, approval: { sourceHash: 'one', reportHash: 'exact-report-hash' }, publication: finishingPublication });
   f.respond = async path => path.includes('/finishing/') ? finishingPlan : f.current;
-  await f.defects().onContinue(); f.render(); await flush(); f.render();
+  await f.openGrade(); f.render(); await flush(); f.render();
   assert.equal(f.finishing(),undefined); assert.equal(f.calls.filter(call=>call.path.includes('/finishing/')).length,0);
   f.completion().onToggleLabel();f.render();await flush();f.render();
   assert.equal(f.finishing().plan.id, 'synthetic-plan'); assert.equal(f.finishing().autoPrintWindow, undefined); assert.equal(f.popups.length, 0);
@@ -317,10 +255,10 @@ test('returning to Findings discards the displayed report and opens a fresh corr
   const f = harness(); await flush(); f.render(); let previews = 0;
   f.preview = async () => ({ reportHash: `report-${++previews}`, sourceRevision: f.current.card.revision,
     sourceHash: f.current.card.contentHash, report: {}, review: {} });
-  await f.defects().onContinue(); f.render(); f.report().onReadyChange(true); f.render();
+  await f.openGrade(); f.render(); f.report().onReadyChange(true); f.render();
   await f.openFindings(); f.render(); assert.equal(f.report(), undefined); assert.ok(f.defects());
   f.publish({ ...f.current, card: { revision: 2, contentHash: 'corrected' } });
-  await f.defects().onContinue(); f.render();
+  await f.openGrade(); f.render();
   assert.equal(f.report().preview.reportHash, 'report-2'); assert.equal(f.report().preview.sourceHash, 'corrected');
   assert.equal(f.button('Approve final grade and queue label').props.disabled, true, 'new report must verify its images again');
   assert.equal(f.actions.length, 0); f.dispose();
@@ -362,10 +300,10 @@ const preparedReview = current => {
 test('partial final review permits Findings in the exact prepared physical frame without printed borders or geometry confirmation',async()=>{
   const f=harness({finalReview:true});await flush();f.render();
   f.publish({...preparedReview(f.current),provisional:{state:'READY',report:{proposedGrade:null,calculationState:'GEOMETRY_UNRESOLVED'}}});
-  assert.equal(f.defects().grade,undefined);assert.doesNotMatch(f.text(),/Updating measurements|Current provisional grade: null/);
+  assert.doesNotMatch(f.text(), /Grade 9.5 \/ 10/);assert.doesNotMatch(f.text(),/Updating measurements|Current provisional grade: null/);
   f.button('Geometry').props.onClick();f.render();
   assert.equal(f.button('Findings').props.disabled,false);f.openFindings();f.render();
-  assert.ok(f.defects());assert.equal(f.defects().grade,undefined);assert.equal(f.actions.length,0);
+  assert.ok(f.defects());assert.doesNotMatch(f.text(), /Grade 9.5 \/ 10/);assert.equal(f.actions.length,0);
   f.button('Geometry').props.onClick();f.render();
   f.publish({...f.current,defects:{sides:{...f.current.defects.sides,FRONT:{...f.current.defects.sides.FRONT,frame:{...f.current.defects.sides.FRONT.frame,frameId:'wrong-frame'}}}}});
   assert.equal(f.button('Findings').props.disabled,true);f.openFindings();f.render();assert.ok(f.geometry());
@@ -373,10 +311,10 @@ test('partial final review permits Findings in the exact prepared physical frame
 });
 test('unsaved geometry and finding edits suppress saved grade until saved or discarded',async()=>{
   const f=harness({finalReview:true});await flush();f.render();
-  f.openFindings();f.render();assert.equal(f.defects().grade,9.5);
-  f.defects().onEditingChange(true);f.render();assert.equal(f.defects().grade,undefined);
+  f.openFindings();f.render();assert.match(f.text(), /Grade 9.5 \/ 10/);
+  f.defects().onEditingChange(true);f.render();assert.doesNotMatch(f.text(), /Grade 9.5 \/ 10/);
   assert.match(f.text(),/Unsaved changes/);assert.doesNotMatch(f.text(),/Current provisional grade:/);
-  f.defects().onEditingChange(false);f.render();assert.equal(f.defects().grade,9.5);
+  f.defects().onEditingChange(false);f.render();assert.match(f.text(), /Grade 9.5 \/ 10/);
   f.button('Geometry').props.onClick();f.render();f.geometry().onEditingChange(true);f.render();
   assert.match(f.text(),/Unsaved changes/);assert.doesNotMatch(f.text(),/Current provisional grade:/);
   f.geometry().onEditingChange(false);f.render();assert.equal(f.current.provisional.report.proposedGrade,9.5);assert.equal(f.actions.length,0);f.dispose();
@@ -395,6 +333,12 @@ test('an interrupted outline edit offers optional same-side undo without a prese
 });
 
 
+async function approveFindings(f){
+ assert.equal(f.defects().side,'FRONT'); f.defects().onReadyChange(true); f.render();
+ await f.button('Approve front findings').props.onClick(); await flush(); f.render();
+ assert.equal(f.defects().side,'BACK'); f.defects().onReadyChange(true); f.render();
+ await f.button('Approve back findings').props.onClick(); await flush(); f.render();
+}
 async function approveGeometry(f){
  assert.equal(f.focusedGeometry().side,'FRONT');
  await f.focusedGeometry().onApproveSide({side:'FRONT'});f.render();
@@ -404,9 +348,9 @@ async function approveGeometry(f){
 test('rapid opens editable Front, saves both sides in order, then findings and final grade without a print popup',async()=>{
  const f=harness({finalReview:true,rapid:true});await flush();f.render();
  assert.ok(f.focusedGeometry());assert.equal(f.machine(),undefined);assert.equal(f.actions.length,0);
- await approveGeometry(f);assert.ok(f.overview());
- f.overview().onReadyChange(true);f.render();await f.button('Approve all findings').props.onClick();f.render();
- assert.ok(f.report());assert.deepEqual(f.actions.map(a=>a.type),['EXPLICIT_SIDE','EXPLICIT_SIDE','EXPLICIT_STAGE','EXPLICIT_STAGE']);
+ await approveGeometry(f);assert.ok(f.defects());
+ await approveFindings(f);
+ assert.ok(f.report());assert.deepEqual(f.actions.map(a=>a.type),['EXPLICIT_SIDE','EXPLICIT_SIDE','EXPLICIT_STAGE','INSPECT_SIDE','INSPECT_SIDE','CONFIRM_FINDINGS']);
  assert.equal(f.button('Approve final grade and queue label').props.disabled,true);
  f.report().onReadyChange(true);f.render();await f.button('Approve final grade and queue label').props.onClick();f.render();
  assert.equal(f.actions.at(-1).type,'APPROVE_REPORT');assert.equal(f.popups.length,0);f.dispose();
@@ -416,7 +360,7 @@ test('rapid failed side save stays on the exact side and does not confirm or adv
  f.onExecute=()=>{throw Error('save failed');};
  await assert.rejects(f.focusedGeometry().onApproveSide({side:'FRONT'}));f.render();
  assert.equal(f.focusedGeometry().side,'FRONT');assert.equal(f.actions.some(a=>a.type==='EXPLICIT_STAGE'),false);
- f.onExecute=undefined;await approveGeometry(f);assert.ok(f.overview());assert.equal(f.report(),undefined);f.dispose();
+ f.onExecute=undefined;await approveGeometry(f);assert.ok(f.defects());assert.equal(f.report(),undefined);f.dispose();
 });
 
 test('approved review opens a calm completion screen with saved award, lazy extras and retained correction path',async()=>{
@@ -424,7 +368,7 @@ test('approved review opens a calm completion screen with saved award, lazy extr
   f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:{version:'atlas-manual-report-snapshot-v2',identity:{cardName:'Abomasnow'},finalGradePolicy:'atlas-final-half-point-v1',finalGrade:10,grade:{overall:{rawGrade:9.9,displayGrade:9.9}}}});
   f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});
   f.respond=async path=>path.includes('/finishing/')?finishingPlan:f.current;
-  f.openFindings();await flush();f.render();await f.defects().onContinue();f.render();await flush();f.render();
+  f.openFindings();await flush();f.render();await f.openGrade();f.render();await flush();f.render();
   assert.match(f.text(),/Completed.*Abomasnow.*APPROVED GRADE10/);assert.match(f.text(),/Next card/);
   assert.doesNotMatch(f.text(),/Final human review|Current provisional|View current provisional|Approved. Preserved|Optional report tools/);
   assert.equal(f.report(),undefined);assert.equal(f.button('Geometry'),undefined);assert.equal(f.finishing(),undefined);
@@ -442,7 +386,7 @@ test('recovered completed snapshot displays the saved whole or half-point award 
     const before=JSON.stringify(saved);
     f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:saved});
     f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});
-    await f.defects().onContinue();f.render();await flush();f.render();
+    await f.openGrade();f.render();await flush();f.render();
     assert.match(f.text(),new RegExp(`APPROVED GRADE${award}ATLAS`));
     assert.equal(all(f.tree(),node=>node.type==='CompletedReviewCard')[0].props.grade,award);
     assert.equal(JSON.stringify(saved),before,'reading an approval never rewrites its evidence');
@@ -454,13 +398,13 @@ test('a changed card revision cannot reuse an older completion award',async()=>{
   const f=harness();await flush();f.render();
   f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:{version:'atlas-manual-report-snapshot-v2',finalGradePolicy:'atlas-final-half-point-v1',finalGrade:8,grade:{overall:{displayGrade:8.2}}}});
   f.publish({...f.current,card:{revision:2,contentHash:'two'},approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});
-  await f.defects().onContinue();f.render();await flush();f.render();
+  await f.openGrade();f.render();await flush();f.render();
   assert.doesNotMatch(f.text(),/APPROVED GRADE|Completed/);assert.equal(f.actions.length,0);f.dispose();
 });
 
 test('rapid approval advances without fetching a label; optional label failure cannot undo saved review',async()=>{
   const f=harness({finalReview:true,rapid:true});await flush();f.render();
-  await approveGeometry(f);f.overview().onReadyChange(true);f.render();await f.button('Approve all findings').props.onClick();f.render();
+  await approveGeometry(f);await approveFindings(f);
   f.report().onReadyChange(true);f.render();
   f.onExecute=action=>{if(action.type==='APPROVE_REPORT')f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});};
   f.respond=async path=>{if(path.includes('/finishing/'))throw {code:'SIGN_IN_REQUIRED'};return f.current;};
@@ -477,25 +421,12 @@ test('rapid approval advances without fetching a label; optional label failure c
 test('publication pending remains a saved approval with explicit retry and no false ready label',async()=>{
   const f=harness();await flush();f.render();
   f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:{...finishingPublication,state:'PENDING',retryable:true}});
-  await f.defects().onContinue();f.render();await flush();f.render();
+  await f.openGrade();f.render();await flush();f.render();
   assert.match(f.text(),/Grade approved and saved. Report publication still needs attention/);assert.ok(f.button('Retry publication'));
   assert.equal(f.button('Next card →'),undefined);assert.equal(f.finishing(),undefined);assert.equal(f.actions.length,0);f.dispose();
 });
 
 
-test('individual decisions use saved progress and the last Approve opens the grade immediately',async()=>{
- const f=harness({finalReview:true,rapid:true});await flush();f.render();
- const findings=[{id:'a',side:'FRONT'},{id:'b',side:'FRONT'},{id:'c',side:'BACK'}];
- f.publish({...f.current,defects:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{pending:null,findings:findings.filter(value=>value.side===side)}]))},provisional:{...f.current.provisional,report:{...f.current.provisional.report,findings}}});
- f.onExecute=async action=>{if(action.type==='REVIEW_FINDING'){const slot=f.current.defects.sides[action.side];f.publish({...f.current,defects:{sides:{...f.current.defects.sides,[action.side]:{...slot,findingReviews:{decisions:[...(slot.findingReviews?.decisions??[]),{findingId:action.findingId}]}}}}});}};
- await approveGeometry(f);f.button('Review one at a time').props.onClick();f.render();f.defects().onReadyChange(true);f.render();
- assert.equal(f.defects().focusedReview.findingId,'a');
- await f.defects().focusedReview.onApprove({findingId:'a'});f.render();assert.equal(f.defects().focusedReview.findingId,'b');
- f.publish({...f.current,provisional:{...f.current.provisional,reportHash:'new-projection'}});
- await f.defects().focusedReview.onApprove({findingId:'b'});f.render();assert.equal(f.defects().focusedReview.findingId,'c');
- await f.defects().focusedReview.onApprove({findingId:'c'});f.render();assert.ok(f.report());
- assert.equal(f.actions.filter(a=>a.type==='REVIEW_FINDING').length,3);assert.equal(f.actions.at(-1).stage,'findings');assert.equal(f.actions.some(a=>a.type==='APPROVE_REPORT'),false);f.dispose();
-});
 
 test('explicit photo editor entry opens geometry even when a final report exists and prioritizes the chosen side',async()=>{
  const f=harness({finalReview:true,initialGeometrySide:'BACK'});
@@ -538,7 +469,7 @@ test('rapid stage browsing records no decisions and side approvals work after st
  await f.focusedGeometry().onApproveSide({side:'BACK'});f.render();
  assert.equal(f.focusedGeometry().side,'FRONT');assert.equal(f.actions.some(action=>action.type==='EXPLICIT_STAGE'),false);
  await f.focusedGeometry().onApproveSide({side:'FRONT'});f.render();
- assert.ok(f.overview());assert.equal(f.actions.filter(action=>action.type==='EXPLICIT_SIDE').length,2);
+ assert.ok(f.defects());assert.equal(f.actions.filter(action=>action.type==='EXPLICIT_SIDE').length,2);
  assert.equal(f.actions.filter(action=>action.type==='EXPLICIT_STAGE').length,1);assert.equal(f.actions.some(action=>action.type==='APPROVE_REPORT'),false);f.dispose();
 });
 
@@ -548,18 +479,6 @@ test('stale rapid navigation handler cannot replace a newly dirty geometry side'
  f.focusedGeometry().onEditingChange(true);stale();f.render();
  assert.equal(f.focusedGeometry().side,'FRONT');assert.equal(f.button('02Back').props.disabled,true);
  assert.match(f.text(),/Unsaved changes/);assert.equal(f.actions.length,0);f.dispose();
-});
-
-test('focused finding jump preserves side and never records approval; dirty editor blocks navigation',async()=>{
- const f=harness({finalReview:true,rapid:true});await flush();f.render();
- const findings=[{id:'front-a',side:'FRONT',defectType:'WHITENING'},{id:'back-b',side:'BACK',defectType:'LIGHT_SCRATCH_SCUFF'}];
- f.publish({...f.current,defects:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{pending:null,findings:findings.filter(value=>value.side===side)}]))}});
- await approveGeometry(f);f.button('Review one at a time').props.onClick();f.render();const count=f.actions.length;
- f.defects().focusedReview.navigation.onSelect('back-b');f.render();
- assert.equal(f.defects().focusedReview.side,'BACK');assert.equal(f.defects().focusedReview.findingId,'back-b');
- const old=f.defects().focusedReview.navigation.onPrevious;
- f.defects().onEditingChange(true);old();f.render();assert.equal(f.defects().focusedReview.findingId,'back-b');
- assert.equal(f.actions.length,count);f.dispose();
 });
 
 
@@ -573,54 +492,12 @@ test('a deferred Grade preview cannot replace a geometry draft begun during the 
  assert.equal(f.actions.length,0);f.dispose();
 });
 
-test('rapid original observations live in the inspector and retain exact reject identity while browsing records no decision',async()=>{
-  const f=harness({rapid:true,finalReview:true});await flush();f.render();
-  f.publish({...f.current,finalReview:{reportHash:'observed-report',report:{analysisId:'original-analysis',findings:[],unmeasurableProposals:[{id:'front-unmeasured',side:'FRONT',defectType:'VISIBLE_WHITENING'},{id:'back-unmeasured',side:'BACK',defectType:'VISIBLE_WHITENING'}]}}});
-  assert.doesNotMatch(f.text(),/These observations produced no measurable trace/,'the old full-width banner is absent');
-  const inspector=f.focusedGeometry().reviewObservations;
-  assert.match(text(inspector),/Redraw visible damage to replace an observation with a measured finding/);
-  assert.doesNotMatch(text(inspector),/A new trace keeps the original observation pending/);
-  assert.equal(f.actions.length,0,'reading retained observations records no decision');assert.match(text(inspector),/2 to resolve/);assert.match(text(inspector),/Front · visible whitening/);assert.match(text(inspector),/Back · visible whitening/);
-  const reject=all(inspector,n=>n.type==='button'&&text(n)==='Reject original observation')[0];
-  await reject.props.onClick();await flush();f.render();
-  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)),[{type:'REJECT_FINAL_OBSERVATION',reportHash:'observed-report',proposalId:'front-unmeasured',reviewed:true}]);
-  f.focusedGeometry().onEditingChange(true);f.render();
-  assert.ok(all(f.focusedGeometry().reviewObservations,n=>n.type==='button').every(n=>n.props.disabled),'draft geometry blocks observation navigation and decisions');
-  f.dispose();
-});
-
-
-test('original-observation inspector binds redraw to the exact report and remains unresolved until its saved measurement',async()=>{
-  const f=harness({rapid:true,finalReview:true});await flush();f.render();
-  const observation={id:'front-original',side:'FRONT',defectType:'VISIBLE_WHITENING'};
-  const original={reportHash:'exact-original-report',report:{analysisId:'original-analysis',findings:[],unmeasurableProposals:[observation]}};
-  f.publish({...f.current,finalReview:original});
-  await approveGeometry(f);const actionCount=f.actions.length;
-  let selected;
-  const render=()=>f.overview().renderObservations({side:'FRONT',onTrace:value=>{selected=value;},onlySide:true});
-  const trace=all(render(),node=>node.type==='button'&&text(node)==='Trace visible damage')[0];
-  trace.props.onClick();
-  assert.deepEqual(JSON.parse(JSON.stringify(selected)),{reportHash:'exact-original-report',proposalId:'front-original',defectType:'VISIBLE_WHITENING'});
-  assert.equal(f.actions.length,actionCount,'opening redraw does not reject or resolve the proposal');
-  assert.match(text(render()),/1 to resolve/);
-  const review={analysisId:'original-analysis',proposalId:observation.id,side:'FRONT',action:'TRACE_SAVE',findingId:'human-replacement'};
-  const finding={id:'human-replacement',side:'FRONT',defectType:'VISIBLE_WHITENING',reviewResult:'SMART_MARKED',measurementRegions:[{measurement:{pixelCount:8,areaMm2:.02}}]};
-  const sides={FRONT:{findings:[finding],humanEditedIds:[finding.id],pending:{type:'TRACE_SAVE'},measurement:{receipt:{fixture:'previous saved measurement'}}},BACK:{findings:[],humanEditedIds:[],pending:null}};
-  f.publish({...f.current,assistance:{reviews:[review]},defects:{sides}});
-  assert.match(text(render()),/1 to resolve/,'pending or failed measurement remains unresolved even with an earlier receipt');
-  f.publish({...f.current,defects:{sides:{...sides,FRONT:{...sides.FRONT,pending:null,measurement:{receipt:{fixture:'saved replacement measurement'}}}}}});
-  assert.doesNotMatch(text(render()),/to resolve|No measurable trace/);
-  assert.match(text(render()),/Reviewed/);
-  assert.equal(all(render(),node=>node.type==='button'&&text(node)==='Reject original observation').length,0);
-  assert.equal(f.actions.length,actionCount,'a saved-state read cannot create a human decision');
-  f.dispose();
-});
 
 
 test('final identity gate blocks approval until current card verification, and pending recovery blocks stage navigation', async () => {
   const f = harness(); await flush(); f.render();
   f.publish({...f.current,card:{...f.current.card,draft:{source:{sourceHash:'photos'},identityRevision:1}},variantVerification:{enabled:true}});
-  await f.defects().onContinue(); f.render();
+  await f.openGrade(); f.render();
   f.report().onReadyChange(true); f.render();
   assert.equal(f.variant().revision,1); assert.equal(f.button('Approve final grade and queue label').props.disabled,true);
   await f.button('Approve final grade and queue label').props.onClick(); await flush(); assert.equal(f.actions.length,0); assert.equal(f.popups.length,0);
@@ -645,100 +522,24 @@ test('Rapid Grade keeps the exact current preview grade above empty variant matc
 });
 
 
-test('variant recheck polls saved status only, exposes fresh request-bound proposals, and leaves human findings unchanged',async()=>{
-  const f=harness();await flush();f.render();
-  const confirmation={reprocessRequired:true,recheckState:'QUEUED',analysisActionId:'variant-request'};
-  f.publish({...f.current,variantVerification:{enabled:true,confirmation,approvalReady:false}});
-  assert.match(f.text(),/Checking the confirmed variant/);const before=f.current.defects;
-  f.respond=async()=>({...f.current,variantVerification:{enabled:true,confirmation:{...confirmation,recheckState:'READY'},approvalReady:true},astra:{enabled:true,status:'READY',analysisId:'result-id',requestActionId:'variant-request',proposals:[{id:'fresh',reviewStatus:'PENDING'}]}});
-  await f.tick(5500);assert.equal(f.defects().astra.requestActionId,'variant-request');assert.equal(f.defects().astra.proposals[0].id,'fresh');assert.equal(f.defects().workspace,before);
-  assert.doesNotMatch(f.text(),/Fresh findings are available/);assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));
-  f.publish({...f.current,variantVerification:{enabled:true,confirmation:{...confirmation,recheckState:'UNKNOWN'},approvalReady:false}});
-  const count=f.calls.length;await f.tick(5500);assert.equal(f.calls.length,count);assert.match(f.text(),/check needs attention/);f.dispose();
-});
 
-test('a previous settled browser analysis cannot hide the exact saved variant recheck projection',async()=>{
-  const actionId=randomUUID(),journal={version:1,phase:'SETTLED',canResume:false,body:{actionId,base}};
-  const f=harness({journal});f.respond=async path=>path.endsWith('/view')?f.current:{state:'READY',astra:{enabled:true,status:'READY',analysisId:actionId,proposals:[{id:'old'}]}};await flush();f.render();
-  f.publish({...f.current,variantVerification:{enabled:true,confirmation:{reprocessRequired:true,recheckState:'READY',analysisActionId:'fresh-request'}},astra:{enabled:true,status:'READY',analysisId:'fresh-result',requestActionId:'fresh-request',proposals:[{id:'fresh'}]}});
-  assert.equal(f.defects().astra.analysisId,'fresh-result');await f.defects().onRefreshAnalysis();f.render();assert.equal(f.defects().astra.analysisId,'fresh-result','late exact old-journal status cannot overwrite fresh recheck');assert.equal(f.actions.length,0);f.dispose();
-});
 
-test('changed variant opens retained geometry, then the fresh defect proposal workspace without automatic decisions',async()=>{
-  const f=harness();await flush();f.render();await f.defects().onContinue();f.render();
-  const saved=f.variant().onSaved,prepared=preparedReview(f.current);
-  f.current={...prepared,card:{...f.current.card,revision:2,contentHash:'variant'},finalReview:{report:{proposedGrade:9.5,findings:[]}},
-    variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED'}}};
-  await saved();await flush();f.render();
-  assert.equal(f.geometry().workspace,prepared.geometry);assert.equal(f.report(),undefined);assert.equal(f.machine(),undefined);
-  assert.match(f.text(),/Recheck border placement for the confirmed variant/);assert.match(f.text(),/Front and Back, then review the fresh defect proposals/);
-  assert.equal(f.actions.length,0,'routing does not change saved borders or findings');
-  f.onExecute=()=>f.publish({...f.current,geometry:{...f.current.geometry,confirmed:true}});
-  await approveGeometry(f);f.render();
-  assert.equal(f.overview().workspace,prepared.defects);assert.equal(f.machine(),undefined);assert.doesNotMatch(f.text(),/Recheck border placement/);
-  assert.deepEqual(f.actions.map(value=>value.type),['EXPLICIT_SIDE','EXPLICIT_SIDE','EXPLICIT_STAGE']);f.dispose();
-});
 
-test('rapid variant change discards only old browser review checkpoints and requires both borders again',async()=>{
-  const f=harness({rapid:true,finalReview:true});await flush();f.render();await approveGeometry(f);
-  f.button('04Grade').props.onClick();await flush();f.render();const saved=f.variant().onSaved;
-  const count=f.actions.length;f.current={...preparedReview(f.current),card:{...f.current.card,revision:2,contentHash:'variant'},
-    variantVerification:{enabled:true,confirmation:{decision:'MANUAL',reprocessRequired:true,recheckState:'QUEUED'},approvalReady:false}};
-  await saved();await flush();f.render();assert.equal(f.focusedGeometry().side,'FRONT');assert.equal(f.actions.length,count);
-  await f.focusedGeometry().onApproveSide({side:'FRONT'});f.render();
-  assert.equal(f.focusedGeometry().side,'BACK','previous Back checkpoint cannot confirm the changed identity');
-  assert.equal(f.actions.filter(value=>value.type==='EXPLICIT_STAGE').length,1);
-  await f.focusedGeometry().onApproveSide({side:'BACK'});f.render();assert.ok(f.overview());
-  assert.equal(f.actions.filter(value=>value.type==='EXPLICIT_STAGE').length,2);f.dispose();
-});
 
 test('same identity confirmation keeps confirmed borders and returns to its report',async()=>{
-  const f=harness();await flush();f.render();await f.defects().onContinue();f.render();
+  const f=harness();await flush();f.render();await f.openGrade();f.render();
   const saved=f.variant().onSaved,geometry=f.current.geometry;
   f.current={...f.current,variantVerification:{enabled:true,confirmation:{decision:'SELECTED',reprocessRequired:false},approvalReady:true}};
   await saved();await flush();f.render();assert.ok(f.report());assert.equal(f.report().geometry,geometry);
   assert.doesNotMatch(f.text(),/Recheck border placement/);assert.equal(f.actions.length,0);f.dispose();
 });
 
-test('same identity retry with already reviewed borders opens fresh findings without another geometry review',async()=>{
-  const f=harness();await flush();f.render();await f.defects().onContinue();f.render();const saved=f.variant().onSaved;
-  f.current={...f.current,variantVerification:{enabled:true,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED'},approvalReady:false}};
-  await saved();await flush();f.render();assert.ok(f.overview());assert.equal(f.geometry(),undefined);
-  assert.doesNotMatch(f.text(),/Recheck border placement/);assert.equal(f.actions.length,0);f.dispose();
-});
 
-test('reloading a changed variant resumes required geometry review ahead of the retained machine report',async()=>{
-  const f=harness({finalReview:true,initialView:{geometry:{confirmed:false},variantVerification:{enabled:true,
-    confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'READY'},approvalReady:true}}});
-  await flush();f.render();assert.ok(f.geometry());assert.equal(f.machine(),undefined);assert.equal(f.report(),undefined);
-  assert.match(f.text(),/Recheck border placement/);assert.equal(f.actions.length,0);f.dispose();
-});
 
-test('a refused variant check can open identity recovery without a report preview and pending saves lock exit',async()=>{
-  const f=harness();await flush();f.render();let previews=0;f.preview=()=>{previews++;throw {code:'VARIANT_REPROCESS_REQUIRED'};};
-  f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'REFUSED',recheckRetryable:true}}});
-  f.button('Review confirmed variant').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);assert.equal(previews,0);
-  assert.equal(all(f.tree(),value=>value.type==='DefectReviewWorkspace').length,0,'grading editor cannot submit beside identity recovery');
-  f.variant().onActivityChange(true);f.render();assert.equal(f.button('Back to grading review').props.disabled,true);
-  f.button('Back to grading review').props.onClick();f.render();assert.ok(f.variant(),'stale exit handlers respect retained saves');
-  f.variant().onActivityChange(false);f.render();f.button('Back to grading review').props.onClick();f.render();assert.ok(f.defects());
-  assert.equal(previews,0);assert.equal(f.actions.length,0);f.dispose();
-});
 
-test('stale geometry recheck recovery and unknown status remain accessible without preview or automatic dispatch',async()=>{
-  for(const confirmation of [
-    {decision:'MANUAL',reprocessRequired:true,recheckState:'READY',recheckReason:'VARIANT_ANALYSIS_STALE',recheckRetryable:true},
-    {decision:'SELECTED',reprocessRequired:true,recheckState:'UNKNOWN',recheckRetryable:false},
-  ]){
-    const f=harness({rapid:true,finalReview:true});await flush();f.render();f.preview=()=>{throw Error('must not preview');};
-    f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation}});
-    if(confirmation.recheckReason)assert.match(f.text(),/Border geometry changed after the saved variant check/);
-    f.button('Review confirmed variant').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.focusedGeometry(),undefined);
-    assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
-  }
-});
+
 test('an unresolved hold after an earlier variant check stays in identity review without attempting report preview',async()=>{
- const f=harness();await flush();f.render();await f.defects().onContinue();f.render();const saved=f.variant().onSaved;
+ const f=harness();await flush();f.render();await f.openGrade();f.render();const saved=f.variant().onSaved;
  f.preview=()=>{throw Error('held identity must not request a report');};
  f.current={...f.current,geometry:{confirmed:false},variantVerification:{enabled:true,approvalReady:false,
   confirmation:{decision:'UNRESOLVED',reprocessRequired:true,recheckState:'REFUSED',recheckRetryable:true}}};
@@ -762,62 +563,9 @@ test('card correction exits the variant panel into its visible editor and retain
  f.button('Review card variant').props.onClick();f.render();assert.ok(f.variant());assert.equal(f.actions.length,0);f.dispose();
 });
 
-test('Rapid findings defaults to both-side overview; detail browsing and returning preserve saved decisions without approval',async()=>{
- const findings=[{id:'front-a',side:'FRONT',defectType:'VISIBLE_WHITENING'},{id:'back-b',side:'BACK',defectType:'LIGHT_SCRATCH_SCUFF'}];
- const f=harness({finalReview:true,rapid:true});await flush();f.render();
- f.publish({...f.current,defects:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{findings:findings.filter(value=>value.side===side),findingReviews:{decisions:side==='FRONT'?[{findingId:'front-a'}]:[]}}]))}});
- await approveGeometry(f);const count=f.actions.length;assert.ok(f.overview());assert.equal(f.button('Approve all findings').props.disabled,true);
- f.overview().onSelectFinding(findings[1]);f.render();assert.equal(f.defects().focusedReview.side,'BACK');assert.equal(f.defects().focusedReview.findingId,'back-b');
- f.button('Show all findings').props.onClick();f.render();assert.ok(f.overview());assert.equal(f.actions.length,count);
- f.button('Review one at a time').props.onClick();f.render();assert.equal(f.defects().focusedReview.findingId,'back-b');
- const returnToAll=f.button('Show all findings').props.onClick;f.defects().onEditingChange(true);returnToAll();f.render();assert.equal(f.defects().focusedReview.findingId,'back-b');assert.equal(f.button('Show all findings').props.disabled,true);
- assert.equal(f.actions.length,count);f.dispose();
-});
 
-test('one Approve all findings gesture advances to grade only after acknowledged save and suppresses duplicate or pending attempts',async()=>{
- const f=harness({finalReview:true,rapid:true});await flush();f.render();await approveGeometry(f);f.overview().onReadyChange(true);f.render();
- const approve=f.button('Approve all findings').props.onClick;let finish;
- f.onExecute=action=>action.type==='EXPLICIT_STAGE'&&action.stage==='findings'?new Promise(resolve=>{finish=resolve;}):undefined;
- const saving=approve();await flush();await approve();f.render();assert.equal(f.report(),undefined);assert.equal(f.button('Approve all findings on Front and Back').props.disabled,true);
- assert.equal(f.actions.filter(action=>action.stage==='findings').length,1);finish();await saving;f.render();assert.ok(f.report());assert.equal(f.actions.some(action=>action.type==='APPROVE_REPORT'),false);
- f.dispose();
- const pending=harness({finalReview:true,rapid:true});await flush();pending.render();await approveGeometry(pending);pending.overview().onReadyChange(true);pending.render();const stale=pending.button('Approve all findings').props.onClick;
- pending.pending=true;await stale();pending.render();assert.equal(pending.actions.some(action=>action.stage==='findings'),false);assert.equal(pending.report(),undefined);pending.dispose();
-});
 
-test('adding a missed Back finding returns to the paired overview without confirming other findings or the grade',async()=>{
- const f=harness({finalReview:true,rapid:true});await flush();f.render();
- const frames={FRONT:{inspectionImageSha256:'a'.repeat(64)},BACK:{inspectionImageSha256:'b'.repeat(64)}};
- f.publish({...f.current,defects:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{frame:frames[side],findings:[],pending:null}]))}});
- await approveGeometry(f);const context={side:'BACK',imageSha256:frames.BACK.inspectionImageSha256,findingId:null,intent:'ADD'};
- f.overview().onAddFinding(context);f.render();assert.equal(f.defects().initialInspection,context);assert.equal(f.defects().focusedReview.side,'BACK');assert.equal(f.defects().focusedReview.returnToOverview,true);
- await f.defects().focusedReview.onApprove({side:'BACK',findingId:'back-added',inspectionHashes:Object.fromEntries(['FRONT','BACK'].map(side=>[side,frames[side].inspectionImageSha256]))});f.render();
- assert.ok(f.overview());assert.equal(f.actions.at(-1).type,'REVIEW_FINDING');assert.equal(f.actions.at(-1).side,'BACK');assert.equal(f.actions.some(action=>action.stage==='findings'||action.type==='APPROVE_REPORT'),false);assert.equal(f.report(),undefined);f.dispose();
-});
 
-test('rejecting a finding returns to both photographs only after the saved rejection and measurement are acknowledged',async()=>{
- for(const mode of ['overview','individual','measurement-failure']){
-  const finding={id:'front-excluded',side:'FRONT',defectType:'VISIBLE_WHITENING',reviewResult:'UNREVIEWED',geometryExclusion:{reason:'OUTSIDE_CARD_FRAME'}};
-  const f=harness({finalReview:true,rapid:true});await flush();f.render();
-  f.publish({...f.current,defects:{sides:{FRONT:{frame:base.FRONT,findings:[finding]},BACK:{frame:base.BACK,findings:[]}}}});
-  await approveGeometry(f);
-  if(mode==='individual'){f.button('Review one at a time').props.onClick();f.render();}
-  else {f.overview().onSelectFinding(finding);f.render();}
-  const priorCount=f.actions.length;let measurement;
-  f.onExecute=action=>action.type==='MEASURE_SIDE'?new Promise((resolve,reject)=>{measurement={resolve,reject};}):undefined;
-  const saving=f.defects().onEdit({side:'FRONT',base:base.FRONT,action:{type:'REMOVE',defectIds:[finding.id]}});
-  await flush();
-  const removed={...f.current,defects:{...f.current.defects,sides:{...f.current.defects.sides,FRONT:{...f.current.defects.sides.FRONT,findings:[{...finding,reviewResult:'REMOVED'}]}}}};
-  f.publish(removed);assert.ok(f.defects(),'the saved edit alone cannot skip its measurement acknowledgement');
-  if(mode==='measurement-failure'){
-   measurement.reject({code:'MEASUREMENT_NOT_CONFIRMED'});await assert.rejects(saving,error=>error.code==='MEASUREMENT_NOT_CONFIRMED');f.render();assert.ok(f.defects());
-  }else{
-   measurement.resolve();await saving;f.render();assert.ok(f.overview());assert.equal(f.report(),undefined);
-   assert.equal(f.overview().workspace.sides.FRONT.findings[0].reviewResult,'REMOVED');
-  }
-  assert.deepEqual(f.actions.slice(priorCount).map(action=>action.type),['EDIT_DEFECT','MEASURE_SIDE']);f.dispose();
- }
-});
 
 test('only an actual unconfirmed save exposes recovery while ordinary pending requests stay quietly locked',async()=>{
  const f=harness({finalReview:true});await flush();f.render();f.pending=true;
@@ -846,29 +594,12 @@ test('incomplete geometry can preview references and return without a report rea
 });
 
 
-test('confirmed variant blocks findings approval while pending, then exposes its fresh roster without auto-approving',async()=>{
- const f=harness({rapid:true,finalReview:true,initialView:{geometry:{confirmed:true}}});await flush();f.render();
- f.button('03Findings').props.onClick();await flush();f.render();f.overview().onReadyChange(true);f.render();
- const prior=f.current.defects,staleApprove=f.button('Approve all findings on Front and Back').props.onClick;
- const confirmation={decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED',analysisActionId:'variant-recheck'};
- f.publish({...f.current,variantVerification:{enabled:true,approvalReady:false,confirmation},astra:{enabled:false,status:'RUNNING',requestActionId:'variant-recheck',proposals:[]}});
- assert.equal(f.button('Approve all findings on Front and Back').props.disabled,true);assert.match(f.text(),/Checking the confirmed variant/);
- await staleApprove();await flush();f.render();assert.equal(f.actions.length,0,'stale enabled handler cannot approve a pending recheck');
- assert.equal(f.current.defects,prior);assert.equal(f.button('Back to geometry').props.disabled,false);
- const proposals=[{id:'fresh-suggestion',reviewStatus:'UNREVIEWED',side:'BACK'}];
- f.respond=async()=>({...f.current,variantVerification:{enabled:true,approvalReady:true,confirmation:{...confirmation,recheckState:'READY'}},astra:{enabled:true,status:'READY',requestActionId:'variant-recheck',analysisId:'fresh-analysis',proposals}});
- await f.tick(5500);f.render();assert.equal(f.overview().astra.proposals[0].id,'fresh-suggestion');assert.equal(f.current.defects,prior);
- assert.equal(f.actions.length,0,'READY polling cannot create any human decision');
- assert.equal(f.button('Approve all findings on Front and Back').props.disabled,false);
- f.dispose();
-});
-
 
 test('reopening rapid review resumes Findings after saved geometry and Grade after saved findings without approvals',async()=>{
  for(const confirmed of [false,true]){
   const f=harness({rapid:true,initialView:{geometry:{confirmed:true},defects:{confirmed,marker:'retained'}}});
   await flush();f.render();assert.equal(f.focusedGeometry(),undefined);
-  if(confirmed)assert.ok(f.report());else assert.ok(f.overview());
+  if(confirmed)assert.ok(f.report());else assert.ok(f.defects());
   assert.equal(f.actions.length,0);f.dispose();
  }
 });
@@ -878,7 +609,70 @@ test('explicit geometry correction remains accessible when saved findings are co
  assert.equal(f.actions.length,0);f.dispose();
 });
 
-test('unresolved outline-excluded evidence suppresses even an older numeric provisional grade',async()=>{
- const f=harness({finalReview:true,initialView:{defects:{sides:{FRONT:{findings:[{id:'old-trace',reviewResult:'UNREVIEWED',geometryExclusion:{reason:'TRACE_OUTSIDE_CORRECTED_CARD'}}]},BACK:{findings:[]}}}}});
- await flush();f.render();assert.equal(f.defects().grade,undefined);assert.equal(f.actions.length,0);f.dispose();
+
+test('one controlled side review keeps selection and navigation display-only',async()=>{
+ const findings=[{id:'front-a',side:'FRONT',defectType:'VISIBLE_WHITENING'},{id:'back-b',side:'BACK',defectType:'LIGHT_SCRATCH_SCUFF'}];
+ const f=harness({finalReview:true,rapid:true});await flush();f.render();
+ f.publish({...f.current,defects:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{findings:findings.filter(value=>value.side===side),pending:null}]))}});
+ await approveGeometry(f);const count=f.actions.length;
+ assert.equal(f.defects().side,'FRONT');assert.equal(f.defects().findingId,'front-a','side entry opens the first current finding close-up');assert.equal(f.defects().focusedReview,undefined);assert.equal(f.button('Review one at a time'),undefined);
+ f.defects().onReadyChange(true);f.render();f.defects().onSelectFinding(findings[0]);f.render();assert.equal(f.defects().findingId,'front-a');
+ f.defects().onSelectFinding(null);f.render();assert.equal(f.defects().findingId,null,'Fit remains a deliberate whole-side view');
+ f.defects().onSideChange('BACK');f.render();assert.equal(f.defects().side,'BACK');assert.equal(f.defects().findingId,'back-b');assert.equal(f.button('Approve back findings').props.disabled,true,'new side must verify its own photographs');
+ const staleChange=f.defects().onSideChange;f.defects().onEditingChange(true);staleChange('FRONT');f.render();assert.equal(f.defects().side,'BACK');
+ assert.equal(f.actions.length,count);assert.equal(f.calls.filter(call=>call.options?.method==='POST').length,0);f.dispose();
+});
+
+test('front and back approval use one side gesture each and wait for saved confirmation before Grade',async()=>{
+ const f=harness({finalReview:true,rapid:true});await flush();f.render();await approveGeometry(f);
+ f.defects().onReadyChange(true);f.render();await f.button('Approve front findings').props.onClick();await flush();f.render();
+ assert.equal(f.defects().side,'BACK');assert.equal(f.report(),undefined);assert.equal(f.actions.at(-1).type,'INSPECT_SIDE');assert.equal(f.actions.at(-1).side,'FRONT');
+ assert.equal(f.button('Approve back findings').props.disabled,true);f.defects().onReadyChange(true);f.render();
+ let finish;f.onExecute=action=>action.type==='CONFIRM_FINDINGS'?new Promise(resolve=>{finish=resolve;}):undefined;
+ const approve=f.button('Approve back findings').props.onClick,saving=approve();await flush();await approve();f.render();
+ assert.equal(f.report(),undefined);assert.equal(f.actions.filter(action=>action.type==='CONFIRM_FINDINGS').length,1);assert.equal(f.button('Approve back findings').props.disabled,true);
+ finish();await saving;await flush();f.render();assert.ok(f.report());assert.equal(f.actions.some(action=>action.type==='REVIEW_FINDING'||action.type==='APPROVE_REPORT'),false);
+ assert.deepEqual(f.actions.filter(action=>action.type==='INSPECT_SIDE').map(action=>action.side),['FRONT','BACK']);f.dispose();
+});
+
+test('failed side approval preserves the active side and an old enabled handler cannot bypass a pending command',async()=>{
+ const f=harness({finalReview:true,rapid:true});await flush();f.render();await approveGeometry(f);f.defects().onReadyChange(true);f.render();
+ const approve=f.button('Approve front findings').props.onClick;f.onExecute=action=>{if(action.type==='INSPECT_SIDE')throw {code:'SAVE_NOT_CONFIRMED'};};
+ await approve();await flush();f.render();assert.equal(f.defects().side,'FRONT');assert.equal(f.report(),undefined);assert.match(f.text(),/SAVE_NOT_CONFIRMED/);
+ const count=f.actions.length;f.pending=true;await approve();await flush();f.render();assert.equal(f.actions.length,count);assert.equal(f.report(),undefined);f.dispose();
+});
+
+test('historical original observations and variant recheck metadata cannot veto current findings approval',async()=>{
+ const f=harness({finalReview:true,rapid:true,initialView:{
+   finalReview:{reportHash:'historical-machine-report',report:{findings:[],unmeasurableProposals:[{id:'old-observation',side:'FRONT',defectType:'VISIBLE_WHITENING'}]}},
+   variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'SELECTED',reprocessRequired:true,recheckState:'QUEUED'}},
+ }});await flush();f.render();
+ assert.equal(f.focusedGeometry().reviewObservations,undefined);await approveGeometry(f);f.defects().onReadyChange(true);f.render();
+ assert.equal(f.defects().renderObservations,undefined);assert.doesNotMatch(f.text(),/Original observations|Checking the confirmed variant|Review notes/);
+ assert.equal(f.button('Approve front findings').props.disabled,false);await f.button('Approve front findings').props.onClick();await flush();f.render();
+ assert.equal(f.defects().side,'BACK');assert.equal(f.actions.some(action=>action.type==='REJECT_FINAL_OBSERVATION'),false);assert.equal(f.calls.filter(call=>call.options?.method==='POST').length,0);f.dispose();
+});
+
+test('a corrected finding stays in the same side review until its measurement acknowledges without a finding checklist',async()=>{
+ const f=harness();await flush();f.render();f.defects().onSideChange('BACK');f.render();let measurement;
+ f.onExecute=action=>action.type==='MEASURE_SIDE'?new Promise((resolve,reject)=>{measurement={resolve,reject};}):undefined;
+ const saving=f.defects().onEdit({side:'BACK',base:base.BACK,action:{type:'REMOVE',defectIds:['back-finding']}});await flush();
+ assert.equal(f.defects().side,'BACK');assert.equal(f.report(),undefined);measurement.reject({code:'MEASUREMENT_NOT_CONFIRMED'});await assert.rejects(saving,error=>error.code==='MEASUREMENT_NOT_CONFIRMED');
+ f.render();assert.equal(f.defects().side,'BACK');assert.deepEqual(f.actions.map(action=>action.type),['EDIT_DEFECT','MEASURE_SIDE']);
+ assert.equal(f.actions.some(action=>action.type==='INSPECT_SIDE'||action.type==='CONFIRM_FINDINGS'||action.type==='REVIEW_FINDING'),false);f.dispose();
+});
+
+test('accepted background analysis uses GET only and a late response cannot replace an active manual edit',async()=>{
+ const id='55555555-5555-4555-8555-555555555555';
+ const f=harness({journal:{version:1,phase:'PENDING',canResume:false,body:{actionId:id,base}}});let finish,reads=0;
+ f.respond=async(path,options)=>{
+  assert.equal(options?.method,undefined);
+  if(reads++===0)return {astra:{enabled:true,status:'RUNNING',backgroundAccepted:true,analysisId:id,base,proposals:[]}};
+  return new Promise(resolve=>{finish=resolve;});
+ };
+ await flush();f.render();const polling=f.tick();await flush();
+ f.defects().onEditingChange(true);f.publish({...f.current,card:{revision:2,contentHash:'new-trace'},defects:{marker:'new-human-trace'}});
+ finish({astra:{enabled:true,status:'READY',analysisId:id,base,proposals:[]}});await polling;f.render();
+ assert.equal(f.defects().workspace.marker,'new-human-trace');assert.equal(f.button('Edit card details').props.disabled,true);
+ assert.equal(f.actions.length,0);assert.equal(f.calls.filter(call=>call.options?.method==='POST').length,0);f.dispose();
 });

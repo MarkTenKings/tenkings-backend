@@ -92,6 +92,29 @@ test('frozen official bundle resolves LaMelo and keeps the Jaxson printed-number
  assert.ok(official.candidates.every(c=>c.label.startsWith('Donruss Threads ')&&c.source.sha256==='5ea74b6c404251b503f64d635c58d8c714c87d21eef716f5455fb02e0e65d567'));
 });
 
+test('frozen Fleer supplement serves six official sports sources with literal labels and no inferred plates',async()=>{
+ const provider=createManufacturerChecklistVariantProvider();
+ const cases=[
+  ['2016-17','Fleer Showcase','Sidney Crosby','1',6,'2016-17-fleer-showcase-checklist/','Base Set'],
+  ['2015-16','Fleer Showcase','Steven Stamkos','1',3,'2015-16-fleer-showcase-checklist/','Base Set'],
+  ['25-26','Fleer Ultra PWHL','Abby Roque','1',12,'2025-26-fleer-ultra-pwhl-checklist/','Base Set'],
+  ['2025-2026','Fleer Ultra','Tomas Hertl','1',8,'2025-2026-fleer-ultra-checklist/','Printing Plates Parallel'],
+  ['2026','Fleer Ultra Golf','Viktor Hovland','1',12,'2026-fleer-ultra-golf/','Base Set'],
+  ['2023','Fleer Ultra Golf','Tiger Woods','2',18,'2023-fleer-ultra-golf-checklist/','2023 Fleer Ultra Golf'],
+ ];
+ for(const [year,setName,name,cardNumber,count,slug,literal] of cases){
+  const result=await provider.prepare({category:'SPORTS',year,setName,name,cardNumber,manufacturer:'Fleer',language:'en'});
+  assert.equal(result.candidates.length,count,name);
+  assert.ok(result.candidates.some(c=>c.label===literal),name);
+  assert.ok(result.candidates.every(c=>c.source.url===`https://upperdeck.com/checklist/${slug}`&&c.applicability==='unknown'&&c.canonical===null));
+  assert.ok(result.candidates.every(c=>!/^Printing Plates (Black|Cyan|Magenta|Yellow)/i.test(c.label)));
+ }
+ const missing=await provider.prepare({category:'SPORTS',year:'2026',setName:'Fleer Ultra Golf',name:'Matthieu Pavon',cardNumber:'FLAIR-1',manufacturer:'Fleer',language:'en'});
+ assert.equal(missing.candidates.length,0,'a blank printed subset is not filled from another row');
+ const jordan=await provider.prepare({category:'SPORTS',year:'92-93',setName:'Fleer',name:'Michael Jordan',cardNumber:'273',manufacturer:'Fleer',language:'en'});
+ assert.equal(jordan.candidates.length,0,'unacquired historical Fleer remains an explicit gap');
+});
+
 const hashBytes = value => createHash('sha256').update(value).digest('hex');
 function shardsFor(data) {
  const files = new Map();
@@ -110,6 +133,43 @@ function productsFixture() {
  return {...catalog,sources:[source,{...source,setName:'Prizm',aliases:['Prizm'],sha256:'b'.repeat(64)},{...source,setName:'Select',aliases:['Select'],sha256:'c'.repeat(64)}],
   rows:[...catalog.rows,[1,'Base','203','Drake Maye','row:1'],[2,'Silver','203','Drake Maye','row:2']]};
 }
+test('explicit Fleer season spellings resolve from catalog evidence in row and shard readers',async()=>{
+ const jordan={...identity,name:'Michael Jordan',year:'92-93',setName:'Fleer',cardNumber:'273',manufacturer:'Fleer'};
+ const fleer={...source,manufacturer:'Fleer',manufacturerAliases:[],sport:'basketball',year:'1992-93',setName:'1992-93 Fleer Basketball',aliases:[],url:'https://example.com/season-fixture'};
+ for(const sourceYear of ['1992-93','1992-1993','1992–93']){
+  const data={...catalog,sources:[{...fleer,year:sourceYear}],rows:[[0,'Base','273','Michael Jordan','row:274']]};
+  for(const options of [{catalog:data},shardsFor(data)]){
+   const p=createManufacturerChecklistVariantProvider(options);
+   for(const year of ['92-93','92–93','1992-93','1992-1993','1992 / 1993']){
+    const result=await p.prepare({...jordan,year});
+    assert.deepEqual(result.candidates.map(c=>c.label),['Base']);
+    assert.equal(result.candidates[0].identity.year,year);
+   }
+   assert.equal((await p.prepare({...jordan,setName:'92-93 Fleer'})).candidates.length,1);
+   for(const year of ['92','93','1993','91-92','1992-94','1992-2093','92-94'])
+    assert.equal((await p.prepare({...jordan,year})).candidates.length,0,year);
+  }
+ }
+});
+test('abbreviated season never chooses a century from the player or current date',async()=>{
+ const fleer={...source,manufacturer:'Fleer',manufacturerAliases:[],sport:'basketball',year:'1992-93',setName:'Fleer',aliases:[]};
+ const data={...catalog,sources:[fleer,{...fleer,year:'2092-2093',sha256:'b'.repeat(64)}],rows:[[0,'Base','273','Michael Jordan','row:274'],[1,'Base','1','Different Athlete','row:2']]};
+ for(const options of [{catalog:data},shardsFor(data)]){
+  const p=createManufacturerChecklistVariantProvider(options);
+  const query={...identity,name:'Michael Jordan',year:'92-93',setName:'Fleer',cardNumber:'273',manufacturer:'Fleer'};
+  assert.deepEqual((await p.prepare(query)).problems,['PROVIDER_NOT_SUPPORTED']);
+  assert.equal((await p.prepare({...query,year:'1992-1993'})).candidates.length,1);
+ }
+});
+test('season rollover and unrelated products do not create century guesses or conflicts',async()=>{
+ const data={...catalog,sources:[{...source,year:'1999-2000'},{...source,year:'2099-2100',setName:'Other Product',aliases:[]}],rows:catalog.rows};
+ for(const options of [{catalog:data},shardsFor(data)]){
+  const p=createManufacturerChecklistVariantProvider(options);
+  assert.equal((await p.prepare({...identity,year:'99-00'})).candidates.length,2);
+  assert.equal((await p.prepare({...identity,year:'1999-00'})).candidates.length,2);
+  assert.equal((await p.prepare({...identity,year:'1999-1900'})).candidates.length,0);
+ }
+});
 test('v2 source selection loads only the exact product and preserves v1 IDs, ordering and evidence',async()=>{
  const data=productsFixture(), f=shardsFor(data), reads=[];
  const provider=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{reads.push(d.path);return f.loadShard(d);}});

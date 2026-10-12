@@ -73,12 +73,12 @@ try {
     response = await call('/admin/api/staff/auth/verify', { body: { challengeId: challenge.challengeId, code: '424242' }, csrf: boot.csrf });
     assert.equal(response.status, 200); const signed = await response.json(); assert.equal(signed.staff.role, 'REVIEWER'); checks++;
     response = await call('/admin/grading'); assert.equal(response.status, 200); const queue = await response.text();
-    assert.match(queue, /href="\/admin\/grading"/); assert.match(queue, /href="\/admin\/operations"/); checks++;
-    response = await call('/admin/cards/sample-001'); assert.equal(response.status, 200); checks++;
+    assert.match(queue, /This workspace is not enabled here/); checks++;
+    response = await call('/admin/cards/sample-001'); assert.equal(response.status, 307); assert.equal(new URL(response.headers.get('location'), logicalOrigin).pathname, '/admin/grading'); checks++;
     response = await call('/admin/api/staff/cards/sample-001'); assert.equal(response.status, 200); assert.equal((await response.json()).card.id, 'sample-001'); checks++;
     response = await call('/admin/api/staff/evidence/sample-001/FRONT'); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /image\/svg\+xml/); checks++;
     const buildId = readFileSync(resolve(root, '.next/BUILD_ID'), 'utf8').trim();
-    response = await call(`/admin/_next/data/${buildId}/cards/sample-001.json`); assert.equal(response.status, 200); assert((await response.json()).pageProps.staff); checks++;
+    response = await call(`/admin/_next/data/${buildId}/cards/sample-001.json`); assert.equal(response.status, 200); assert.equal((await response.json()).pageProps.__N_REDIRECT, '/grading'); checks++;
     response = await call('/admin/api/staff/auth/logout', { body: {}, csrf: boot.csrf }); assert.equal(response.status, 403); checks++;
     response = await call('/admin/api/staff/auth/logout', { body: {}, csrf: signed.csrf, headers: { Origin: 'https://app.atlasgrading.com' } }); assert.equal(response.status, 403); checks++;
     response = await call('/admin/api/staff/auth/logout', { body: {}, csrf: signed.csrf }); assert.equal(response.status, 200); assert.equal(jar.has('atlas_local_staff'), false); checks++;

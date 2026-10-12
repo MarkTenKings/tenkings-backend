@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 const root = fileURLToPath(new URL('../', import.meta.url));
 await mkdir(resolve(root, 'dist'), { recursive: true });
+// Remove the retired generated entry when rebuilding an existing checkout/image.
+for (const file of ['PairedGeometryWorkspace.js', 'PairedGeometryWorkspace.js.map'])
+  await rm(resolve(root, 'dist', file), {force: true});
 const result = await build({
   absWorkingDir: root,
-  entryPoints: ['src/PairedGeometryWorkspace.jsx', 'src/FocusedGeometryWorkspace.jsx', 'src/DefectReviewWorkspace.jsx', 'src/FinalReportReview.jsx', 'src/VerifiedImageCacheBoundary.jsx', 'src/gradient-snap.ts'],
+  entryPoints: ['src/FocusedGeometryWorkspace.jsx', 'src/DefectReviewWorkspace.jsx', 'src/FinalReportReview.jsx', 'src/VerifiedImageCacheBoundary.jsx', 'src/gradient-snap.ts'],
   outdir: 'dist', bundle: true, splitting: true, format: 'esm', platform: 'browser',
   target: ['es2022'], jsx: 'automatic', external: ['react', 'react-dom', 'react/jsx-runtime'],
   metafile: true, logLevel: 'silent',

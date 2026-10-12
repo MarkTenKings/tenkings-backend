@@ -1,5 +1,5 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { adoptDefectProposals, createDefectWorkspace, parseDefectWorkspace, defectBase, isDefectObservationResolved } from '@atlas/manual-workspace/defect-actions';
+import { adoptDefectProposals, createDefectWorkspace, parseDefectWorkspace, defectBase } from '@atlas/manual-workspace/defect-actions';
 import { calculateAtlasReview, ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { calculateAtlasFinalGrade, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
@@ -44,7 +44,7 @@ export function beginFinalReview({ card, geometry, defects, packet }) {
 }
 
 export function importedProposalIds(finalReview) {
-  return finalReview ? finalReview.proposals.filter(proposal => finalReview.report.findings.some(finding => finding.id === proposalFindingId(proposal.id))).map(proposal => proposal.id) : [];
+  return finalReview ? (finalReview.report.measurementReceipts ?? []).map(receipt => receipt.proposalId) : [];
 }
 
 /** This runs only inside the explicit human Confirm findings command. */
@@ -53,32 +53,21 @@ export function finalReviewDecisions({ finalReview, defects, assistance, princip
   for (const proposal of finalReview.proposals) {
     const id = proposalFindingId(proposal.id), original = finalReview.report.findings.find(value => value.id === id);
     const previousIndex = reviews.findIndex(review => review.analysisId === finalReview.report.analysisId && review.proposalId === proposal.id);
-    if (!original) {
-      requireThat(previousIndex !== -1 && isDefectObservationResolved(defects, reviews[previousIndex]), 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
-      const previous = reviews[previousIndex], replacement = previous.findingId
-        && defects.sides[proposal.side].findings.find(value => value.id === previous.findingId);
-      if (replacement) reviews[previousIndex] = { ...previous,
-        action: replacement.reviewResult === 'REMOVED' ? 'REJECT' : 'TRACE_SAVE',
-        base: defectBase(defects, proposal.side), reviewerId: principal.id, reviewedAt: new Date().toISOString() };
-      continue;
-    }
-    const finding = defects.sides[proposal.side].findings.find(value => value.id === id);
-    // Findings without raster pixels remain ordinary visible proposals and
-    // need a deliberate correction/rejection; they cannot disappear here.
-    requireThat(finding, 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
-    requireThat(original, 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
-    // Both traces passed the exact-raster parser at their artifact boundaries.
-    // Their validated digests bind every pixel without the compact document
-    // serializer's size limit rejecting a legitimate complex trace.
-    const changed = finding.defectType !== original.defectType
+    const previous = reviews[previousIndex];
+    const finding = defects.sides[proposal.side].findings.find(value => value.id === (original ? id : previous?.findingId));
+    const measurable = finding && !finding.geometryExclusion;
+    const changed = measurable && (!original || finding.defectType !== original.defectType
       || (finding.finalTrace ?? finding.detectorMask).sha256 !== (original.finalTrace ?? original.detectorMask).sha256
-      || canonical(defects.sides[proposal.side].frame) !== canonical(finalReview.report.geometry[proposal.side].frame);
+      || canonical(defects.sides[proposal.side].frame) !== canonical(finalReview.report.geometry[proposal.side].frame));
     if (previousIndex !== -1) reviews.splice(previousIndex, 1);
     reviews.push({ analysisId: finalReview.report.analysisId, proposalId: proposal.id, side: proposal.side,
-      action: finding.reviewResult === 'REMOVED' ? 'REJECT' : changed ? 'TRACE_SAVE' : 'ACCEPT', findingId: id, base: defectBase(defects, proposal.side), proposal,
+      action: !measurable ? 'EXCLUDE' : finding.reviewResult === 'REMOVED' ? 'REJECT' : changed ? 'TRACE_SAVE' : 'ACCEPT',
+      findingId: finding?.id ?? null, base: defectBase(defects, proposal.side), proposal,
+      ...(!measurable ? { exclusionReason: finding?.geometryExclusion?.reason
+        ?? finalReview.report.unmeasurableProposals?.find(value => value.id === proposal.id)?.reason ?? 'NOT_IN_CURRENT_FINDINGS' } : {}),
       reviewerId: principal.id, reviewedAt: new Date().toISOString() });
   }
-  return { version: 'atlas-defect-assistance-v1', reviews };
+  return { ...assistance, version: 'atlas-defect-assistance-v1', reviews };
 }
 
 /** A pure current score. Pending preparation/measurement hides the old score;
@@ -99,8 +88,9 @@ export function finalReviewPreview(card, state) {
     centeringBorders: measureSpeedsterCenteringBorders(state.geometry.sides[side].printed.quad),
   }]));
   const findings = SIDES.flatMap(side => state.defects.sides[side].findings);
-  const geometryObservations = findings.filter(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED');
-  const calculated = capture && !geometryObservations.length ? calculateAtlasReview(capture, findings) : { grade: null, defects: findings };
+  const geometryObservations = findings.filter(finding => finding.geometryExclusion);
+  const measurableFindings = findings.filter(finding => !finding.geometryExclusion);
+  const calculated = capture ? calculateAtlasReview(capture, measurableFindings) : { grade: null, defects: measurableFindings };
   const geometryReview = { policy: 'atlas-final-human-geometry-review-v1', requiresHumanConfirmation: true,
     sides: Object.fromEntries(SIDES.map(side => {
       const slot = state.geometry.sides[side];
@@ -111,12 +101,12 @@ export function finalReviewPreview(card, state) {
     })) };
   const unresolvedObservations = (state.finalReview.report.unmeasurableProposals ?? []).filter(proposal =>
     !(state.assistance?.reviews ?? []).some(review => review.analysisId === state.finalReview.report.analysisId
-      && review.proposalId === proposal.id && isDefectObservationResolved(state.defects, review)));
+      && review.proposalId === proposal.id));
   const report = { ...state.finalReview.report, version: 'atlas-review-provisional-report-v1', authority: 'HUMAN_REVIEW_DRAFT',
     originalMachineReportHash: state.finalReview.reportHash, manualRevision: card.revision, manualContentHash: card.contentHash,
     identity: state.identity, ruleVersion: ATLAS_RULE_VERSION,
     grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
-    calculationState: calculated.grade ? 'COMPLETE' : geometryObservations.length ? 'FINDINGS_UNRESOLVED' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry, geometryReview,
+    calculationState: calculated.grade ? 'COMPLETE' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry, geometryReview,
     // Original receipts and warnings remain bound to the immutable machine
     // report; they must not impersonate measurements of a corrected frame.
     originalMachineEvidence: { geometryReview: state.finalReview.report.geometryReview ?? null,
@@ -125,11 +115,11 @@ export function finalReviewPreview(card, state) {
       ? [{ side, ...state.defects.sides[side].measurement }] : []),
     analysisLimitations: state.finalReview.report.analysisLimitations ?? [],
     limitations: [...(state.finalReview.report.analysisLimitations ?? []),
-      ...(geometryObservations.length ? ['Observations outside the corrected outline need redraw or rejection before grading.'] : []), ...(unresolvedGeometry.length ? ['Centering geometry is unresolved; the overall grade is unavailable.'] : []),
+      ...(geometryObservations.length ? ['Observations outside the corrected outline are excluded from the current measured grade.'] : []), ...(unresolvedGeometry.length ? ['Centering geometry is unresolved; the overall grade is unavailable.'] : []),
       ...(SIDES.some(side => geometryReview.sides[side].ambiguous && !geometryReview.sides[side].confirmed)
         ? ['Competing proposed outlines remain for final human geometry review.'] : []),
-      ...(unresolvedObservations.length ? ['Original observations without measurable pixels remain for explicit human review.'] : [])],
-    unmeasurableProposals: unresolvedObservations,
+      ...(unresolvedObservations.length ? ['Original observations without measurable pixels are excluded from the current measured grade.'] : [])],
+    unmeasurableProposals: unresolvedObservations, excludedFindings: geometryObservations,
     findings: calculated.defects, findingCounts: { total: calculated.defects.length,
       included: calculated.defects.filter(finding => finding.reviewResult !== 'REMOVED').length,
       removed: calculated.defects.filter(finding => finding.reviewResult === 'REMOVED').length,

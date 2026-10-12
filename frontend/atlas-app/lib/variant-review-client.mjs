@@ -1,8 +1,9 @@
+const candidateIdentityKey = candidate => candidate && JSON.stringify([candidate.identity, candidate.parallel]);
 const fail = code => Object.assign(new Error(code), { code });
 const check = (value, code = 'VARIANT_RESPONSE_INVALID') => { if (!value) throw fail(code); };
 const sha = value => /^[a-f0-9]{64}$/.test(value ?? '');
 const uuid = value => /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value ?? '');
-export const variantBindingKey = value => value && JSON.stringify([value.sourceHash, value.identityRevision, value.identityHash, value.jobId, value.resultHash]);
+export const variantBindingKey = value => value && JSON.stringify([value.sourceHash, value.identityRevision, value.identityHash]);
 export function variantStatus(value) {
   check(value && typeof value.enabled === 'boolean' && typeof value.approvalReady === 'boolean');
   check(['NOT_REQUESTED','QUEUED','SEARCHING','READY','UNKNOWN','FAILED','STALE'].includes(value.state));
@@ -24,17 +25,6 @@ export function variantConfirmationCurrent(value) {
     && proof.identityHash === value.identityHash && (proof.decision === 'MANUAL' || proof.selectedCandidateId));
 }
 export const variantApprovalReady = value => value?.enabled === false || Boolean(value?.approvalReady && variantConfirmationCurrent(value));
-export function variantRecheckMessage(value) {
-  if (!value?.confirmation?.reprocessRequired || value.confirmation.decision === 'UNRESOLVED') return null;
-  if (value.confirmation.recheckReason === 'VARIANT_ANALYSIS_STALE') return 'Border geometry changed after the saved variant check. Review the confirmed identity to start a fresh check against the updated geometry. Your saved findings stay in place.';
-  const state = value.confirmation.recheckState;
-  if (['QUEUED','PREPARED','DISPATCHED'].includes(state)) return 'Checking the confirmed variant… Your saved photographs and human findings stay in place.';
-  // The Findings workspace owns the current proposal roster and review state.
-  // READY describes a finished analysis, not unfinished human review.
-  if (state === 'READY') return null;
-  if (state === 'FAILED' || state === 'UNKNOWN' || state === 'REFUSED') return 'The variant check needs attention. Your saved photographs and findings are retained. Check its saved status before continuing.';
-  return value.approvalReady ? null : 'The confirmed variant needs a grading check. Your saved photographs and human findings stay in place.';
-}
 export function createVariantReviewClient({ cardId, staffId, request, storage, cryptoImpl = globalThis.crypto }) {
   check(uuid(cardId) && uuid(staffId) && typeof request === 'function' && storage, 'VARIANT_CLIENT_INVALID');
   const key = `atlas-variant-review:${staffId}:${cardId}`, path = `/api/staff/manual-connected/cards/${cardId}/variants`;
@@ -74,7 +64,13 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
       }
       if (error?.status === 409 && error.code === 'VARIANT_FINISH_UNRESOLVED') { clearPending(input.actionId); throw error; }
       if (error?.status === 400 && error.code === 'VARIANT_REFERENCE_PERMISSION_INVALID') { clearPending(input.actionId); throw error; }
-      if (error?.status === 409 && ['VARIANT_SOURCE_STALE','VARIANT_IDENTITY_STALE','VARIANT_RESULT_STALE','VARIANT_RECHECK_STALE','MANUAL_DRAFT_STALE'].includes(error.code)) {
+      if (operation === 'CONFIRM' && error?.status === 400 && ['MANUAL_REQUEST_INVALID','VARIANT_CONFIRMATION_INVALID'].includes(error.code)) {
+        // A previous application version can retain a request with retired
+        // fields. A definitive contract refusal did not commit that request.
+        // Release only that intent; never rewrite and replay it under its ID.
+        clearPending(input.actionId); throw fail('VARIANT_REQUEST_RETIRED');
+      }
+      if (error?.status === 409 && ['VARIANT_SOURCE_STALE','VARIANT_IDENTITY_STALE','VARIANT_RESULT_STALE','MANUAL_DRAFT_STALE'].includes(error.code)) {
         clearPending(intentId(input)); throw fail('VARIANT_REVIEW_CHANGED');
       }
       throw error;
@@ -86,24 +82,26 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
       check(latest && !retained()?.pending, 'VARIANT_SAVE_PENDING');
       check(candidateId === null || latest.result?.catalog.candidates.some(candidate => candidate.candidateId === candidateId), 'VARIANT_CANDIDATE_STALE');
       store({ draft: { binding: variantBindingKey(latest), candidateId, outcome, manual,
+        candidateIdentityKey: candidateIdentityKey(latest.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId)),
         ...(!outcome && referencePermission ? { referencePermission } : {}) } });
     },
     confirm: ({ candidateId, unresolved = false, manual = null, referencePermission = null }) => exclusive(async () => {
       check(latest && !retained()?.pending, 'VARIANT_SAVE_PENDING');
       const basis = latest, current = await read();
       check(variantBindingKey(basis) === variantBindingKey(current), 'VARIANT_REVIEW_CHANGED');
-      check(unresolved || manual || current.state === 'READY' && current.result?.catalog.candidates.some(candidate => candidate.candidateId === candidateId), 'VARIANT_CANDIDATE_STALE');
+      const chosen = current.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId);
+      const expectedChoice = retained()?.draft?.candidateIdentityKey ?? candidateIdentityKey(basis.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId));
+      check(unresolved || manual || current.state === 'READY' && chosen && expectedChoice === candidateIdentityKey(chosen), 'VARIANT_CANDIDATE_STALE');
       const permission = !unresolved && referencePermission ? referencePermission : null;
-      check(!permission || Object.keys(permission).sort().join('|') === 'basis|consumers|detail'
+      check(!permission || Object.keys(permission).sort().join('|') === 'basis|consumers'
         && ['owned_original','licensed','permission'].includes(permission.basis)
-        && typeof permission.detail === 'string' && permission.detail.trim().length > 0 && permission.detail.trim().length <= 1000
         && Array.isArray(permission.consumers) && permission.consumers.join('|') === 'inventory|atlas', 'VARIANT_REFERENCE_PERMISSION_INVALID');
       const input = { actionId: cryptoImpl.randomUUID(), expectedRevision: current.revision, sourceHash: current.sourceHash,
         identityRevision: current.identityRevision, identityHash: current.identityHash, jobId: manual || unresolved ? null : current.jobId, resultHash: manual || unresolved ? null : current.resultHash,
         decision: manual ? 'MANUAL' : unresolved ? 'UNRESOLVED' : 'SELECTED', candidateId: manual || unresolved ? null : candidateId, reviewed: true,
-        ...(manual ? { manualParallel: manual.parallel.trim(), observedFeatures: manual.features.trim() } : {}),
-        ...(permission ? { referencePermission: { basis: permission.basis, detail: permission.detail.trim(), consumers: ['inventory','atlas'] } } : {}) };
-      check(!manual || input.manualParallel.length > 0 && input.manualParallel.length <= 120 && input.observedFeatures.length > 0 && input.observedFeatures.length <= 1000, 'VARIANT_MANUAL_INVALID');
+        ...(manual ? { manualParallel: manual.parallel.trim() } : {}),
+        ...(permission ? { referencePermission: { basis: permission.basis, consumers: ['inventory','atlas'] } } : {}) };
+      check(!manual || input.manualParallel.length > 0 && input.manualParallel.length <= 120, 'VARIANT_MANUAL_INVALID');
       store({ pending: input }); return send(input);
     }),
     refresh: () => exclusive(async () => {
@@ -123,12 +121,13 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
   });
 }
 export function variantError(error) {
-  return ({ VARIANT_REVIEW_CHANGED: 'The photos, identity, grading evidence or available matches changed. Check the saved choices and review again.',
+  return ({ VARIANT_REVIEW_CHANGED: 'The photos or saved card identity changed. Check the saved choices and review again.',
+    VARIANT_REQUEST_RETIRED: 'The earlier save was not accepted. Choose the variant again to submit a new confirmation.',
     VARIANT_LOCAL_UNAVAILABLE: 'This browser could not retain your decision. Enable local storage before saving; nothing was submitted.',
     VARIANT_LOCAL_INVALID: 'The retained decision could not be read. Keep this tab open and reload your access before continuing.',
     VARIANT_FINISH_UNRESOLVED: 'This reference does not identify a printing. Choose another match, or record the details you can verify on the physical card.',
-    VARIANT_MANUAL_INVALID: 'Enter a printing and the visible details that confirm it before saving.',
-    VARIANT_REFERENCE_PERMISSION_INVALID: 'Choose the photo rights basis and add a brief rights note, or turn off the optional photo contribution.',
+    VARIANT_MANUAL_INVALID: 'Choose Base or enter the printing visible on the physical card.',
+    VARIANT_REFERENCE_PERMISSION_INVALID: 'Choose the photo rights basis, or turn off the optional photo contribution.',
     VARIANT_REFRESH_UNAVAILABLE: 'Reference preparation cannot be refreshed in its current state. Check the saved status first.',
     VARIANT_SAVE_PENDING: 'Check the retained decision before making another change.',
   })[error?.code] ?? 'The save is not confirmed. Your decision is retained. Check its saved status before trying another choice.';

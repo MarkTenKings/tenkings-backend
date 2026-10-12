@@ -84,7 +84,8 @@ test('confirmed choices create idempotent unreviewed metadata proposals; replay 
   assert.throws(() => prepareVariantCatalogObservation({ ...payload, decision: 'UNRESOLVED' }), /INVALID/);
   const manual = prepareVariantCatalogObservation({ ...payload, decision: 'MANUAL', candidateId: null, catalog: null, parallel: 'English Cosmos Holo', observedFeatures: 'Visible galaxy pattern in the picture window.' });
   assert.equal(manual.proposal.identity.cardId, null); assert.equal(manual.proposal.basedOnPublication, null); assert.deepEqual(manual.proposal.images, []);
-  assert.throws(() => prepareVariantCatalogObservation({ ...payload, decision: 'MANUAL', candidateId: null, observedFeatures: '' }), /INVALID/);
+  assert.ok(prepareVariantCatalogObservation({ ...payload, decision: 'MANUAL', candidateId: null, observedFeatures: '' }).proposal);
+  const {observedFeatures,...withoutNote}=payload;assert.ok(prepareVariantCatalogObservation({...withoutNote,decision:'MANUAL',candidateId:null}).proposal);
 });
 
 test('Pokémon uses configured Scrydex only: no shared demand or secondary metadata acquisition',async()=>{

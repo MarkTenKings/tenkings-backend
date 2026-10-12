@@ -98,10 +98,11 @@ test('a proposal outside a rounded corner is retained for human review while rea
   f.analysis.proposals.push(outside, inside);
   const before = structuredClone({ analysis: f.analysis, state: f.state }), report = await buildMachineReport(f);
   assert.equal(report.findings.length, 3); assert.equal(report.measurementReceipts.length, 3);
+  assert.deepEqual(report.proposals, before.analysis.proposals);
   assert.deepEqual(report.unmeasurableProposals, [{ ...outside, reason: 'NO_IN_CARD_RASTER_PIXELS' }]);
   assert.equal(report.measurementReceipts.some(receipt => receipt.proposalId === inside.id), true);
   assert.equal(report.measurementReceipts.some(receipt => receipt.proposalId === outside.id), false);
-  assert.match(report.limitations.at(-1), /manual workspace before certification/);
+  assert.match(report.limitations.at(-1), /excluded evidence/);
   assert.equal(report.certification, null); assert.deepEqual(f.analysis, before.analysis);
   assert.deepEqual(f.state, before.state);
 });

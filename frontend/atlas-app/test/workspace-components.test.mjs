@@ -8,9 +8,8 @@ import * as client from '../lib/workspace-client.mjs';
 import * as drafts from '../lib/workspace-drafts.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
-const fullCardFrame = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
 function compile(path) { return babel.transformSync(readFileSync(new URL(path, import.meta.url), 'utf8'), { filename: path, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false }).code; }
-const hookCode = compile('../lib/useWorkspaceMutation.js'), workspaceCode = compile('../components/CardGradingWorkspace.jsx'), intakeCode = compile('../components/PhotoIntake.jsx'), sharedCode = compile('../components/WorkspaceShared.jsx');
+const hookCode = compile('../lib/useWorkspaceMutation.js'), sharedCode = compile('../components/WorkspaceShared.jsx');
 function reactHarness() {
     const slots = [], effects = [], cleanups = new Map(); let cursor = 0;
     return { react: { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment',
@@ -164,78 +163,6 @@ test('workspace notices use inline status/errors with no yellow recovery panel o
     const auth = exported.RecoveryNotice({ mutation: { pending: {}, errorCode: 'SIGN_IN_REQUIRED', error: 'Your session ended.' } });
     const links = all(auth, node => node.type === 'a'); assert.equal(links.length, 1); assert.equal(text(links[0]), 'Sign in again'); assert.equal(links[0].props.target, undefined);
 });
-function stageHarness(name, initial) {
-    const react = reactHarness(), exported = {}, f = { props: { card: initial, forms: {}, disabled: false, discard() {} }, actions: [] };
-    f.props.edit = (scope, value) => { f.props.forms = { ...f.props.forms, [scope]: { value, baseRevision: f.props.card.revision } }; };
-    f.props.act = (...args) => f.actions.push(args);
-    vm.runInNewContext(workspaceCode, { exports: exported, require(module) {
-        if (module === 'react') return react.react;
-        if (module === 'next/link') return 'link';
-        if (module === './Shell') return { Notice: 'notice' };
-        if (module === './WorkspaceShared') return { OriginalImages: 'OriginalImages', ReportLink: 'ReportLink' };
-        if (module === './WorkspaceGeometry') return { ImageQuadEditor: 'ImageQuadEditor', fullCardFrame };
-        if (module === '../lib/workspace-client.mjs') return client;
-        if (module === '../lib/useWorkspaceMutation' || module === '../lib/usePendingNavigation') return {};
-        if (module.endsWith('.module.css')) return {};
-        if (module.startsWith('./')) return {};
-        return nextRequire(module.startsWith('@babel/runtime/') ? `next/dist/compiled/${module}` : module);
-    } });
-    f.render = () => { f.tree = react.render(() => exported[name](f.props)); };
-    f.find = (type, label) => { const value = all(f.tree, node => node.type === type && (label == null || text(node).includes(label)))[0]; assert.ok(value, `${type}: ${label}`); return value; };
-    f.change = (label, value, checked = false) => { const field = f.find('label', label), input = all(field, node => ['input', 'select'].includes(node.type))[0]; input.props.onChange({ target: { value, checked } }); f.render(); };
-    f.submit = () => { f.find('form').props.onSubmit({ preventDefault() {} }); f.render(); };
-    f.render(); return f;
-}
-test('identity form binds explicit human corner shape and strips fields from the other category', () => {
-    const initial = card(); initial.identity = { category: 'SPORTS', playerName: 'Sports Player', manufacturer: 'Maker', insert: 'Insert', year: '2024', productSet: 'Set' };
-    const f = stageHarness('IdentityStage', initial);
-    f.change('Card type', 'POKEMON'); f.change('Card name', 'New Pokémon'); f.change('Printed layout', 'TRAINER'); f.change('Physical card corners', 'SQUARE'); f.submit();
-    assert.equal(f.actions.length, 1); const [action, payload, scope] = f.actions[0];
-    assert.equal(action, 'SAVE_IDENTITY'); assert.equal(scope, 'identity'); assert.equal(payload.cornerShape, 'SQUARE');
-    assert.equal(payload.identity.layoutType, 'TRAINER'); assert.equal(payload.identity.cardName, 'New Pokémon');
-    assert.equal('playerName' in payload.identity, false); assert.equal('manufacturer' in payload.identity, false); assert.equal('cornerShape' in payload.identity, false);
-    f.props.card = { ...initial, revision: 4 }; f.render(); f.submit(); assert.equal(f.actions.length, 1, 'A newer saved card invalidates the stale form revision.');
-});
-test('centering uses only the prepared image and fixed physical frame, preserving earlier edits on invalidation', () => {
-    const initial = card(), f = stageHarness('CenteringStage', initial);
-    assert.equal(f.find('ImageQuadEditor').props.imageUrl, null, 'Original photography is never a centering fallback.');
-    assert.equal(f.find('button', 'Save and measure').props.disabled, true);
-    f.props.card.workspace = { preparation: { FRONT: { status: 'PREPARED', imageUrl: `/admin/api/staff/workspace/cards/${initial.id}/prepared/FRONT` } } }; f.render();
-    f.find('ImageQuadEditor').props.onReady(true); f.render();
-    const inner = [{ x: .04, y: .06 }, { x: .96, y: .06 }, { x: .96, y: .94 }, { x: .04, y: .94 }];
-    f.find('ImageQuadEditor').props.onChange(inner); f.render(); f.change('I reviewed the printed frame', '', true);
-    const save = f.find('button', 'Save and measure'); assert.equal(save.props.disabled, false); save.props.onClick();
-    assert.equal(f.actions[0][0], 'SAVE_CENTERING'); assert.deepEqual(f.actions[0][1].outer, fullCardFrame); assert.deepEqual(f.actions[0][1].inner, inner);
-    f.props.card = { ...f.props.card, revision: 4, workspace: { preparation: { FRONT: { status: 'PENDING' } } } }; f.render();
-    assert.equal(f.find('ImageQuadEditor').props.imageUrl, null); assert.equal(f.find('button', 'Save and measure').props.disabled, true);
-    assert.deepEqual(f.find('ImageQuadEditor').props.points, inner, 'The human outline stays visible in the local draft state.');
-});
-
-// Rapid intake, retained rejection and local-commit regression coverage is in photo-intake-flow.test.mjs.
-
-test('map review checks automatically once, while failure consent stays explicitly human and revision-bound', () => {
-    const initial = card(); initial.operator = { kind: 'HUMAN', name: 'Fixture reviewer' }; initial.capabilities.actions.push('RESOLVE_MAP');
-    const f = stageHarness('MapReview', initial); assert.equal(f.actions.length, 1); assert.equal(f.actions[0][0], 'RESOLVE_MAP'); f.render(); assert.equal(f.actions.length, 1);
-    f.props.card = { ...initial, revision: 4, workspace: { map: { status: 'LOOKUP_FAILED', name: null, scope: null, version: null, registration: { FRONT: 'MISSING', BACK: 'MISSING' }, bindingReady: false, canRegister: false } }, capabilities: { canEdit: true, actions: ['RESOLVE_MAP', 'CONTINUE_WITHOUT_MAP'] } }; f.render();
-    assert.equal(f.find('button', 'Save decision').props.disabled, true);
-    f.change('I reviewed the recorded map failure', '', true); assert.equal(f.find('button', 'Save decision').props.disabled, false);
-    f.props.card = { ...f.props.card, revision: 5 }; f.render(); assert.equal(f.find('button', 'Save decision').props.disabled, true);
-    f.change('I reviewed the recorded map failure', '', true); f.find('button', 'Save decision').props.onClick();
-    assert.equal(f.actions.at(-1)[0], 'CONTINUE_WITHOUT_MAP'); assert.equal(f.actions.at(-1)[1].confirmed, true);
-    f.props.card.operator = { kind: 'ASTRA' }; f.render(); assert.equal(all(f.tree, node => node.type === 'input' && node.props.type === 'checkbox').length, 0);
-});
-
-// Rapid intake, retained rejection and local-commit regression coverage is in photo-intake-flow.test.mjs.
-
-// Rapid intake, retained rejection and local-commit regression coverage is in photo-intake-flow.test.mjs.
-
-test('map review never treats missing map or integrity failure as a human override', () => {
-    for (const status of ['NO_MAP', 'INTEGRITY_ERROR', 'HUMAN_REVIEW_WITHOUT_MAP']) {
-        const initial = card(); initial.operator = { kind: 'HUMAN' }; initial.workspace.map = { status, name: null, scope: null, version: null, registration: {}, canRegister: false, bindingReady: false };
-        const f = stageHarness('MapReview', initial); assert.equal(f.actions.length, 0); assert.equal(all(f.tree, node => node.type === 'input').length, 0);
-    }
-});
-
 test('lost human map-decision response recovers its exact affirmative request after reload', async () => {
     const f = hookHarness(), path = `workspace/cards/${f.card.id}/action`;
     await f.hook.mutate(path, { action: 'CONTINUE_WITHOUT_MAP', payload: { confirmed: true }, expectedRevision: 3 }, f.card.id);

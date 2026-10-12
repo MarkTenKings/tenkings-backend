@@ -1,12 +1,13 @@
 {
   "schemaVersion": "manufacturer-checklist/v1",
-  "capturedAt": "2026-10-10T22:04:42.466Z",
+  "capturedAt": "2026-10-12T05:32:18.078Z",
   "complete": false,
-  "sources": 618,
-  "explicitRows": 1131964,
-  "gzipBytes": 6054311,
-  "jsonBytes": 38417790,
-  "sha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0",
-  "decodedSha256": "57eb56b4cc13378cf6a2c4b96f4154bc58c94e71387de4042e2ee4e2489be300",
-  "sourceManifestSha256": "227d91c67fc575e67548a21f4ecaa2764b37aaf1555b002675b58875509baba0"
+  "sources": 624,
+  "explicitRows": 1144344,
+  "gzipBytes": 6149333,
+  "jsonBytes": 38903926,
+  "sha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f",
+  "decodedSha256": "175c20c6129fcabb84c8c29c61f00958f2bd1980bef5787f71078ea6f9a16f4a",
+  "sourceManifestSha256": "c57a798b59b76377e7240e2c66c913608ed80bdc64b0bb72606b31f0d885951c",
+  "sourceManifestFile": "manufacturer-checklists.fleer-import.json"
 }

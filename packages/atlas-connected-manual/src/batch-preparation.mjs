@@ -79,6 +79,7 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
   return { version: 'atlas-machine-provisional-report-v1', authority: 'MACHINE_PROPOSAL', certification: null,
     cardId: card.cardId, sourceHash: card.draft.source.sourceHash, manualRevision: card.revision, manualContentHash: card.contentHash,
     analysisId: analysis.analysisId, analysisResultHash: digest(canonical(analysis.proposals)),
+    proposals: structuredClone(analysis.proposals),
     identity: state.identity, cardProfile: state.geometry.profile, ruleVersion: ATLAS_RULE_VERSION,
     grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
     calculationState: calculated.grade ? 'COMPLETE' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry,
@@ -88,7 +89,7 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
     limitations: [...(analysis.limitations ?? []), ...(unresolvedGeometry.length
       ? ['Printed-frame geometry is unresolved. Defects were analyzed and measured, but centering and the overall grade remain unavailable until final review supplies supported geometry.'] : []), ...(ambiguousSides.length
       ? [`Machine geometry has competing plausible outlines on ${ambiguousSides.join(' and ')}. Review the proposed edges and centering in final review; this grade remains tentative.`] : []), ...(unmeasurableProposals.length
-      ? ['Some model proposals have no measurable pixels within the selected card outline. Review those proposals in the manual workspace before certification.'] : [])],
+      ? ['Model observations without measurable pixels are retained as excluded evidence. Human approval covers the current measured findings.'] : [])],
     unmeasurableProposals, measurementReceipts: receipts,
     geometry: Object.fromEntries(SIDES.map(side => [side, { frame: state.defects.sides[side].frame,
       centeringQuad: state.geometry.sides[side].printed?.quad ?? null }])),

@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import * as core from '@atlas/grading-core/geometry';
 import * as geometry from '../src/geometry-actions.mjs';
 import * as focus from '../src/geometry-focus.mjs';
-import {geometryImage} from '../dist/PairedGeometryWorkspace.js';
+import {geometryImage} from '../src/geometry-image.mjs';
 import {verifiedImageContentKey} from '../src/verified-image.mjs';
 import {focusedFixture} from './focused-geometry-fixture.mjs';
 const require=createRequire(new URL('../../../frontend/atlas-app/package.json',import.meta.url)),babel=require('next/dist/compiled/babel/core'),nextRequire=createRequire(require.resolve('next/package.json'));
@@ -18,7 +18,7 @@ function harness(extra={},load=image=>({url:image?.url})){const instances=new Ma
   const react={Fragment:'fragment',createElement:(type,props,...children)=>({type,props:{...props,children}}),
     useState(initial){const i=cursor++,current=slots;if(!(i in current))current[i]=typeof initial==='function'?initial():initial;return[current[i],change=>{const next=typeof change==='function'?change(current[i]):change;if(!Object.is(next,current[i])){current[i]=next;dirty=true;}}];},
     useRef(value){const i=cursor++;if(!(i in slots))slots[i]={current:value};return slots[i];},useEffect:effect,useLayoutEffect:effect};
-  const exports={};vm.runInNewContext(compiled,{exports,require(name){if(name==='react')return react;if(name==='@atlas/grading-core/geometry')return core;if(name==='./geometry-actions.mjs')return geometry;if(name==='./geometry-focus.mjs')return focus;if(name==='./PairedGeometryWorkspace.jsx')return{geometryImage};if(name==='./verified-image.mjs')return{useVerifiedImage:load,verifiedImageContentKey};if(name==='./gradient-snap')return{gradientMapFromImage:()=>null};return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);}});
+  const exports={};vm.runInNewContext(compiled,{exports,require(name){if(name==='react')return react;if(name==='@atlas/grading-core/geometry')return core;if(name==='./geometry-actions.mjs')return geometry;if(name==='./geometry-focus.mjs')return focus;if(name==='./geometry-image.mjs')return{geometryImage};if(name==='./verified-image.mjs')return{useVerifiedImage:load,verifiedImageContentKey};if(name==='./gradient-snap')return{gradientMapFromImage:()=>null};return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);}});
   const f={props:{...focusedFixture(),onApproveSide:async()=>{},...extra}};
   function expand(node,path='root'){if(Array.isArray(node))return node.map((n,i)=>expand(n,`${path}.${i}`));if(!node||typeof node!=='object')return node;if(typeof node.type==='function'){const id=`${path}:${node.type.name}:${node.props.key??''}`;if(!instances.has(id))instances.set(id,[]);slots=instances.get(id);cursor=0;return expand(node.type(node.props),`${id}.out`);}return{...node,props:{...node.props,children:expand(node.props.children,`${path}.children`)}};}
   f.render=()=>{let rounds=0;do{dirty=false;tree=expand({type:exports.FocusedGeometryWorkspace,props:f.props});const pending=effects;effects=[];pending.forEach(fn=>fn());assert.ok(++rounds<20);}while(dirty);return tree;};
@@ -87,4 +87,24 @@ test('the persistent review task and keyboard precision view remain in the inspe
   assert.equal(f.nodes(n=>n.props?.className==='fg-loupe').length,1);
   f.nudge('FRONT printed border Top left');assert.ok(f.has('Unsaved adjustments'));
   await f.click('Discard unsaved adjustments');assert.ok(f.has('Human review required'));
+});
+
+
+test('a replacement lossless transport requires its own verified decode without changing geometry lineage',async()=>{
+  const fixture=focusedFixture(),original=fixture.images.FRONT.original;
+  original.byteCount=100;original.mime='image/png';original.display={url:'blob:first',sha256:'d'.repeat(64),byteCount:50,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:original.sha256,width:1600,height:2400};
+  const f=harness(fixture);await f.ready();assert.equal(f.button('Approve').props.disabled,false);
+  const before=structuredClone(f.props.workspace);
+  original.display={...original.display,url:'blob:second',sha256:'e'.repeat(64)};f.render();
+  assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-handle')).length,0);assert.ok(f.button('Approve').props.disabled);
+  await f.ready();assert.equal(f.button('Approve').props.disabled,false);assert.deepEqual(f.props.workspace,before);
+});
+
+test('pending full detail can show a source-bound preview without giving preview pixels edit authority',()=>{
+  const fixture=focusedFixture(),original=fixture.images.FRONT.original,calls=[];
+  fixture.images.FRONT.original={sha256:original.sha256,byteCount:100,mime:'image/png',displayState:{state:'PENDING'},preview:{url:'blob:preview',sha256:'e'.repeat(64),byteCount:20,mime:'image/jpeg',width:512,height:768,sourceSha256:original.sha256}};
+  const f=harness(fixture,image=>{calls.push(image);return{url:image?.url??null};});
+  assert.equal(f.nodes(n=>n.type==='img'&&n.props.src==='blob:preview').length,1);
+  assert.equal(calls.some(image=>image?.sha256===original.sha256&&!image.url),false);
+  assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-handle')).length,0);assert.ok(f.button('Approve').props.disabled);
 });

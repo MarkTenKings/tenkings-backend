@@ -2,7 +2,7 @@ import { canonical, digest, object, requireThat, ManualServiceError } from '@atl
 import { createManualService } from '@atlas/manual-service';
 import { applyGeometryEdit, markPrintedBorderAbsent, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, updateGeometrySettings, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
 import { beginDefectEdit, applyDefectMeasurement, confirmDefectFindings, createDefectWorkspace, defectBase,
-  markDefectSideInspected, markDefectFindingReviewed, invalidateDefectFindingReviews, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, isDefectObservationResolved, DefectActionError } from '@atlas/manual-workspace/defect-actions';
+  markDefectSideInspected, markDefectFindingReviewed, invalidateDefectFindingReviews, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement-runtime';
 import { canonicalizeNewSpeedsterSessionIdentity, SpeedsterIdentityValidationError } from '@atlas/grading-core/identity';
 
@@ -29,7 +29,7 @@ export function frameFromGeometry(geometry, side) {
  * immutable artifacts. No photo, mask or model call occurs in a DB transaction.
  */
 export function createManualWorkflow({ repository, artifacts, pythonExecutable, measurementLimits, prepare = null, replaceSources = null, assertCurrent = null, measure = measureDefectWorkspaceEdit, resolveProposal = null, afterConfirm = null,
-  resolveConfirmation = null, assertReviewComplete = null, confirmationTimeoutMs = 180000, afterApprove = null, resolveFinalReview = null, resolveVariantConfirmation = null, prepareVariantConfirmation = null }) {
+  resolveConfirmation = null, confirmationTimeoutMs = 180000, afterApprove = null, resolveFinalReview = null, resolveVariantConfirmation = null }) {
   requireThat(Number.isSafeInteger(confirmationTimeoutMs) && confirmationTimeoutMs > 0 && confirmationTimeoutMs <= 180000);
   const domain = work => async (...args) => {
     try { return await work(...args); }
@@ -58,15 +58,16 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
     requireThat(sourceHash(value) === hash, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
     return value;
   }
-  async function hydrate(card) {
+  async function hydrate(card, { scope = 'all' } = {}) {
+    requireThat(['all', 'state'].includes(scope), 400, 'MANUAL_STATE_SCOPE_INVALID');
     const draft = card.draft;
     object(draft, ['version', 'geometry', 'defects', 'identity', 'identityRevision', ...(draft.version === 'atlas-manual-workflow-v2' ? ['source'] : []), ...(Object.hasOwn(draft, 'assistance') ? ['assistance'] : []),
       ...(Object.hasOwn(draft, 'finalReview') ? ['finalReview'] : []), ...(Object.hasOwn(draft, 'geometryBeforeEdit') ? ['geometryBeforeEdit'] : [])]);
     requireThat(['atlas-manual-workflow-v1', 'atlas-manual-workflow-v2'].includes(draft.version), 503, 'MANUAL_DRAFT_INVALID');
     const [g, d, assistance, finalReview] = await Promise.all([read(card.cardId, 'GEOMETRY', draft.geometry.ref, draft.geometry.sourceHash),
       draft.defects ? read(card.cardId, 'DEFECTS', draft.defects.ref, draft.defects.sourceHash) : null,
-      draft.assistance ? read(card.cardId, 'ASSISTANCE', draft.assistance.ref, draft.assistance.sourceHash) : null,
-      draft.finalReview ? read(card.cardId, 'FINAL_REVIEW', draft.finalReview.ref, draft.finalReview.sourceHash) : null]);
+      scope === 'all' && draft.assistance ? read(card.cardId, 'ASSISTANCE', draft.assistance.ref, draft.assistance.sourceHash) : null,
+      scope === 'all' && draft.finalReview ? read(card.cardId, 'FINAL_REVIEW', draft.finalReview.ref, draft.finalReview.sourceHash) : null]);
     const geometry = parseGeometryWorkspace(g), defects = d ? parseDefectWorkspace(d) : null;
     requireThat(geometry.cardId === card.cardId && (!defects || defects.cardId === card.cardId && geometry.profile === defects.profile),
       503, 'MANUAL_DRAFT_INVALID');
@@ -91,15 +92,6 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       defects: defects ? await store(defects, cardId, 'DEFECTS') : null, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, identity), identityRevision: 1 };
     return repository.provision(staff, { cardId, draft });
   }
-  function finalObservationProposal(finalReview, defects, assistance, binding, side) {
-    object(binding, ['reportHash', 'proposalId']);
-    requireThat(finalReview && binding.reportHash === finalReview.reportHash, 409, 'MANUAL_FINAL_REVIEW_REQUIRED');
-    const proposal = finalReview.report.unmeasurableProposals?.find(value => value.id === binding.proposalId);
-    requireThat(proposal && proposal.side === side, 409, 'MANUAL_PROPOSAL_STALE');
-    const previous = assistance?.reviews.find(review => review.analysisId === finalReview.report.analysisId && review.proposalId === proposal.id);
-    requireThat(!isDefectObservationResolved(defects, previous), 409, 'MANUAL_PROPOSAL_ALREADY_REVIEWED');
-    return proposal;
-  }
   async function reduce({ card, action, principal, startedAt }, staff) {
     let { geometry, defects, assistance, finalReview } = await hydrate(card);
     let draft = card.draft;
@@ -109,25 +101,6 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       const packet = await resolveFinalReview({ staff, card, batchKey: action.batchKey, reportHash: action.reportHash });
       ({ defects, finalReview } = beginFinalReview({ card, geometry, defects, packet }));
       draft = { ...draft, finalReview: await store(finalReview, card.cardId, 'FINAL_REVIEW') };
-    } else if (action.type === 'REJECT_FINAL_OBSERVATION') {
-      object(action, ['type', 'reportHash', 'proposalId', 'reviewed']);
-      requireThat(finalReview && action.reviewed === true && action.reportHash === finalReview.reportHash
-        && principal.actorKind !== 'MACHINE', 409, 'MANUAL_FINAL_REVIEW_REQUIRED');
-      const proposal = finalReview.report.unmeasurableProposals?.find(value => value.id === action.proposalId);
-      requireThat(proposal && ['NO_IN_CARD_RASTER_PIXELS', 'OUTSIDE_CARD_FRAME'].includes(proposal.reason), 409, 'MANUAL_PROPOSAL_STALE');
-      requireThat(!(assistance?.reviews ?? []).some(review => review.analysisId === finalReview.report.analysisId
-        && review.proposalId === proposal.id && isDefectObservationResolved(defects, review)), 409, 'MANUAL_PROPOSAL_ALREADY_REVIEWED');
-      // The human rejects an explicitly retained original observation. This
-      // never reuses its old polygon as pixels on a changed inspection frame.
-      assistance = { version: 'atlas-defect-assistance-v1', reviews: [...(assistance?.reviews ?? []).filter(review =>
-        review.analysisId !== finalReview.report.analysisId || review.proposalId !== proposal.id), {
-        analysisId: finalReview.report.analysisId, proposalId: proposal.id, side: proposal.side, action: 'REJECT', findingId: null,
-        base: finalReview.originalBases[proposal.side], proposal: finalReview.proposals.find(value => value.id === proposal.id),
-        reviewerId: principal.id, reviewedAt: new Date().toISOString(),
-        ...(proposal.reason === 'NO_IN_CARD_RASTER_PIXELS' ? { noMeasurablePixels: true } : { measurementHold: proposal.reason }),
-      }] };
-      defects = invalidateDefectConfirmation(defects);
-      draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
     } else if (action.type === 'REPLACE_SOURCES') {
       object(action, ['type', 'sourceHash']);
       requireThat(typeof replaceSources === 'function', 503, 'MANUAL_PREPARATION_UNAVAILABLE');
@@ -217,7 +190,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       // The confirmation changes identity metadata, not either photograph or
       // its measured outlines. Preserve the exact saved human geometry and
       // findings. Actual photo/geometry edits still invalidate their own
-      // confirmations; meaningful identity corrections have a separate recheck.
+      // confirmations.
     } else if (action.type === 'IDENTITY_EDIT') {
       object(action, ['type', 'identity']);
       draft = { ...draft, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, action.identity), identityRevision: draft.identityRevision + 1 };
@@ -248,21 +221,11 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       } else if (action.type === 'DEFECT_EDIT' || action.type === 'TRACE_SAVE') {
         let edit;
         if (action.type === 'TRACE_SAVE') {
-          object(action, ['type', 'side', 'base', 'findingId', 'traceRef', 'traceSourceHash', ...(Object.hasOwn(action, 'finalObservation') ? ['finalObservation'] : [])]);
+          object(action, ['type', 'side', 'base', 'findingId', 'traceRef', 'traceSourceHash']);
           requireThat(action.traceSourceHash === digest(canonical(action.base)), 409, 'MANUAL_TRACE_STALE');
           const trace = await artifacts.read(action.traceRef, { cardId: card.cardId, kind: 'EDIT', sourceHash: action.traceSourceHash });
           edit = { type: 'TRACE_SAVE', side: action.side, findingId: action.findingId, trace };
-          if (Object.hasOwn(action, 'finalObservation')) {
-            requireThat(action.findingId === null, 409, 'MANUAL_PROPOSAL_STALE');
-            const proposal = finalObservationProposal(finalReview, defects, assistance, action.finalObservation, action.side);
-            assistance = { version: 'atlas-defect-assistance-v1', reviews: [
-              ...(assistance?.reviews ?? []).filter(review => review.analysisId !== finalReview.report.analysisId || review.proposalId !== proposal.id),
-              { analysisId: finalReview.report.analysisId, proposalId: proposal.id, side: action.side, action: 'TRACE_SAVE',
-                findingId: trace.id, base: action.base, proposal: finalReview.proposals.find(value => value.id === proposal.id),
-                reviewerId: principal.id, reviewedAt: new Date().toISOString() },
-            ] };
-            draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
-          }
+
         } else { object(action, ['type', 'side', 'base', 'edit']); edit = action.edit; }
         defects = beginDefectEdit(defects, { side: action.side, base: action.base, actor: 'HUMAN', action: edit }).state;
       } else if (action.type === 'MEASURE_SIDE') {
@@ -292,17 +255,23 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
         const budget = confirmationBudget(startedAt, confirmationTimeoutMs);
         budget.check();
         requireThat(!action.proposalReview || typeof resolveConfirmation === 'function', 503, 'MANUAL_PROPOSAL_UNAVAILABLE');
-        const resolved = resolveConfirmation ? await resolveConfirmation({ staff, card, selection: action.proposalReview ?? null }) : null;
+        const resolved = action.proposalReview ? await resolveConfirmation({ staff, card, selection: action.proposalReview }) : null;
         budget.check();
         if (action.proposalReview) {
           ({ defects, assistance } = await collectivelyConfirmDefects({ defects, assistance, request: action,
             entries: resolved.entries, principal, measure, pythonExecutable, measurementLimits, budget }));
-          draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
         } else defects = confirmDefectFindings(defects, { base: action.base, reviewed: action.reviewed, actor: 'HUMAN' }).state;
         if (finalReview) {
           assistance = finalReviewDecisions({ finalReview, defects, assistance, principal });
-          draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
         }
+        // The explicit human action approves the current measured roster and
+        // excludes every other AI suggestion, including late model results.
+        assistance = { ...assistance, version: 'atlas-defect-assistance-v1', reviews: assistance?.reviews ?? [],
+          confirmation: { scope: 'CURRENT_MEASURED_FINDINGS', excludedSuggestions: 'ALL_OTHER_SUGGESTIONS',
+            findingIds: SIDES.flatMap(side => defects.sides[side].findings.filter(finding => !finding.geometryExclusion && finding.reviewResult !== 'REMOVED').map(finding => finding.id)),
+            excludedFindingIds: SIDES.flatMap(side => defects.sides[side].findings.filter(finding => finding.geometryExclusion).map(finding => finding.id)),
+            reviewerId: principal.id, reviewedAt: new Date().toISOString() } };
+        draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
         budget.check();
       } else requireThat(false, 400, 'MANUAL_ACTION_UNSUPPORTED');
     }
@@ -314,7 +283,6 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
   }
   async function buildReport({ card, principal }, staff) {
     if (assertCurrent) await assertCurrent({ card, principal, staff });
-    if (assertReviewComplete) await assertReviewComplete({ staff, card });
     const { geometry, defects, identity } = await hydrate(card);
     requireThat(defects && geometryStatus(geometry).confirmed, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
     const full = previewDefectReport(defects, { identity, centeringQuads: Object.fromEntries(SIDES.map(side => [side, geometry.sides[side].printed.quad])),
@@ -325,15 +293,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       findingCounts: full.findingCounts, ruleVersion: full.ruleVersion };
   }
   const ordinaryService = createManualService({ repository, reduce: domain((context, staff) => context.action.type === 'CONFIRM_FINDINGS'
-    ? confirmationBudget(context.startedAt, confirmationTimeoutMs).run(() => reduce(context, staff)) : reduce(context, staff)), buildReport: domain(buildReport),
-    beforeCommit: async ({ card, draft, action, startedAt }, staff) => {
-      if(action.type==='VARIANT_CONFIRM'&&prepareVariantConfirmation)return prepareVariantConfirmation({staff,card,action});
-      if (!assertReviewComplete || !['CONFIRM_FINDINGS', 'APPROVE_REPORT'].includes(action.type)) return null;
-      const budget = confirmationBudget(startedAt, confirmationTimeoutMs); budget.check();
-      const analysis = await budget.run(() => assertReviewComplete({ staff, card: { ...card, draft }, selection: action.proposalReview ?? null }));
-      budget.check();
-      return { version: 'atlas-manual-confirmation-fence-v1', analysis, deadlineAt: budget.deadlineAt };
-    } });
+    ? confirmationBudget(context.startedAt, confirmationTimeoutMs).run(() => reduce(context, staff)) : reduce(context, staff)), buildReport: domain(buildReport) });
   const service = Object.freeze({ ...ordinaryService,
     async previewReport(staff, cardId) {
       const preview = await ordinaryService.previewReport(staff, cardId);
@@ -364,6 +324,19 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
     return result;
   } });
   return Object.freeze({ service, hydrate, provision, currentPreview: finalReviewPreview,
+    async readState(staff, cardId) {
+      const { card, principal } = await repository.load(staff, cardId);
+      if (assertCurrent) await assertCurrent({ card, principal, staff });
+      const state = await hydrate(card, { scope: 'state' });
+      // Read-only chaining still proves the current photo pair and access.
+      // A concurrent edit must not pair old geometry with a newer CAS revision.
+      const [{ card: latest }] = await Promise.all([
+        repository.load(staff, cardId),
+        assertCurrent ? assertCurrent({ card, principal, staff }) : null,
+      ]);
+      requireThat(latest.revision === card.revision && latest.contentHash === card.contentHash, 409, 'MANUAL_DRAFT_STALE');
+      return { card, ...state };
+    },
     stageProposalTrace: domain(async (staff, cardId, request) => {
       object(request, ['side', 'base', 'analysisId', 'proposalId', 'trace']);
       requireThat(typeof resolveProposal === 'function', 503, 'MANUAL_PROPOSAL_UNAVAILABLE');
@@ -380,21 +353,16 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       return { ...action, traceRef, traceSourceHash };
     }),
     stageTrace: domain(async (staff, cardId, request) => {
-      object(request, ['side', 'base', 'findingId', 'trace', ...(Object.hasOwn(request, 'finalObservation') ? ['finalObservation'] : [])]);
-      const { card } = await service.authorizeEdit(staff, cardId), { geometry, defects, assistance, finalReview } = await hydrate(card);
+      object(request, ['side', 'base', 'findingId', 'trace']);
+      const { card } = await service.authorizeEdit(staff, cardId), { geometry, defects, finalReview } = await hydrate(card);
       requireThat(geometryStatus(geometry).confirmed || finalReview && preparedForReview(geometry), 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
-      if (Object.hasOwn(request, 'finalObservation')) {
-        requireThat(request.findingId === null, 409, 'MANUAL_PROPOSAL_STALE');
-        finalObservationProposal(finalReview, defects, assistance, request.finalObservation, request.side);
-      }
       // Parse the exact unchanged wire before storing any user trace. Client
       // actor labels never enter the public envelope or the server authority.
       beginDefectEdit(defects, { side: request.side, base: request.base, actor: 'HUMAN',
         action: { type: 'TRACE_SAVE', side: request.side, findingId: request.findingId, trace: request.trace } });
       const traceSourceHash = digest(canonical(request.base));
       const traceRef = await artifacts.write(request.trace, { cardId, kind: 'EDIT', sourceHash: traceSourceHash });
-      return { type: 'TRACE_SAVE', side: request.side, base: request.base, findingId: request.findingId, traceRef, traceSourceHash,
-        ...(request.finalObservation ? { finalObservation: request.finalObservation } : {}) };
+      return { type: 'TRACE_SAVE', side: request.side, base: request.base, findingId: request.findingId, traceRef, traceSourceHash };
     }),
   });
 }

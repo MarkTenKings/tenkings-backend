@@ -5,7 +5,7 @@ function fixture() {
   const calls = [], origin = 'https://atlasgrading.com', staff = { id: 'ordinary-staff-handle' };
   const handler = createBatchHandler({ origin, assertRequest: async () => calls.push('gateway'),
     boundary: { authenticate: async (cookie, csrf) => { calls.push({ cookie, csrf }); return staff; } },
-    service: Object.fromEntries(['enqueue', 'list', 'resume', 'detail', 'approve'].map(method => [method, async (actor, input) => { assert.equal(actor, staff); calls.push(method); return { method, input }; }])) });
+    service: Object.fromEntries(['enqueue', 'list', 'resume', 'detail'].map(method => [method, async (actor, input) => { assert.equal(actor, staff); calls.push(method); return { method, input }; }])) });
   const req = { method: 'POST', url: BATCH_PATH, headers: { origin, cookie: 'session', 'content-type': 'application/json', 'x-atlas-csrf': 'current' }, body: {} };
   const res = { headers: {}, setHeader(name, value) { this.headers[name] = value; }, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; } };
   return { calls, handler, req, res };
@@ -28,11 +28,12 @@ test('read and exact resume use their own methods; unrelated manual routes are n
   const h = fixture(); h.req.url = '/api/staff/manual/cards/card-id'; assert.equal(await h.handler(h.req, h.res), false); assert.deepEqual(h.calls, []);
 });
 
-test('review reads cannot mutate and approval requires exact POST, current CSRF and bound job route', async () => {
+test('batch detail is read-only and the retired bulk approval route is not exposed', async () => {
   const key='a'.repeat(64), f=fixture(); f.req.url+=`/${key}`; f.req.method='GET';
   await f.handler(f.req,f.res); assert.equal(f.res.body.method,'detail'); assert.equal(f.res.body.input,key);
-  const g=fixture(); g.req.url+=`/${key}/review`; await g.handler(g.req,g.res); assert.equal(g.res.body.method,'approve');
-  for(const [suffix,method] of [[`/${key}`,'POST'],[`/${key}/review`,'GET'],[`/${key}/review`,'DELETE']]){
-    const h=fixture(); h.req.url+=suffix; h.req.method=method; await h.handler(h.req,h.res); assert.equal(h.res.statusCode,405); assert.deepEqual(h.calls,['gateway']);
+  const write=fixture();write.req.url+=`/${key}`;await write.handler(write.req,write.res);assert.equal(write.res.statusCode,405);assert.deepEqual(write.calls,['gateway']);
+  for(const method of ['POST','GET','DELETE']){
+    const h=fixture();h.req.url+=`/${key}/review`;h.req.method=method;
+    assert.equal(await h.handler(h.req,h.res),false);assert.deepEqual(h.calls,[]);
   }
 });

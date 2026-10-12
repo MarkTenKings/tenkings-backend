@@ -37,7 +37,7 @@ export async function buildReviewedLessons({ confirmation, hydrate, createExempl
   const unique = new Set();
   for (const review of reviews) {
     const key = `${review.analysisId}:${review.proposalId}`;
-    requireThat(!unique.has(key) && SIDES.includes(review.side) && ['ACCEPT', 'REJECT', 'TRACE_SAVE'].includes(review.action), 503, 'MEMORY_REVIEW_INVALID');
+    requireThat(!unique.has(key) && SIDES.includes(review.side) && ['ACCEPT', 'REJECT', 'TRACE_SAVE', 'EXCLUDE'].includes(review.action), 503, 'MEMORY_REVIEW_INVALID');
     unique.add(key);
   }
   const proposalReview = review => review ? { analysisId: review.analysisId, proposalId: review.proposalId, reviewerId: review.reviewerId,
@@ -59,21 +59,17 @@ export async function buildReviewedLessons({ confirmation, hydrate, createExempl
     requireThat(!slot.pending && slot.inspection?.inspected === true && slot.inspection.imageSha256 === slot.frame.inspectionImageSha256,
       409, 'MEMORY_INSPECTION_REQUIRED');
     for (const finding of slot.findings) {
-      requireThat(finding.reviewResult !== 'UNREVIEWED', 409, 'MEMORY_CONFIRMATION_REQUIRED');
-      // An engine-only suppression is not a human negative example. Confirm
-      // findings deliberately reviews the surviving list; removal lessons need
-      // the separately preserved human edit identity as well.
-      if (finding.reviewResult === 'REMOVED' && !slot.humanEditedIds.includes(finding.id)) continue;
-      // The human rejected this trace in an older frame and it no longer maps
-      // completely into the corrected card. Its exact history is retained,
-      // but the current inspection cannot provide an exemplar for old pixels.
+      // Excluded original-frame observations are not current measured evidence
+      // or negative training examples. Keep their provenance without a crop.
       if (finding.geometryExclusion) {
         retainedObservations.push({ findingId: finding.id, side, reason: 'ORIGINAL_FRAME_NOT_CURRENT',
           sourceFrameId: finding.geometryExclusion.sourceFrame.id, sourceTraceSha256: finding.geometryExclusion.sourceTraceSha256 });
         continue;
       }
+      requireThat(finding.reviewResult !== 'UNREVIEWED', 409, 'MEMORY_CONFIRMATION_REQUIRED');
+      if (finding.reviewResult === 'REMOVED' && !slot.humanEditedIds.includes(finding.id)) continue;
       const trace = parseSpeedsterTraceRleV1(finding.finalTrace ?? finding.detectorMask);
-      const review = reviews.find(entry => entry.side === side && entry.findingId === finding.id
+      const review = reviews.find(entry => entry.action !== 'EXCLUDE' && entry.side === side && entry.findingId === finding.id
         && (entry.action !== 'REJECT' || finding.reviewResult === 'REMOVED')
         && canonical(entry.base.frame) === canonical(slot.frame));
       let correctedProposal = false;

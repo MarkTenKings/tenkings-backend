@@ -9,7 +9,7 @@ import {createGeometryWorkspace,applyGeometryEdit,applyPreparedFrame,geometryBas
   markPrintedBorderAbsent,confirmBothGeometry} from '../src/geometry-actions.mjs';
 import {createDefectWorkspace,adoptDefectProposals,defectBase,invalidateDefectFindingReviews,beginDefectEdit,
   applyDefectMeasurement,markDefectFindingReviewed,markDefectSideInspected,confirmDefectFindings,
-  previewDefectReport,isDefectObservationResolved} from '../src/defect-actions.mjs';
+  previewDefectReport} from '../src/defect-actions.mjs';
 import {beginReprojectDefectFrame} from '../src/geometry-reprojection.mjs';
 import {focusedFixture,printed} from '../test/focused-geometry-fixture.mjs';
 import {measurements} from '../test/defect-fixtures.mjs';
@@ -98,13 +98,7 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
       // Keep old evidence/images if preparation, reprojection or measurement fails.
       retainPrepared(candidate.result);geometry=candidate.geometry;defects=nextDefects;delete previousGeometry[side];
     }else if(action.type==='DEFECT_EDIT'){
-      if(action.finalObservation && (action.finalObservation.reportHash!==observationReportHash||action.finalObservation.proposalId!==observation?.id||action.side!==observation.side))throw Error('Synthetic observation binding mismatch');
-      const next=beginDefectEdit(defects,{side:action.side,base:action.base,actor:'HUMAN',action:action.edit}).state;
-      if(action.finalObservation)assistance={reviews:[{analysisId,proposalId:observation.id,side:action.side,action:'TRACE_SAVE',findingId:action.edit.trace.id,base:action.base,proposal:observation,reviewerId:'synthetic'}]};
-      defects=next;
-    }else if(action.type==='REJECT_FINAL_OBSERVATION'){
-      if(action.reportHash!==observationReportHash||action.proposalId!==observation?.id||!action.reviewed)throw Error('Synthetic observation binding mismatch');
-      assistance={reviews:[{analysisId,proposalId:observation.id,side:observation.side,action:'REJECT',findingId:null,proposal:observation,reviewerId:'synthetic'}]};
+      defects=beginDefectEdit(defects,{side:action.side,base:action.base,actor:'HUMAN',action:action.edit}).state;
     }else if(action.type==='MEASURE_SIDE'){
       const measured=await measureDefectWorkspaceEdit({workspace:defects,side:action.side,pythonExecutable,limits:measurementLimits});
       defects=applyDefectMeasurement(defects,measured).state;
@@ -117,7 +111,7 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
       else if(action.type==='REVIEW_FINDING')defects=markDefectFindingReviewed(defects,{...request,reviewerId:'synthetic',reviewedAt:new Date().toISOString()}).state;
       else if(action.type==='INSPECT_SIDE')defects=markDefectSideInspected(defects,request).state;
       else if(action.type==='CONFIRM_FINDINGS'){
-        if(observation&&!assistance.reviews.some(review=>review.proposalId===observation.id&&isDefectObservationResolved(defects,review)))throw Error('Synthetic observation requires explicit review');
+        if(observation)assistance={reviews:[{analysisId,proposalId:observation.id,side:observation.side,action:'EXCLUDE',findingId:null,proposal:observation,reviewerId:'synthetic'}]};
         defects=confirmDefectFindings(defects,request).state;
       }
       else throw Error(`Unsupported synthetic action ${action.type}`);

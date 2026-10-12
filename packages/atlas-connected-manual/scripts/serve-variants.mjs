@@ -10,7 +10,6 @@ import { createVariantPhotoProvider, projectVariantPhotoResponse } from '../src/
 import { createVariantWorker } from '../src/variant-worker.mjs';
 import { createVariantWorkers } from './variant-workers.mjs';
 import { createVariantAdmission } from '../src/variant-admission.mjs';
-import { createVariantRecheck } from '../src/variant-recheck.mjs';
 import { createVariantReferenceContribution } from '../src/variant-reference-contribution.mjs';
 
 // Separate process entry point. Never imported by Next.js or the grading host.
@@ -33,11 +32,9 @@ const catalog = createVariantCatalogService({ catalogClient: settings.catalogTok
   cache: store.cache, scrydex: settings.scrydex, listingProvider });
 const provider = createVariantPhotoProvider({ apiKey: settings.apiKey, readReferenceImage: catalog.readImage });
 const admitDispatch = createVariantAdmission({ boundary: runtime.boundary });
-const recheck = createVariantRecheck({ store, boundary: runtime.boundary, workflow: connected.workflow, assistance: connected.assistance, onError, admitDispatch });
 const contributeReference=createVariantReferenceContribution({store,artifacts:runtime.variantArtifacts,boundary:runtime.boundary,
   workflow:connected.workflow,loadPhotos:runtime.readVariantPhotos,catalog});
 async function backgroundMaintenance() {
-  await recheck();
   if (!settings.catalogToken) return;
   const job = await store.claimContribution();
   if (!job) return;
@@ -53,7 +50,7 @@ async function backgroundMaintenance() {
 }
 const worker = createVariantWorker({ store, catalog, loadPhotos: runtime.readVariantPhotos, provider,
   projectResponse: projectVariantPhotoResponse, concurrency: settings.concurrency, intervalMs: settings.intervalMs,
-  onError, recheck: backgroundMaintenance, admitDispatch });
+  onError, maintenance: backgroundMaintenance, admitDispatch });
 const workers = createVariantWorkers({ worker, reconciler: runtime.analysisReconciler,
   onEvent: event => console.log(JSON.stringify(event)) });
 let stopping = false;

@@ -15,13 +15,14 @@ export function createWorkflowHandler({ workflow, boundary, origin, assertReques
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
       await assertRequest(req); requireThat(url.origin === origin
-        && (!url.search || found[2] === 'view' && url.search === '?images=inspection'));
+        && (!url.search || found[2] === 'view' && ['?images=inspection', '?scope=state'].includes(url.search)));
       const write = found[2] !== 'view';
       requireThat(req.method === (write ? 'POST' : 'GET'), 405, 'MANUAL_METHOD_NOT_ALLOWED');
       if (write) requireThat(req.headers.origin === origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')
         && typeof req.headers['x-atlas-csrf'] === 'string' && req.headers['x-atlas-csrf'], 403, 'CSRF_REQUIRED');
       const staff = await boundary.authenticate(req.headers.cookie ?? '', write ? req.headers['x-atlas-csrf'] : undefined);
       if (write) res.status(200).json(await (found[2] === 'proposal-trace' ? workflow.stageProposalTrace : workflow.stageTrace)(staff, found[1], req.body));
+      else if (url.search === '?scope=state') res.status(200).json(await workflow.readState(staff, found[1]));
       else {
         const card = await workflow.service.read(staff, found[1]);
         const [state, approval] = await Promise.all([

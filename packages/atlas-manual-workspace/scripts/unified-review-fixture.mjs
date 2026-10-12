@@ -38,7 +38,7 @@ const server=createServer(async(q,r)=>{try{
  }
  if(q.url?.endsWith('/trace')&&q.method==='POST'){
   let bytes='';for await(const chunk of q)bytes+=chunk;const input=JSON.parse(bytes);
-  r.setHeader('content-type','application/json');r.end(JSON.stringify({type:'DEFECT_EDIT',side:input.side,base:input.base,...(input.finalObservation?{finalObservation:input.finalObservation}:{}),edit:{type:'TRACE_SAVE',side:input.side,findingId:input.findingId,trace:input.trace}}));return;
+  r.setHeader('content-type','application/json');r.end(JSON.stringify({type:'DEFECT_EDIT',side:input.side,base:input.base,edit:{type:'TRACE_SAVE',side:input.side,findingId:input.findingId,trace:input.trace}}));return;
  }
  if(q.url?.includes('/actions/')&&q.method==='GET'){
   const result=receipts.get(q.url.split('/').at(-1));r.setHeader('content-type','application/json');r.end(JSON.stringify(result?{state:'COMMITTED',result}:{state:'NOT_FOUND'}));return;

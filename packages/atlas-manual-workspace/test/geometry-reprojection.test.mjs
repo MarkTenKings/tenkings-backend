@@ -99,8 +99,11 @@ test('out-of-frame traces retain exact evidence for review without blocking corr
     })).state;
     assert.throws(()=>markDefectFindingReviewed(measured,{side:'FRONT',base:defectBase(measured,'FRONT'),findingId:finding.id,actor:'HUMAN',reviewed:true,reviewerId:'reviewer',reviewedAt:'2026-10-10T00:00:00Z'}));
     for(const side of SIDES)measured=markDefectSideInspected(measured,{side,base:defectBase(measured,side),actor:'HUMAN',inspected:true}).state;
-    assert.equal(defectStatus(measured).canConfirm,false);
-    assert.throws(()=>confirmDefectFindings(measured,{base:Object.fromEntries(SIDES.map(side=>[side,defectBase(measured,side)])),actor:'HUMAN',reviewed:true}),/RETRACE_REQUIRED/);
+    assert.equal(defectStatus(measured).canConfirm,true);
+    const confirmed=confirmDefectFindings(measured,{base:Object.fromEntries(SIDES.map(side=>[side,defectBase(measured,side)])),actor:'HUMAN',reviewed:true}).state;
+    assert.equal(defectStatus(confirmed).confirmed,true);
+    assert.equal(defectStatus(confirmed).sides.FRONT.included,0);
+    assert.deepEqual(confirmed.sides.FRONT.findings,measured.sides.FRONT.findings,'excluded evidence is not falsely accepted or removed');
     const removing=beginDefectEdit(measured,{side:'FRONT',base:defectBase(measured,'FRONT'),actor:'HUMAN',action:{type:'REMOVE',defectIds:[finding.id]}}).state;
     const removed=applyDefectMeasurement(removing,await runDefectMeasurement(removing,'FRONT',async({findings})=>{assert.deepEqual(findings,[]);return {defects:[]};})).state;
     assert.equal(removed.sides.FRONT.findings[0].reviewResult,'REMOVED');

@@ -183,6 +183,5 @@ export function createBatchGrading({ repository, worker, review, intakeStatus = 
     },
     worker,
     detail: (staff, key) => review.detail(staff, key),
-    approve: (staff, key, input) => review.approve(staff, key, input),
   });
 }

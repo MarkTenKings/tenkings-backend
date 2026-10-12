@@ -5,8 +5,6 @@ import { digest } from '@atlas/manual-service/contract';
 import { variantReviewSettings, variantWorkerSettings, variantWorkerEnvironment, validateVariantRuntimeConfiguration } from '../../../frontend/atlas-app/lib/server/variant-runtime-settings.mjs';
 import { createVariantSourcePhotoReader } from '../src/variant-source-photos.mjs';
 import { variantBinding, variantJobGrantSQL } from '../src/variant-job-store.mjs';
-import { createVariantRecheck } from '../src/variant-recheck.mjs';
-import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 
 const env = { ATLAS_MANUAL_ENABLED: 'true', ATLAS_MANUAL_VARIANT_REVIEW_ENABLED: 'true', ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED: 'true',
   ATLAS_MANUAL_DEFECT_MEMORY_ENABLED: 'true', ATLAS_VARIANT_WORKER_ENABLED: 'true', ATLAS_MANUAL_OPENAI_KEY: 'synthetic-config-only-key', ATLAS_VARIANT_OPENAI_KEY:'distinct-synthetic-variant-key',
@@ -76,29 +74,3 @@ test('worker downsizes copies of both current photos; replacing a source during 
   assert.equal(digest(source), photo.workingFrame.raster.content.sha256, 'original source buffer stays unchanged');
   changed = true; await assert.rejects(reader(job), { code: 'VARIANT_SOURCE_STALE' });
 });
-
-test('variant recheck creates one deterministic request, resumes only PREPARED, and preserves findings', async () => {
-  const card = cardFixture(), binding = variantBinding(card), state = { defects: workspace(false) }, before = structuredClone(state);
-  const row = { owner_id: 'owner', access_version: 1, card_id: card.cardId, source_hash: binding.sourceHash, identity_revision: binding.identityRevision,
-    identity_hash: binding.identityHash, analysis_action_id: '00000000-0000-4000-8000-000000000001', reprocess_required: true };
-  let previous = null, status = null, requests = 0, resumes = 0;
-  const store = { pendingRechecks: async () => [row], currentConfirmation: async () => row };
-  const assistance = { repository: { find: async () => previous, status: async () => status },
-    executor: { resume: async () => { resumes++; } }, analyzeMachine: async (_staff, id, input) => {
-      assert.equal(id, card.cardId); assert.equal(input.actionId, row.analysis_action_id); requests++;
-      previous = { analysisId: 'saved', state: 'DISPATCHED' }; status = { state: 'RUNNING' };
-    } };
-  const run = createVariantRecheck({ store, boundary: { machineOwner: x => x }, workflow: { service: { read: async () => card }, hydrate: async () => state }, assistance });
-  await run(); await run(); assert.equal(requests, 1); assert.equal(resumes, 0);
-  for (const terminal of ['READY', 'UNKNOWN', 'FAILED', 'REFUSED']) { status = { state: terminal }; await run(); }
-  assert.equal(requests, 1); assert.equal(resumes, 0);
-  status = { state: 'PREPARED' }; await run(); assert.equal(resumes, 1);
-  assert.deepEqual(state, before);
-  row.identity_hash = digest('different identity'); previous = null; await run(); assert.equal(requests, 1);
-});
-
- test('recheck defers before preparation and safely retires an expired saved PREPARED request',async()=>{
-  const card=cardFixture(),b=variantBinding(card),row={owner_id:'owner',access_version:1,card_id:card.cardId,source_hash:b.sourceHash,identity_revision:b.identityRevision,identity_hash:b.identityHash,analysis_action_id:'11111111-1111-4111-8111-111111111111',reprocess_required:true};
-  let busy=true,reads=0,retirements=0;const run=createVariantRecheck({store:{pendingRechecks:async()=>[row],currentConfirmation:async()=>row},boundary:{machineOwner:x=>x},workflow:{service:{read:async()=>{reads++;return card;}},hydrate:async()=>assert.fail('no hydration')},assistance:{repository:{find:async()=>({analysisId:row.analysis_action_id,baseHash:'fixture',expiresAt:'2000-01-01T00:00:00Z'}),status:async()=>({state:'PREPARED'}),retireUndispatched:async(_staff,input)=>{assert.equal(input.actionId,row.analysis_action_id);assert.equal(input.code,'DEFECT_ANALYSIS_REQUEST_EXPIRED');retirements++;}},executor:{resume:async()=>assert.fail('no stale dispatch')}},admitDispatch:async({actionId})=>{assert.equal(actionId,row.analysis_action_id);return !busy;}});
-  await run();assert.equal(reads,0);busy=false;await run();assert.equal(retirements,1);
- });

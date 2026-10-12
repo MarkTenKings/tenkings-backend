@@ -10,8 +10,20 @@ const norm = value => String(value ?? '').normalize('NFKD').replace(/\p{M}/gu, '
 const check = (value, message) => { if (!value) throw new Error(`MANUFACTURER_CHECKLIST_INVALID: ${message}`); };
 const string = (value, max = 240) => typeof value === 'string' && value.length > 0 && value.length <= max && value === value.trim() && !/[\x00-\x1f\x7f]/.test(value);
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function checklistYear(value) {
+  const text = String(value ?? '').trim();
+  const season = /^(\d{4})\s*[-\u2010-\u2015/]\s*(\d{2}|\d{4})$/.exec(text);
+  if (!season) return norm(text);
+  const end = Number(season[1]) + 1;
+  if (Number(season[2]) !== (season[2].length === 2 ? end % 100 : end)) return norm(text);
+  return `${season[1]}-${String(end).slice(-2)}`;
+}
+function shortSeason(value) {
+  const season = /^(\d{2})\s*[-\u2010-\u2015/]\s*(\d{2})$/.exec(String(value ?? '').trim());
+  return season && Number(season[2]) === (Number(season[1]) + 1) % 100 ? `${season[1]}-${season[2]}` : null;
+}
 function productName(value, manufacturer) {
-  let text = norm(value).replace(/^\d{4}(?: \d{2,4})? /, '').replace(/ (baseball|basketball|football)$/, '');
+  let text = norm(value).replace(/^(?:\d{4}(?: \d{2,4})?|\d{2} \d{2}) /, '').replace(/ (baseball|basketball|football|hockey|golf)$/, '');
   const maker = norm(manufacturer);
   if (text.startsWith(`${maker} `)) text = text.slice(maker.length + 1);
   return text;
@@ -52,7 +64,7 @@ async function bundledCatalog() {
 }
 function sourceMetadata(source) {
   check(source && string(source.manufacturer) && string(source.year) && string(source.setName) && string(source.sport)
-    && ['baseball','basketball','football'].includes(source.sport) && string(source.url, 2048) && HASH.test(source.sha256)
+    && ['baseball','basketball','football','hockey','golf'].includes(source.sport) && string(source.url, 2048) && HASH.test(source.sha256)
     && Array.isArray(source.aliases) && source.aliases.length <= 12 && source.aliases.every(v => string(v))
     && (source.manufacturerAliases === undefined || Array.isArray(source.manufacturerAliases) && source.manufacturerAliases.length <= 8 && source.manufacturerAliases.every(v => string(v))), 'source');
   const url = new URL(source.url);
@@ -70,7 +82,7 @@ function rowCatalog(data, rowLimit = 1500000) {
     check(Array.isArray(row) && row.length === 5 && Number.isSafeInteger(row[0]) && sources[row[0]]
       && (!strings || row.slice(1).every(v => Number.isSafeInteger(v) && v >= 0 && v < strings.length))
       && string(cell(row,1),120) && string(cell(row,2),120) && string(cell(row,3),120) && string(cell(row,4),160), 'row');
-    const key = `${norm(sources[row[0]].year)}|${athleteName(cell(row,3))}`;
+    const key = `${checklistYear(sources[row[0]].year)}|${athleteName(cell(row,3))}`;
     if (!index.has(key)) index.set(key, []);
     index.get(key).push(row);
   }
@@ -151,10 +163,13 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       const { sources, index, cell } = archive;
       const scope = productScope(identity.setName), athlete = athleteName(identity.name);
       const maker = norm(identity.manufacturer);
-      function matchesSource(source, year, basketballOnly) {
-        return norm(source.year) === norm(year) && (!basketballOnly || source.sport === 'basketball')
-          && [source.manufacturer, ...(source.manufacturerAliases ?? [])].some(v => norm(v) === maker)
+      function matchesProduct(source) {
+        return [source.manufacturer, ...(source.manufacturerAliases ?? [])].some(v => norm(v) === maker)
           && source.products.has(productName(scope.product, source.manufacturer));
+      }
+      function matchesSource(source, year, basketballOnly) {
+        return checklistYear(source.year) === checklistYear(year) && (!basketballOnly || source.sport === 'basketball')
+          && matchesProduct(source);
       }
       function matchesRow(row, readCell) {
         const label = norm(readCell(row,1));
@@ -163,7 +178,7 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
           && (!scope.subset || label === scope.subset || label.startsWith(`${scope.subset} `));
       }
       async function matchingRows(year, basketballOnly = false) {
-        const key = `${norm(year)}|${athlete}`;
+        const key = `${checklistYear(year)}|${athlete}`;
         if (archive.kind === 'rows') return (index.get(key) ?? []).filter(row => matchesSource(sources[row[0]], year, basketballOnly) && matchesRow(row, cell));
         const matching = [];
         for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
@@ -176,13 +191,22 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
         }
         return matching;
       }
-      let rows = await matchingRows(identity.year), seasonFallback = false;
+      let lookupYear = identity.year;
+      const abbreviatedSeason = shortSeason(identity.year);
+      if (abbreviatedSeason) {
+        // Resolve the century from this product's explicit catalog seasons,
+        // never a moving date pivot or a guess from a two-digit bare year.
+        const seasons = new Set(sources.filter(matchesProduct).map(source => checklistYear(source.year))
+          .filter(year => /^\d{4}-\d{2}$/.test(year) && year.slice(2) === abbreviatedSeason));
+        if (seasons.size !== 1) return { ...empty, problems: seasons.size ? ['PROVIDER_NOT_SUPPORTED'] : [] };
+        lookupYear = [...seasons][0];
+      }
+      let rows = await matchingRows(lookupYear), seasonFallback = false;
       // A bare starting year is a constrained lookup alias for basketball
       // only. An explicit season never falls back, and exact-year rows win.
       if (!rows.length && /^\d{4}$/.test(identity.year)) {
         const endYear = Number(identity.year) + 1;
-        rows = [...await matchingRows(`${identity.year}-${String(endYear).slice(-2)}`, true),
-          ...await matchingRows(`${identity.year}-${endYear}`, true)];
+        rows = await matchingRows(`${identity.year}-${String(endYear).slice(-2)}`, true);
         const scopes = new Set(rows.map(row => {
           const source = sources[row[0]];
           return `${norm(source.manufacturer)}|${productName(source.setName, source.manufacturer)}`;

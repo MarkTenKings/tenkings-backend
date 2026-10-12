@@ -1,5 +1,5 @@
 {
-  "asOf": "2026-10-10",
+  "asOf": "2026-10-12",
   "complete": false,
   "requestedYears": {
     "from": 1990,
@@ -159,6 +159,28 @@
       "state": "normalized",
       "sources": 4,
       "explicitRows": 2433
+    },
+    {
+      "manufacturer": "Fleer",
+      "sport": "hockey",
+      "state": "normalized",
+      "sources": 4,
+      "explicitRows": 7767
+    },
+    {
+      "manufacturer": "Fleer",
+      "sport": "golf",
+      "state": "normalized",
+      "sources": 2,
+      "explicitRows": 4613
+    },
+    {
+      "manufacturer": "Fleer",
+      "sport": null,
+      "classification": "entertainment",
+      "state": "retained_unsupported_category",
+      "sources": 8,
+      "explicitRows": 0
     }
   ],
   "normalizedYearBounds": [
@@ -186,13 +208,18 @@
       "manufacturer": "Upper Deck",
       "earliest": "2024",
       "latest": "2026"
+    },
+    {
+      "manufacturer": "Fleer",
+      "earliest": "2015-16",
+      "latest": "2026"
     }
   ],
   "counts": {
-    "sourceRecords": 1133,
-    "retainedFiles": 692,
-    "explicitRows": 1135649,
-    "retainedDistinctFileHashes": 692
+    "sourceRecords": 1147,
+    "retainedFiles": 706,
+    "explicitRows": 1148029,
+    "retainedDistinctFileHashes": 706
   },
   "limitations": [
     "No year or manufacturer archive is asserted complete.",
@@ -203,16 +230,24 @@
     "Set-wide parallels and unspecified printing plates are not expanded.",
     "Physical applicability remains unknown until staff review.",
     "Serving rows are deduplicated within source and exclude labels/identities over bounded field lengths; SQLite preserves retained source rows.",
-    "2025 Donruss Optic official Jaxson Dart Threads rows use card number 3; no explicit alias to DTBH-JDT is supplied, so that printed-number identity remains unmatched."
+    "2025 Donruss Optic official Jaxson Dart Threads rows use card number 3; no explicit alias to DTBH-JDT is supplied, so that printed-number identity remains unmatched.",
+    "Fleer expansion adds six official hockey/golf checklists only; eight entertainment captures are retained outside serving. Historical Fleer basketball, including 1992-93 Michael Jordan #273, remains an explicit catalog gap.",
+    "Counts combine the prior acquisition archive with the separate Fleer DOM-capture archive; no catalog database was changed."
   ],
   "servingBundle": {
-    "sources": 618,
-    "explicitRows": 1131964,
-    "gzipBytes": 6054311,
-    "jsonBytes": 38417790,
-    "sha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0"
+    "sources": 624,
+    "explicitRows": 1144344,
+    "gzipBytes": 6149333,
+    "jsonBytes": 38903926,
+    "sha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f"
   },
-  "validation": {
+  "priorAcquisitionCounts": {
+    "sourceRecords": 1133,
+    "retainedFiles": 692,
+    "explicitRows": 1135649,
+    "retainedDistinctFileHashes": 692
+  },
+  "priorBundleValidation": {
     "parserTests": 8,
     "providerTests": 13,
     "realCardLookups": [
@@ -227,5 +262,14 @@
     "measuredHeapUsedBytes": 204937872,
     "firstLoadTwoActiveCardLookupsMs": 889.935291,
     "measuredBundleSha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0"
-  }
+  },
+  "validation": {
+    "catalogTests": 63,
+    "fleerParserTests": 4,
+    "realFleerSourceLookups": 6,
+    "originalSourcesRowsAndStringIndicesPreserved": true,
+    "bundleSha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f",
+    "sportsParserTests": 25
+  },
+  "fleerSupplementInventory": "manufacturer-checklists.fleer-coverage.json"
 }

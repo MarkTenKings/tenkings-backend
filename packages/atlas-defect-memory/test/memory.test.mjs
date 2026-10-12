@@ -183,3 +183,21 @@ test('a rejected off-frame model observation keeps review evidence without manuf
   assert.equal(bundle.lessons.length, 0);
   assert.equal(review.action, 'REJECT'); assert.equal(review.proposal.canonicalContour[0].y, 1.01);
 });
+
+
+test('excluded AI suggestions retain honest review history without positive or negative lessons', async () => {
+  for (const reason of ['OUTSIDE_CARD_FRAME', 'NO_IN_CARD_RASTER_PIXELS', 'NOT_IN_CURRENT_FINDINGS']) {
+    const f = fixtures({ empty: true }), hydrated = await f.hydrate();
+    const review = { analysisId: randomUUID(), proposalId: 'excluded-original', side: 'FRONT',
+      action: 'EXCLUDE', findingId: null, exclusionReason: reason,
+      base: { frame: hydrated.defects.sides.FRONT.frame }, proposal: { defectType: 'LIGHT_SCRATCH_SCUFF',
+        canonicalContour: [{ x: .2, y: 1.01 }, { x: .3, y: 1.01 }, { x: .3, y: 1.02 }] },
+      reviewerId: randomUUID(), reviewedAt: new Date().toISOString() };
+    const before = structuredClone(review);
+    const bundle = await buildReviewedLessons({ confirmation: f.confirmation,
+      hydrate: async () => ({ ...hydrated, assistance: { reviews: [review] } }),
+      createExemplar: async () => assert.fail('Excluded observations must not create learning crops'),
+      proposalTrace: async () => assert.fail('Excluded observations must not become measured traces') });
+    assert.deepEqual(bundle.lessons, []); assert.deepEqual(review, before);
+  }
+});

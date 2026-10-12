@@ -21,7 +21,7 @@ export function prepareVariantCatalogObservation(payload) {
     snapshot = validateVariantReviewSnapshot(payload.catalog);
     candidate = snapshot.candidates.find(c => c.candidateId === payload.candidateId);
     requireValue(candidate && variantSelectionParallel(candidate) === payload.parallel);
-  } else requireValue(payload.candidateId === null && typeof payload.observedFeatures === 'string' && payload.observedFeatures.trim().length > 0 && payload.observedFeatures.length <= 1000);
+  } else requireValue(payload.candidateId === null);
   const physicalSourceId = 'physical-review', sources = [{ sourceId: physicalSourceId, kind: 'PHYSICAL_OBSERVATION',
     sourceRef: `atlas:variant:${payload.actionId}`, sourceUrl: null, sha256: payload.sourceHash, parentSourceIds: [],
     originKeys: [`physical:atlas:${payload.cardId}`] }];

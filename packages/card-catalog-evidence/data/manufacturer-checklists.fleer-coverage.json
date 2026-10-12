@@ -1,0 +1,425 @@
+{
+  "schemaVersion": "fleer-acquisition-inventory/v1",
+  "asOf": "2026-10-12T05:32:45.787Z",
+  "complete": false,
+  "scope": "Bounded discovery from current official Upper Deck Fleer brand archives and the linked Fleer Retro Looney Tunes checklist. This is not all historical Fleer sets.",
+  "servingSports": [
+    "baseball",
+    "basketball",
+    "football",
+    "hockey",
+    "golf"
+  ],
+  "servingBundle": {
+    "sources": 624,
+    "explicitRows": 1144344,
+    "sha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f",
+    "fleerProductSources": 6,
+    "fleerProductRows": 12380
+  },
+  "retainedPriorUpperDeckSupplementFleerProductSources": 0,
+  "acquisition": {
+    "sourcePages": 14,
+    "capturedDataRows": 30533,
+    "retainedCaptureBytes": 3233100,
+    "newServingSources": 6,
+    "newServingRows": 12380,
+    "countsByClassification": {
+      "hockey": {
+        "sources": 4,
+        "capturedDataRows": 7767
+      },
+      "golf": {
+        "sources": 2,
+        "capturedDataRows": 4633
+      },
+      "entertainment": {
+        "sources": 8,
+        "capturedDataRows": 18133
+      }
+    }
+  },
+  "indexSources": [
+    "https://upperdeck.com/checklist-brand/fleer-brilliants/",
+    "https://upperdeck.com/checklist-year/2024/page/5/",
+    "https://upperdeck.com/checklist-brand/fleer-ultra/",
+    "https://upperdeck.com/checklist-brand/fleer/"
+  ],
+  "sources": [
+    {
+      "url": "https://upperdeck.com/checklist/2024-fleer-scooby-doo-checklist/",
+      "title": "2024 Fleer Scooby Doo Checklist",
+      "capturedAt": "2026-10-12T05:32:02.483Z",
+      "sha256": "f43df8753a96331b1a49ba58bc83575d605eccdb311c7eb7094245ebfa0c648f",
+      "bytes": 216578,
+      "path": "raw/f43df8753a96331b1a49ba58bc83575d605eccdb311c7eb7094245ebfa0c648f.json",
+      "rowCounts": [
+        2192
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 2191,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2016-17-fleer-showcase-checklist/",
+      "title": "2016-17 Fleer Showcase Checklist",
+      "capturedAt": "2026-10-12T05:29:21.012Z",
+      "sha256": "027d35b0de78e1559cc675e0a27618a687374fb3c07119fc5322b46f6e566d8c",
+      "bytes": 177337,
+      "path": "raw/027d35b0de78e1559cc675e0a27618a687374fb3c07119fc5322b46f6e566d8c.json",
+      "rowCounts": [
+        1438
+      ],
+      "completeTableCapture": true,
+      "classification": "hockey",
+      "capturedDataRows": 1437,
+      "imported": true,
+      "importStatus": "normalized_local_serving_bundle",
+      "normalizedRows": 1437,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2015-16-fleer-showcase-checklist/",
+      "title": "2015-16 Fleer Showcase Checklist",
+      "capturedAt": "2026-10-12T05:29:25.149Z",
+      "sha256": "b55c88fc5aecd6db156f3d94e0103e948782d3bb1187474b113fc8e2d4fc97d7",
+      "bytes": 151683,
+      "path": "raw/b55c88fc5aecd6db156f3d94e0103e948782d3bb1187474b113fc8e2d4fc97d7.json",
+      "rowCounts": [
+        1213
+      ],
+      "completeTableCapture": true,
+      "classification": "hockey",
+      "capturedDataRows": 1212,
+      "imported": true,
+      "importStatus": "normalized_local_serving_bundle",
+      "normalizedRows": 1212,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2025-26-fleer-ultra-pwhl-checklist/",
+      "title": "2025-26 Fleer Ultra PWHL Checklist",
+      "capturedAt": "2026-10-12T05:29:30.951Z",
+      "sha256": "e1fcdebcc2f267ae52343737b5bb1111e325101aeed97fb36c486c2a0fabd873",
+      "bytes": 251938,
+      "path": "raw/e1fcdebcc2f267ae52343737b5bb1111e325101aeed97fb36c486c2a0fabd873.json",
+      "rowCounts": [
+        1980
+      ],
+      "completeTableCapture": true,
+      "classification": "hockey",
+      "capturedDataRows": 1979,
+      "imported": true,
+      "importStatus": "normalized_local_serving_bundle",
+      "normalizedRows": 1979,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2026-fleer-ultra-golf/",
+      "title": "2026 Fleer Ultra Golf Checklist",
+      "capturedAt": "2026-10-12T05:29:45.044Z",
+      "sha256": "71ddcc63ba36eb3d60f91407f27ff900e52faf94c05b2bfbea2c5b86e3b651c4",
+      "bytes": 213570,
+      "path": "raw/71ddcc63ba36eb3d60f91407f27ff900e52faf94c05b2bfbea2c5b86e3b651c4.json",
+      "rowCounts": [
+        1882
+      ],
+      "completeTableCapture": true,
+      "classification": "golf",
+      "capturedDataRows": 1881,
+      "imported": true,
+      "importStatus": "normalized_local_serving_bundle",
+      "normalizedRows": 1861,
+      "rejectedRows": [
+        {
+          "table": 1,
+          "row": 1310,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1311,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1312,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1313,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1314,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1315,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1316,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1317,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1318,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1319,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1320,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1321,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1322,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1323,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1324,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1325,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1326,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1327,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1328,
+          "reason": "missing_explicit_identity"
+        },
+        {
+          "table": 1,
+          "row": 1329,
+          "reason": "missing_explicit_identity"
+        }
+      ]
+    },
+    {
+      "url": "https://upperdeck.com/checklist/fleer-ultra-superman-checklist/",
+      "title": "Fleer Ultra Superman Checklist",
+      "capturedAt": "2026-10-12T05:32:07.590Z",
+      "sha256": "b92e1fcf458e92c04b79215a0339418ef2f0c7f379d339b83a54e91d5c3ab2d3",
+      "bytes": 282882,
+      "path": "raw/b92e1fcf458e92c04b79215a0339418ef2f0c7f379d339b83a54e91d5c3ab2d3.json",
+      "rowCounts": [
+        2642
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 2641,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2025-2026-fleer-ultra-checklist/",
+      "title": "2025-2026 Fleer Ultra Checklist",
+      "capturedAt": "2026-10-12T05:32:14.350Z",
+      "sha256": "2e50693569938c0692b36659279f6b16f78703e1d8dab0baf18858ddd405afa5",
+      "bytes": 390197,
+      "path": "raw/2e50693569938c0692b36659279f6b16f78703e1d8dab0baf18858ddd405afa5.json",
+      "rowCounts": [
+        3140
+      ],
+      "completeTableCapture": true,
+      "classification": "hockey",
+      "capturedDataRows": 3139,
+      "imported": true,
+      "importStatus": "normalized_local_serving_bundle",
+      "normalizedRows": 3139,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2023-fleer-ultra-golf-checklist/",
+      "title": "2023 Fleer Ultra Golf Checklist",
+      "capturedAt": "2026-10-12T05:32:18.078Z",
+      "sha256": "1b5295411d09202d0a0e9489862ffe657ead012a692037c3355ddaa438301c5a",
+      "bytes": 170691,
+      "path": "raw/1b5295411d09202d0a0e9489862ffe657ead012a692037c3355ddaa438301c5a.json",
+      "rowCounts": [
+        2753
+      ],
+      "completeTableCapture": true,
+      "classification": "golf",
+      "capturedDataRows": 2752,
+      "imported": true,
+      "importStatus": "normalized_local_serving_bundle",
+      "normalizedRows": 2752,
+      "rejectedRows": []
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2024-fleer-ultra-matriarchs-of-marvel-checklist/",
+      "title": "2024 Fleer Ultra Matriarchs Of Marvel Checklist",
+      "capturedAt": "2026-10-12T05:30:06.410Z",
+      "sha256": "d657c55b3cefdb331a3ef3f0282f0bfd5ce36af6b0d9fd8cc7d63211dc5f2e81",
+      "bytes": 174904,
+      "path": "raw/d657c55b3cefdb331a3ef3f0282f0bfd5ce36af6b0d9fd8cc7d63211dc5f2e81.json",
+      "rowCounts": [
+        1950
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 1949,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    },
+    {
+      "url": "https://upperdeck.com/checklist/fleer-ultra-wolverine-checklist/",
+      "title": "Fleer Ultra Wolverine Checklist",
+      "capturedAt": "2026-10-12T05:32:32.433Z",
+      "sha256": "8e0cf09966056e86127554aa374ca0dcd76e2d0995d451afc8a608a4df41496f",
+      "bytes": 305983,
+      "path": "raw/8e0cf09966056e86127554aa374ca0dcd76e2d0995d451afc8a608a4df41496f.json",
+      "rowCounts": [
+        2845
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 2844,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    },
+    {
+      "url": "https://upperdeck.com/checklist/fleer-ultra-avengers-checklist/",
+      "title": "Fleer Ultra Avengers Checklist",
+      "capturedAt": "2026-10-12T05:32:37.033Z",
+      "sha256": "3cd899b09e938cc300121c12591620faf813319be571ea95d9505e702248e4f0",
+      "bytes": 266156,
+      "path": "raw/3cd899b09e938cc300121c12591620faf813319be571ea95d9505e702248e4f0.json",
+      "rowCounts": [
+        2528
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 2527,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    },
+    {
+      "url": "https://upperdeck.com/checklist/fleer-ultra-midnight-sons-checklist/",
+      "title": "Fleer Ultra Midnight Sons Checklist",
+      "capturedAt": "2026-10-12T05:32:41.002Z",
+      "sha256": "fd1a80d109554d2d1df14ce84f336cbb1e18636e8d8b859f394bfb5abd2ced04",
+      "bytes": 211298,
+      "path": "raw/fd1a80d109554d2d1df14ce84f336cbb1e18636e8d8b859f394bfb5abd2ced04.json",
+      "rowCounts": [
+        2117
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 2116,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    },
+    {
+      "url": "https://upperdeck.com/checklist/2025-fleer-brilliants-superman-checklist/",
+      "title": "2025 Fleer Brilliants Superman Checklist",
+      "capturedAt": "2026-10-12T05:30:35.037Z",
+      "sha256": "cc5f02b37ce08330d2f998ad6957c1821139bb6649451e873ea8ce549892f6bd",
+      "bytes": 105972,
+      "path": "raw/cc5f02b37ce08330d2f998ad6957c1821139bb6649451e873ea8ce549892f6bd.json",
+      "rowCounts": [
+        1071
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 1070,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    },
+    {
+      "url": "https://upperdeck.com/checklist/fleer-retro-looney-tunes-checklist/",
+      "title": "Fleer Retro Looney Tunes Checklist",
+      "capturedAt": "2026-10-12T05:32:45.787Z",
+      "sha256": "b15e3b44ca805194aad60bb33e4f0d4cda5409f8a3f12358c9f8753ecc8f6d73",
+      "bytes": 313911,
+      "path": "raw/b15e3b44ca805194aad60bb33e4f0d4cda5409f8a3f12358c9f8753ecc8f6d73.json",
+      "rowCounts": [
+        2796
+      ],
+      "completeTableCapture": true,
+      "classification": "entertainment",
+      "capturedDataRows": 2795,
+      "imported": false,
+      "importStatus": "unsupported_entertainment_category_retained_only"
+    }
+  ],
+  "limitations": [
+    "Historical Fleer basketball/baseball/football manufacturer checklists were not located in this bounded acquisition; 1992-93 Fleer Michael Jordan #273 remains unmatched.",
+    "Upper Deck current year selector exposes 2015 through 2026; that is archive navigation, not complete coverage.",
+    "Six official hockey/golf sources are normalized into the local serving bundle. Eight entertainment sources remain retained only because SPORTS/POKEMON are the current identity categories; no entertainment records are mislabeled as sports.",
+    "Captured data-row counts include source annotations and rows that may lack complete card identity. They are not unique cards or normalized serving rows.",
+    "Eight initial browser captures were truncated by serialization at 2000 rows. Their immutable bytes are retained in capture-superseded.json; final receipts use full 500-row chunks and exact table row-count checks.",
+    "Direct unauthenticated HTTP fetch returned 403. Acquisition used the ordinary public browser pages; no access-control bypass or private endpoint was used.",
+    "This is a local repository serving-bundle import only. No production deployment or catalog DB mutation occurred; deployment is still required for live use."
+  ],
+  "privateEvidenceDirectory": "sports-checklists-20261010/fleer-expansion-20261011",
+  "priorServingBundle": {
+    "sources": 618,
+    "explicitRows": 1131964,
+    "sha256": "caf2bc5b07c610c87b632bce71893541056ea712861dff2b139ad07fc92a77d0",
+    "fleerProductSources": 0,
+    "fleerProductRows": 0
+  },
+  "importManifest": "manufacturer-checklists.fleer-import.json",
+  "historicalResearch": [
+    {
+      "publisher": "Trading Card Database",
+      "authority": "secondary_collector_database",
+      "url": "https://www.tcdb.com/Checklist.cfm/sid/2096/1992-93-Fleer?PageIndex=3",
+      "observedAt": "2026-10-12T05:41:36Z",
+      "setName": "1992-93 Fleer",
+      "cardNumber": "273",
+      "name": "Michael Jordan",
+      "printedDatabaseNote": "SD",
+      "servingImported": false,
+      "limitation": "Public checklist fact observed; manufacturer authority, licensed feed status and complete parallel coverage are not established."
+    },
+    {
+      "publisher": "Beckett",
+      "url": "https://www.beckett.com/basketball/1992-93/fleer/",
+      "observedAt": "2026-10-12T05:41:36Z",
+      "result": "Redirected to https://maintenance.beckett.com/; no usable checklist acquired."
+    }
+  ]
+}

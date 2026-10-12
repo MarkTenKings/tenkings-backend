@@ -19,9 +19,8 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createDetailsStore, gradingIdentity, geometrySideSettings } from './details.mjs';
 import { createIdentification } from './identification.mjs';
 import { createDefectImageEffects } from './defect-images.mjs';
-import { createDefectAssistance, compatibleDefectAnalysis } from './defect-assistance.mjs';
+import { createDefectAssistance } from './defect-assistance.mjs';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
-import { validateConfirmationCommit } from './confirmation-fence.mjs';
 import { createImageDescriptors } from './image-descriptors.mjs';
 import { createEarlyGeometryStore, recordEarlyGeometryIntent } from './early-geometry-store.mjs';
 import { createEarlyGeometry, adoptEarlyGeometry } from './early-geometry.mjs';
@@ -86,7 +85,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     geometryLearning:learningEnabled?createNativeGeometryLearning({boundary,intakeRepository}):null,
     geometryConcurrency:processing.geometryConcurrency,geometryDiscoveryPageSize:processing.geometryDiscoveryPageSize});
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient,limited});
-  const variantJobs=variantReviewEnabled?createVariantJobStore({boundary,intakeRepository,analysisCompatible:async({card,run})=>compatibleDefectAnalysis(run,card,await workflow.hydrate(card))}):null;
+  const variantJobs=variantReviewEnabled?createVariantJobStore({boundary,intakeRepository}):null;
   const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
   const publicationRepository=createPublicationRepository({boundary,validateAccess});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
@@ -110,7 +109,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
   }
-  const repository=createManualRepository({boundary,validateAccess,validateCommit: async context=>{if(memoryEnabled)await validateConfirmationCommit(context);if(variantJobs)await variantJobs.validateCommit(context);},approvalCommitted:async context=>{
+  const repository=createManualRepository({boundary,validateAccess,validateCommit: async context=>{if(variantJobs)await variantJobs.validateCommit(context);},approvalCommitted:async context=>{
     await publicationRepository.approvalCommitted(context);
     if(marketJobs)await recordApprovalMarket(context);
   },
@@ -168,14 +167,8 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const workflow=createManualWorkflow({repository,artifacts,pythonExecutable,measurementLimits:limits.measurement,
     resolveProposal: input => assistance.resolveProposal(input),
     resolveVariantConfirmation: input=>{requireThat(variantReview,503,'VARIANT_DISABLED');return variantReview.resolve(input);},
-    prepareVariantConfirmation: input=>variantJobs?.prepareConfirmation(input)??null,
     resolveFinalReview: input => { requireThat(batchReview,503,'BATCH_DISABLED'); return batchReview.resolveCorrections(input); },
     resolveConfirmation: input => assistance.resolveConfirmation(input),
-    assertReviewComplete: async input => {
-      const confirmation = variantJobs ? await variantJobs.currentConfirmation(input.staff, input.card) : null;
-      if (confirmation?.reprocess_required) await assistance.assertVariantAnalysis({ ...input, analysisActionId: confirmation.analysis_action_id });
-      return assistance.assertReviewComplete(input);
-    },
     afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
     afterApprove: async (staff,cardId,actionId)=>{
       try { return await publication.publish(staff,cardId,actionId); }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createVariantReviewClient, variantApprovalReady, variantStatus, variantRecheckMessage } from '../lib/variant-review-client.mjs';
+import { createVariantReviewClient, variantApprovalReady, variantStatus } from '../lib/variant-review-client.mjs';
 const hash = char => char.repeat(64);
 export const catalogFixture = () => ({schemaVersion:'atlas-variant-catalog/v1',snapshotHash:hash('d'),candidates:[{candidateId:'exact',label:'Pikachu · Reverse holo',identity:{name:'Pikachu',setName:'151',cardNumber:'025/165',language:'English'},parallel:'Reverse holo',applicability:'supported',diagnostics:[{id:'foil',description:'Compare the foil pattern outside the artwork.'}],images:[]}]});
 export const statusFixture = () => ({enabled:true,state:'READY',revision:9,sourceHash:hash('a'),identityRevision:1,identityHash:hash('b'),jobId:randomUUID(),resultHash:hash('c'),result:{catalog:catalogFixture(),suggestion:{candidateId:'exact',confidence:'high',reason:'Printed name and number match.'}},confirmation:null,approvalReady:false});
@@ -23,12 +23,12 @@ test('an unresolved hold does not require a completed catalog result in any prep
   assert.equal(result.confirmation.sourceHash,f.status.sourceHash);assert.equal(variantApprovalReady(result),false);assert.equal(f.client.retained(),null);
  }
 });
-test('manual physical observations are explicit, do not claim a catalog candidate, and can satisfy saved gate',async()=>{const f=fixture();await f.client.read();const result=await f.client.confirm({candidateId:null,manual:{parallel:' English, reverse holo ',features:' Foil outside picture, English text and 025/165. '}});const input=f.requests.at(-1).body;assert.equal(input.decision,'MANUAL');assert.equal(input.jobId,null);assert.equal(input.resultHash,null);assert.equal(input.manualParallel,'English, reverse holo');assert.equal(variantApprovalReady(result),true);});
+test('manual physical observations are explicit, do not claim a catalog candidate, and can satisfy saved gate',async()=>{const f=fixture();await f.client.read();const result=await f.client.confirm({candidateId:null,manual:{parallel:' English, reverse holo '}});const input=f.requests.at(-1).body;assert.equal(input.decision,'MANUAL');assert.equal(input.jobId,null);assert.equal(input.resultHash,null);assert.equal(input.manualParallel,'English, reverse holo');assert.equal(variantApprovalReady(result),true);});
 test('gate rejects obsolete confirmation even if approvalReady is true',()=>{const s=statusFixture();s.approvalReady=true;s.confirmation={decision:'SELECTED',selectedCandidateId:'exact',sourceHash:s.sourceHash,identityRevision:0,identityHash:s.identityHash};assert.equal(variantApprovalReady(s),false);assert.throws(()=>variantStatus({...s,result:{catalog:{candidates:[]}}}),{code:'VARIANT_RESPONSE_INVALID'});});
 
 
-test('known unresolved printing refusal clears only that rejected intent so manual observations remain available',async()=>{const f=fixture();await f.client.read();f.save=()=>{throw {status:409,code:'VARIANT_FINISH_UNRESOLVED'};};await assert.rejects(f.client.confirm({candidateId:'exact'}),{code:'VARIANT_FINISH_UNRESOLVED'});assert.equal(f.client.retained(),null);f.client.choose(null,null,{parallel:'English reverse holo',features:'Visible foil outside picture.'});assert.equal(f.client.retained().draft.manual.parallel,'English reverse holo');});
-test('definite stale recheck fence clears the rejected intent for an explicit fresh review',async()=>{const f=fixture();await f.client.read();f.save=()=>{throw {status:409,code:'VARIANT_RECHECK_STALE'};};await assert.rejects(f.client.confirm({candidateId:'exact'}),{code:'VARIANT_REVIEW_CHANGED'});assert.equal(f.client.retained(),null);assert.equal(f.requests.filter(r=>r.method).length,1);});
+test('known unresolved printing refusal clears only that rejected intent so manual observations remain available',async()=>{const f=fixture();await f.client.read();f.save=()=>{throw {status:409,code:'VARIANT_FINISH_UNRESOLVED'};};await assert.rejects(f.client.confirm({candidateId:'exact'}),{code:'VARIANT_FINISH_UNRESOLVED'});assert.equal(f.client.retained(),null);f.client.choose(null,null,{parallel:'English reverse holo'});assert.equal(f.client.retained().draft.manual.parallel,'English reverse holo');});
+
 
 test('explicit library refresh retains request identity and reconciles a lost reply without redispatch',async()=>{const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await f.client.read();f.save=input=>{f.status={...f.status,state:'QUEUED',refreshable:false,jobId:hash('f'),refreshRequestId:input.requestId,result:null};throw Error('lost refresh acknowledgement');};await assert.rejects(f.client.refresh());const input=f.requests.at(-1).body;assert.equal(f.requests.at(-1).path.endsWith('/refresh'),true);assert.equal(f.client.retained().operation,'REFRESH');assert.equal(input.jobId,hash('e'));await createVariantReviewClient(f.options).resume();assert.equal(f.requests.filter(r=>r.method).length,1);assert.equal(f.client.retained(),null);});
 test('unacknowledged library request resumes exact payload and clears a known refusal only',async()=>{const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await f.client.read();f.save=()=>{throw {status:503};};await assert.rejects(f.client.refresh());const first=f.requests.at(-1).body;f.save=input=>({...f.status,state:'QUEUED',refreshable:false,refreshRequestId:input.requestId});await f.client.resume();assert.deepEqual(f.requests.filter(r=>r.method).map(r=>r.body),[first,first]);const g=fixture();g.status.jobId=hash('e');g.status.refreshable=true;await g.client.read();g.save=()=>{throw {status:409,code:'VARIANT_REFRESH_CONFLICT'};};await assert.rejects(g.client.refresh(),{code:'VARIANT_REFRESH_UNAVAILABLE'});assert.equal(g.client.retained(),null);});
@@ -56,15 +56,15 @@ test('a historical acknowledgement must match every original binding and is acce
  }
 });
 
-const photoPermission={basis:'owned_original',detail:'I took these photos and authorize internal reference review.',consumers:['inventory','atlas']};
+const photoPermission={basis:'owned_original',consumers:['inventory','atlas']};
 test('optional photo permission is absent by default and explicitly retained with the bound draft and confirmation',async()=>{
  const ordinary=fixture();await ordinary.client.read();await ordinary.client.confirm({candidateId:'exact'});assert.equal(Object.hasOwn(ordinary.requests.at(-1).body,'referencePermission'),false);
  const f=fixture();await f.client.read();f.client.choose('exact',null,null,photoPermission);const reopened=createVariantReviewClient(f.options);await reopened.read();
- assert.deepEqual(reopened.retained().draft.referencePermission,photoPermission);await reopened.confirm({candidateId:'exact',referencePermission:{...photoPermission,detail:` ${photoPermission.detail} `}});
+ assert.deepEqual(reopened.retained().draft.referencePermission,photoPermission);await reopened.confirm({candidateId:'exact',referencePermission:photoPermission});
  assert.deepEqual(f.requests.at(-1).body.referencePermission,photoPermission);assert.equal(f.client.retained(),null);
 });
 test('incomplete or broadened photo rights never submit and an unresolved hold omits even supplied permission',async()=>{
- for(const permission of [{...photoPermission,basis:''},{...photoPermission,detail:' '},{...photoPermission,detail:'x'.repeat(1001)},{...photoPermission,consumers:['atlas','public']}]){
+ for(const permission of [{...photoPermission,basis:''},{...photoPermission,consumers:['atlas','public']}]){
   const f=fixture();await f.client.read();await assert.rejects(f.client.confirm({candidateId:'exact',referencePermission:permission}),{code:'VARIANT_REFERENCE_PERMISSION_INVALID'});assert.equal(f.requests.filter(r=>r.method).length,0);
  }
  const f=fixture();await f.client.read();f.client.choose(null,'CANNOT_TELL',null,photoPermission);assert.equal(Object.hasOwn(f.client.retained().draft,'referencePermission'),false);
@@ -82,9 +82,45 @@ test('a changed source or identity cannot reuse a prepared photo-permission conf
 });
 
 
-test('a finished variant analysis does not show a stale review warning; pending and stale checks stay visible',()=>{
- const confirmation={decision:'SELECTED',reprocessRequired:true,recheckState:'READY'};
- assert.equal(variantRecheckMessage({confirmation}),null);
- assert.match(variantRecheckMessage({confirmation:{...confirmation,recheckState:'DISPATCHED'}}),/Checking the confirmed variant/);
- assert.match(variantRecheckMessage({confirmation:{...confirmation,recheckReason:'VARIANT_ANALYSIS_STALE'}}),/Border geometry changed/);
+test('a physical Base or named printing choice survives background reference changes in every state',async()=>{
+ for(const state of ['NOT_REQUESTED','QUEUED','SEARCHING','FAILED','UNKNOWN','READY']){
+  const f=fixture();f.status.state=state;await f.client.read();f.client.choose(null,null,{parallel:'Base'});
+  f.status={...f.status,jobId:hash('f'),resultHash:hash('e'),result:null,state:'SEARCHING'};
+  const result=await f.client.confirm({candidateId:null,manual:{parallel:'Base'}});
+  assert.equal(variantApprovalReady(result),true,state);assert.equal(f.requests.at(-1).body.manualParallel,'Base');
+  assert.equal(Object.hasOwn(f.requests.at(-1).body,'observedFeatures'),false);
+ }
+});
+test('same catalog choice survives regenerated references; reused candidate ID cannot silently change identity',async()=>{
+ for(const changed of [false,true]){const f=fixture();await f.client.read();f.client.choose('exact');
+  f.status.jobId=hash('e');f.status.resultHash=hash('f');f.status.result.catalog.snapshotHash=hash('e');
+  if(changed)f.status.result.catalog.candidates[0].identity.name='Raichu';
+  if(changed)await assert.rejects(f.client.confirm({candidateId:'exact'}),{code:'VARIANT_CANDIDATE_STALE'});
+  else assert.equal(variantApprovalReady(await f.client.confirm({candidateId:'exact'})),true);
+  assert.equal(f.requests.filter(r=>r.method).length,changed?0:1);
+ }
+});
+test('manual confirmation never defaults an empty printing to Base',async()=>{
+ const f=fixture();await f.client.read();await assert.rejects(f.client.confirm({candidateId:null,manual:{parallel:''}}),{code:'VARIANT_MANUAL_INVALID'});
+ assert.equal(f.requests.filter(r=>r.method).length,0);
+});
+test('a definitively refused old request releases its pending lock without rewriting or reusing its action ID',async()=>{
+ for(const code of ['MANUAL_REQUEST_INVALID','VARIANT_CONFIRMATION_INVALID']){
+  const f=fixture();await f.client.read();f.save=()=>{throw Error('lost reply');};
+  await assert.rejects(f.client.confirm({candidateId:null,manual:{parallel:'Base'}}));
+  const [key,value]=[...f.values][0],saved=JSON.parse(value);saved.pending.observedFeatures='old required note';f.values.set(key,JSON.stringify(saved));
+  f.save=()=>{throw {status:400,code};};const reopened=createVariantReviewClient(f.options);
+  await assert.rejects(reopened.resume(),{code:'VARIANT_REQUEST_RETIRED'});
+  assert.deepEqual(f.requests.at(-1).body,saved.pending,'exact old request is reconciled, never transformed');
+  assert.equal(reopened.retained(),null);
+  reopened.choose(null,null,{parallel:'Base'});f.save=null;await reopened.confirm({candidateId:null,manual:{parallel:'Base'}});
+  assert.notEqual(f.requests.at(-1).body.actionId,saved.pending.actionId);
+  assert.equal(Object.hasOwn(f.requests.at(-1).body,'observedFeatures'),false);
+ }
+});
+test('a saved old request is acknowledged before any replay, while an unknown 400 remains recoverable',async()=>{
+ const f=fixture();await f.client.read();f.save=()=>{throw Error('lost reply');};await assert.rejects(f.client.confirm({candidateId:'exact'}));
+ const saved=f.client.retained().pending;f.status.confirmation={...saved,selectedCandidateId:saved.candidateId};
+ await createVariantReviewClient(f.options).resume();assert.equal(f.client.retained(),null);assert.equal(f.requests.filter(r=>r.method).length,1);
+ const g=fixture();await g.client.read();g.save=()=>{throw {status:400,code:'UNKNOWN'};};await assert.rejects(g.client.confirm({candidateId:'exact'}));assert.ok(g.client.retained()?.pending);
 });

@@ -193,8 +193,7 @@ function validate(state) {
     for (const side of SIDES) {
       matches(state.confirmation.base[side], baseFor(state, side));
       requireThat(state.sides[side].inspection && !state.sides[side].pending, 'ATLAS_DEFECT_INSPECTION_REQUIRED');
-      requireThat(!state.sides[side].findings.some(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED'), 'ATLAS_DEFECT_RETRACE_REQUIRED');
-      requireThat(state.sides[side].findings.every(f => f.reviewResult !== 'UNREVIEWED'));
+      requireThat(state.sides[side].findings.every(f => f.geometryExclusion || f.reviewResult !== 'UNREVIEWED'));
     }
   }
   return state;
@@ -411,12 +410,11 @@ export function confirmDefectFindings(state, request) {
   for (const side of SIDES) {
     matches(request.base[side], baseFor(state, side));
     requireThat(state.sides[side].inspection && !state.sides[side].pending, 'ATLAS_DEFECT_INSPECTION_REQUIRED');
-    requireThat(!state.sides[side].findings.some(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED'), 'ATLAS_DEFECT_RETRACE_REQUIRED');
   }
   const result = { ...state, draftRevision: next(state.draftRevision), sides: {} };
   for (const side of SIDES) {
     const slot = state.sides[side], findingRevision = next(slot.findingRevision);
-    result.sides[side] = { ...slot, findingRevision, findings: completeSpeedsterReview(slot.findings),
+    result.sides[side] = { ...slot, findingRevision, findings: slot.findings.map(finding => finding.geometryExclusion ? finding : completeSpeedsterReview([finding])[0]),
       ...advanceFindingReviews(slot, findingRevision),
       inspection: { ...slot.inspection, findingRevision } };
   }
@@ -428,12 +426,11 @@ export function defectStatus(state) {
   const sides = Object.fromEntries(SIDES.map(side => {
     const slot = state.sides[side];
     return [side, { settled: !slot.pending, canInspect: !slot.pending, inspected: Boolean(slot.inspection),
-      findingRevision: slot.findingRevision, included: slot.findings.filter(f => f.reviewResult !== 'REMOVED').length,
+      findingRevision: slot.findingRevision, included: slot.findings.filter(f => !f.geometryExclusion && f.reviewResult !== 'REMOVED').length,
       removed: slot.findings.filter(f => f.reviewResult === 'REMOVED').length }];
   }));
   return copy({ sides, settled: SIDES.every(side => sides[side].settled),
-    canConfirm: SIDES.every(side => sides[side].settled && sides[side].inspected
-      && !state.sides[side].findings.some(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED')),
+    canConfirm: SIDES.every(side => sides[side].settled && sides[side].inspected),
     confirmed: Boolean(state.confirmation), reportApproval: false, learningPublished: false });
 }
 /** Identity/border changes affect draft report content only; they do not erase
@@ -444,19 +441,6 @@ export function previewDefectReport(state, { identity, centeringQuads, draftRevi
     findingRevisions: { front: state.sides.FRONT.findingRevision, back: state.sides.BACK.findingRevision },
     capture: Object.fromEntries(SIDES.map(side => [side.toLowerCase(), { centeringQuad: centeringQuads[side],
       inspectionImageSha256: state.sides[side].frame.inspectionImageSha256 }])),
-    reviewedDefects: SIDES.flatMap(side => state.sides[side].findings),
+    reviewedDefects: SIDES.flatMap(side => state.sides[side].findings.filter(finding => !finding.geometryExclusion)),
     manualInspection: { method: 'HUMAN', front: state.sides.FRONT.inspection, back: state.sides.BACK.inspection } });
-}
-
-/** An original observation is resolved only by an explicit rejection or by its
- * linked human trace after successful current-frame measurement. A saved or
- * failed pending trace alone is never a completed review. */
-export function isDefectObservationResolved(workspace, review) {
-  if (review?.action === 'REJECT') return true;
-  if (review?.action !== 'TRACE_SAVE' || !review.findingId) return false;
-  const slot = workspace?.sides?.[review.side];
-  const finding = slot?.findings.find(value => value.id === review.findingId);
-  return Boolean(slot && !slot.pending && slot.measurement?.receipt && slot.humanEditedIds.includes(review.findingId)
-    && finding && (finding.reviewResult === 'REMOVED' || !finding.geometryExclusion
-      && finding.measurementRegions?.some(region => region.measurement.pixelCount > 0 || region.measurement.areaMm2 > 0)));
 }

@@ -179,7 +179,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     const imported = state.finalReview?.report.analysisId === run.analysisId ? importedProposalIds(state.finalReview) : [];
     const proposals = (loaded?.result?.proposals ?? []).filter(proposal => !imported.includes(proposal.id)).map(proposal => {
       const review = reviews.find(r => r.analysisId === run.analysisId && r.proposalId === proposal.id);
-      return { ...proposal, reviewStatus: review ? { ACCEPT: 'ACCEPTED', TRACE_SAVE: 'CORRECTED', REJECT: 'REJECTED' }[review.action] : 'UNREVIEWED' };
+      return { ...proposal, reviewStatus: review ? { ACCEPT: 'ACCEPTED', TRACE_SAVE: 'CORRECTED', REJECT: 'REJECTED', EXCLUDE: 'EXCLUDED' }[review.action] : 'UNREVIEWED' };
     });
     let replacement = null;
     if (run.state === 'UNKNOWN' && !run.backgroundAccepted) {
@@ -211,32 +211,18 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
   }
   const api = Object.freeze({
     memory, repository, executor,
-    async assertVariantAnalysis({ staff, card, analysisActionId }) {
-      requireThat(repository && reader, 503, 'DEFECT_ANALYSIS_DISABLED');
-      const found = await repository.find(staff, { cardId: card.cardId, actionId: analysisActionId });
-      const run = found && await repository.status(staff, { cardId: card.cardId, analysisId: found.analysisId });
-      const state = await workflow.hydrate(card);
-      requireThat(run && !run.retired && run.state === 'READY' && compatible(run, card, state), 409, 'VARIANT_REPROCESS_REQUIRED');
-      const context = await reviewContext(staff, card, state);
-      requireThat(context.fence?.analysisId === run.analysisId, 409, 'VARIANT_REPROCESS_REQUIRED');
-      requireThat(!context.entries.length, 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
-      return context.fence;
-    },
     async resolveConfirmation({ staff, card, selection = null }) {
       const context = await reviewContext(staff, card);
       if (selection) {
         object(selection, ['analysisId', 'resultHash', 'proposalIds']);
         requireThat(context.offer && context.offer.proposalIds.length > 0
-          && canonical(selection) === canonical(context.offer), 409, 'MANUAL_ASTRA_REVIEW_STALE');
-      } else requireThat(!context.entries.length, 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
+          && selection.analysisId === context.offer.analysisId && selection.resultHash === context.offer.resultHash
+          && Array.isArray(selection.proposalIds) && selection.proposalIds.length > 0
+          && new Set(selection.proposalIds).size === selection.proposalIds.length
+          && selection.proposalIds.every(id => context.offer.proposalIds.includes(id)), 409, 'MANUAL_ASTRA_REVIEW_STALE');
+        return { ...context, entries: context.entries.filter(entry => selection.proposalIds.includes(entry.proposal.id)) };
+      }
       return context;
-    },
-    async assertReviewComplete({ staff, card, selection = null }) {
-      const context = await reviewContext(staff, card);
-      requireThat(!context.entries.length, 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
-      if (selection) requireThat(context.offer?.analysisId === selection.analysisId
-        && context.offer?.resultHash === selection.resultHash, 409, 'MANUAL_ASTRA_REVIEW_STALE');
-      return context.fence;
     },
     async publish(staff, cardId, actionId = null) {
       requireThat(memory, 503, 'DEFECT_MEMORY_DISABLED');

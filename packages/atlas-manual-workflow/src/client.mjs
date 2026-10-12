@@ -23,7 +23,15 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
     return readManualResponse(response);
   }
   async function load() { view = await request(`${path}/view${imageScope() === 'inspection' ? '?images=inspection' : ''}`); onView(view); return view; }
-  async function finish(command) { await load(); clearPending(command); onStatus('Saved'); return view; }
+  async function finish(command, refresh = 'view') {
+    // Intermediate geometry commands need authoritative bases for the next
+    // save, not another set of photograph grants and ancillary report reads.
+    // Never publish this partial state to the UI or merge old image metadata
+    // into it. The sequence owner loads the full view at its boundary.
+    if (refresh === 'state') view = await request(`${path}/view?scope=state`);
+    else await load();
+    clearPending(command); onStatus('Saved'); return view;
+  }
   async function reconcile(command) {
     const found = await request(`${path}/actions/${command.actionId}`);
     if (found.state === 'COMMITTED') return finish(command);
@@ -31,7 +39,7 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
     await request(`${path}/actions`, command);
     return finish(command);
   }
-  async function send(command) {
+  async function send(command, refresh = 'view') {
     // Keep reconciliation bound to the bytes journaled before dispatch even
     // if the caller later mutates its action object.
     command = JSON.parse(JSON.stringify(command));
@@ -39,7 +47,7 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
     // this point. Another client may have journaled an uncertain action meanwhile.
     if (pending()) throw new Error('Resolve the pending save first');
     storage.setItem(key, JSON.stringify(command)); onStatus('Saving…');
-    try { await request(`${path}/actions`, command); return await finish(command); }
+    try { await request(`${path}/actions`, command); return await finish(command, refresh); }
     catch (error) {
       if ([400, 401, 403, 404, 409, 413, 422].includes(error.status)) {
         clearPending(command); await load().catch(() => {}); onStatus('Change needs review'); throw error;
@@ -71,17 +79,18 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
         onStatus('Last edit not confirmed — check its saved status'); throw error;
       }
     }),
-    execute: action => exclusive(async () => {
+    execute: (action, { refresh = 'view' } = {}) => exclusive(async () => {
+      if (!['view', 'state'].includes(refresh)) throw new Error('Invalid save refresh');
       if (pending()) throw new Error('Resolve the pending save first');
       if (!view) await load();
-      return send({ actionId: crypto.randomUUID(), expectedRevision: view.card.revision, action });
+      return send({ actionId: crypto.randomUUID(), expectedRevision: view.card.revision, action }, refresh);
     }),
     editDefect: input => exclusive(async () => {
       if (pending()) throw new Error('Resolve the pending save first');
       if (!view) await load();
       const expectedRevision = view.card.revision;
       const action = input.action.type === 'TRACE_SAVE'
-        ? await request(`${path}/trace`, { side: input.side, base: input.base, findingId: input.action.findingId, trace: input.action.trace, ...(input.finalObservation ? { finalObservation: input.finalObservation } : {}) })
+        ? await request(`${path}/trace`, { side: input.side, base: input.base, findingId: input.action.findingId, trace: input.action.trace })
         : { type: 'DEFECT_EDIT', side: input.side, base: input.base, edit: input.action };
       return send({ actionId: crypto.randomUUID(), expectedRevision, action });
     }),

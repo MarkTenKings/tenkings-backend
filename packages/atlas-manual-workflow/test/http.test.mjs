@@ -41,3 +41,24 @@ test('view overlaps independent reads while retaining one authorized snapshot an
   extrasDone.resolve({ astra: { status: 'IDLE' } }); await pending;
   assert.deepEqual(response.body, { card, ...state, images: { FRONT: {} }, approval: null, astra: { status: 'IDLE' } });
 });
+
+test('state view authenticates and reads only current verified core state without image, report or ancillary work', async () => {
+  const cardId = '11111111-1111-4111-8111-111111111111', staff = {}, calls = [];
+  const state = { card: { cardId, revision: 4 }, geometry: {}, defects: {}, identity: {} };
+  const forbidden = () => { throw Error('Full view work must not run'); };
+  const handler = createWorkflowHandler({ origin: 'http://127.0.0.1:4318', assertRequest() { calls.push('boundary'); },
+    boundary: { async authenticate() { calls.push('authenticate'); return staff; } },
+    workflow: { service: { read: forbidden, latestApproval: forbidden }, hydrate: forbidden,
+      async readState(actor, id) { assert.equal(actor, staff); assert.equal(id, cardId); calls.push('state'); return state; } },
+    imageDescriptors: forbidden, workspaceExtras: forbidden,
+  });
+  const response = { headers: {}, setHeader(key, value) { this.headers[key] = value; }, status(code) { this.code = code; return this; }, json(body) { this.body = body; } };
+  await handler({ url: `/api/staff/manual/cards/${cardId}/view?scope=state`, method: 'GET', headers: {} }, response);
+  assert.equal(response.code, 200); assert.equal(response.headers['Cache-Control'], 'no-store'); assert.deepEqual(response.body, state);
+  assert.deepEqual(calls, ['boundary', 'authenticate', 'state']);
+  for (const query of ['?scope=state&images=inspection', '?scope=unknown', '?scope=state&scope=state']) {
+    calls.length = 0;
+    await handler({ url: `/api/staff/manual/cards/${cardId}/view${query}`, method: 'GET', headers: {} }, response);
+    assert.equal(response.code, 400); assert.deepEqual(calls, ['boundary']);
+  }
+});

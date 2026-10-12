@@ -473,6 +473,17 @@ test('partial machine and corrected reports show verified evidence and measured 
     assert.deepEqual(report,before);
   }
 });
+test('an excluded observation in an older partial report is advisory and never demands redraw or rejection',()=>{
+  const source=fixture(),original=source.preview.review.report,finding=original.findings.find(value=>value.side==='BACK');
+  finding.geometryExclusion={version:'atlas-geometry-exclusion-v1'};
+  const report={...original,version:'atlas-review-provisional-report-v1',authority:'HUMAN_REVIEW_DRAFT',certification:null,
+    grade:null,proposedGrade:null,calculationState:'GEOMETRY_UNRESOLVED',unresolvedGeometry:[{side:'BACK',code:'PRINTED_GEOMETRY_UNRESOLVED'}],
+    geometry:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{frame:{inspectionImageSha256:original.inspection[side.toLowerCase()].imageSha256},centeringQuad:null}]))};
+  const f=harness({packet:{report,reportHash:source.preview.reportHash,explanation:null,images:source.images}},{machine:true});
+  f.control('Back 1 · '+finding.defectType.toLowerCase().replaceAll('_',' ')).props.onClick();f.render();
+  assert.ok(f.has('Excluded from the current measured grade'));assert.equal(f.has('Redraw or reject'),false);
+  assert.deepEqual(presentation.reportFindingRegions(finding),[]);
+});
 test('malformed partial packets never display fabricated grades or accept stale explanation',()=>{
   for(const alter of [report=>{report.proposedGrade=10;},report=>{report.unresolvedGeometry=[];},report=>{report.geometry.FRONT.frame.inspectionImageSha256='wrong';}]){
     const source=fixture(),original=source.preview.review.report;

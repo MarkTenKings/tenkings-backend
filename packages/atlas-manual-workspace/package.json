@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./dist/PairedGeometryWorkspace.js",
+    ".": "./src/geometry-image.mjs",
     "./geometry-actions": "./src/geometry-actions.mjs",
     "./geometry-focus": "./src/geometry-focus.mjs",
     "./focused-geometry": "./dist/FocusedGeometryWorkspace.js",
@@ -24,9 +24,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node scripts/build.mjs && node --test test/*.test.mjs",
-    "dev": "node scripts/preview.mjs",
-    "test:browser": "node scripts/browser-check.mjs"
+    "test": "node scripts/build.mjs && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@atlas/grading-core": "workspace:*",

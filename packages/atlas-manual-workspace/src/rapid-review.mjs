@@ -1,6 +1,5 @@
 import { geometryBase, geometryStatus } from './geometry-actions.mjs';
-import { defectBase, defectStatus, reviewedDefectFindingIds, isDefectObservationResolved } from './defect-actions.mjs';
-import { collectiveProposalReview } from './astra-review-ui.mjs';
+import { defectBase, defectStatus } from './defect-actions.mjs';
 const sides = ['FRONT', 'BACK'];
 const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
 const requireReview = (value, code='ATLAS_GEOMETRY_STALE') => { if (!value) throw {code}; };
@@ -10,7 +9,7 @@ const sameQuad = (a,b) => Array.isArray(a) && Array.isArray(b) && a.length===4 &
 /** One explicit side approval saves both outlines. Printed coordinates remain
  * in the source frame until physical preparation returns its NEW transform.
  * A caller-owned checkpoint resumes only acknowledged steps after a failure. */
-export async function approveRapidGeometrySide(view, input, execute, sourceQuadToPrepared, checkpoint={}) {
+export async function approveRapidGeometrySide(view, input, execute, sourceQuadToPrepared, checkpoint={}, refreshView=null) {
   const {side,physical,printedOriginal,printedAbsent=false}=input;
   requireReview(sides.includes(side) && typeof sourceQuadToPrepared==='function','ATLAS_GEOMETRY_HUMAN_REVIEW_REQUIRED');
   const target=JSON.stringify({side,base:input.base,physical,printedOriginal,printedAbsent});
@@ -23,14 +22,18 @@ export async function approveRapidGeometrySide(view, input, execute, sourceQuadT
       checkpoint.target=target;checkpoint.step=0;
     }
   }else {requireReview(same(input.base,currentBase()));checkpoint.target=target;checkpoint.inputBase=input.base;checkpoint.base=currentBase();checkpoint.step=0;}
-  const save=async action=>{current=await execute(action);checkpoint.base=currentBase();};
+  let compact=false;
+  const save=async(action,intermediate=false)=>{
+    const refresh=intermediate&&refreshView?'state':'view';
+    current=await execute(action,{refresh});compact=refresh==='state';checkpoint.base=currentBase();
+  };
   if(checkpoint.step<1){
     if(!sameQuad(current.geometry.sides[side].physical?.quad,physical))
-      await save({type:'GEOMETRY_EDIT',edit:{side,kind:'PHYSICAL',base:geometryBase(current.geometry,side,'PHYSICAL'),quad:physical}});
+      await save({type:'GEOMETRY_EDIT',edit:{side,kind:'PHYSICAL',base:geometryBase(current.geometry,side,'PHYSICAL'),quad:physical}},true);
     checkpoint.step=1;
   }
   if(checkpoint.step<2){
-    if(!current.geometry.sides[side].prepared)await save({type:'PREPARE_SIDE',side});
+    if(!current.geometry.sides[side].prepared)await save({type:'PREPARE_SIDE',side},true);
     requireReview(current.geometry.sides[side].prepared,'ATLAS_GEOMETRY_PREPARED_FRAME_REQUIRED');checkpoint.step=2;
   }
   if(checkpoint.step<3){
@@ -44,87 +47,39 @@ export async function approveRapidGeometrySide(view, input, execute, sourceQuadT
     }
     checkpoint.step=3;
   }
-  return current;
+  return compact?refreshView():current;
 }
 
-/** Both side gestures must still name the exact geometry being confirmed. */
+/** Both side gestures name the exact geometry being confirmed. */
 export async function confirmRapidGeometryPair(view, approvals, execute) {
   requireReview(sides.every(side=>same(approvals?.[side],geometryBase(view.geometry,side,'REVIEW'))),'ATLAS_GEOMETRY_HUMAN_REVIEW_REQUIRED');
-  return approveRapidStage('geometry',view,execute);
+  requireReview(geometryStatus(view.geometry).canConfirmBoth,'ATLAS_GEOMETRY_HUMAN_REVIEW_REQUIRED');
+  if(geometryStatus(view.geometry).confirmed)return view;
+  return execute({type:'CONFIRM_GEOMETRY',base:Object.fromEntries(sides.map(side=>[side,geometryBase(view.geometry,side,'REVIEW')])),reviewed:true});
 }
 
-/** The final finding's explicit Approve also saves the side attestations and
- * findings confirmation; it never approves/publishes the final report. */
-export async function approveRapidFinding(view, findingId, execute) {
-  requireReview(!variantFindingsBlocked(view), 'VARIANT_REPROCESS_REQUIRED');
-  requireReview(geometryStatus(view.geometry).confirmed && view.defects && defectStatus(view.defects).settled,'ATLAS_DEFECT_CONFIRMATION_REQUIRED');
-  let current=view;
-  const findings=()=>sides.flatMap(side=>current.defects.sides[side].findings.filter(f=>f.reviewResult!=='REMOVED').map(f=>({...f,side})));
-  if(findingId){
-    const finding=findings().find(f=>f.id===findingId);requireReview(finding,'ATLAS_DEFECT_FINDING_REQUIRED');
-    if(!reviewedDefectFindingIds(current.defects,finding.side).includes(finding.id))
-      current=await execute({type:'REVIEW_FINDING',side:finding.side,base:defectBase(current.defects,finding.side),findingId,reviewed:true});
-  }
-  const next=findings().find(f=>!reviewedDefectFindingIds(current.defects,f.side).includes(f.id));
-  if(next)return {view:current,nextFindingId:next.id,complete:false};
-  current=await approveRapidStage('findings',current,execute);
-  return {view:current,nextFindingId:null,complete:true};
-}
-/** A confirmed identity owns one exact recheck. Human inspection remains
- * available while its result is pending; the current roster cannot be approved. */
-export function variantFindingsBlocked(view) {
-  const required = view?.variantVerification?.confirmation;
-  return Boolean(required?.reprocessRequired && required.decision !== 'UNRESOLVED'
-    && (required.recheckState !== 'READY' || required.recheckReason === 'VARIANT_ANALYSIS_STALE'
-      || required.analysisActionId && view.astra?.requestActionId !== required.analysisActionId));
-}
+/** Machine history does not veto the reviewer's current saved findings. */
 export function rapidReviewStatus(view) {
-  const geometry = geometryStatus(view.geometry);
-  const unresolved = (view.finalReview?.report.unmeasurableProposals ?? []).filter(proposal =>
-    !view.assistance?.reviews?.some(review => review.analysisId === view.finalReview.report.analysisId && review.proposalId === proposal.id && isDefectObservationResolved(view.defects, review)));
-  const geometryObservations = sides.flatMap(side => view.defects?.sides[side].findings ?? []).filter(finding => finding.geometryExclusion && finding.reviewResult !== 'REMOVED');
-  const proposals = view.defects ? collectiveProposalReview(view.defects, view.astra) : null;
-  // An empty proposal list while a request is still running is not a finished
-  // inspection. Match the server's pending-analysis fence without blocking
-  // manual review after a terminal refused or uncertain result.
-  const analysisPending = view.astra?.enabled && (view.astra.status === 'RUNNING' || view.astra.resumeAvailable === true);
-  return { geometry: geometry.canConfirmBoth, findings: Boolean(!analysisPending && !variantFindingsBlocked(view) && geometry.confirmed && view.defects && defectStatus(view.defects).settled && proposals?.ready && !unresolved.length && !geometryObservations.length), unresolved: unresolved.length + geometryObservations.length };
+  const geometry=geometryStatus(view.geometry);
+  return {geometry:geometry.canConfirmBoth,findings:Boolean(geometry.confirmed&&view.defects&&defectStatus(view.defects).settled)};
 }
-/** Resume the unfinished human step without replaying any approval. */
 export function rapidResumeStage(view) {
-  if (!geometryStatus(view.geometry).confirmed) return 'geometry-review';
-  const status = rapidReviewStatus(view);
-  return status.findings && defectStatus(view.defects).confirmed
-    && collectiveProposalReview(view.defects, view.astra).unresolvedCount === 0 ? 'report' : 'findings-review';
-}
-// Only an explicit Approve gesture calls this function. Navigation never does.
-// Every sequential save uses the returned current revision, including recovery.
-export async function approveRapidStage(stage, view, execute) {
-  const status = rapidReviewStatus(view);
-  if (stage === 'geometry') {
-    if (!status.geometry) throw { code: 'ATLAS_GEOMETRY_HUMAN_REVIEW_REQUIRED' };
-    if (geometryStatus(view.geometry).confirmed) return view;
-    return execute({ type: 'CONFIRM_GEOMETRY', base: Object.fromEntries(sides.map(side => [side, geometryBase(view.geometry, side, 'REVIEW')])), reviewed: true });
-  }
-  if (stage === 'findings' && variantFindingsBlocked(view)) throw { code: 'VARIANT_REPROCESS_REQUIRED' };
-  if (stage !== 'findings' || !status.findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };
-  const current = await inspectBothDefectSides(view, execute);
-  if (!rapidReviewStatus(current).findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };
-  const { proposalReview } = collectiveProposalReview(current.defects, current.astra);
-  // A later identity review can supply fresh suggestions while the unchanged
-  // image-bound findings remain confirmed. The explicit gesture must still
-  // submit that exact offered roster; a read never accepts it.
-  if (defectStatus(current.defects).confirmed && !proposalReview) return current;
-  return execute({ type: 'CONFIRM_FINDINGS', base: Object.fromEntries(sides.map(side => [side, defectBase(current.defects, side)])), reviewed: true, ...(proposalReview ? { proposalReview } : {}) });
+  if(!geometryStatus(view.geometry).confirmed)return 'geometry-review';
+  return view.defects&&defectStatus(view.defects).confirmed?'report':'findings-review';
 }
 
-/** One explicit human attestation, two durable side records, current bases throughout. */
-export async function inspectBothDefectSides(view, execute) {
-  let current = view;
-  if (!current.defects || !defectStatus(current.defects).settled) throw {code:'ATLAS_DEFECT_MEASUREMENT_PENDING'};
-  for (const side of sides) {
-    if (!defectStatus(current.defects).sides[side].inspected)
-      current = await execute({type:'INSPECT_SIDE',side,base:defectBase(current.defects,side),inspected:true});
-  }
-  return current;
+/** A side's explicit approval records its current inspection. After both sides,
+ * the same gesture confirms the shown findings; final grade approval is separate.
+ * An interrupted save resumes from the returned durable side records. */
+export async function approveRapidFindingsSide(view,side,execute) {
+  requireReview(sides.includes(side),'ATLAS_DEFECT_SIDE_REQUIRED');
+  requireReview(rapidReviewStatus(view).findings,'ATLAS_DEFECT_MEASUREMENT_PENDING');
+  let current=view;
+  if(!defectStatus(current.defects).sides[side].inspected)
+    current=await execute({type:'INSPECT_SIDE',side,base:defectBase(current.defects,side),inspected:true});
+  const nextSide=sides.find(value=>!defectStatus(current.defects).sides[value].inspected);
+  if(nextSide)return {view:current,nextSide,complete:false};
+  if(!defectStatus(current.defects).confirmed)
+    current=await execute({type:'CONFIRM_FINDINGS',base:Object.fromEntries(sides.map(value=>[value,defectBase(current.defects,value)])),reviewed:true});
+  return {view:current,nextSide:null,complete:true};
 }

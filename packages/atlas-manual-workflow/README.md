@@ -1,8 +1,7 @@
 # ATLAS manual workflow integration
 
-Server composition for the clean manual build, plus an authenticated local
-browser fixture. No serving application imports this package yet. The staff
-schema proposal remains inactive outside owned disposable tests.
+Server composition for the staff manual review, including authenticated
+actions, durable recovery, and exact measured report approval.
 
 `createManualWorkflow({repository, artifacts, pythonExecutable,
 measurementLimits, prepare})` composes the existing pure geometry/defect actions,
@@ -58,33 +57,16 @@ and warns on unload while an outline or trace is being edited.
 
 ## Local verification
 
-The fixture uses actual existing DurableStaffAuth bootstrap/challenge/cookies,
-an explicitly synthetic SMS provider, native local PostgreSQL, private immutable
-files and the actual CPU engines. It does not fake measurements or authentication.
-Its card pixels are generated synthetic fixtures. It is fixed to loopback4318
-and accepts only the ownership-checked disposable PostgreSQL helper's binary/
-module arguments, never an existing database URL.
+Run `node --test test/*.test.mjs` for client, HTTP, workflow, and recovery
+regressions. Build `@atlas/grading-core` and `@atlas/manual-workspace` first.
+The current review fixture is
+`../atlas-manual-workspace/scripts/unified-review-fixture.mjs`; the obsolete
+paired-editor development app and its browser driver are removed.
 
-Run `node --test test/*.test.mjs` for client/HTTP regressions. Build
-`@atlas/grading-core` and `@atlas/manual-workspace` first. For browser verification,
-set `ATLAS_FIXTURE_PYTHON` to the qualified absolute CPU environment and
-`ATLAS_BROWSER_EVIDENCE` to a task-owned output directory, then run:
-
-```sh
-node scripts/preview.mjs --ack-disposable-local-postgres \
-  --postgres-bin /absolute/path/to/native/bin \
-  --pg-module /absolute/path/to/pg
-node scripts/browser-check.mjs
-```
-
-The fixture reapplies the existing migration chain and inactive manual proposal
-only in its fresh owned database. Stop its exact process with SIGTERM to close
-the web server, disconnect clients and verify the owned PostgreSQL shutdown.
-Keep its startup, cleanup and browser evidence. Native validation used macOS,
-Node25.6.1 and PostgreSQL17.10; it is not deployment-runtime qualification.
-
-Still separate: live photo/provider storage and ordinary app intake, real-card
-optical/HDR acceptance, the shared identifier/research application wiring,
-detector/SAM/Astra integration, deliberate learning publication, public report
-URLs and physical finishing. No report approval publishes a lesson, certificate,
-label, inventory/ownership change or physical-work completion here.
+Owned PostgreSQL checks use the existing manual-service fixture with an
+explicit disposable local database acknowledgement. The human variant
+confirmation qualification is
+`../atlas-connected-manual/scripts/validate-human-variant-confirmation-postgres.mjs`.
+It validates the registered migration chain, ordinary authenticated staff
+confirmation, immutable actions, and historical row preservation without
+provider calls. It is metadata qualification, not optical grading acceptance.

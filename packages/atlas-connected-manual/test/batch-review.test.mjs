@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createBatchReview, assertMachineReportUnchanged } from '../src/batch-review.mjs';
+import { createBatchReview } from '../src/batch-review.mjs';
 import { buildMachineReport } from '../src/batch-preparation.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 import { createManualWorkflow } from '../../atlas-manual-workflow/src/workflow.mjs';
 import { canonical, digest, stateDocument, inputCommand, requireThat } from '@atlas/manual-service/contract';
-import { defectBase, runDefectMeasurement, isDefectObservationResolved } from '@atlas/manual-workspace/defect-actions';
+import { defectBase, runDefectMeasurement } from '@atlas/manual-workspace/defect-actions';
 import { decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { SPEEDSTER_RULE_VERSION } from '@atlas/grading-core/contracts';
 import { ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
@@ -16,10 +16,9 @@ import { calculateAtlasFinalGrade } from '@atlas/grading-core/manual-report';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 import { geometryBase } from '@atlas/manual-workspace/geometry-actions';
 import { proposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
-import { finalReviewDecisions } from '../../atlas-manual-workflow/src/final-review.mjs';
 import { batchActionId } from '@atlas/batch-grading';
 const sides = ['FRONT', 'BACK'], clone = structuredClone;
-async function fixture({ count = 2, native = false, unmeasurable = false, outside = false, missingPrinted = false, historicalMachine = false } = {}) {
+async function fixture({ count = 2, native = false, unmeasurable = false, outside = false, missingPrinted = false, historicalMachine = false, withoutSavedProposals = false } = {}) {
   const p = await publicationFixture(), staff = { id: p.actorId }, principal = { id: p.actorId, canCertify: true };
   const records = new Map(), approvals = new Map(), commits = [], lessons = [];
   const publishedLessons = new Set();
@@ -83,11 +82,6 @@ async function fixture({ count = 2, native = false, unmeasurable = false, outsid
       return { entries: proposals.slice().sort((a, b) => a.id.localeCompare(b.id))
         .map(proposal => ({ proposal, base: defectBase(initial.defects, proposal.side) })) };
     },
-    assertReviewComplete: async ({ card }) => {
-      const state = await workflow.hydrate(card);
-      requireThat((state.assistance?.reviews.length ?? 0) === count, 409, 'MANUAL_ASTRA_REVIEW_REQUIRED');
-      return null;
-    },
     afterConfirm: publishLesson,
     afterApprove: async () => ({ state: 'PUBLISHED' }),
   });
@@ -95,6 +89,7 @@ async function fixture({ count = 2, native = false, unmeasurable = false, outsid
   initial = await workflow.hydrate(card);
   const analysis = { status: 'READY', analysisId, proposals, proposalReview: offer };
   const report = await buildMachineReport({ card: clone(card), state: initial, analysis, measure });
+  if (withoutSavedProposals) delete report.proposals;
   if (historicalMachine) {
     const capture = Object.fromEntries(sides.map(side => [side.toLowerCase(), {
       centeringBorders: measureSpeedsterCenteringBorders(initial.geometry.sides[side].printed.quad),
@@ -114,7 +109,7 @@ async function fixture({ count = 2, native = false, unmeasurable = false, outsid
   };
   const connected = { workflow: { ...workflow, service: { ...workflow.service, async previewReport(...args) {
     const preview = await workflow.service.previewReport(...args); if (tamper) preview.review.report.findings[0].defectType = 'DENT'; return preview;
-  } } }, assistance: { async status() { return { astra: clone(analysis) }; }, publish: publishLesson },
+  } } }, assistance: { async status() { throw Error('Human review must not read current AI status'); }, publish: publishLesson },
   async imageDescriptors() { return Object.fromEntries(sides.map(side => [side, { inspection: { sha256: report.geometry[side].frame.inspectionImageSha256 } }])); },
   publication: { async publish() { return { state: 'PUBLISHED' }; } } };
   batchReview = createBatchReview({ connected, repository: batchRepository, artifacts: p.artifacts });
@@ -168,7 +163,6 @@ test('missing-border report is visible and unapprovable until final human geomet
   assert.equal(view.report.grade, null); assert.equal(view.report.proposedGrade, null); assert.equal(view.explanation, null);
   assert.equal(view.report.findings.length, 2); assert.equal(view.canCertify, false);
   assert.equal(view.reviewRequiredReason, 'BATCH_FINAL_GEOMETRY_REQUIRED');
-  await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), { code: 'BATCH_FINAL_GEOMETRY_REQUIRED' });
   assert.equal(f.command, null); assert.equal(f.commits.length, 0); assert.equal(f.lessons.length, 0);
   await execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash });
   let state = await f.workflow.hydrate(f.card);
@@ -224,7 +218,6 @@ test('final correction entry preserves unreviewed machine evidence; printed corr
   const batch = await f.review.detail(f.staff, f.job.key);
   assert.equal(batch.correctionAvailable, true); assert.equal(batch.canCertify, false);
   assert.equal(batch.report.proposedGrade, updated.report.proposedGrade);
-  await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), { code: 'BATCH_REVIEW_STALE' });
   await assert.rejects(execute({ type: 'APPROVE_REPORT', reportHash: original.reportHash, reviewed: true }));
   await execute({ type: 'CONFIRM_GEOMETRY', reviewed: true, base: Object.fromEntries(sides.map(side => [side, geometryBase(state.geometry, side, 'REVIEW')])) });
   for (const side of sides) { state = await f.workflow.hydrate(f.card); await execute({ type: 'INSPECT_SIDE', side, inspected: true, base: defectBase(state.defects, side) }); }
@@ -251,49 +244,12 @@ test('pending geometry after final-review physical correction never serves the o
   assert.deepEqual(after.defects, state.defects); assert.ok(f.card.draft.geometryBeforeEdit.FRONT);
 });
 
-test('a retained nonraster observation can be explicitly rejected after physical geometry changes without reusing old coordinates', async () => {
-  const f = await fixture({ unmeasurable: true });
-  const execute = action => f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision, action });
-  await execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash });
-  const before = await f.workflow.hydrate(f.card), proposal = f.report.unmeasurableProposals[0];
-  await execute({ type: 'GEOMETRY_EDIT', edit: { side: 'FRONT', kind: 'PHYSICAL', base: geometryBase(before.geometry, 'FRONT', 'PHYSICAL'),
-    quad: [{ x: .126, y: .1 }, { x: .875, y: .1 }, { x: .875, y: .9 }, { x: .126, y: .9 }] } });
-  await assert.rejects(execute({ type: 'REJECT_FINAL_OBSERVATION', proposalId: proposal.id, reportHash: 'e'.repeat(64), reviewed: true }));
-  await execute({ type: 'REJECT_FINAL_OBSERVATION', proposalId: proposal.id, reportHash: f.input.reportHash, reviewed: true });
-  const after = await f.workflow.hydrate(f.card), review = after.assistance.reviews[0];
-  assert.equal(review.action, 'REJECT'); assert.equal(review.noMeasurablePixels, true);
-  assert.equal(review.reviewerId, f.staff.id); assert.equal(review.proposalId, proposal.id);
-  assert.deepEqual(review.base.frame, before.defects.sides[proposal.side].frame);
-  assert.deepEqual(after.defects.sides.FRONT.findings, before.defects.sides.FRONT.findings);
-  assert.equal(after.defects.confirmation, null); assert.equal(f.approvals.size, 0); assert.equal(f.lessons.length, 0);
-});
-test('unmeasurable machine proposals require manual review before any human action or approval intent is saved', async () => {
-  const f = await fixture({ unmeasurable: true });
-  const view = await f.review.detail(f.staff, f.job.key);
-  assert.equal(view.canCertify, false); assert.equal(view.reviewRequiredReason, 'BATCH_PROPOSAL_REVIEW_REQUIRED');
-  assert.equal(view.report.unmeasurableProposals.length, 1);
-  await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), error => error.code === 'BATCH_PROPOSAL_REVIEW_REQUIRED');
-  assert.equal(f.command, null); assert.equal(f.commits.length, 0); assert.equal(f.approvals.size, 0);
-  assert.equal(f.lessons.length, 0); assert.equal(f.card.revision, 1);
-});
-test('reading exact machine evidence does not attest; one explicit human command adopts displayed traces, grades and approves', async () => {
-  const f = await fixture(); const view = await f.review.detail(f.staff, f.job.key);
-  assert.equal(view.report.ruleVersion, ATLAS_RULE_VERSION);
-  assert.equal(view.report.authority, 'MACHINE_PROPOSAL'); assert.equal(f.command, null); assert.equal(f.commits.length, 0); assert.equal(f.lessons.length, 0);
-  const result = await f.review.approve(f.staff, f.job.key, f.input);
-  assert.equal(result.publication.state, 'PUBLISHED');
-  assert.deepEqual(f.commits.map(x => x.action.type), ['CONFIRM_GEOMETRY', 'INSPECT_SIDE', 'INSPECT_SIDE', 'CONFIRM_FINDINGS', 'APPROVE_REPORT']);
-  const state = await f.workflow.hydrate(f.card);
-  assert.equal(state.assistance.reviews.length, 2); assert.equal(state.assistance.reviews.every(x => x.reviewerId === f.staff.id && x.action === 'ACCEPT'), true);
-  assert.equal(f.lessons.length, 1); assert.equal(f.approvals.size, 1);
-});
 test('retained machine report under the old rule is readable but requires a new human-scored draft before approval', async () => {
   const f = await fixture({ historicalMachine: true });
   const before = clone(f.report), view = await f.review.detail(f.staff, f.job.key);
   assert.equal(view.report.ruleVersion, SPEEDSTER_RULE_VERSION);
   assert.equal(view.reviewRequiredReason, 'BATCH_SCORING_POLICY_UPDATED');
   assert.equal(view.canCertify, false);
-  await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), { code: 'BATCH_SCORING_POLICY_UPDATED' });
   assert.equal(f.commits.length, 0);
   await f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
     action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } });
@@ -303,22 +259,12 @@ test('retained machine report under the old rule is readable but requires a new 
   assert.equal(current.report.originalMachineReportHash, f.input.reportHash);
   assert.equal(current.explanation.ruleVersion, ATLAS_RULE_VERSION);
 });
-test('lost committed findings response resumes identical receipts without duplicate adoption or approval', async () => {
-  const f = await fixture(); f.loseReply('CONFIRM_FINDINGS');
-  await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), /reply lost/);
-  const view = await f.review.detail(f.staff, f.job.key); assert.equal(view.resumeAvailable, true);
-  assert.equal(f.commits.length, 4); await f.review.approve(f.staff, f.job.key, f.input); await f.review.approve(f.staff, f.job.key, f.input);
-  assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
-  assert.equal(f.lessons.length, 1, 'A lost commit reply resumes the exact reviewed-memory publication once');
-  assert.equal((await f.workflow.hydrate(f.card)).assistance.reviews.length, 2);
-});
 test('each interrupted historical approval prefix can explicitly reopen unchanged evidence for fresh current-policy review', async () => {
   for (const steps of [0, 1, 2, 3, 4]) {
     const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(steps);
     const original = clone(f.report), before = await f.workflow.hydrate(f.card);
     const view = await f.review.detail(f.staff, f.job.key);
     assert.equal(view.reviewRequiredReason, 'BATCH_SCORING_POLICY_UPDATED'); assert.equal(view.canCertify, false);
-    await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), { code: 'BATCH_SCORING_POLICY_UPDATED' });
     await f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
       action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } });
     const state = await f.workflow.hydrate(f.card), preview = f.workflow.currentPreview(f.card, state);
@@ -383,7 +329,7 @@ test('current-policy correction handoff refuses changed evidence, missing receip
       action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } }));
     assert.equal(f.commits.length, 4); assert.equal(f.approvals.size, 0);
   }
-  const f = await fixture(); await f.review.approve(f.staff, f.job.key, f.input);
+  const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(5);
   const approved = clone([...f.approvals]);
   await assert.rejects(f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
     action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } }), { code: 'BATCH_REVIEW_STALE' });
@@ -399,189 +345,137 @@ test('historical correction transition rejects changed revision/hash, missing re
     assert.equal(f.commits.length, 3); assert.equal(f.approvals.size, 0);
   }
 });
-test('fully committed historical approval recovers the exact saved award and publication without reapproval', async () => {
-  const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(5);
-  const before = clone([...f.approvals]), card = clone(f.card), view = await f.review.detail(f.staff, f.job.key);
-  assert.equal(view.approved, true); assert.equal(view.canCertify, true); assert.equal(view.reviewRequiredReason, null);
-  const result = await f.review.approve(f.staff, f.job.key, f.input);
-  assert.equal(result.publication.state, 'PUBLISHED'); assert.equal(result.actionId, batchActionId(f.job.key, 'HUMAN_REVIEW_APPROVAL'));
-  assert.deepEqual(await f.review.approve(f.staff, f.job.key, f.input), result);
-  assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
-  assert.deepEqual([...f.approvals], before); assert.deepEqual(f.card, card);
-  await assert.rejects(f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
-    action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } }), { code: 'BATCH_REVIEW_STALE' });
-});
-test('historical saved approval recovery rejects mismatched receipt chains and approval source revisions', async () => {
-  for (const change of [f => f.loseHistoricalReceipt('FINDINGS'), f => f.changeContentHash(),
-    f => { f.approvals.values().next().value.sourceRevision++; }]) {
-    const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(5); change(f);
-    await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), error => ['BATCH_REVIEW_STALE', 'BATCH_REVIEW_BINDING_CHANGED'].includes(error.code));
-    assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
-  }
-});
-test('zero findings still require the same actual human inspection and approval', async () => {
-  const f = await fixture({ count: 0 }); await f.review.approve(f.staff, f.job.key, f.input);
-  assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
-});
-test('double-digit proposal IDs approve unchanged evidence when confirmation changes finding order', async () => {
-  const f = await fixture({ count: 12 });
-  const originalOrder = f.report.findings.map(finding => finding.id);
-  const result = await f.review.approve(f.staff, f.job.key, f.input);
-  const state = await f.workflow.hydrate(f.card);
-  const finalOrder = sides.flatMap(side => state.defects.sides[side].findings.map(finding => finding.id));
-  assert.notDeepEqual(finalOrder, originalOrder, 'The real confirmation adapter sorts proposal IDs lexically');
-  assert.equal(result.publication.state, 'PUBLISHED'); assert.equal(f.approvals.size, 1);
-  await f.review.approve(f.staff, f.job.key, f.input);
-  assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
-});
-test('finding identity matching refuses duplicates, missing or extra findings and any changed evidence', async () => {
-  const f = await fixture({ count: 12 }); await f.review.approve(f.staff, f.job.key, f.input);
-  const final = (await f.workflow.service.previewReport(f.staff, f.card.cardId)).review.report;
-  const reordered = { ...final, findings: [...final.findings].reverse() };
-  assert.doesNotThrow(() => assertMachineReportUnchanged(f.report, reordered));
-  for (const change of [
-    value => { value.findings[1] = clone(value.findings[0]); },
-    value => { value.findings.pop(); },
-    value => { value.findings.push(clone(value.findings[0])); },
-    value => { value.findings[0].id = 'unknown-finding'; },
-    value => { value.findings[0].side = value.findings[0].side === 'FRONT' ? 'BACK' : 'FRONT'; },
-    value => { value.findings[0].defectType = 'DENT_MATERIAL_DAMAGE'; },
-    value => { value.findings[0].finalTrace.runs[0]++; },
-    value => { value.findings[0].measurementRegions[0].measurement.areaMm2 += .001; },
-  ]) {
-    const altered = clone(reordered); change(altered);
-    assert.throws(() => assertMachineReportUnchanged(f.report, altered), { code: 'BATCH_REVIEW_REPORT_CHANGED' });
-  }
-  const duplicateOriginal = clone(f.report); duplicateOriginal.findings[1] = clone(duplicateOriginal.findings[0]);
-  assert.throws(() => assertMachineReportUnchanged(duplicateOriginal, final), { code: 'BATCH_REVIEW_REPORT_CHANGED' });
-});
-test('different photo/report authority, missing deliberate decision and untrained staff never begin review', async () => {
-  for (const change of [f => ({ ...f.input, reviewed: false }), f => ({ ...f.input, reportHash: 'c'.repeat(64) }),
-    f => ({ ...f.input, images: { ...f.input.images, FRONT: 'c'.repeat(64) } }), f => { f.deny(); return f.input; }]) {
-    const f = await fixture(); await assert.rejects(f.review.approve(f.staff, f.job.key, change(f))); assert.equal(f.command, null); assert.equal(f.commits.length, 0);
-  }
-});
-test('intervening manual edits or replaced source after partial review cannot be silently adopted', async () => {
-  for (const change of ['mutate', 'replace']) {
-    const f = await fixture(); f.loseReply('INSPECT_SIDE'); await assert.rejects(f.review.approve(f.staff, f.job.key, f.input)); f[change]();
-    await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), e => ['BATCH_REVIEW_STALE', 'BATCH_PHOTOS_CHANGED'].includes(e.code)); assert.equal(f.approvals.size, 0);
-  }
-});
-test('a reclassified or differently measured final finding refuses approval even when final rounded grade is unchanged', async () => {
-  const f = await fixture(); f.tamper(); await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), e => e.code === 'BATCH_REVIEW_REPORT_CHANGED');
-  assert.equal(f.commits.length, 4); assert.equal(f.approvals.size, 0);
-});
-test('checked native CPU yields exactly the same proposal and approved traces, overlap ownership and score',
-  { skip: !process.env.ATLAS_MEASUREMENT_PYTHON }, async () => {
-    const f = await fixture({ count: 4, native: true });
-    assert.equal(f.report.measurementReceipts.every(item => item.receipt.version === 'atlas-manual-cpu-measurement-v1'), true);
-    const result = await f.review.approve(f.staff, f.job.key, f.input);
-    assert.equal(result.publication.state, 'PUBLISHED'); assert.equal(f.approvals.size, 1);
-    assert.equal((await f.workflow.hydrate(f.card)).assistance.reviews.length, 4);
+for (const options of [{ outside: true }, { unmeasurable: true }]) test(`current measured findings approve while retained ${options.outside ? 'off-frame' : 'subpixel'} AI observations are excluded`, async () => {
+  const f = await fixture(options);
+  const execute = action => f.workflow.service.execute(f.staff, f.card.cardId, {
+    actionId: randomUUID(), expectedRevision: f.card.revision, action,
   });
-
-test('explicitly rejecting an off-frame observation retains its original coordinates without inventing zero pixels', async () => {
-  const f=await fixture({outside:true});
-  const execute=action=>f.workflow.service.execute(f.staff,f.card.cardId,{actionId:randomUUID(),expectedRevision:f.card.revision,action});
-  await execute({type:'BEGIN_FINAL_REVIEW',batchKey:f.job.key,reportHash:f.input.reportHash});
-  const observation=f.report.unmeasurableProposals[0];
-  await execute({type:'REJECT_FINAL_OBSERVATION',proposalId:observation.id,reportHash:f.input.reportHash,reviewed:true});
-  const saved=await f.workflow.hydrate(f.card), review=saved.assistance.reviews[0];
-  assert.equal(review.measurementHold,'OUTSIDE_CARD_FRAME');assert.equal(review.noMeasurablePixels,undefined);
-  assert.deepEqual(review.proposal.canonicalContour,observation.canonicalContour);
-  assert.equal(saved.defects.sides.FRONT.findings.length,0);assert.equal(f.approvals.size,0);
+  await execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash });
+  let state = await f.workflow.hydrate(f.card);
+  const original = clone(state.finalReview), before = clone(state.defects), observation = f.report.unmeasurableProposals[0];
+  await execute({ type: 'CONFIRM_GEOMETRY', reviewed: true,
+    base: Object.fromEntries(sides.map(side => [side, geometryBase(state.geometry, side, 'REVIEW')])) });
+  for (const side of sides) {
+    state = await f.workflow.hydrate(f.card);
+    await execute({ type: 'INSPECT_SIDE', side, inspected: true, base: defectBase(state.defects, side) });
+  }
+  state = await f.workflow.hydrate(f.card);
+  await execute({ type: 'CONFIRM_FINDINGS', reviewed: true,
+    base: Object.fromEntries(sides.map(side => [side, defectBase(state.defects, side)])) });
+  state = await f.workflow.hydrate(f.card);
+  const excluded = state.assistance.reviews.find(review => review.proposalId === observation.id);
+  assert.equal(excluded.action, 'EXCLUDE'); assert.equal(excluded.exclusionReason, observation.reason);
+  assert.equal(excluded.findingId, null); assert.equal(excluded.reviewerId, f.staff.id);
+  assert.deepEqual(excluded.proposal.canonicalContour, observation.canonicalContour);
+  assert.equal(excluded.proposal.measurement, undefined);
+  assert.deepEqual(state.finalReview, original);
+  assert.deepEqual(state.defects.sides.FRONT.findings, before.sides.FRONT.findings);
+  assert.equal(f.approvals.size, 0, 'findings confirmation is not final report approval');
+  const preview = await f.workflow.service.previewReport(f.staff, f.card.cardId);
+  assert.equal(preview.report.findingCounts.included, 1);
+  await execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: preview.reportHash });
+  assert.equal(f.approvals.size, 1);
 });
 
-
-test('redrawing a retained observation resolves its original proposal only after durable successful measurement', async () => {
+test('a real unsaved trace still blocks findings approval until measured or explicitly discarded', async () => {
   const f = await fixture({ outside: true });
   const execute = action => f.workflow.service.execute(f.staff, f.card.cardId, {
     actionId: randomUUID(), expectedRevision: f.card.revision, action,
   });
   await execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash });
   let state = await f.workflow.hydrate(f.card);
-  const observation = f.report.unmeasurableProposals[0], side = observation.side;
-  const corrected = { ...observation, id: 'explicit-human-redraw', measurementHold: undefined,
-    canonicalContour: [{ x: .4, y: .4 }, { x: .45, y: .4 }, { x: .45, y: .45 }, { x: .4, y: .45 }] };
-  const trace = proposalEdit(corrected, side, state.defects.sides[side].cornerShape);
-  const request = { side, base: defectBase(state.defects, side), findingId: null, trace,
-    finalObservation: { reportHash: f.input.reportHash, proposalId: observation.id } };
-  await assert.rejects(f.workflow.stageTrace(f.staff, f.card.cardId, {
-    ...request, finalObservation: { ...request.finalObservation, reportHash: 'e'.repeat(64) },
-  }), { code: 'MANUAL_FINAL_REVIEW_REQUIRED' });
-  const action = await f.workflow.stageTrace(f.staff, f.card.cardId, request);
-  assert.deepEqual(action.finalObservation, request.finalObservation);
+  await execute({ type: 'CONFIRM_GEOMETRY', reviewed: true,
+    base: Object.fromEntries(sides.map(side => [side, geometryBase(state.geometry, side, 'REVIEW')])) });
   state = await f.workflow.hydrate(f.card);
-  assert.equal(state.assistance?.reviews.length ?? 0, 0, 'staging does not make a human decision');
-  assert.equal(f.workflow.currentPreview(f.card, state).report.unmeasurableProposals.length, 1);
-  await execute(action);
+  const trace = proposalEdit({ id: 'human-correction', side: 'FRONT', defectType: 'LIGHT_SCRATCH_SCUFF',
+    canonicalContour: [{ x: .4, y: .4 }, { x: .42, y: .4 }, { x: .42, y: .42 }] }, 'FRONT', state.defects.sides.FRONT.cornerShape);
+  await execute(await f.workflow.stageTrace(f.staff, f.card.cardId, {
+    side: 'FRONT', base: defectBase(state.defects, 'FRONT'), findingId: null, trace,
+  }));
   state = await f.workflow.hydrate(f.card);
-  const review = state.assistance.reviews[0];
-  assert.equal(review.action, 'TRACE_SAVE'); assert.equal(review.proposalId, observation.id);
-  assert.equal(review.findingId, trace.id); assert.equal(review.reviewerId, f.staff.id);
-  assert.equal(isDefectObservationResolved(state.defects, review), false);
-  assert.equal(f.workflow.currentPreview(f.card, state).state, 'PENDING');
-  assert.throws(() => finalReviewDecisions({ finalReview: state.finalReview, defects: state.defects,
-    assistance: state.assistance, principal: f.staff }), { code: 'MANUAL_ASTRA_REVIEW_REQUIRED' });
-  const savedRevision = f.card.revision;
+  await assert.rejects(execute({ type: 'CONFIRM_FINDINGS', reviewed: true,
+    base: Object.fromEntries(sides.map(side => [side, defectBase(state.defects, side)])) }));
   f.holdMeasurement(true);
-  await assert.rejects(execute({ type: 'MEASURE_SIDE', side }), /Local measurement unavailable/);
+  await assert.rejects(execute({ type: 'MEASURE_SIDE', side: 'FRONT' }));
+  assert.ok((await f.workflow.hydrate(f.card)).defects.sides.FRONT.pending);
+  await execute({ type: 'DISCARD_PENDING', side: 'FRONT', base: defectBase(state.defects, 'FRONT') });
+  for (const side of sides) {
+    state = await f.workflow.hydrate(f.card);
+    await execute({ type: 'INSPECT_SIDE', side, inspected: true, base: defectBase(state.defects, side) });
+  }
   state = await f.workflow.hydrate(f.card);
-  assert.equal(f.card.revision, savedRevision); assert.ok(state.defects.sides[side].pending);
-  assert.equal(isDefectObservationResolved(state.defects, state.assistance.reviews[0]), false);
-  f.holdMeasurement(false);
-  await execute({ type: 'MEASURE_SIDE', side });
-  state = await f.workflow.hydrate(f.card);
-  assert.equal(isDefectObservationResolved(state.defects, state.assistance.reviews[0]), true);
-  assert.equal(f.workflow.currentPreview(f.card, state).report.unmeasurableProposals.length, 0);
-  const decisions = finalReviewDecisions({ finalReview: state.finalReview, defects: state.defects,
-    assistance: state.assistance, principal: f.staff });
-  assert.equal(decisions.reviews.find(value => value.proposalId === observation.id).action, 'TRACE_SAVE');
-  assert.deepEqual(decisions.reviews[0].proposal.canonicalContour, observation.canonicalContour);
-  assert.equal(state.defects.sides[side].findings.filter(value => value.id === trace.id).length, 1);
-  assert.equal(f.approvals.size, 0);
-  await execute({ type: 'DEFECT_EDIT', side, base: defectBase(state.defects, side),
-    edit: { type: 'REMOVE', defectIds: [trace.id] } });
-  state = await f.workflow.hydrate(f.card);
-  assert.equal(isDefectObservationResolved(state.defects, state.assistance.reviews[0]), false, 'pending removal must finish measurement');
-  await execute({ type: 'MEASURE_SIDE', side });
-  state = await f.workflow.hydrate(f.card);
-  assert.equal(isDefectObservationResolved(state.defects, state.assistance.reviews[0]), true, 'explicit removal also resolves the original');
-  assert.equal(f.workflow.currentPreview(f.card, state).report.unmeasurableProposals.length, 0);
-  const rejected = finalReviewDecisions({ finalReview: state.finalReview, defects: state.defects,
-    assistance: state.assistance, principal: f.staff });
-  assert.equal(rejected.reviews.find(value => value.proposalId === observation.id).action, 'REJECT');
+  await execute({ type: 'CONFIRM_FINDINGS', reviewed: true,
+    base: Object.fromEntries(sides.map(side => [side, defectBase(state.defects, side)])) });
+  assert.equal((await f.workflow.hydrate(f.card)).assistance.reviews.find(review => review.action === 'EXCLUDE').proposalId,
+    f.report.unmeasurableProposals[0].id);
 });
 
 
-test('discarding a failed observation redraw leaves the original available for retry or explicit rejection', async () => {
-  const f = await fixture({ outside: true });
-  const execute = action => f.workflow.service.execute(f.staff, f.card.cardId, {
-    actionId: randomUUID(), expectedRevision: f.card.revision, action,
+async function approveCurrent(f) {
+  const execute = action => f.workflow.service.execute(f.staff, f.card.cardId, {actionId:randomUUID(), expectedRevision:f.card.revision, action});
+  await execute({type:'BEGIN_FINAL_REVIEW',batchKey:f.job.key,reportHash:f.input.reportHash});
+  let state=await f.workflow.hydrate(f.card);
+  await execute({type:'CONFIRM_GEOMETRY',reviewed:true,base:Object.fromEntries(sides.map(side=>[side,geometryBase(state.geometry,side,'REVIEW')]))});
+  for(const side of sides){state=await f.workflow.hydrate(f.card);await execute({type:'INSPECT_SIDE',side,inspected:true,base:defectBase(state.defects,side)});}
+  state=await f.workflow.hydrate(f.card);
+  await execute({type:'CONFIRM_FINDINGS',reviewed:true,base:Object.fromEntries(sides.map(side=>[side,defectBase(state.defects,side)]))});
+  const preview=await f.workflow.service.previewReport(f.staff,f.card.cardId);
+  assert.equal(f.approvals.size,0);
+  await execute({type:'APPROVE_REPORT',reportHash:preview.reportHash,reviewed:true});
+  return preview;
+}
+
+test('batch evidence is read-only; current manual review opens and approves without reading live AI status',async()=>{
+  const f=await fixture(),view=await f.review.detail(f.staff,f.job.key);
+  assert.equal(typeof f.review.approve,'undefined');assert.equal(view.canCertify,false);
+  assert.equal(f.commits.length,0);assert.equal(f.approvals.size,0);
+  const preview=await approveCurrent(f);
+  assert.deepEqual(preview.review.report.grade,f.report.grade);assert.equal(f.approvals.size,1);
+  const state=await f.workflow.hydrate(f.card);
+  assert.equal(state.assistance.reviews.length,2);assert(state.assistance.reviews.every(r=>r.action==='ACCEPT'));
+});
+
+test('old reports open from their measured receipts and recorded excluded observations without inventing missing proposals',async()=>{
+  const f=await fixture({withoutSavedProposals:true,unmeasurable:true});
+  const before=clone(f.report),view=await f.review.detail(f.staff,f.job.key);
+  assert.equal(view.reviewRequiredReason,null);assert.equal(view.report.unmeasurableProposals.length,1);
+  await approveCurrent(f);const state=await f.workflow.hydrate(f.card);
+  assert.deepEqual(state.finalReview.report,before);assert.deepEqual(state.finalReview.proposals,before.unmeasurableProposals);
+  assert.equal(state.assistance.reviews.length,1);assert.equal(state.assistance.reviews[0].action,'EXCLUDE');
+  assert.equal(state.assistance.confirmation.findingIds.length,1);assert.equal(f.approvals.size,1);
+});
+
+test('zero findings still need explicit current human inspection, findings confirmation and final approval',async()=>{
+  const f=await fixture({count:0});await approveCurrent(f);
+  assert.deepEqual(f.commits.map(value=>value.action.type),['BEGIN_FINAL_REVIEW','CONFIRM_GEOMETRY','INSPECT_SIDE','INSPECT_SIDE','CONFIRM_FINDINGS','APPROVE_REPORT']);
+  assert.equal(f.approvals.size,1);
+});
+
+test('completed historical approval receipts remain readable and cannot enter a new correction handoff',async()=>{
+  const f=await fixture({historicalMachine:true});await f.seedReviewProgress(5);
+  const before=clone([...f.approvals]),card=clone(f.card),detail=await f.review.detail(f.staff,f.job.key);
+  assert.equal(detail.approved,true);assert.equal(detail.canCertify,false);assert.equal(detail.resumeAvailable,true);
+  assert.deepEqual([...f.approvals],before);assert.deepEqual(f.card,card);
+  await assert.rejects(f.workflow.service.execute(f.staff,f.card.cardId,{actionId:randomUUID(),expectedRevision:f.card.revision,action:{type:'BEGIN_FINAL_REVIEW',batchKey:f.job.key,reportHash:f.input.reportHash}}),{code:'BATCH_REVIEW_STALE'});
+});
+
+test('native CPU measurements, traces and exact grade survive current human approval without a model reread',
+  {skip:!process.env.ATLAS_MEASUREMENT_PYTHON},async()=>{
+    const f=await fixture({count:4,native:true});
+    assert(f.report.measurementReceipts.every(item=>item.receipt.version==='atlas-manual-cpu-measurement-v1'));
+    const preview=await approveCurrent(f);
+    assert.deepEqual(preview.review.report.grade,f.report.grade);
+    const measured=new Map(f.report.findings.map(f=>[f.id,f]));
+    for(const finding of preview.review.report.findings){const original=measured.get(finding.id);assert.deepEqual(finding.finalTrace,original.finalTrace);assert.deepEqual(finding.measurementRegions,original.measurementRegions);}
+    assert.equal(f.approvals.size,1);
   });
-  await execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash });
-  let state = await f.workflow.hydrate(f.card);
-  const observation = f.report.unmeasurableProposals[0], side = observation.side;
-  const trace = proposalEdit({ ...observation, measurementHold: undefined,
-    canonicalContour: [{ x: .4, y: .4 }, { x: .42, y: .4 }, { x: .42, y: .42 }] }, side, state.defects.sides[side].cornerShape);
-  const stage = () => f.workflow.stageTrace(f.staff, f.card.cardId, {
-    side, base: defectBase(state.defects, side), findingId: null, trace,
-    finalObservation: { reportHash: f.input.reportHash, proposalId: observation.id },
-  });
-  await execute(await stage()); f.holdMeasurement(true);
-  await assert.rejects(execute({ type: 'MEASURE_SIDE', side }));
-  state = await f.workflow.hydrate(f.card);
-  await execute({ type: 'DISCARD_PENDING', side, base: defectBase(state.defects, side) });
-  state = await f.workflow.hydrate(f.card);
-  assert.equal(state.assistance.reviews.length, 0);
-  assert.equal(f.workflow.currentPreview(f.card, state).report.unmeasurableProposals.length, 1);
-  await execute(await stage());
-  state = await f.workflow.hydrate(f.card);
-  assert.equal(state.assistance.reviews.length, 1); assert.ok(state.defects.sides[side].pending);
-  await execute({ type: 'DISCARD_PENDING', side, base: defectBase(state.defects, side) });
-  await execute({ type: 'REJECT_FINAL_OBSERVATION', proposalId: observation.id, reportHash: f.input.reportHash, reviewed: true });
-  state = await f.workflow.hydrate(f.card);
-  assert.equal(state.assistance.reviews.length, 1); assert.equal(state.assistance.reviews[0].action, 'REJECT');
-  assert.equal(f.workflow.currentPreview(f.card, state).report.unmeasurableProposals.length, 0);
-  assert.equal(f.approvals.size, 0);
+
+
+test('batch navigation opens a newer current manual draft while old-report adoption cannot replace measured human findings',async()=>{
+  const f=await fixture();await f.seedReviewProgress(4);
+  await f.workflow.service.execute(f.staff,f.card.cardId,{actionId:randomUUID(),expectedRevision:f.card.revision,action:{type:'IDENTITY_EDIT',identity:{...f.card.draft.identity,parallel:'Foil'}}});
+  const before=await f.workflow.hydrate(f.card),detail=await f.review.detail(f.staff,f.job.key);
+  assert.equal(detail.state,'CURRENT_MANUAL');assert.equal(detail.correctionAvailable,true);assert.equal(detail.reportHash,undefined);
+  await assert.rejects(f.workflow.service.execute(f.staff,f.card.cardId,{actionId:randomUUID(),expectedRevision:f.card.revision,action:{type:'BEGIN_FINAL_REVIEW',batchKey:f.job.key,reportHash:f.input.reportHash}}),{code:'BATCH_REVIEW_STALE'});
+  assert.deepEqual(await f.workflow.hydrate(f.card),before);assert.equal(f.approvals.size,0);
 });

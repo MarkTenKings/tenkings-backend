@@ -75,11 +75,10 @@ test('refused startup recovery never clears a later command and does not hide fa
 });
 
 
-test('observation redraw journals its exact proposal binding through unknown save and client recreation', async () => {
+test('ordinary trace journals the exact saved artifact through unknown save and client recreation', async () => {
   const store = storage(), posted = [], staged = [];
-  const finalObservation = { reportHash: 'a'.repeat(64), proposalId: 'off-frame-original' };
   const action = { type: 'TRACE_SAVE', side: 'FRONT', base: {}, findingId: null,
-    traceRef: { fixture: true }, traceSourceHash: 'b'.repeat(64), finalObservation };
+    traceRef: { fixture: true }, traceSourceHash: 'b'.repeat(64) };
   const c = client(store, async (url, options) => {
     if (url.endsWith('/view')) return response(current(1));
     if (url.endsWith('/trace')) { staged.push(JSON.parse(options.body)); return response(action); }
@@ -87,10 +86,8 @@ test('observation redraw journals its exact proposal binding through unknown sav
     throw Error('offline after trace command');
   });
   await c.load();
-  await assert.rejects(c.editDefect({ side: 'FRONT', base: {}, finalObservation,
+  await assert.rejects(c.editDefect({ side: 'FRONT', base: {},
     action: { type: 'TRACE_SAVE', findingId: null, trace: { fixture: true } } }));
-  assert.deepEqual(staged[0].finalObservation, finalObservation);
-  assert.deepEqual(posted[0].action.finalObservation, finalObservation);
   let revision = 1;
   const resumed = client(store, async (url, options) => {
     if (url.endsWith('/view')) return response(current(revision));

@@ -41,10 +41,19 @@ export function geometryFocusBounds(quad, image) {
   const x=Math.max(0,x0-padX),y=Math.max(0,y0-padY);
   return {x,y,width:Math.min(image.width,x1+padX)-x,height:Math.min(image.height,y1+padY)-y};
 }
-export function geometryCamera(bounds, viewport, image) {
+export function geometryCamera(bounds, viewport, image, view = {zoom:1,pan:{x:0,y:0}}) {
   const scale=Math.min(Math.max(1,viewport.width-40)/bounds.width,Math.max(1,viewport.height-40)/bounds.height);
-  return {scale,left:(viewport.width-bounds.width*scale)/2-bounds.x*scale,
-    top:(viewport.height-bounds.height*scale)/2-bounds.y*scale,width:image.width*scale,height:image.height*scale};
+  const left=(viewport.width-bounds.width*scale)/2-bounds.x*scale;
+  const top=(viewport.height-bounds.height*scale)/2-bounds.y*scale;
+  return {scale:scale*view.zoom,left:viewport.width/2+(left-viewport.width/2)*view.zoom+view.pan.x,
+    top:viewport.height/2+(top-viewport.height/2)*view.zoom+view.pan.y,width:image.width*scale*view.zoom,height:image.height*scale*view.zoom};
+}
+
+/** Zoom only the display camera, keeping the image point under the pointer fixed. */
+export function zoomGeometryAt(view, requestedZoom, anchor, viewport) {
+  const zoom=Math.max(.25,Math.min(32,requestedZoom)),ratio=zoom/view.zoom;
+  const x=anchor.x-viewport.width/2,y=anchor.y-viewport.height/2;
+  return {zoom,pan:{x:x-(x-view.pan.x)*ratio,y:y-(y-view.pan.y)*ratio}};
 }
 
 /** Draft-only homography for responsive measurement. Persistence always uses

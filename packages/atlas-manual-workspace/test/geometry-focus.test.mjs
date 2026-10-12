@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {focusedGeometryOutlines,sourceQuadToPrepared,draftPrintedQuad,focusedCentering,geometryFocusBounds,geometryCamera} from '../src/geometry-focus.mjs';
+import {focusedGeometryOutlines,sourceQuadToPrepared,draftPrintedQuad,focusedCentering,geometryFocusBounds,geometryCamera,zoomGeometryAt} from '../src/geometry-focus.mjs';
 import {applyGeometryEdit,geometryBase,preparedPointToOriginal} from '../src/geometry-actions.mjs';
 import {focusedFixture,printed} from './focused-geometry-fixture.mjs';
 
@@ -48,4 +48,15 @@ test('card fit keeps all eight handles visible at laptop and phone sizes without
     assert.ok(camera.height*(Math.max(...outlines.physical.map(p=>p.y))-Math.min(...outlines.physical.map(p=>p.y)))>viewport.height*.65);
   }
   assert.equal(JSON.stringify(workspace),before);
+});
+
+test('zoom and pan keep the same source pixel under the pointer without changing grading geometry',()=>{
+ const {workspace}=focusedFixture({perspective:true}),before=JSON.stringify(workspace),image=workspace.sides.FRONT.image;
+ const bounds=geometryFocusBounds(workspace.sides.FRONT.physical.quad,image),viewport={width:1200,height:700},anchor={x:317,y:211};
+ const initial={zoom:1,pan:{x:0,y:0}},camera=geometryCamera(bounds,viewport,image,initial);
+ const point={x:(anchor.x-camera.left)/camera.width,y:(anchor.y-camera.top)/camera.height};
+ const zoomed=zoomGeometryAt(initial,4,anchor,viewport),next=geometryCamera(bounds,viewport,image,zoomed);
+ near(next.left+point.x*next.width,anchor.x);near(next.top+point.y*next.height,anchor.y);
+ const panned=geometryCamera(bounds,viewport,image,{...zoomed,pan:{x:zoomed.pan.x+53,y:zoomed.pan.y-19}});
+ near(panned.left,next.left+53);near(panned.top,next.top-19);assert.equal(JSON.stringify(workspace),before);
 });

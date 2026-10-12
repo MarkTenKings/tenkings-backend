@@ -31,12 +31,9 @@ const messages = {
   BATCH_CONTINUE_MANUAL_REVIEW: 'Continue your saved corrections in the card workspace.',
   BATCH_REVIEW_STALE: 'This card has newer saved work. Open the saved card workspace to continue its current review.',
   BATCH_REVIEW_BINDING_CHANGED: 'The saved report or photographs changed. Open the current card workspace before continuing.',
-  BATCH_REVIEW_ANALYSIS_CHANGED: 'The saved findings changed. Open the current card workspace to review them.',
-  BATCH_REVIEW_REPORT_CHANGED: 'Your inspection is saved. The calculated report needs final review before approval. Open card review to continue.',
   MANUAL_TEMPORARILY_UNAVAILABLE: 'ATLAS could not finish this request. Your saved report and decisions are retained. Try again shortly.',
   BATCH_SCORING_POLICY_UPDATED: 'This draft uses an earlier scoring policy. Open final review to recalculate its saved measurements with the current policy before approval.',
   BATCH_FINAL_GEOMETRY_REQUIRED: 'Defect analysis and measurements are saved. Review the physical outlines and printed borders in final review; centering and the overall grade remain unavailable until supported geometry is saved.',
-  BATCH_PROPOSAL_REVIEW_REQUIRED: 'The report is ready. Some observations could not be measured; check them in the card workspace before approval.',
 };
 function QueuePhoto({ job, side = 'FRONT', readPreview, eager = false }) {
   const [src, setSrc] = useState(null), [failed, setFailed] = useState(false), [retry, setRetry] = useState(0);

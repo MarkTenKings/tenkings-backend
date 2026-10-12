@@ -179,7 +179,7 @@ export function catalogDemandSourceKind(url: string): 'manufacturer' | 'secondar
 
 export const MANUFACTURER_CHECKLIST_REVISION: 'manufacturer-checklist/v1';
 /** Explicit source rows only; the partial catalog never establishes physical printing. */
-export type ManufacturerChecklistSource = { manufacturer: string; manufacturerAliases?: string[]; sport: 'baseball' | 'basketball' | 'football'; year: string;
+export type ManufacturerChecklistSource = { manufacturer: string; manufacturerAliases?: string[]; sport: 'baseball' | 'basketball' | 'football' | 'hockey' | 'golf'; year: string;
   setName: string; aliases: string[]; url: string; sha256: string };
 export type ManufacturerChecklistCatalog = { schemaVersion: typeof MANUFACTURER_CHECKLIST_REVISION; complete: false;
   sources: ManufacturerChecklistSource[];

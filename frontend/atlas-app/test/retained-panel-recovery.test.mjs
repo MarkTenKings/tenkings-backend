@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core');
-const files = ['MachinePreparation', 'OperationalRecovery', 'TrustedLearning'];
+const files = ['MachinePreparation', 'OperationalRecovery'];
 const compiled = Object.fromEntries(files.map(name => [name, babel.transformSync(readFileSync(new URL(`../components/${name}.jsx`, import.meta.url), 'utf8'), {
     filename: `${name}.jsx`, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false }).code]));
 const sha = 'a'.repeat(64), fresh = 'b'.repeat(64), session = { staff: { id: 'human' }, csrf: fresh };
@@ -105,29 +105,6 @@ test('actual operational recovery retains exact decision while disabled and keep
     const before = f.calls.length; await f.click('Record human abandonment'); assert.equal(f.calls.length, before);
     f.respond = async call => call.path === 'session' ? session : { receipt: { pilotId, recordId, specimenId, kind: 'ASTRA', state: 'FAILED', holds, nextAction: 'HUMAN_INSPECTION_OR_RECAPTURE' } };
     await f.click('Retry exact recovery decision'); assert.deepEqual(f.writes().at(-1).body, original); assert.equal(f.writes().at(-1).csrf, fresh); assert.equal(f.pending(), false);
-});
-test('actual learning decision retries saved approval/subset despite disabled changed-approval props and failed fresh sign-in', async () => {
-    const specimenId = randomUUID(), approvalId = randomUUID(), candidatesId = randomUUID();
-    const f = harness('TrustedLearning', { specimenId, approvalId });
-    f.respond = async () => ({ preview: { specimenId, approvalId, candidatesId, bundleHash: sha, selectedCandidateIds: [], applicationAvailable: false,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(), candidates: [{ candidateId: sha, findingId: 'finding', proposalOrder: 0, lessonOrder: 0, defectType: 'SCRATCH', polarity: 'POSITIVE', provenance: 'UNTOUCHED_ACCEPTED_POSITIVE', sourceViewId: 'ORIGINAL' }] } });
-    await f.click('Load candidates from approved report'); f.change('SCRATCH', '', true); f.change('Approve · pending bank application', '', true); f.change('Reason for the selected candidates', 'Exact learning reason');
-    f.respond = async () => { throw Error('lost decision'); }; await f.click('Record separate trusted-learning decision');
-    const original = f.writes().at(-1).body; f.props.disabled = true; f.props.approvalId = randomUUID(); f.render();
-    assert.equal(f.find('button', 'Retry exact trusted-learning decision').props.disabled, false);
-    assert.equal(f.find('button', 'Load candidates').props.disabled, true);
-    const before = f.calls.length; await f.click('Load candidates'); assert.equal(f.calls.length, before);
-    f.respond = async () => ({ staff: null }); await f.click('Retry exact trusted-learning decision'); assert.equal(f.pending(), true); assert.equal(f.writes().length, 2);
-    f.respond = async call => { if (call.path === 'session') return session;
-        if (call.path.endsWith('/decisions')) throw error(403, 'FRESH_TRUSTED_LEARNING_REVIEWER_REQUIRED');
-        throw Error('unexpected'); };
-    await f.click('Retry exact trusted-learning decision'); assert.equal(f.pending(), true);
-    f.respond = async call => call.path === 'session' ? session : call.path.endsWith('/decisions') ? { receipt: { decisionId: randomUUID(), specimenId, approvalId,
-        bundleHash: sha, status: 'APPROVED_PENDING_APPLICATION', candidateIds: [sha], reason: original.reason, createdAt: new Date().toISOString(), applicationAvailable: false } }
-        : { learning: { applicationAvailable: false, decisions: [], olderDecisionsAvailable: false } };
-    await f.click('Retry exact trusted-learning decision'); assert.equal(f.pending(), false);
-    for (const call of f.writes().filter(c => c.path.endsWith('/decisions'))) { assert.deepEqual(call.body, original); if (call !== f.writes()[1]) assert.equal(call.csrf, fresh); }
-    assert.ok(f.find('p', 'No learning-bank application has occurred.'));
 });
 test('retained retry keeps its synchronous busy interlock while fresh-session read is unresolved', async () => {
     const f = harness('hook'); f.respond = async () => { throw Error('lost'); };

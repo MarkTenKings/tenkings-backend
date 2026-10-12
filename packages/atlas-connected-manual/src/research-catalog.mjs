@@ -115,9 +115,8 @@ export function createAtlasCatalogClient({token,fetchImpl=globalThis.fetch}={}) 
       const images=p.images.map(image=>{
         const permission=request.images.find(i=>i.imageId===image.imageId)?.permission;
         requireThat(permission&&['owned_original','licensed','permission'].includes(permission.basis)
-          &&typeof permission.detail==='string'&&permission.detail.trim()===permission.detail&&permission.detail.length>=1&&permission.detail.length<=1000
           &&canonicalJson(permission.consumers)===canonicalJson(['inventory','atlas']),400,'RESEARCH_PROPOSAL_INVALID');
-        return {imageId:image.imageId,sha256:image.sha256,proposedPermission:permission};
+        return {imageId:image.imageId,sha256:image.sha256,proposedPermission:{...permission,detail:permission.detail??({owned_original:'I own these original photos.',licensed:'A license allows this internal reference use.',permission:'I have permission to share these photos for internal reference use.'})[permission.basis]}};
       });
       const roots=p.sources.filter(source=>source.kind==='PHYSICAL_OBSERVATION');
       requireThat(roots.length===1&&Array.isArray(request.sourceArtifacts)&&request.sourceArtifacts.length===1,400,'RESEARCH_PROPOSAL_INVALID');

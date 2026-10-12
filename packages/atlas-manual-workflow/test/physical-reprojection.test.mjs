@@ -41,7 +41,7 @@ async function setup({native=false,edge=false}={}) {
     cornerShape:'SQUARE',matColor:'BLACK'}]))});
   for(const side of sides){geometry=applyGeometryEdit(geometry,{side,kind:'PHYSICAL',base:geometryBase(geometry,side,'PHYSICAL'),quad,actor:'HUMAN',proposal:null}).state;geometry=prepared(geometry,side);}
   const draft={version:'atlas-manual-workflow-v2',source:{sourceHash:sha('b')},geometry:await store(geometry),defects:await store(defects),identity:{},identityRevision:1};
-  if(edge){const report={cardId:defects.cardId,sourceHash:sha('b'),findings:sides.flatMap(side=>defects.sides[side].findings)};
+  if(edge){const report={cardId:defects.cardId,sourceHash:sha('b'),finalGradePolicy:'atlas-final-half-point-v1',findings:sides.flatMap(side=>defects.sides[side].findings)};
     draft.finalReview=await store({version:'atlas-final-review-v1',report,reportHash:digest(JSON.stringify(report))});}
   card={cardId:defects.cardId,revision:1,contentHash:stateDocument(draft).hash,draft};
   const counts={prepares:0,measurements:0,commits:0,failMeasurement:false};
@@ -99,8 +99,9 @@ test('corrected outline saves without restoration and preserves off-frame observ
   const previewState=clone(state);
   for(const side of sides) previewState.geometry.sides[side].printed={quad:[{x:.02,y:.02},{x:.98,y:.02},{x:.98,y:.98},{x:.02,y:.98}]};
   const preview=finalReviewPreview(f.card(),previewState);
-  assert.equal(preview.state,'READY');assert.equal(preview.report.calculationState,'FINDINGS_UNRESOLVED');
-  assert.equal(preview.report.grade,null);assert.equal(preview.report.proposedGrade,null);
+  assert.equal(preview.state,'READY');assert.equal(preview.report.calculationState,'COMPLETE');
+  assert.ok(preview.report.grade);assert.ok(Number.isFinite(preview.report.proposedGrade));
+  assert.equal(preview.report.excludedFindings.length,1);assert.equal(preview.report.findings.some(f=>f.id===observation.id),false);
   await f.execute(f.command({type:'DEFECT_EDIT',side:'FRONT',base:defectBase(state.defects,'FRONT'),edit:{type:'REMOVE',defectIds:[observation.id]}}));
   await f.execute(f.command({type:'MEASURE_SIDE',side:'FRONT'}));
   const after=await f.state(),retained=after.defects.sides.FRONT.findings.find(f=>f.id===observation.id);

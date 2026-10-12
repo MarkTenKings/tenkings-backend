@@ -1,10 +1,10 @@
 import React, {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {sanitizeSpeedsterUnitQuad} from '@atlas/grading-core/geometry';
 import {geometryBase} from './geometry-actions.mjs';
-import {geometryImage} from './PairedGeometryWorkspace.jsx';
+import {geometryImage} from './geometry-image.mjs';
 import {useVerifiedImage, verifiedImageContentKey} from './verified-image.mjs';
 import {gradientMapFromImage, snapSpeedsterPoint} from './gradient-snap';
-import {focusedGeometryOutlines, geometryFocusBounds, geometryCamera, focusedCentering} from './geometry-focus.mjs';
+import {focusedGeometryOutlines, geometryFocusBounds, geometryCamera, zoomGeometryAt, focusedCentering} from './geometry-focus.mjs';
 export {sourceQuadToPrepared} from './geometry-focus.mjs';
 
 const corners=['Top left','Top right','Bottom right','Bottom left'];
@@ -30,11 +30,11 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   const [selected,setSelected]=useState({kind:'PHYSICAL',corner:0}),[snap,setSnap]=useState(false),[snapReady,setSnapReady]=useState(false),[dragging,setDragging]=useState(false),[handleFocused,setHandleFocused]=useState(false);
   const initial=focusedGeometryOutlines(workspace,side), outlines=draft??initial;
   const [bounds,setBounds]=useState(()=>slot.image?geometryFocusBounds(initial.physical,slot.image):null);
-  const [size,setSize]=useState({width:640,height:680});
-  const viewport=useRef(null),gradient=useRef(null),drag=useRef(null),mounted=useRef(true),saving=useRef(false),loadGeneration=useRef(0);
+  const [size,setSize]=useState({width:640,height:680}),[view,setView]=useState({zoom:1,pan:{x:0,y:0}});
+  const viewport=useRef(null),gradient=useRef(null),drag=useRef(null),panDrag=useRef(null),mounted=useRef(true),saving=useRef(false),loadGeneration=useRef(0);
   const ready=Boolean(verified.url&&contentKey&&readyKey===contentKey);
   const inactive=readOnly||hostBusy||busy||!ready;
-  const camera=image&&bounds?geometryCamera(bounds,size,image):null;
+  const camera=image&&bounds?geometryCamera(bounds,size,image,view):null;
   const needsPlacement=outlines.needsPhysicalPlacement||(!outlines.printedAbsent&&outlines.needsPrintedPlacement);
   const centering=!needsPlacement&&!outlines.printedAbsent?focusedCentering(outlines.physical,outlines.printedOriginal):null;
   const editing=Boolean(draft)||busy;
@@ -49,6 +49,26 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
     const observer=new ResizeObserver(([entry])=>setSize({width:entry.contentRect.width,height:entry.contentRect.height}));
     observer.observe(viewport.current);return()=>observer.disconnect();
   },[]);
+  useEffect(()=>{
+    const element=viewport.current;
+    if(!element?.addEventListener)return;
+    const wheel=event=>{
+      if(!ready||drag.current)return;
+      event.preventDefault();const rect=element.getBoundingClientRect();
+      const unit=event.deltaMode===1?16:event.deltaMode===2?size.height:1;
+      setView(previous=>zoomGeometryAt(previous,previous.zoom*Math.exp(-event.deltaY*unit*.002),
+        {x:event.clientX-rect.left,y:event.clientY-rect.top},size));
+    };
+    element.addEventListener('wheel',wheel,{passive:false});
+    return()=>element.removeEventListener('wheel',wheel);
+  },[ready,size]);
+  const fit=()=>{setBounds(geometryFocusBounds(outlines.physical,image));setView({zoom:1,pan:{x:0,y:0}});};
+  const zoomBy=factor=>setView(previous=>zoomGeometryAt(previous,previous.zoom*factor,{x:size.width/2,y:size.height/2},size));
+  function startPan(event){
+    if(!ready||event.button!==0||event.target.closest?.('button'))return;
+    panDrag.current={id:event.pointerId,x:event.clientX,y:event.clientY,pan:view.pan};
+    event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();
+  }
 
   const capture=()=>draft??{...initial,base:geometryBase(workspace,side,'REVIEW')};
   function setPoint(kind,index,point,useSnap=false){
@@ -88,15 +108,17 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
     const field=pick.kind==='PHYSICAL'?'physical':'printedOriginal',point=outlines[field][pick.corner],p=screenPoint(point);
     setSelected({kind:pick.kind,corner:pick.corner});setDragging(true);
     drag.current={...pick,pointerId:event.pointerId,offsetX:p.x-x,offsetY:p.y-y};
-    event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();event.stopPropagation();
   }
   function pointerMove(event){
+    const panning=panDrag.current;
+    if(panning?.id===event.pointerId){setView(previous=>({...previous,pan:{x:panning.pan.x+event.clientX-panning.x,y:panning.pan.y+event.clientY-panning.y}}));return;}
     const moving=drag.current;if(!moving||moving.pointerId!==event.pointerId||!viewport.current||!camera)return;
     const rect=viewport.current.getBoundingClientRect();
     setPoint(moving.kind,moving.corner,{x:(event.clientX-rect.left+moving.offsetX-camera.left)/camera.width,
       y:(event.clientY-rect.top+moving.offsetY-camera.top)/camera.height},true);
   }
-  function endDrag(){drag.current=null;setDragging(false);}
+  function endDrag(){drag.current=null;panDrag.current=null;setDragging(false);}
   async function approve(){
     if(inactive||saving.current||!onApproveSide||needsPlacement||(!outlines.printedAbsent&&!centering))return;
     const pending=capture();saving.current=true;setDraft(pending);setBusy(true);setError('');
@@ -133,7 +155,7 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   const action={approve,disabled:inactive||!onApproveSide||needsPlacement||(!outlines.printedAbsent&&!centering),busy,message:approvalMessage};
   return <section className="atlas-focused-geometry" aria-label={`${label} geometry`} data-review-target={`geometry-${side}`}>
     <div className="fg-body">
-    <div className="fg-stage" ref={viewport} onPointerMove={pointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
+    <div className="fg-stage" ref={viewport} onPointerDown={startPan} onPointerMove={pointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
       <div className="fg-stage-label">{label} <span>Geometry</span></div>
       {image&&camera&&(verified.url||preview.url)&&<img key={`${contentKey}:${verified.url?'full':'preview'}`} className="fg-photo" src={verified.url??preview.url} draggable={false}
         alt={`${label} card${verified.url?', original geometry view':' preview; full detail is loading'}`} onLoad={verified.url?loaded:undefined}
@@ -168,7 +190,8 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
       </div>
       <div className="fg-legend"><span><i/>Physical edge</span><span><i/>Printed border</span></div>
     <div className="fg-instruments"><div className="fg-measurements" aria-live="polite">{centering&&!outlines.printedAbsent?<><span>Left / right <strong>{ratio(centering.leftRight)}</strong></span><span>Top / bottom <strong>{ratio(centering.topBottom)}</strong></span><small>Live centering</small></>:<span>{outlines.printedAbsent?'No printed border':'Place both outlines to measure centering'}</span>}</div>
-      <div className="fg-tools"><button type="button" disabled={!ready||busy} onClick={()=>setBounds(geometryFocusBounds(outlines.physical,image))}>Fit card</button>
+      <div className="fg-tools"><button type="button" disabled={!ready} onClick={fit}>Fit card</button>
+        <button type="button" disabled={!ready} aria-label="Zoom out" onClick={()=>zoomBy(1/1.25)}>−</button><span aria-label="Image zoom">{Math.round(view.zoom*100)}%</span><button type="button" disabled={!ready} aria-label="Zoom in" onClick={()=>zoomBy(1.25)}>+</button>
         <button type="button" aria-pressed={snap} disabled={!ready||!snapReady||busy} onClick={()=>setSnap(value=>!value)}>Snap {snap?'on':'off'}</button>
         <details><summary>More</summary><div className="fg-options"><button type="button" disabled={inactive} aria-pressed={outlines.printedAbsent} onClick={()=>{setDraft({...capture(),printedAbsent:!outlines.printedAbsent});setError('');}}>No printed border</button>
           {draft&&<button type="button" disabled={busy||hostBusy} onClick={()=>{setDraft(null);setError('');}}>Discard unsaved adjustments</button>}

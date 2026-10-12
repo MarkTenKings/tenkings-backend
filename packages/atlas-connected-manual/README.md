@@ -225,3 +225,14 @@ activated together. Source implementation and synthetic local qualification do
 not establish deployment or owner approval of any real card. The owned
 `validate-publication-postgres.mjs` qualifier runs against all 44 current
 migrations and is also included in the connected and release-storage qualifiers.
+
+
+Batch reports are read-only machine evidence. The retired bulk approval route
+`POST /api/staff/manual-connected/cards/batch/:key/review` is removed; human
+geometry, findings, and final report approval use the current manual workspace.
+Opening review uses the immutable report's measured findings and recorded
+observations without requiring a current AI result. New reports retain their
+exact original proposals. Older report evidence is preserved without inventing
+missing model metadata. A newer manual draft opens directly and is never
+replaced by the older machine report. Historical interrupted approval receipts
+remain readable for an exact current-review handoff.
