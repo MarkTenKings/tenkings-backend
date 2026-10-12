@@ -4,9 +4,11 @@ import assert from 'node:assert/strict';
 import { createManualFinishing } from '../src/finishing.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 import { canonical, digest } from '@atlas/manual-service/contract';
+import { validateManualFinishingPlan } from '@atlas/finishing/manual';
+import { renderManualLabel, validateManualLabel } from '@atlas/finishing/label';
 
-async function fixture() {
-  const f = await publicationFixture(); await f.publication.publish({}, f.cardId, f.actionId);
+async function fixture(options) {
+  const f = await publicationFixture(options); await f.publication.publish({}, f.cardId, f.actionId);
   let loads = 0; const actualLoad = f.repository.load;
   const repository = { load: async (...args) => { loads++; return structuredClone(await actualLoad(...args)); } };
   return { ...f, repository, loader: createManualFinishing({ repository, artifacts: f.artifacts }), loads: () => loads };
@@ -53,5 +55,23 @@ test('revoked access or changed published authority during artifact read prevent
     } return row; } };
     await assert.rejects(createManualFinishing({ repository, artifacts: f.artifacts })[method]({}, f.cardId, f.actionId));
     assert.equal(calls, 2);
+  }
+});
+
+test('approved Pokémon manufacturer survives publication, label planning and rendering; historical omission stays omitted', async () => {
+  for (const manufacturer of ['Pokémon', undefined]) {
+    const identity = { cardName: 'Synthetic Pokémon', year: '2026', ...(manufacturer ? { manufacturer } : {}),
+      productSet: 'Local only', parallel: 'English Cosmos Holofoil', cardNumber: '025/165', layoutType: 'POKEMON' };
+    const f = await fixture({ cardProfile: 'POKEMON', identity }), before = structuredClone(f.row);
+    const plan = await f.loader.load({}, f.cardId, f.actionId);
+    assert.deepEqual(plan.label.identity, f.full.identity); assert.equal(Object.hasOwn(plan.label.identity, 'manufacturer'), manufacturer !== undefined);
+    assert.equal(plan.label.finalGrade, f.full.finalGrade); assert.deepEqual(validateManualFinishingPlan(plan), plan);
+    const rendered = renderManualLabel({ label: plan.label, measureText: (text, size) => text.length * size * 0.45 });
+    assert.match(rendered.front, /Synthetic Pokémon/); assert.match(rendered.reverse, /<svg/);
+    assert.deepEqual(f.row, before); assert.deepEqual(await f.loader.load({}, f.cardId, f.actionId), plan);
+    for (const alter of [v => { v.identity.manufacturer = ''; }, v => { v.identity.manufacturer = null; },
+      v => { v.identity.manufacturer = 'x'.repeat(121); }, v => { v.identity.privateProposal = 'staff-only'; }]) {
+      const invalid = structuredClone(plan.label); alter(invalid); assert.throws(() => validateManualLabel(invalid), /MANUAL_LABEL_IDENTITY_INVALID/);
+    }
   }
 });

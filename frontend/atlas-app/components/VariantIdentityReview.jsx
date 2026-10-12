@@ -4,6 +4,7 @@ import { useVerifiedImage } from '@atlas/manual-workspace/report-review';
 import { manualRequest } from '../lib/manual-client.mjs';
 import { staffApiPath } from '../lib/routes.mjs';
 import { createVariantReviewClient, variantBindingKey, variantApprovalReady, variantConfirmationCurrent, variantError } from '../lib/variant-review-client.mjs';
+import { unmatchedVariantReferences } from '../lib/variant-reference-photos.mjs';
 import styles from './VariantIdentityReview.module.css';
 
 const normalize = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -60,7 +61,8 @@ export function variantReference(candidate, cardId, { artwork = true, result = n
   return image ? { ...image, url: safeUrl(image.url) } : null;
 }
 function referenceLabel(image) {
-  if (image?.labelReading) return `${image.labelReading.company} slab · saved in ATLAS Codex`;
+  if (image?.associationStatus === 'UNASSIGNED') return image.labelReading?.company ? `Saved ${image.labelReading.company} slab · printing unassigned` : 'Saved reference photo · printing unassigned';
+  if (image?.labelReading?.company) return `${image.labelReading.company} slab · saved in ATLAS Codex`;
   return ({ exact: 'Exact printing reference', listing_photo: 'eBay listing photo', representative: 'Representative printing · different card may be pictured', card_art_only: 'Card artwork · finish is not shown' })[image?.relationship] ?? 'Reference photo unavailable';
 }
 function referenceSource(image, candidate, className = styles.source) {
@@ -109,6 +111,7 @@ function Comparison({ photo, reference, candidate, side, onClose }) {
     <div className={styles.dialogHeading}><div><h3>Compare the visible details</h3><p>{candidate?.label ?? 'Your uploaded card'} · {side === 'FRONT' ? 'Front' : 'Back'}</p></div><button type="button" onClick={close} autoFocus>Close comparison</button></div>
     <p>Check the printed number, language, stamp and foil pattern against your physical card. Artwork alone does not confirm a finish.</p>
     <button type="button" aria-pressed={camera.scale > 1} onClick={() => setCamera(camera.scale > 1 ? fitCamera() : {...fitCamera(),scale:2})}>{camera.scale > 1 ? 'Fit both photos' : 'Enlarge both photos'}</button>
+    {reference?.associationStatus === 'UNASSIGNED' && <p>This saved photograph has not been matched to a catalog printing. Inspect its label and details; opening it makes no variant selection.</p>}
     <p>Scroll or pinch to zoom either photograph. Drag to inspect the same area in both.</p><div className={styles.compare}><figure><figcaption>Your saved photograph</figcaption><VariantPhotoPane camera={camera} setCamera={setCamera} label="Uploaded photograph zoom">{photo ? <img src={photo} alt="Your unchanged uploaded photograph" draggable={false}/> : <span>Photograph unavailable</span>}</VariantPhotoPane></figure>
       <figure><figcaption>{referenceLabel(reference)}</figcaption><VariantPhotoPane camera={camera} setCamera={setCamera} label="Reference photograph zoom"><ReferencePhoto image={reference} label={candidate?.label ?? 'Reference'} enlarged/></VariantPhotoPane>{reference?.labelReading && <p className={styles.labelReading}><strong>Slab label</strong> {reference.labelReading.text}</p>}{referenceSource(reference, candidate, styles.comparisonSource)}</figure></div>
     {candidate?.diagnostics?.length > 0 && <ul>{candidate.diagnostics.map(cue => <li key={cue.id}>{cue.description}</li>)}</ul>}
@@ -118,7 +121,7 @@ function Comparison({ photo, reference, candidate, side, onClose }) {
 /** All page-open and polling work reads saved status. Only explicit confirmation
  * writes; a suggested image never stands in for the reviewer’s decision. */
 export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, sourceHash, identityRevision, revision, identity, savedIdentification,
-  geometry, images, disabled = false, previewOnly = false, onGateChange, onSaved, onActivityChange, onReloadImages,
+  geometry, images, disabled = false, previewOnly = false, onGateChange, onSaved, onActivityChange, onReloadImages, renderReviewActions,
   createClient = createVariantReviewClient, pollIntervalMs = 3000 }) {
   const [status, setStatus] = useState(null), [choice, setChoice] = useState(null), [unresolved, setUnresolved] = useState(null);
   const [pending, setPending] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
@@ -126,7 +129,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const [side, setSide] = useState('FRONT'), [comparison, setComparison] = useState(null), [reloadNeeded, setReloadNeeded] = useState(false);
   const [manual, setManual] = useState(null), [referencePermission, setReferencePermission] = useState(null);
   const [drafted, setDrafted] = useState(false), [previewId, setPreviewId] = useState(null), [variantFilter, setVariantFilter] = useState('');
-  const comparisonOpener = useRef(null);
+  const comparisonOpener = useRef(null), choiceControls = useRef(null);
   const compare = (candidate, event) => { comparisonOpener.current = event.currentTarget; setComparison(candidate); };
   const client = useRef(null), generation = useRef(0), lock = useRef(false), callbacks = useRef({});
   callbacks.current = { onGateChange, onSaved, onActivityChange, previewOnly };
@@ -235,8 +238,22 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const primaryChoices = ordered.filter(candidate => variantCandidateGroup(candidate, groupingIdentity) === 'same');
   const preview = candidates.find(candidate => candidate.candidateId === previewId) ?? selected ?? primaryChoices.find(candidate => variantReference(candidate, cardId, { artwork: false, result: status?.result })) ?? primaryChoices[0] ?? null;
   const previewPhoto = preview ? variantReference(preview, cardId, { artwork: false, result: status?.result }) : null;
+  const unassignedPhotos = unmatchedVariantReferences(status?.result);
   const manualComplete = manual?.parallel.trim();
   const permissionComplete = !referencePermission || ['owned_original','licensed','permission'].includes(referencePermission.basis);
+  const needsChoice = !unresolved && (manual ? !manualComplete : !selected?.parallel?.trim());
+  const focusChoices = () => {
+    choiceControls.current?.scrollIntoView({ block: 'start' });
+    choiceControls.current?.querySelector('input:not(:disabled),button:not(:disabled)')?.focus({ preventScroll: true });
+  };
+  const confirmationDisabled = unavailable || !unresolved && (!permissionComplete || (manual ? !manualComplete : !selected?.parallel?.trim() || status?.state !== 'READY') || !front.url || !back.url) || Boolean(confirmed);
+  const reviewAction = reloadNeeded || !status && error
+    ? { approve: () => void check(), disabled: busy || disabled, approveLabel: 'Reload saved review', message: 'Your saved decision is retained. Reload the review to continue.' }
+    : pending
+    ? { approve: () => void check(), disabled: busy || disabled, approveLabel: pending.operation === 'REFRESH' ? 'Check reference request' : 'Check saved decision', message: 'Check the retained request before making another choice.' }
+    : { approve: needsChoice ? focusChoices : () => void save(), disabled: needsChoice ? unavailable : confirmationDisabled,
+      approveLabel: needsChoice ? 'Choose variant' : unresolved ? 'Save for identity review' : 'Confirm variant',
+      message: needsChoice ? 'Choose Base or enter the printing you can verify on your physical card.' : !permissionComplete ? 'Choose the photo rights basis or turn off the optional contribution.' : !unresolved && (!front.url || !back.url) ? 'Verifying both saved photographs…' : unresolved ? 'Keep this card for identity review.' : `Confirm ${selected?.label ?? manual?.parallel ?? 'the variant'} from your physical card.` };
   const savedName = identity?.playerName || identity?.cardName || identity?.name;
   const savedDetails = [['Year',identity?.year],['Manufacturer',identity?.manufacturer ?? (savedIdentification?.sourceHash === sourceHash ? savedIdentification.fields?.manufacturer : null)],['Set',identity?.productSet ?? identity?.setName],['Card number',identity?.cardNumber],['Saved variant',identity?.parallel]];
   const renderGroup = group => {
@@ -256,9 +273,9 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   };
   return <section className={styles.panel} aria-label="Final card identity review">
     <header className={styles.heading}><div><p className={styles.eyebrow}>{previewOnly ? 'CARD VARIANT REFERENCES' : 'FINAL REVIEW · CARD VARIANT'}</p><h2>{previewOnly ? 'Compare variant references' : 'Confirm the card variant'}</h2></div><span className={identitySaved ? styles.confirmed : styles.badge}>{identitySaved ? 'Human confirmed' : 'Variant still needs confirmation'}</span></header>
-    {previewOnly ? <p role="status">Reference preview · Your grading review stays saved. Confirm the variant during final review.</p> : <div className={styles.actions} aria-label="Variant confirmation"><div><strong>{confirmed ? 'Identity confirmed for this saved card' : selected ? selected.label : manual ? manual.parallel || 'Choose the physical printing' : unresolved ? 'Keep for variant review' : 'Confirm the variant or keep it unresolved'}</strong><p role="status">{busy ? 'Checking the saved decision…' : notice || 'A suggested match is never approved automatically.'}</p></div>
+    {previewOnly ? <p role="status">Reference preview · Your grading review stays saved. Confirm the variant during final review.</p> : renderReviewActions ? !gate && renderReviewActions({...reviewAction, busy, message: error || (busy ? 'Saving your variant decision…' : reviewAction.message)}) : <div className={styles.actions} aria-label="Variant confirmation"><div><strong>{confirmed ? 'Identity confirmed for this saved card' : selected ? selected.label : manual ? manual.parallel || 'Choose the physical printing' : unresolved ? 'Keep for variant review' : 'Confirm the variant or keep it unresolved'}</strong><p role="status">{busy ? 'Checking the saved decision…' : notice || 'A suggested match is never approved automatically.'}</p></div>
       {pending ? <button type="button" className={styles.primary} disabled={busy || disabled} onClick={() => void check()}>{pending.operation === 'REFRESH' ? 'Check retained reference request' : 'Check retained decision'}</button>
-        : <button type="button" className={styles.primary} disabled={unavailable || !unresolved && (!permissionComplete || (manual ? !manualComplete : !selected?.parallel?.trim() || status?.state !== 'READY') || !front.url || !back.url) || Boolean(confirmed)} onClick={() => void save()}>{unresolved ? 'Save for identity review' : confirmed ? 'Identity confirmed' : 'Confirm selected identity'}</button>}
+        : <button type="button" className={styles.primary} disabled={confirmationDisabled} onClick={() => void save()}>{unresolved ? 'Save for identity review' : confirmed ? 'Identity confirmed' : 'Confirm selected identity'}</button>}
     </div>}
     <section className={styles.savedIdentity} aria-label="Saved card identification"><p>{savedName ? 'Card identified' : 'Saved card details'}</p><h3>{savedName || 'Card name not recorded'}</h3><dl>{savedDetails.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value == null || value === '' ? 'Not recorded' : value}</dd></div>)}</dl></section>
       {!status && <p role="status">Checking saved photo matches…</p>}{stateText && <p role="status" className={styles.notice}>{stateText}</p>}
@@ -266,8 +283,6 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
       {suggested?.candidateId && candidates.some(candidate => candidate.candidateId === suggested.candidateId) && <p className={styles.suggestion}><strong>AI suggestion · not a confirmation</strong></p>}
       {status?.state === 'READY' && !candidates.length && <p>The reference library has no usable variant matches for this card. Your saved identification and grading work are retained. Verify the variant from the physical card if you can, or keep it unresolved.</p>}
 
-    <div className={styles.variantPicker}>{groups.filter(group => group.key === 'same').map(renderGroup)}</div>
-      {!previewOnly && status && <fieldset className={styles.manual} disabled={unavailable}><legend>Confirm from the physical card</legend><button type="button" aria-pressed={manual?.parallel === 'Base'} onClick={() => choose(null, null, {parallel:'Base'})}>Base</button><label>Language, printing and variant<input maxLength={120} value={manual?.parallel ?? ''} onChange={event => choose(null, null, {...manual,parallel:event.target.value})} placeholder="For example: English, reverse holo"/></label></fieldset>}
     <p className={styles.photoHelp}>Scroll or pinch on either photo to zoom. Drag to pan. <button type="button" onClick={() => setCamera(fitCamera())}>Fit both photos</button></p>
     <div className={styles.layout}><div className={styles.original}>
       <div className={styles.sideButtons} aria-label="Uploaded photograph side">{['FRONT','BACK'].map(value => <button key={value} type="button" aria-pressed={side === value} onClick={() => { setSide(value); setCamera(fitCamera()); }}>{value === 'FRONT' ? 'Front' : 'Back'}</button>)}</div>
@@ -275,18 +290,27 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
       {(!front.url || !back.url) && onReloadImages && <button type="button" onClick={onReloadImages} disabled={busy}>Reload photographs</button>}
 
     </div><div className={styles.choices}>
+      <div ref={choiceControls} className={styles.choiceControls} aria-label="Choose the card variant">
+        <div className={styles.variantPicker}>{groups.filter(group => group.key === 'same').map(renderGroup)}</div>
+        {!previewOnly && status && <fieldset className={styles.manual} disabled={unavailable}><legend>Confirm from the physical card</legend><button type="button" aria-pressed={manual?.parallel === 'Base'} onClick={() => choose(null, null, {parallel:'Base'})}>Base</button><label>Language, printing and variant<input maxLength={120} value={manual?.parallel ?? ''} onChange={event => choose(null, null, {...manual,parallel:event.target.value})} placeholder="For example: English, reverse holo"/></label></fieldset>}
+      </div>
       {preview && <article className={styles.referenceFocus} aria-label="Variant reference preview">
         <div className={styles.referenceHeading}><h3>{preview.label}</h3><span>{preview.identity.language || ''}</span></div>
-        <VariantPhotoPane camera={camera} setCamera={setCamera} label="Reference photograph zoom"><button type="button" className={styles.focusPhoto} onClick={event => compare(preview, event)} disabled={!previewPhoto || !photograph.url} aria-label={`Enlarge ${preview.label} reference`}>
-          {previewPhoto ? <ReferencePhoto image={previewPhoto} label={`${preview.label} reference`} enlarged/> : <span className={styles.missing}>No matching reference photo yet</span>}
+        {previewPhoto ? <><VariantPhotoPane camera={camera} setCamera={setCamera} label="Reference photograph zoom"><button type="button" className={styles.focusPhoto} onClick={event => compare(preview, event)} disabled={!photograph.url} aria-label={`Enlarge ${preview.label} reference`}>
+          <ReferencePhoto image={previewPhoto} label={`${preview.label} reference`} enlarged/>
         </button>
-        </VariantPhotoPane><p className={styles.photoHelp}>{previewPhoto?.labelReading ? referenceLabel(previewPhoto) : previewPhoto?.relationship === 'listing_photo' ? 'eBay listing photo · compare the finish and markings' : referenceLabel(previewPhoto)}</p>
+        </VariantPhotoPane><p className={styles.photoHelp}>{previewPhoto.labelReading ? referenceLabel(previewPhoto) : previewPhoto.relationship === 'listing_photo' ? 'eBay listing photo · compare the finish and markings' : referenceLabel(previewPhoto)}</p></> : <p className={styles.photoHelp}>{unassignedPhotos.length ? 'No photo is assigned to this printing yet. Compare the saved reference photos below.' : 'No matching reference photo yet.'}</p>}
         {previewPhoto?.labelReading && <p className={styles.labelReading}><strong>Slab label</strong> {previewPhoto.labelReading.text}</p>}
         <details className={styles.referenceDetails}><summary>Source and identifying details</summary>
           {variantCardNumberComparison(identity?.cardNumber, preview.identity.cardNumber) === 'unknown' && <p>Full collector number unconfirmed · check the number and set total on your card</p>}{referenceSource(previewPhoto, preview)}
           {preview.diagnostics.length > 0 && <ul className={styles.cues}>{preview.diagnostics.map(cue => <li key={cue.id}>{cue.description}</li>)}</ul>}
         </details>
       </article>}
+    {unassignedPhotos.length > 0 && <section className={styles.unassigned} aria-label="Unassigned saved reference photos"><h3>Other saved reference photos · {unassignedPhotos.length}</h3><p>These photographs have not been matched to a catalog printing. Inspect the saved labels and compare their details with your physical card.</p><div className={styles.referenceGallery}>{unassignedPhotos.map(image => {
+      const candidate = { authority: 'provider_candidate', label: image.labelReading.company ? `${image.labelReading.company} · unassigned reference` : 'Unassigned reference photo', images: [image], diagnostics: [] };
+      const reference = variantReference(candidate, cardId, { artwork: false });
+      return <article key={image.sha256}><button type="button" className={styles.galleryPhoto} disabled={!reference || !photograph.url} onClick={event => compare(candidate, event)} aria-label={`Compare ${candidate.label}`}><ReferencePhoto image={reference} label={candidate.label}/></button><p className={styles.labelReading}><strong>{referenceLabel(image)}</strong>{image.labelReading.text || 'No slab label was read from this photograph.'}</p><p>{image.labelReading.reason}</p>{referenceSource(image, candidate)}</article>;
+    })}</div></section>}
       {!previewOnly && status && <div className={styles.unknown}><p>{candidates.length ? 'None of these is a clear variant match?' : 'Keep the variant unresolved if you cannot verify it.'}</p><div><button type="button" aria-pressed={unresolved === 'NOT_SHOWN'} disabled={unavailable} onClick={() => choose(null, 'NOT_SHOWN')}>My card is not shown</button><button type="button" aria-pressed={unresolved === 'CANNOT_TELL'} disabled={unavailable} onClick={() => choose(null, 'CANNOT_TELL')}>I cannot tell</button></div>{unresolved && <p>Your card identification and grading work stay saved. Final approval waits for variant confirmation. Do not guess from artwork or reflections.</p>}</div>}
 
     </div></div>

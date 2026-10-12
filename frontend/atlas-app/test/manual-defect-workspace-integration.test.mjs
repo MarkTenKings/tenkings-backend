@@ -51,7 +51,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   const exports = {};
   vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: storage,
     setInterval: (callback, ms) => { timers.set(ms, callback); return ms; }, clearInterval: id => timers.delete(id),
-    window: { addEventListener() {}, removeEventListener() {} }, require(name) {
+    window: { addEventListener() {}, removeEventListener() {}, location:{reload(){f.pageReloads=(f.pageReloads??0)+1;}} }, require(name) {
       if (name === 'react') return react;
       if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
@@ -98,7 +98,11 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
         f.calls.push({ path, options: options && structuredClone(options) }); return f.respond(path, options); } };
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
-  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', initialReviewStage: !rapid&&!initialGeometrySide?'defects':null, initialGeometrySide, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
+  f.scroll = { top: 900, resets: 0, scrollTo({top}) { this.top = top; this.resets++; } };
+  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: f.cardId ?? 'card', csrf: 'csrf', initialReviewStage: !rapid&&!initialGeometrySide?'defects':null, initialGeometrySide, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;} });
+    const stage = all(tree,node=>node.props?.ref && /mc-rapid-stage|mc-complete/.test(node.props.className ?? ''))[0];
+    if(stage)stage.props.ref.current={closest:selector=>selector==='[data-review-scroll]'?f.scroll:null};
+    effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
   f.tree = () => tree;
   f.tick = async (ms = 5000) => { const tick = timers.get(ms); if (!tick) return; tick(); await flush(); f.render(); };
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -422,8 +426,33 @@ test('publication pending remains a saved approval with explicit retry and no fa
   const f=harness();await flush();f.render();
   f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:{...finishingPublication,state:'PENDING',retryable:true}});
   await f.openGrade();f.render();await flush();f.render();
-  assert.match(f.text(),/Grade approved and saved. Report publication still needs attention/);assert.ok(f.button('Retry publication'));
+  assert.match(f.text(),/Grade approved/);assert.match(f.text(),/report and label are not ready yet/);assert.doesNotMatch(f.text(),/Completed|Sign in again|Refresh access/);assert.ok(f.button('Finish report and label'));
   assert.equal(f.button('Next card →'),undefined);assert.equal(f.finishing(),undefined);assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('publication errors offer sign-in only for actual authentication loss and reload only for changed CSRF',async()=>{
+ for(const failure of [{status:500,code:'MANUAL_PUBLICATION_REPORT_INVALID'},{status:401,code:'SIGN_IN_REQUIRED'},{status:403,code:'CSRF_REQUIRED'}]){
+  const f=harness();await flush();f.render();
+  f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:{version:'atlas-manual-report-snapshot-v2',finalGradePolicy:'atlas-final-half-point-v1',finalGrade:8}});
+  f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:{...finishingPublication,state:'PENDING',retryable:true}});
+  await f.openGrade();f.render();f.respond=async()=>{throw failure;};
+  await f.button('Finish report and label').props.onClick();await flush();f.render();
+  assert.match(f.text(),/Your grade 8 is approved and saved/);assert.equal(f.actions.length,0,'publication retry never reapproves');
+  const writes=f.calls.filter(call=>call.options?.method==='POST');assert.equal(writes.length,1);assert.equal(writes[0].options.body.actionId,finishingPublication.actionId);
+  assert.equal(all(f.tree(),node=>node.type==='a'&&text(node)==='Sign in again ↗').length,failure.status===401?1:0);
+  assert.equal(Boolean(f.button('Reload review')),failure.code==='CSRF_REQUIRED');assert.equal(f.button('Refresh access'),undefined);
+  if(failure.code==='CSRF_REQUIRED'){f.button('Reload review').props.onClick();assert.equal(f.pageReloads,1);}
+  f.dispose();
+ }
+});
+
+test('card and stage changes reset the shared scrolled review container without recording a decision',async()=>{
+ const f=harness({rapid:true,finalReview:true});await flush();f.render();assert.equal(f.scroll.top,0);
+ f.scroll.top=700;await f.openGrade();assert.equal(f.scroll.top,0);
+ f.scroll.top=800;const count=f.scroll.resets;f.render();assert.equal(f.scroll.top,800);assert.equal(f.scroll.resets,count,'ordinary render preserves inspection scroll');
+ f.button('01Front').props.onClick();await flush();f.render();assert.equal(f.scroll.top,0);
+ f.scroll.top=900;f.cardId='next-card';f.render();await flush();f.render();assert.equal(f.scroll.top,0);
+ assert.equal(f.actions.length,0);f.dispose();
 });
 
 
@@ -499,14 +528,14 @@ test('final identity gate blocks approval until current card verification, and p
   f.publish({...f.current,card:{...f.current.card,draft:{source:{sourceHash:'photos'},identityRevision:1}},variantVerification:{enabled:true}});
   await f.openGrade(); f.render();
   f.report().onReadyChange(true); f.render();
-  assert.equal(f.variant().revision,1); assert.equal(f.button('Approve final grade and queue label').props.disabled,true);
-  await f.button('Approve final grade and queue label').props.onClick(); await flush(); assert.equal(f.actions.length,0); assert.equal(f.popups.length,0);
+  assert.equal(f.variant().revision,1); assert.equal(f.button('Approve final grade and queue label'),undefined);
+  assert.equal(typeof f.variant().renderReviewActions,'function');assert.equal(f.actions.length,0); assert.equal(f.popups.length,0);
   f.variant().onGateChange(true); f.render(); assert.equal(f.button('Approve final grade and queue label').props.disabled,false);
   f.variant().onActivityChange(true); f.render(); assert.equal(f.button('Approve final grade and queue label').props.disabled,true);
   f.openFindings(); await flush(); f.render(); assert.ok(f.report(),'pending exact decision prevents leaving final review');
   f.variant().onActivityChange(false); f.render();
   f.publish({...f.current,card:{...f.current.card,revision:2,draft:{source:{sourceHash:'photos'},identityRevision:2}}});
-  assert.equal(f.button('Approve final grade and queue label').props.disabled,true,'old identity gate cannot approve revised identity');
+  assert.equal(f.button('Approve final grade and queue label'),undefined,'old identity gate cannot approve revised identity');
   f.dispose();
 });
 
@@ -514,10 +543,10 @@ test('Rapid Grade keeps the exact current preview grade above empty variant matc
  const f=harness({rapid:true,finalReview:true,initialView:{variantVerification:{enabled:true,state:'READY',result:{catalog:{candidates:[]}},approvalReady:false}}});await flush();f.render();
  f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:f.current.card.revision,sourceHash:f.current.card.contentHash,canCertify:true,report:{},review:{report:{version:'atlas-manual-draft-report-v2',finalGradePolicy:'atlas-final-half-point-v1',finalGrade:9.5}}});
  f.button('04Grade').props.onClick();await flush();f.render();assert.ok(f.report());
- assert.match(f.text(),/Grade awaiting final approval: 9.5 \/ 10/);assert.match(f.text(),/Confirm the card variant before final approval/);
+ assert.match(f.text(),/Grade awaiting final approval: 9.5 \/ 10/);assert.equal(typeof f.variant().renderReviewActions,'function');
  const sequence=all(f.tree(),node=>node.type==='VariantIdentityReview'||node.type==='FinalReportReview'||node.type==='p'&&text(node).includes('Grade awaiting final approval:'));
  assert.deepEqual(sequence.map(node=>node.type),['p','VariantIdentityReview','FinalReportReview']);
- f.report().onReadyChange(true);f.render();assert.equal(f.button('Approve final grade and queue label').props.disabled,true);assert.equal(f.actions.length,0);
+ f.report().onReadyChange(true);f.render();assert.equal(f.button('Approve final grade and queue label'),undefined);assert.equal(f.actions.length,0);
  f.publish({...f.current,card:{...f.current.card,revision:2,contentHash:'changed'}});assert.doesNotMatch(f.text(),/Grade awaiting final approval: 9.5/);f.dispose();
 });
 

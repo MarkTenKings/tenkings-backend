@@ -79,14 +79,17 @@ test('ambiguous season product aliases fail closed while duplicate same-product 
  const duplicate={...data,sources:[lameloSource,{...lameloSource,sha256:'b'.repeat(64)}]};
  assert.equal((await createManufacturerChecklistVariantProvider({catalog:duplicate}).prepare(lameloIdentity)).candidates.length,1);
 });
-test('frozen official bundle resolves LaMelo and keeps the Jaxson printed-number gap explicit',async()=>{
+test('frozen official bundle exposes Jaxson insert variants while retaining the different printed number',async()=>{
  const provider=createManufacturerChecklistVariantProvider();
  const r=await provider.prepare(lameloIdentity);
  assert.equal(r.candidates.length,1);assert.equal(r.candidates[0].label,'BALL OF DUTY');
  assert.equal(r.candidates[0].source.sha256,lameloSource.sha256);
  assert.equal(r.candidates[0].identity.year,'2025');assert.match(r.candidates[0].diagnostics[0].description,/2025-26/);
  const jaxson={category:'SPORTS',name:'Jaxson Dart',year:'2025',setName:'Donruss Optic Football — Donruss Threads',cardNumber:'DTBH-JDT',manufacturer:'Panini',language:null};
- assert.equal((await provider.prepare(jaxson)).candidates.length,0);
+ const printed=await provider.prepare(jaxson);
+ assert.equal(printed.candidates.length,9);assert.ok(printed.candidates.some(c=>c.label==='Donruss Threads Blue Hyper'));
+ assert.ok(printed.candidates.every(c=>c.identity.cardNumber==='DTBH-JDT'&&c.applicability==='unknown'&&c.warnings.includes('SCOPE_UNCONFIRMED')));
+ assert.ok(printed.candidates.every(c=>c.diagnostics.some(d=>d.id==='manufacturer-checklist-number'&&d.description.includes('checklist number: 3')&&d.description.includes('DTBH-JDT'))));
  const official=await provider.prepare({...jaxson,cardNumber:'3'});
  assert.equal(official.candidates.length,9);assert.ok(official.candidates.some(c=>c.label==='Donruss Threads Blue Hyper'));
  assert.ok(official.candidates.every(c=>c.label.startsWith('Donruss Threads ')&&c.source.sha256==='5ea74b6c404251b503f64d635c58d8c714c87d21eef716f5455fb02e0e65d567'));
@@ -240,4 +243,25 @@ test('v2 stops oversized gzip output before parsing despite a false small decode
  const f=shardsFor(catalog), bytes=gzipSync(Buffer.alloc(8*1024*1024+1,32)), sha256=hashBytes(bytes);
  Object.assign(f.catalog.sources[0].shard,{sha256,path:`manufacturer-checklists/${sha256}.json.gz`,compressedBytes:bytes.length});
  await assert.rejects(createManufacturerChecklistVariantProvider({...f,loadShard:async()=>bytes}).prepare(identity),{code:'ERR_BUFFER_TOO_LARGE'});
+});
+
+
+test('numeric checklist positions are advisory only for a unique explicit athlete and insert in both catalog readers',async()=>{
+ const entry={...source,year:'2025',setName:'2025 Donruss Optic Football'};
+ const data={schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[entry],rows:[
+  [0,'Donruss Threads Blue Hyper','3','Jaxson Dart','row:1'],
+  [0,'Donruss Threads Gold','3','Jaxson Dart','row:2'],
+  [0,'Rated Rookie','3','Jaxson Dart','row:3'],
+  [0,'Donruss Threads Blue Hyper','4','Other Player','row:4']]};
+ const input={...identity,name:'Jaxson Dart',year:'2025',setName:'Donruss Optic — Donruss Threads',cardNumber:'DTBH-JDT'};
+ for(const provider of [createManufacturerChecklistVariantProvider({catalog:data}),createManufacturerChecklistVariantProvider(shardsFor(data))]){
+  const result=await provider.prepare(input);
+  assert.deepEqual(result.candidates.map(c=>c.label),['Donruss Threads Blue Hyper','Donruss Threads Gold']);
+  assert.ok(result.candidates.every(c=>c.identity.cardNumber===input.cardNumber&&c.canonical===null&&c.warnings.includes('SCOPE_UNCONFIRMED')));
+  for(const patch of [{cardNumber:'4'},{setName:'Donruss Optic'},{setName:'Donruss Optic — Other Insert'},{name:'Unknown Player'},{year:'2024'},{manufacturer:'Topps'}])
+   assert.equal((await provider.prepare({...input,...patch})).candidates.length,0,JSON.stringify(patch));
+  assert.ok((await provider.prepare({...input,cardNumber:'3'})).candidates.every(c=>!c.warnings.includes('SCOPE_UNCONFIRMED')));
+ }
+ const ambiguous={...data,rows:[...data.rows,[0,'Donruss Threads Black','5','Jaxson Dart','row:5']]};
+ assert.equal((await createManufacturerChecklistVariantProvider({catalog:ambiguous}).prepare(input)).candidates.length,0);
 });

@@ -338,16 +338,19 @@ function finalFindingsAvailable(view){
 
 export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusyChange,onQueued,initialGeometrySide=null,initialInspection=null,initialReviewStage=null}){
   const imageScope=useRef('all');
+  const [errorRecovery,setErrorRecovery]=useState(null);
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
   const rapidInFlight=useRef(false),[rapidSaving,setRapidSaving]=useState(false);
   const rapidGeometry=useRef({}),rapidCheckpoints=useRef({}),[rapidSide,setRapidSide]=useState(initialGeometrySide??'FRONT');
   const [rapidSelection,setRapidSelection]=useState(initialInspection?{key:cardId,id:initialInspection.findingId,side:initialInspection.side}:null),[completionFeedback,setCompletionFeedback]=useState(null);
   const [findingsSide,setFindingsSide]=useState(initialInspection?.side??'FRONT');
+  const reviewStage=useRef(null);
   const [showFinishing,setShowFinishing]=useState(false),[showReport,setShowReport]=useState(false),[showExtras,setShowExtras]=useState(false),[showComps,setShowComps]=useState(true);
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
   const [reportImagesReady,setReportImagesReady]=useState(false),[loadingReport,setLoadingReport]=useState(false);
   const [publishing,setPublishing]=useState(false),[copyStatus,setCopyStatus]=useState('');
   const [variantGate,setVariantGate]=useState(null),[variantActivity,setVariantActivity]=useState(false),[showVariantReview,setShowVariantReview]=useState(false),[variantPreviewOnly,setVariantPreviewOnly]=useState(false);
+  useEffect(()=>{reviewStage.current?.closest('[data-review-scroll]')?.scrollTo({top:0,left:0});},[cardId,screen,rapidSide,findingsSide,showVariantReview,Boolean(view)]);
   const variantScope=view?`${view.card.draft?.source?.sourceHash}:${view.card.draft?.identityRevision}:${view.card.revision}`:'';
   const variantRequired=view?.variantVerification?.enabled===true;
   const variantActivityChanged=useCallback(value=>{interaction.current.variant=value;setVariantActivity(value);},[]);
@@ -359,7 +362,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
   const finishingRead=useRef(0),approvalInFlight=useRef(false);
   interaction.current={...interaction.current,identity:Boolean(identity),approving,saving:status==='Saving…'};
   const changeEditing=useCallback(value=>{if(value&&!interaction.current.editing)interaction.current.editingRevision=(interaction.current.editingRevision??0)+1;interaction.current.editing=value;setEditing(value);},[]);
-  const attempt=async work=>{const owner=client.current;setError('');try{return await work();}catch(error){if(client.current===owner)setError(manualMessage(error));}};
+  const attempt=async work=>{const owner=client.current;setError('');setErrorRecovery(null);try{return await work();}catch(error){if(client.current===owner){setError(manualMessage(error));setErrorRecovery(error?.status===401||error?.code==='SIGN_IN_REQUIRED'?'signin':error?.code==='CSRF_REQUIRED'?'reload':null);}}};
   useEffect(()=>{
     let stopped=false;
     imageScope.current='all';
@@ -640,14 +643,14 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
     const labelReady=finishing?.binding.approvalActionId===publication?.actionId&&finishing?.binding.publicHash===publication?.publicHash;
     const name=report.report?.identity?.playerName||report.report?.identity?.cardName||view.identity?.playerName||view.identity?.cardName||'Card';
     const grade=reportAwardedGrade(report.report);
-    return <section className="mc-complete" aria-label="Review complete">
+    return <section ref={reviewStage} className="mc-complete" aria-label={published?'Review complete':'Grade approved'}>
       <div className="mc-complete-hero">
         <CompletedReviewCard descriptor={view.images?.FRONT?.inspection} expectedHash={report.review?.report?.inspection?.front?.imageSha256} name={name} grade={grade} reportNumber={publication?.reportNumber} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}/>
-        <div className="mc-complete-result"><div className="mc-complete-check" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28"/><path d="m18 32 10 10 19-21"/></svg></div><p className="mc-complete-eyebrow" role="status">Completed</p><h1>{name}</h1><div className="mc-complete-grade"><span>APPROVED GRADE</span><strong>{Number.isFinite(grade)?grade:'—'}</strong><span>ATLAS / 10</span></div><p>{published?'✓ Saved to label queue':'Grade approved and saved. Report publication still needs attention.'}</p>
+        <div className="mc-complete-result"><div className="mc-complete-check" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28"/><path d="m18 32 10 10 19-21"/></svg></div><p className="mc-complete-eyebrow" role="status">{published?'Completed':'Grade approved'}</p><h1>{name}</h1><div className="mc-complete-grade"><span>APPROVED GRADE</span><strong>{Number.isFinite(grade)?grade:'—'}</strong><span>ATLAS / 10</span></div><p>{published?'✓ Saved to label queue':`Your grade${Number.isFinite(grade)?` ${grade}`:''} is approved and saved. The report and label are not ready yet.`}</p>
         {completionFeedback?.voiceIndex!==null&&completionFeedback?.voiceIndex!==undefined&&<p className="mc-atlas-line"><small>ATLAS</small>“{ATLAS_LINES[completionFeedback.voiceIndex].text}”</p>}</div>
       </div>
-      {(rapidControls({message:published?'Card complete · label queued':'Approval saved · publication pending',back:()=>setShowReport(value=>!value),approveLabel:published?'Next card →':'Retry publication',disabled:locked||publishing||!published&&!publication?.retryable,approve:published?()=>onQueued?onQueued({cardId,actionId:publication.actionId,publication}):router.push('/batch?tab=REVIEW'):()=>attempt(publishReport)}))}
-      {error&&<div className="mc-notice error" role="alert"><strong>Your approval is saved.</strong><p>{error}</p><a href={`${STAFF_BASE_PATH}?reauthenticate=1`} target="_blank" rel="noreferrer">Sign in again ↗</a><button disabled={locked} onClick={()=>attempt(()=>client.current.recover())}>Refresh access</button></div>}
+      {(rapidControls({message:published?'Card complete · label queued':'Grade saved · report and label not ready',back:()=>setShowReport(value=>!value),approveLabel:published?'Next card →':'Finish report and label',disabled:locked||publishing||!published&&!publication?.retryable,approve:published?()=>onQueued?onQueued({cardId,actionId:publication.actionId,publication}):router.push('/batch?tab=REVIEW'):()=>attempt(publishReport)}))}
+      {error&&<div className="mc-notice error" role="alert"><strong>Your approval is saved.</strong><p>{error}</p>{errorRecovery==='signin'&&<a href={`${STAFF_BASE_PATH}?reauthenticate=1`} target="_blank" rel="noreferrer">Sign in again ↗</a>}{errorRecovery==='reload'&&<button disabled={locked} onClick={()=>window.location.reload()}>Reload review</button>}</div>}
       <CompletionNextSteps published={published} reportHref={publication?.href} labelState={loadingFinishing?'LOADING':finishingError?'FAILED':labelReady?'READY':'IDLE'} labelOpen={showFinishing} onToggleLabel={()=>setShowFinishing(value=>!value)} marketAvailable={view.marketEnabled===true} marketAutomatic={view.marketAutomaticEnabled===true} marketOpen={showComps} onToggleMarket={()=>setShowComps(value=>!value)} disabled={locked}/>
       {showComps&&published&&<ReportMarketPicker key={`market:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} automaticEnabled={view.marketAutomaticEnabled===true} available={view.marketEnabled===true} disabled={locked||staff.role!=='REVIEWER'} pickerOptions={{card:report.report?.identity,cardImage:<CompletedReviewCard compact descriptor={view.images?.FRONT?.inspection} expectedHash={report.review?.report?.inspection?.front?.imageSha256} name={name}/>}}/>}
       <div className="mc-complete-tools"><button aria-expanded={showReport} onClick={()=>setShowReport(value=>!value)}>{showReport?'Hide evidence':'Review saved evidence'}</button><button aria-expanded={showExtras} onClick={()=>setShowExtras(value=>!value)}>More options {showExtras?'−':'+'}</button></div>
@@ -662,11 +665,11 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
   }
   const findingsAvailable=finalFindingsAvailable(view);
   const previewGrade=report?.sourceHash===view.card.contentHash&&report?.sourceRevision===view.card.revision&&!unsaved&&!calculating?reportAwardedGrade(report.review?.report):null;
-  const variantPanel=<VariantIdentityReview previewOnly={variantPreviewOnly} key={`variant:${cardId}:${variantScope}`} cardId={cardId} staffId={staff.id} csrf={csrf} enabled={variantRequired} sourceHash={view.card.draft?.source?.sourceHash} identityRevision={view.card.draft?.identityRevision} revision={view.card.revision} identity={view.identity} savedIdentification={view.savedIdentification} geometry={view.geometry} images={view.images} disabled={readOnly||locked||calculating} onGateChange={ready=>setVariantGate({scope:variantScope,ready})} onActivityChange={variantActivityChanged} onSaved={variantSaved} onReloadImages={()=>attempt(refreshImages)}/>;
+  const variantPanel=<VariantIdentityReview previewOnly={variantPreviewOnly} key={`variant:${cardId}:${variantScope}`} cardId={cardId} staffId={staff.id} csrf={csrf} enabled={variantRequired} sourceHash={view.card.draft?.source?.sourceHash} identityRevision={view.card.draft?.identityRevision} revision={view.card.revision} identity={view.identity} savedIdentification={view.savedIdentification} geometry={view.geometry} images={view.images} disabled={readOnly||locked||calculating} onGateChange={ready=>setVariantGate({scope:variantScope,ready})} onActivityChange={variantActivityChanged} onSaved={variantSaved} onReloadImages={()=>attempt(refreshImages)} renderReviewActions={options=>rapidControls({...options,backDisabled:locked||calculating||variantActivity,back:showVariantReview?()=>{if(!navigationBlocked()){setShowVariantReview(false);setVariantPreviewOnly(false);}}:rapidBack})}/>;
   const currentGrade=!unsaved&&!calculating&&view.provisional?.state==='READY'&&Number.isFinite(view.provisional.report.proposedGrade)?view.provisional.report.proposedGrade:undefined;
   const rapidStatus=rapidReviewStatus(view);
   const rapidStage=screen.startsWith('geometry')?'geometry':screen==='report'?'report':'findings';
-  return <div className={(`mc-rapid-stage mc-rapid-stage-${screen}`)} onKeyDown={rapidShortcut}>
+  return <div ref={reviewStage} className={(`mc-rapid-stage mc-rapid-stage-${screen}`)} onKeyDown={rapidShortcut}>
     {(<nav className="mc-rapid-progress" aria-label="Rapid review progress">{[{id:'FRONT',label:'Front'},{id:'BACK',label:'Back'},{id:'findings',label:'Findings'},{id:'report',label:'Grade'}].map((step,index)=><button type="button" key={step.id} aria-current={(rapidStage==='geometry'?rapidSide===step.id:rapidStage===step.id)?'step':undefined} aria-keyshortcuts={`Alt+${index+1}`} disabled={locked||calculating||variantActivity||(step.id==='findings'&&!findingsAvailable)} onClick={()=>navigateRapid(step.id)} title={`Open ${step.label.toLowerCase()} · Alt ${index+1}`}><span>{String(index+1).padStart(2,'0')}</span>{step.label}</button>)}<small role="status">{Number.isFinite(currentGrade)&&<strong>Grade {currentGrade} / 10 · </strong>}{unsaved?'Unsaved changes':calculating||rapidSaving?'Saving…':status||'Saved'}</small></nav>)}
     {error&&!saveRecoveryNeeded&&<div className="mc-notice error" role="alert">{error}</div>}
     {saveRecoveryNeeded&&<section className="mc-notice" role="status"><p>The last edit has not been confirmed. Check that exact save before continuing.</p><button onClick={()=>attempt(()=>client.current.recover())}>Check last save</button></section>}
@@ -693,7 +696,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
       approved={view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash}
       rejectedSuggestions={report.sourceHash===view.card.contentHash?view.astra?.proposals?.filter(proposal=>proposal.reviewStatus==='REJECTED').length??0:0}
       current={report.sourceHash===view.card.contentHash&&(report.sourceRevision===view.card.revision||view.approval?.reportHash===report.reportHash)}>
-<>{(rapidControls({message:!variantReady?'Confirm the card variant before final approval':report.canCertify!==true?'Current reviewer certification required':!reportImagesReady?'Verifying both saved photographs…':'Final grade · Approve saves the report and queues its label',adjust:'Defects',approveAria:'Approve final grade and queue label',disabled:approving||savePending||loadingReport||variantActivity||!variantReady||report.canCertify!==true||!reportImagesReady,busy:approving,approve:()=>attempt(approveAndPrepareLabel)}))}</>
+<>{variantReady&&rapidControls({message:report.canCertify!==true?'Current reviewer certification required':!reportImagesReady?'Verifying both saved photographs…':'Final grade · Approve saves the report and queues its label',adjust:'Defects',approveAria:'Approve final grade and queue label',disabled:approving||savePending||loadingReport||variantActivity||report.canCertify!==true||!reportImagesReady,busy:approving,approve:()=>attempt(approveAndPrepareLabel)})}</>
     </FinalReportReview></>}
 
   </div>;

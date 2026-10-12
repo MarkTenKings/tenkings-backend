@@ -5,13 +5,13 @@ import {createVariantJobStore,variantJobKey} from '../src/variant-job-store.mjs'
 import {prepareVariantListingRequest,prepareRetainedVariantListingRequest} from '../src/variant-listing-provider.mjs';
 import {variantIdentity} from './variant-fixture.mjs';
 
-function fixture({historical=null,generation=null}={}){
- const input={cardId:'04c3c3e1-4a66-4912-93cc-26dc534f6cb2',identity:variantIdentity,sourceHash:digest('source'),identityHash:digest('identity'),identityRevision:1,...(generation?{generation}:{})};
+function fixture({historical=null,generation=null,identity=variantIdentity,printing={name:'Base',language:null},historicalPhotoPool=false}={}){
+ const input={cardId:'04c3c3e1-4a66-4912-93cc-26dc534f6cb2',identity,sourceHash:digest('source'),identityHash:digest('identity'),identityRevision:1,...(generation?{generation}:{})};
  const text=canonical(input),job={key:variantJobKey(input),card_id:input.cardId,source_hash:input.sourceHash,identity_hash:input.identityHash,identity_revision:1,
   generation:generation??'00000000-0000-0000-0000-000000000000',input:text,input_hash:digest(text),claim_id:'claim',state:'RUNNING'};
  const rows=new Map(),writes=[];
  const put=(key,value)=>{const snapshot=canonical(value);rows.set(key,{snapshot,snapshot_hash:digest(snapshot)});};
- const printing={name:'Base',language:null},old=prepareRetainedVariantListingRequest(variantIdentity,printing);
+ const old=prepareRetainedVariantListingRequest(identity,printing,{photoPool:historicalPhotoPool,generation:historicalPhotoPool?generation:null});
  const reservation={schemaVersion:'variant-listing-dispatch/v1',request:old,dispatchId:'old-dispatch',jobKey:'deleted-original-card-job',claimId:'old-claim',reservedAt:'2026-10-10T00:00:00.000Z'};
  if(historical){put(`variant-listing-dispatch:v1:${old.requestKey}`,reservation);
   if(historical==='saved')put(`variant-listing-response:v1:${old.requestKey}`,{schemaVersion:'variant-listing-source-journal/v1',sourceSchemaVersion:'variant-listing-response/v1',dispatchId:reservation.dispatchId,
@@ -20,7 +20,7 @@ function fixture({historical=null,generation=null}={}){
  const tx={async $executeRawUnsafe(sql,...args){writes.push({sql,args});if(sql.startsWith('INSERT INTO atlas_manual_connected.variant_catalog_cache'))rows.set(args[0],{snapshot:args[1],snapshot_hash:args[2]});return 1;},
   async $queryRawUnsafe(sql,key){if(sql.includes('variant_catalog_cache'))return rows.has(key)?[rows.get(key)]:[];assert.match(sql,/SELECT j\.\* FROM atlas_manual_connected.variant_job/);assert.equal(key,job.key);return [job];}};
  const store=createVariantJobStore({boundary:{machineTransaction:async(_,work)=>work({tx})}});
- const request=prepareVariantListingRequest(variantIdentity,printing,{graded:true,...(generation?{generation}:{})});
+ const request=prepareVariantListingRequest(identity,printing,{graded:true,...(generation?{generation}:{})});
  return {store,job:{...job,input},request,old,rows,writes};
 }
 
@@ -50,4 +50,21 @@ test('new acquisition and deliberate refresh reserve only the unrestricted 240-r
   const again=await f.store.reserveListingSource(f.job,f.request);assert.equal(again.state,'UNKNOWN','A reservation is never sent twice');
   await assert.rejects(f.store.reserveListingSource(f.job,f.old),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
  }
+});
+test('insert query compaction reuses saved or uncertain paid journals without purchasing under the corrected key',async()=>{
+ const identity={category:'SPORTS',name:'Jaxson Dart',year:'2025',setName:'Donruss Optic Football — Donruss Threads',cardNumber:'DTBH-JDT',manufacturer:'Panini',language:null};
+ const printing={name:'Donruss Threads Blue Hyper',language:null};
+ for(const historicalPhotoPool of [false,true])for(const historical of ['saved','unknown'])
+  for(const generation of historicalPhotoPool?[null,'7b109de3-c117-49d8-81aa-1221b735b8cb']:[null]){
+   const f=fixture({identity,printing,historicalPhotoPool,historical,generation}),before=[...f.rows];
+   assert.notEqual(f.request.requestKey,f.old.requestKey);
+   const result=await f.store.reserveListingSource(f.job,f.request);
+   assert.equal(result.state,historical==='saved'?'REUSED':'UNKNOWN');
+   if(historical==='saved')assert.deepEqual(result.request,f.old);
+   assert.deepEqual([...f.rows],before);assert(!f.writes.some(w=>w.sql.startsWith('INSERT')));
+   await assert.rejects(f.store.reserveListingSource(f.job,f.old),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+  }
+ const fresh=fixture({identity,printing});
+ assert.equal((await fresh.store.reserveListingSource(fresh.job,fresh.request)).state,'RESERVED');
+ assert.equal(fresh.request.query,'2025 panini donruss optic football jaxson dart donruss threads blue hyper #dtbh-jdt graded');
 });

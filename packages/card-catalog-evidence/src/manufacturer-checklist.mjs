@@ -171,25 +171,34 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
         return checklistYear(source.year) === checklistYear(year) && (!basketballOnly || source.sport === 'basketball')
           && matchesProduct(source);
       }
-      function matchesRow(row, readCell) {
+      function matchesSubset(row, readCell) {
         const label = norm(readCell(row,1));
-        // A composite suffix constrains the literal checklist subset.
-        return compareVariantCardNumber(identity.cardNumber, readCell(row,2)) === 'match'
-          && (!scope.subset || label === scope.subset || label.startsWith(`${scope.subset} `));
+        return !scope.subset || label === scope.subset || label.startsWith(`${scope.subset} `);
+      }
+      function reviewableRows(rows, readCell) {
+        const numbered = rows.filter(row => compareVariantCardNumber(identity.cardNumber, readCell(row,2)) === 'match');
+        if (numbered.length) return numbered;
+        // Some manufacturer inserts list a numeric checklist position while
+        // the physical card prints a letter code. Show the explicit variants
+        // for one athlete/insert/number; never turn those numbers into aliases
+        // or replace the photographed identity. Human confirmation is required.
+        const numbers = new Set(rows.map(row => readCell(row,2)));
+        return scope.subset && /^[a-z][a-z0-9]*-[a-z0-9]+$/i.test(identity.cardNumber)
+          && numbers.size === 1 && /^\d+$/.test([...numbers][0]) ? rows : [];
       }
       async function matchingRows(year, basketballOnly = false) {
         const key = `${checklistYear(year)}|${athlete}`;
-        if (archive.kind === 'rows') return (index.get(key) ?? []).filter(row => matchesSource(sources[row[0]], year, basketballOnly) && matchesRow(row, cell));
+        if (archive.kind === 'rows') return reviewableRows((index.get(key) ?? []).filter(row => matchesSource(sources[row[0]], year, basketballOnly) && matchesSubset(row, cell)), cell);
         const matching = [];
         for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
           const source = sources[sourceIndex];
           if (!matchesSource(source, year, basketballOnly)) continue;
           signal?.throwIfAborted();
           const shard = await rowsFor(source); signal?.throwIfAborted();
-          for (const row of shard.index.get(key) ?? []) if (matchesRow(row, shard.cell))
+          for (const row of shard.index.get(key) ?? []) if (matchesSubset(row, shard.cell))
             matching.push([sourceIndex, ...row.slice(1).map((_, i) => shard.cell(row, i + 1))]);
         }
-        return matching;
+        return reviewableRows(matching, cell);
       }
       let lookupYear = identity.year;
       const abbreviatedSeason = shortSeason(identity.year);
@@ -218,15 +227,18 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       for (const row of rows) {
         const source = sources[row[0]];
         const parallel = cell(row,1), key = norm(parallel);
+        const numberDiffers = compareVariantCardNumber(identity.cardNumber, cell(row,2)) !== 'match';
         if (seen.has(key)) continue;
         seen.add(key);
         const candidate = { authority: 'provider_candidate', label: parallel, identity,
           parallel, canonical: null, applicability: 'unknown',
-          diagnostics: seasonFallback ? [{ id: 'manufacturer-checklist-season',
-            description: `Official checklist season: ${source.year}. Requested starting year: ${identity.year}. Source locator: ${cell(row,4)}.` }] : [], images: [],
+          diagnostics: [...(seasonFallback ? [{ id: 'manufacturer-checklist-season',
+            description: `Official checklist season: ${source.year}. Requested starting year: ${identity.year}. Source locator: ${cell(row,4)}.` }] : []),
+            ...(numberDiffers ? [{ id: 'manufacturer-checklist-number',
+              description: `Manufacturer checklist number: ${cell(row,2)}. Photographed card number: ${identity.cardNumber}. Same set, player and insert; confirm the physical printing. Source locator: ${cell(row,4)}.` }] : [])], images: [],
           source: { provider: 'manufacturer_checklist', recordId: `manufacturer-row:v1:${digest([source.sha256, row.slice(1).map((_,i) => cell(row,i+1))])}`,
             url: source.url, sha256: source.sha256, references: [] },
-          warnings: ['APPLICABILITY_UNCONFIRMED', 'REFERENCE_IMAGE_MISSING'] };
+          warnings: ['APPLICABILITY_UNCONFIRMED', 'REFERENCE_IMAGE_MISSING', ...(numberDiffers ? ['SCOPE_UNCONFIRMED'] : [])] };
         candidates.push(validateVariantCandidate({ ...candidate, candidateId: variantCandidateId(candidate) }));
       }
       candidates.sort((a,b) => Number(!/^(base|rookie|rated rookies?)( cards? [ivx]+)?$/i.test(a.label)) - Number(!/^(base|rookie|rated rookies?)( cards? [ivx]+)?$/i.test(b.label)) || a.label.localeCompare(b.label));

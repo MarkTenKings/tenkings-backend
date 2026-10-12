@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson, isVariantPhotoComparable } from '@tenkings/card-catalog-evidence';
 import { validateVariantReviewSnapshot } from '../../card-catalog-evidence/src/variant-review.mjs';
 import { requireThat } from '@atlas/manual-service/contract';
-import { CODEX_LABEL_POLICY, CODEX_LABEL_MODEL, codexChoices, projectCodexReading } from './variant-codex.mjs';
+import { CODEX_LABEL_POLICY, CODEX_LABEL_MODEL, codexChoices, codexCatalogContext, projectCodexReading } from './variant-codex.mjs';
 import { VARIANT_SOURCE_PHOTO_POLICY } from './variant-source-photos.mjs';
 
 export const VARIANT_PHOTO_MODEL = CODEX_LABEL_MODEL;
@@ -29,17 +29,19 @@ const LABEL_PROMPT = [
   'For every supplied photo SHA, transcribe the readable slab label and identify its grading company.',
   'Associate it with one supplied catalog choice only when the visible label unambiguously identifies that exact card and printing.',
   'Read the year, name, product/set, collector number, language and explicit parallel/foil/stamp/edition or insert. Known label abbreviations may match their fully written catalog meaning.',
+  'Use the source-bound catalogContext for each choice. BASE_EXPANSION_RELEASE_YEAR identifies the base set release, not necessarily that variant printing: a different slab printing year alone is not a conflict. A documented printingOrigin may name a later release. Still require the exact card and explicit printing/finish evidence; never invent an origin or infer a finish from a seller title.',
   'Missing seller title words are irrelevant; seller titles are not supplied as identity evidence. For a base/Normal choice, a grading company standard base-card label may omit the word Base or Normal: accept it when the exact card/product/number and visible card corroborate the standard base printing. Distinguishing parallel, foil, stamp or insert claims require visible label/card support; never infer them merely by elimination.',
   'For a different card, raw card without a slab, unreadable label, conflicting details or ambiguous finish, return candidateKey=null. Never invent a catalog choice.',
   'The label is a grading-company claim, not proof of authenticity. Preserve literal label text and explain the match or uncertainty briefly.',
 ].join(' ');
 /** Shared identity contains catalog identities and reference bytes, never physical uploads or capture times. */
-export function prepareVariantLabelRequest(rawCatalog, photoShas = null) {
+export function prepareVariantLabelRequest(rawCatalog, photoShas = null, { includeCatalogContext = true } = {}) {
   const catalog = validateVariantReviewSnapshot(rawCatalog);
   const photos=(catalog.referencePhotos??[]).filter(p=>photoShas===null||photoShas.includes(p.sha256))
     .map(({sha256,mimeType,width,height})=>({sha256,mimeType,width,height})).sort((a,b)=>a.sha256.localeCompare(b.sha256));
   requireThat(photoShas===null || Array.isArray(photoShas)&&new Set(photoShas).size===photoShas.length&&photos.length===photoShas.length,409,'VARIANT_LABEL_REQUEST_CHANGED');
-  const request={policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL,choices:codexChoices(catalog),photos};
+  const request={policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL,choices:codexChoices(catalog),photos,
+    ...(includeCatalogContext ? { catalogContext: codexCatalogContext(catalog) } : {})};
   return freeze({...request,requestKey:`variant-label-source:v1:${sha(canonicalJson(request))}`});
 }
 function labelOutputSchema(request) {
@@ -106,7 +108,7 @@ export function createVariantPhotoProvider({ apiKey, readReferenceImage, fetchIm
   send.prepare = async ({ catalog: raw, photoShas = null, signal }) => {
     const catalog = validateVariantReviewSnapshot(raw), request = prepareVariantLabelRequest(catalog,photoShas);
     requireThat(request.photos.length > 0 && request.photos.length <= VARIANT_PHOTO_LIMITS.referenceImages && request.choices.length > 0, 409, 'VARIANT_DIAGNOSTIC_REFERENCE_REQUIRED');
-    const content = [{ type: 'input_text', text: canonicalJson({ choices: request.choices }) }]; let totalBytes = 0;
+    const content = [{ type: 'input_text', text: canonicalJson({ choices: request.choices, catalogContext: request.catalogContext }) }]; let totalBytes = 0;
     for (const ref of request.photos) {
       signal?.throwIfAborted(); const descriptor = catalog.referencePhotos.find(image => image.sha256 === ref.sha256);
       const image = await readReferenceImage({ snapshot: catalog, candidateId: null, imageId: descriptor.imageId }, { signal });
@@ -127,7 +129,10 @@ export function createVariantPhotoProvider({ apiKey, readReferenceImage, fetchIm
 /** Rebind successful public reference readings to this exact saved catalog, never to a physical upload. */
 export function projectVariantLabelResponse(saved, rawCatalog) {
   const catalog = validateVariantReviewSnapshot(rawCatalog), e = saved?.requestEvidence;
-  const request = prepareVariantLabelRequest(catalog,e?.request?.photos?.map(p=>p.sha256)??[]);
+  // Retained paid requests must remain byte-for-byte readable after context is
+  // added. Their per-image readings keep the same permanent cache identity.
+  const request = prepareVariantLabelRequest(catalog,e?.request?.photos?.map(p=>p.sha256)??[],
+    { includeCatalogContext: Object.hasOwn(e?.request ?? {}, 'catalogContext') });
   requireThat(saved?.version === VARIANT_LABEL_POLICY && e?.policy === VARIANT_LABEL_POLICY && e.model === VARIANT_PHOTO_MODEL
     && request.photos.length>0 && request.photos.length<=VARIANT_PHOTO_LIMITS.referenceImages && HASH.test(e.requestSha256) && canonicalJson(e.request) === canonicalJson(request), 502, 'VARIANT_RESPONSE_BINDING_INVALID');
   requireThat(saved.httpStatus >= 200 && saved.httpStatus < 300, 502, 'VARIANT_PROVIDER_HTTP_ERROR');

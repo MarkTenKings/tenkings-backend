@@ -16,9 +16,13 @@ test('labels reference slabs only, with bounded strict output and one-shot dispa
  assert.equal(result.readings.length,2);assert.equal(result.readings[0].candidateId,catalog.candidates[0].candidateId);assert.equal(result.readings[0].canonicalPrintingKey,variantCodexChoice(catalog.candidates[0]).key);
  await assert.rejects(provider({prepared}),{code:'VARIANT_REQUEST_UNPREPARED'});assert.equal(calls,1);
 });
-test('shared requests ignore physical identity, capture/source evidence changes, case and padded collectors',()=>{
+test('shared card and reading identities ignore capture/source changes while request context binds its actual evidence',()=>{
  const a=labelCatalog(),b=labelCatalog({capturedAt:'2026-10-11T00:00:00.000Z',source:'updated source',candidateTransform:c=>{c.identity.cardNumber='39/192';c.identity.name='MAGIKARP';}});
- assert.notEqual(a.snapshotHash,b.snapshotHash);assert.notEqual(a.candidates[0].candidateId,b.candidates[0].candidateId);assert.deepEqual(prepareVariantLabelRequest(a),prepareVariantLabelRequest(b));
+ assert.notEqual(a.snapshotHash,b.snapshotHash);assert.notEqual(a.candidates[0].candidateId,b.candidates[0].candidateId);
+ const first=prepareVariantLabelRequest(a),second=prepareVariantLabelRequest(b);
+ assert.deepEqual(first.choices,second.choices);assert.deepEqual(first.photos,second.photos);
+ assert.notEqual(first.catalogContext[0].source.sha256,second.catalogContext[0].source.sha256);
+ assert.equal(codexReadingKey(first,a.referencePhotos[0].sha256),codexReadingKey(second,b.referencePhotos[0].sha256),'Changed metadata does not re-bill the same photographed label');
  const expanded=labelCatalog({count:3,photos:2});assert.equal(codexReadingKey(prepareVariantLabelRequest(a),a.referencePhotos[0].sha256),codexReadingKey(prepareVariantLabelRequest(expanded),a.referencePhotos[0].sha256),'new known variants do not re-bill a previously read photo');
 });
 test('96 retained photos remain available, but every model call is bounded to eight exact hashes',async()=>{

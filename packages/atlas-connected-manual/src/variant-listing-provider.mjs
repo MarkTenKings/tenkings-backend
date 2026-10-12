@@ -52,17 +52,22 @@ function listingSearchLabel(identity, label) {
   const suffix = label.replace(/^(?:rated rookies?|rookies?|base(?: cards?(?: [ivx]+)?)?)\s*[-–—:]?\s+/i, '').trim();
   return suffix || label;
 }
-function engineInput(identity, printing = null) {
+function engineInput(identity, printing = null, deduplicateInsert = false) {
   const { product, insert } = productParts(identity);
+  let parallel = printing ? listingSearchLabel(identity, printing.name) : null;
+  // An explicit insert already has its own query field. Remove only that
+  // exact leading phrase from the search finish; keep the saved label intact.
+  if (deduplicateInsert && insert && (parallel === insert || parallel?.startsWith(`${insert} `)))
+    parallel = parallel.slice(insert.length).trim() || null;
   return { matchingPolicy: EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY, category: identity.category,
     year: identity.year, manufacturer: identity.manufacturer, productSet: product, insert,
     ...(identity.category === 'SPORTS' ? { playerName: identity.name } : { cardName: identity.name }),
-    cardNumber: identity.cardNumber, parallel: printing ? listingSearchLabel(identity, printing.name) : null,
+    cardNumber: identity.cardNumber, parallel,
     variantIdentity: { language: languageNames[printing?.language ?? identity.language] ?? printing?.language ?? identity.language } };
 }
 /** Ordinary copies share one permanent request. Only an explicit reference
  * refresh may create another search generation for a still-missing printing. */
-function prepareListingRequest(input, printing = null, legacy = false, graded = false, generation = null, photoPool = false) {
+function prepareListingRequest(input, printing = null, legacy = false, graded = false, generation = null, photoPool = false, deduplicateInsert = false) {
   check(generation === null || graded && typeof generation === 'string'
     && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(generation), 'VARIANT_LISTING_REFRESH_GENERATION');
   const fields = ['category', 'name', 'year', 'setName', 'cardNumber', 'manufacturer', 'language'];
@@ -85,7 +90,7 @@ function prepareListingRequest(input, printing = null, legacy = false, graded = 
   const searchPrinting = graded && /^(?:normal|base|base cards?)$/i.test(printing?.name ?? '') ? null : printing;
   const query = [concisePokemon
     ? ['pokemon', identity.name, identity.cardNumber, searchPrinting ? listingSearchLabel(identity, searchPrinting.name) : null].filter(Boolean).join(' ')
-    : buildEbaySoldCompsV2Query(engineInput(identity, searchPrinting)), printing?.language && printing.language !== 'en' ? languageNames[printing.language] ?? printing.language : null,
+    : buildEbaySoldCompsV2Query(engineInput(identity, searchPrinting, deduplicateInsert)), printing?.language && printing.language !== 'en' ? languageNames[printing.language] ?? printing.language : null,
     graded ? photoPool ? 'graded' : '(PSA,CGC,BGS,SGC)' : null].filter(Boolean).join(' ');
   const url = new URL(endpoint);
   url.search = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(photoPool ? 240 : VARIANT_LISTING_LIMITS.results),
@@ -97,17 +102,18 @@ function prepareListingRequest(input, printing = null, legacy = false, graded = 
 }
 export function prepareVariantListingRequest(input, printing = null, { graded = false, generation = null } = {}) {
   check(typeof graded === 'boolean', 'VARIANT_LISTING_REQUEST_CHANGED');
-  return prepareListingRequest(input, printing, false, graded, generation, graded);
+  return prepareListingRequest(input, printing, false, graded, generation, graded, graded);
 }
 /** Reconstruct an existing paid journal identity for read-only reuse. Never send it. */
-export function prepareRetainedVariantListingRequest(input, printing = null) {
-  return prepareListingRequest(input, printing, false, true);
+export function prepareRetainedVariantListingRequest(input, printing = null, { photoPool = false, generation = null } = {}) {
+  return prepareListingRequest(input, printing, false, true, generation, photoPool);
 }
 function validateRequest(request) {
   // Retained paid responses remain readable under their original request key.
   check([VARIANT_LISTING_REVISION, concisePokemonRequestRevision, retainedGradedRevision, VARIANT_GRADED_LISTING_REVISION].includes(request?.revision)
-    && same(prepareListingRequest(request?.identity, request?.printing ?? null, request.revision === VARIANT_LISTING_REVISION,
-      gradedRequest(request), request.generation ?? null, request.revision === VARIANT_GRADED_LISTING_REVISION), request), 'VARIANT_LISTING_REQUEST_CHANGED');
+    && [false, request.revision === VARIANT_GRADED_LISTING_REVISION].some(deduplicateInsert =>
+      same(prepareListingRequest(request.identity, request.printing ?? null, request.revision === VARIANT_LISTING_REVISION,
+        gradedRequest(request), request.generation ?? null, request.revision === VARIANT_GRADED_LISTING_REVISION, deduplicateInsert), request)), 'VARIANT_LISTING_REQUEST_CHANGED');
   return request;
 }
 function validateSource(request, source) {
@@ -438,7 +444,9 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
   const requireCache = () => check(cache?.get && cache?.getRetained && cache?.put, 'VARIANT_LISTING_CACHE_REQUIRED');
   return Object.freeze({
     async fetchSource(request, { signal } = {}) {
-      validateRequest(request); check(request.revision === VARIANT_GRADED_LISTING_REVISION, 'VARIANT_LISTING_RETIRED_REQUEST');
+      validateRequest(request); check(request.revision === VARIANT_GRADED_LISTING_REVISION
+        && same(request, prepareVariantListingRequest(request.identity, request.printing ?? null,
+          { graded: true, generation: request.generation ?? null })), 'VARIANT_LISTING_RETIRED_REQUEST');
       check(apiKey !== null, 'VARIANT_LISTING_CREDENTIAL_MISSING');
       return listingOperation(request, signal, timeoutMs, async active => {
         active.throwIfAborted();

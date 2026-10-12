@@ -1,6 +1,14 @@
 # Set Ops Handoff (Living)
 
-## Current ATLAS Rapid Review and test-card reset — October 10, 2026
+## Current ATLAS authority — October 12, 2026
+
+Production is R10, application source `564fdfac121bc70227404404128f08467d8e3028`, schema staff 80/public 121. The current runtime/deployment receipts are in `DEPLOY_RUNBOOK.md` and `docs/handoffs/SESSION_LOG.md`. The older R3 workflow below is historical, not current product direction: its combined Front/Back findings overview, mandatory observations/notes, and AI-currentness approval vetoes were deleted in R10. Do not reintroduce them from this document. Current review is geometry Front → Back, findings Front → Back in marked/clean comparison panes, explicit physical-card variant confirmation, then final grade approval.
+
+Owner's new production acceptance found three remaining failures. R11 fixes are being qualified locally, not yet deployed: Pokémon report publication rejected an admitted manufacturer field; retained but unassigned slab photos were hidden; Jaxson's printed `DTBH-JDT` code caused the manufacturer lookup to discard the nine otherwise exact Donruss Threads checklist choices listed at numeric position 3. Variant confirmation was also stranded above a scrolled review, leaving the final Approve button disabled. Current fixes preserve the printed code, expose advisory choices and saved photos, and keep the explicit variant action in the fixed footer.
+
+The current Pikachu `4c539305-5f32-47fc-bbf9-b5c64ae422fe` already has one human approval at ATLAS 8; its report publication is pending. Do not approve it again. Jaxson `b1435880-9c85-4408-9116-5298271a8563` has no variant confirmation. Previous test-card retirement is consumed; no new deletion is authorized by these historical execution notes. Production acceptance, existing-publication repair and any fresh reference/sales work must be recorded separately from code tests.
+
+## Historical ATLAS Rapid Review and test-card reset — October 10, 2026
 
 Application/native source `beaf7a1679b1f212ecff3b10cf554e70dfab8867` is live. After geometry, Findings opens both complete Front and Back photographs with all exact finding traces and a complete index. Staff can correct or add findings on either side and switch to one-at-a-time review. One explicit **Approve all findings** records both side inspections and confirms the current findings/proposal roster, then opens Grade. Final grade/report approval remains separate; browsing never approves. Image verification, exact measurements, stale-revision, pending-save and recovery gates remain enforced.
 

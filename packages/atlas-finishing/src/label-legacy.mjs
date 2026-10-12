@@ -20,7 +20,8 @@ export function validateManualLabel(label) {
   if (!identity || typeof identity !== 'object' || Array.isArray(identity)
     || required.some(key => !text(identity[key], key === 'year' ? 24 : 180))
     || optional.some(key => identity[key] !== '' && !text(identity[key], 120, true))
-    || Object.keys(identity).some(key => ![...required, ...optional, ...(!sports ? ['layoutType'] : [])].includes(key))
+    || Object.keys(identity).some(key => ![...required, ...optional, ...(!sports ? ['layoutType', 'manufacturer'] : [])].includes(key))
+    || !sports && identity.manufacturer !== undefined && !text(identity.manufacturer, 120)
     || !sports && identity.layoutType !== undefined && !['POKEMON', 'TRAINER', 'ENERGY'].includes(identity.layoutType)) fail('MANUAL_LABEL_IDENTITY_INVALID');
   return label;
 }

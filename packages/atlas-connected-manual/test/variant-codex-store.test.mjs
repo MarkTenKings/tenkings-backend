@@ -10,7 +10,7 @@ import {codexLibraryKey,codexPhotoPoolKey,codexReadingKey,codexChoices,variantCo
 import {labelCatalog,labelResponse} from './variant-label-fixture.mjs';
 import {variantIdentity} from './variant-fixture.mjs';
 
-test('all label-batch references reach the shared library with one append per batch, independent of the original card',async()=>{
+test('old and context-bearing label batches recover into the shared library once, independent of the original card',async()=>{
  const catalog=labelCatalog({photos:16}),entries=new Map(),appends=[];
  const put=(key,value)=>{const snapshot=canonical(value,{maxBytes:8388608});const rows=entries.get(key)??[];rows.push({snapshot,snapshot_hash:digest(snapshot)});entries.set(key,rows);};
  const tx={async $queryRawUnsafe(sql,key){
@@ -22,13 +22,15 @@ test('all label-batch references reach the shared library with one append per ba
  const store=createVariantJobStore({boundary:{machineTransaction:async(_,work)=>work({tx})}}),job={key:'new-physical-card-job',claim_id:'current'};
  for(let offset=0;offset<16;offset+=8){
   const batch={...catalog,referencePhotos:catalog.referencePhotos.slice(offset,offset+8)};batch.snapshotHash=variantSnapshotHash(batch);
-  const request=prepareVariantLabelRequest(batch),evidence={policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL,requestSha256:digest(`saved-request-${offset}`),request};
+  const request=prepareVariantLabelRequest(batch,null,{includeCatalogContext:offset>0}),evidence={policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL,requestSha256:digest(`saved-request-${offset}`),request};
   const reservation={schemaVersion:'variant-label-dispatch/v1',request,evidence,catalog:batch,jobKey:'deleted-original-physical-card',claimId:'historical',reservedAt:'2026-10-10T00:00:00.000Z'};
   const response={version:VARIANT_LABEL_POLICY,requestEvidence:evidence,httpStatus:200,bodyText:JSON.stringify(labelResponse(request)),requestId:null};
   put(`variant-label-dispatch:v1:${request.requestKey}`,reservation);
   put(`variant-label-response:v1:${request.requestKey}`,{...response,schemaVersion:'variant-label-response/v1',reservationHash:digest(canonical(reservation))});
   const before=JSON.stringify(reservation);await store.publishLabelSource(job,request);assert.equal(JSON.stringify(reservation),before);
   await store.publishLabelSource(job,request); // Same saved response remains idempotent.
+  const reading=await store.cache.getRetained(codexReadingKey(request,batch.referencePhotos[0].sha256));
+  assert.equal(Object.hasOwn(reading,'catalogContext'),offset>0,'Historical readings retain their original shape');
  }
  const choice=variantCodexChoice(catalog.candidates[0]),key=codexLibraryKey(choice),saved=await store.cache.getRetained(key);
  assert.equal(validateCodexLibrary(saved,choice).references.length,16);assert.equal(new Set(saved.references.map(r=>r.image.sha256)).size,16);

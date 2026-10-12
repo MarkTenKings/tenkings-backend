@@ -8,7 +8,7 @@ export function DirectCardReviewShell({children,title,busy=false,onExit}) {
   useEffect(()=>{const overflow=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=overflow;};},[]);
   return <section className={`${styles.rapidDialog} ${styles.directReview}`} aria-label="Card review workspace">
     <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2>Review card <span>· {title||'Card'}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={busy} onClick={onExit}>All cards</button></div></header>
-    <div className={styles.rapidBody}>{children}</div>
+    <div className={styles.rapidBody} data-review-scroll>{children}</div>
     <footer id="atlas-rapid-actions" className="mc-rapid-actions" aria-label="Review controls"><div id="atlas-rapid-edits" className="mc-rapid-edit-dock"/></footer>
   </section>;
 }

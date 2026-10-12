@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import * as client from '../lib/variant-review-client.mjs';
 import * as routes from '../lib/routes.mjs';
+import * as referencePhotos from '../lib/variant-reference-photos.mjs';
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const code = babel.transformSync(readFileSync(new URL('../components/VariantIdentityReview.jsx', import.meta.url), 'utf8'), {
   filename: 'VariantIdentityReview.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false,
@@ -34,13 +35,14 @@ function fixture({ component = 'default', props, beforeEffects } = {}) {
     if(name==='@atlas/manual-workspace')return{geometryImage:()=>({url:'verified'})};
     if(name==='@atlas/manual-workspace/report-review')return{useVerifiedImage:()=>({url:f.images?'blob:verified':null})};
     if(name.endsWith('variant-review-client.mjs'))return client;
+    if(name.endsWith('variant-reference-photos.mjs'))return referencePhotos;
     if(name.endsWith('manual-client.mjs'))return{manualRequest:async(path,options)=>{if(!options.method){f.reads++;return f.read?f.read():structuredClone(f.status);}f.writes.push(options.body);if(f.save)return f.save(options.body);const input=options.body;f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:input.decision!=='UNRESOLVED'};return structuredClone(f.status);}};
     if(name.endsWith('.css'))return new Proxy({},{get:(_,key)=>key});return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);
   }});
   f.exports=exports;f.render=()=>{let loops=0;do{dirty=false;cursor=0;tree=exports[component](f.props);beforeEffects?.(tree);effects.splice(0).forEach(fn=>fn());assert.ok(++loops<20);}while(dirty);return tree;};
   f.find=predicate=>all(tree,predicate);f.text=()=>text(tree);f.button=label=>f.find(node=>node.type==='button'&&text(node)===label)[0];f.radios=()=>f.find(node=>node.type==='input'&&node.props.type==='radio');f.remount=()=>{slots.forEach(value=>value?.cleanup?.());slots.length=0;f.render();};f.dispose=()=>slots.forEach(value=>value?.cleanup?.());f.render();return f;
 }
-test('saved suggestions are ordered but never selected; foreign language and other cards remain separate',async()=>{const f=fixture();await flush();f.render();assert.equal(f.reads,1);assert.equal(f.writes.length,0);assert.ok(f.radios().every(node=>!node.props.checked));assert.equal(f.gates.at(-1),false);assert.match(f.text(),/AI suggestion · not a confirmation/);assert.equal(f.button('Confirm selected identity').props.disabled,true);const labels=f.find(node=>node.type==='strong').map(text);assert.ok(labels.indexOf('suggested')<labels.indexOf('second'));assert.match(f.text(),/Other languages/);assert.match(f.text(),/Other card matches/);assert.match(f.text(),/Reference photo unavailable/);f.dispose();});
+test('saved suggestions are ordered but never selected; foreign language and other cards remain separate',async()=>{const f=fixture();await flush();f.render();assert.equal(f.reads,1);assert.equal(f.writes.length,0);assert.ok(f.radios().every(node=>!node.props.checked));assert.equal(f.gates.at(-1),false);assert.match(f.text(),/AI suggestion · not a confirmation/);assert.equal(f.button('Confirm selected identity').props.disabled,true);const labels=f.find(node=>node.type==='strong').map(text);assert.ok(labels.indexOf('suggested')<labels.indexOf('second'));assert.match(f.text(),/Other languages/);assert.match(f.text(),/Other card matches/);assert.match(f.text(),/No matching reference photo yet/);f.dispose();});
 
 test('saved sports identity stays visible before and after an empty catalog without claiming variant confirmation',async()=>{
  const f=fixture();f.props.identity={playerName:'Drake Maye',year:2025,manufacturer:'Panini',productSet:'Donruss Optic Football — Donruss Threads',cardNumber:'DTBH-DME',parallel:null};
@@ -351,4 +353,35 @@ test('photo wheel zoom is anchored, bounded and identical for normal wheel and C
  const event={deltaY:-120,clientX:300,clientY:400};const next=zoom(camera,event,rect);
  assert(next.scale>1);assert(next.x<0);assert(next.y<0);assert.deepEqual(zoom(camera,{...event,ctrlKey:true},rect),next);
  assert.deepEqual({...zoom(next,{...event,deltaY:10000},rect)},camera);assert.equal(zoom(camera,{...event,deltaY:-10000},rect).scale,8);f.dispose();
+});
+
+test('empty Jaxson catalog exposes physical inputs beside its photo and the anchored action chooses then confirms explicitly',async()=>{
+ const f=fixture();f.props.identity={playerName:'Jaxson Dart',year:'2025',manufacturer:'Panini',productSet:'Donruss Optic Football — Donruss Threads',cardNumber:'DTBH-JDT',parallel:null};
+ f.status.result.catalog.candidates=[];f.status.result.suggestion={candidateId:null};
+ f.props.renderReviewActions=options=>({type:'ReviewActions',props:options});await flush();f.render();
+ const action=()=>f.find(node=>node.type==='ReviewActions')[0]?.props;
+ assert.equal(action().approveLabel,'Choose variant');assert.equal(action().disabled,false);assert.equal(f.button('Confirm selected identity'),undefined);
+ const choices=f.find(node=>node.props['aria-label']==='Choose the card variant')[0];
+ const column=f.find(node=>node.type==='div'&&node.props.children.includes(choices))[0],layout=f.find(node=>node.type==='div'&&node.props.children.includes(column))[0];
+ assert.ok(layout&&all(layout,node=>node.type==='figure').length,'physical controls share the photo comparison columns');
+ let scrolls=0,focuses=0;choices.props.ref.current={scrollIntoView(){scrolls++;},querySelector(){return {focus(){focuses++;}};}};
+ action().approve();assert.equal(scrolls,1);assert.equal(focuses,1);assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);
+ f.button('Base').props.onClick();f.render();assert.equal(action().approveLabel,'Confirm variant');assert.equal(action().disabled,false);assert.equal(f.writes.length,0);
+ action().approve();await flush();f.render();assert.equal(f.writes.length,1);assert.equal(f.writes[0].decision,'MANUAL');assert.equal(f.writes[0].manualParallel,'Base');assert.equal(f.gates.at(-1),true);assert.equal(action(),undefined,'saved variant leaves the dock for separate report approval');f.dispose();
+});
+
+test('a new card cannot inherit the previous card variant or enabled confirmation action',async()=>{
+ const f=fixture();f.status.result.catalog.candidates=[];f.props.renderReviewActions=options=>({type:'ReviewActions',props:options});await flush();f.render();
+ f.button('Base').props.onClick();f.render();f.find(node=>node.type==='ReviewActions')[0].props.approve();await flush();f.render();assert.equal(f.gates.at(-1),true);
+ f.props.cardId=randomUUID();f.status={...f.status,confirmation:null,approvalReady:false};f.render();await flush();f.render();
+ const action=f.find(node=>node.type==='ReviewActions')[0].props;assert.equal(action.approveLabel,'Choose variant');assert.equal(f.gates.at(-1),false);assert.equal(f.find(node=>node.type==='input'&&node.props.maxLength===120)[0].props.value,'');assert.equal(f.writes.length,1);f.dispose();
+});
+
+test('unassigned retained slab photos show literal labels and compare without becoming a printing choice',async()=>{
+ const f=fixture(),image=listingImage();f.status.result.catalog.referencePhotos=[image];f.status.result.referenceLabels={version:'atlas-slab-label-associations/v1',catalogHash:f.status.result.catalog.snapshotHash,readings:[{imageId:image.imageId,sha256:image.sha256,candidateId:null,gradingCompany:'CGC',labelText:'2024 PIKACHU 025/165 COSMOS HOLO COSTCO',reason:'The saved year differs from the catalog printing.'}]};
+ await flush();f.render();assert.match(f.text(),/Other saved reference photos · 1/);assert.match(f.text(),/2024 PIKACHU 025\/165 COSMOS HOLO COSTCO/);assert.match(f.text(),/Saved CGC slab · printing unassigned/);
+ const gallery=f.find(node=>node.props['aria-label']==='Unassigned saved reference photos')[0];
+ const photo=all(gallery,node=>node.type?.name==='ReferencePhoto')[0];assert.equal(photo.props.image.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${image.sha256}`);
+ f.find(node=>node.props['aria-label']==='Compare CGC · unassigned reference')[0].props.onClick({currentTarget:{focus(){}}});f.render();
+ assert.equal(f.find(node=>node.type?.name==='Comparison')[0].props.candidate.images[0].associationStatus,'UNASSIGNED');assert.ok(f.radios().every(node=>!node.props.checked));assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);f.dispose();
 });

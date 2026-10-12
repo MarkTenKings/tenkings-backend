@@ -146,7 +146,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
             const reading=readings.get(image.sha256);if(!reading)continue;
             if(reading.schemaVersion!=='atlas-codex-reading/v1'||reading.policy!==CODEX_LABEL_POLICY||reading.reading?.sha256!==image.sha256
               ||!Array.isArray(reading.choices)||reading.reading.candidateKey!==null&&!reading.choices.some(c=>c.key===reading.reading.candidateKey))throw fail('VARIANT_CODEX_READING_INVALID');
-            const projected=reassociateCodexReading(reading.reading,base,reading.choices);
+            const projected=reassociateCodexReading(reading.reading,base,reading.choices,reading.catalogContext??[]);
             if(choiceKeys.has(projected.candidateKey))populated.add(projected.candidateKey);
           }
         };

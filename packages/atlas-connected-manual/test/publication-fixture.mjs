@@ -8,7 +8,7 @@ import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs
 import { createManualPublication } from '../src/publication.mjs';
 import { publicationStatus } from '../src/publication-repository.mjs';
 export const sides = ['FRONT','BACK'];
-export async function publicationFixture({ withPreview = false } = {}) {
+export async function publicationFixture({ withPreview = false, cardProfile = 'SPORTS', identity = {playerName:'Synthetic report',year:'2026',manufacturer:'Fixture',productSet:'Local only'}, onError } = {}) {
   const cardId=randomUUID(), actionId=randomUUID(), actorId=randomUUID(), records=new Map();
   const bytes=Object.fromEntries(sides.map(side=>[side,Buffer.from(`synthetic inspection ${side}`)]));
   let failRead=false, corruptBytes=false, loseWriteReply=false, completeCalls=0;
@@ -18,7 +18,7 @@ export async function publicationFixture({ withPreview = false } = {}) {
   },async read({key}) { if(!records.has(key)) throw new Error('missing'); return records.get(key); }}});
   const save=async(kind,value)=>{const sourceHash=digest(JSON.stringify(value));return {ref:await artifacts.write(value,{cardId,kind,sourceHash}),sourceHash};};
   const printed=[{x:.04,y:.03},{x:.96,y:.03},{x:.96,y:.97},{x:.04,y:.97}];
-  let geometry=createGeometryWorkspace({cardId,profile:'SPORTS',sides:Object.fromEntries(sides.map((side,i)=>[side,{
+  let geometry=createGeometryWorkspace({cardId,profile:cardProfile,sides:Object.fromEntries(sides.map((side,i)=>[side,{
     image:{version:1,originalSha256:String(i+1).repeat(64),frameId:`working-${side}`,frameSha256:String(i+3).repeat(64),width:1600,height:2400,coordinateSpace:'ORIENTED_DECODED'},cornerShape:'SQUARE',matColor:'BLACK'}]))});
   const prepared={}, photos={}, previews={};
   for(const side of sides){
@@ -40,10 +40,11 @@ export async function publicationFixture({ withPreview = false } = {}) {
   }
   geometry=confirmBothGeometry(geometry,{actor:'HUMAN',reviewed:true,base:Object.fromEntries(sides.map(side=>[side,geometryBase(geometry,side,'REVIEW')]))}).state;
   let defects=structuredClone(workspace());
+  defects.profile=cardProfile;
   for(const side of sides) defects.sides[side].frame.inspectionImageSha256=digest(bytes[side]);
   for(const side of sides){defects=markDefectSideInspected(defects,{side,base:defectBase(defects,side),actor:'HUMAN',inspected:true}).state;}
   defects=confirmDefectFindings(defects,{base:Object.fromEntries(sides.map(side=>[side,defectBase(defects,side)])),actor:'HUMAN',reviewed:true}).state;
-  const full=previewDefectReport(defects,{identity:{playerName:'Synthetic report',year:'2026',manufacturer:'Fixture',productSet:'Local only'},centeringQuads:{FRONT:printed,BACK:printed},draftRevision:10});
+  const full=previewDefectReport(defects,{identity,centeringQuads:{FRONT:printed,BACK:printed},draftRevision:10});
   const report=await save('REPORT',full), draft={version:'test-approved-source-v1',geometry:await save('GEOMETRY',geometry),source:{prepared,uploads:{FRONT:{side:'FRONT'},BACK:{side:'BACK'}}}};
   const approval={version:'atlas-manual-report-snapshot-v2',report,identity:full.identity,grade:full.grade,finalGrade:full.finalGrade,finalGradePolicy:full.finalGradePolicy,findingCounts:full.findingCounts,ruleVersion:full.ruleVersion};
   const reportText=canonical(approval),sourceHash=digest(canonical(draft));
@@ -51,6 +52,6 @@ export async function publicationFixture({ withPreview = false } = {}) {
   row.result=canonical({card:{cardId,revision:11,contentHash:sourceHash,draft},receipt:{actionId,actorId,approval:{reportHash:row.report_hash,sourceHash,sourceRevision:10}}});
   const storage={async readDerivative({descriptor}){if(failRead)throw new Error('private storage unavailable'); const values=descriptor.purpose==='preview'?previews:bytes;const side=sides.find(s=>values[s]&&digest(values[s])===descriptor.raster.content.sha256);return {bytes:corruptBytes?Buffer.from('changed bytes'):values[side]};}};
   const repository={async load(){return structuredClone(row);},async status(){return publicationStatus(row);},async complete(staff,before,manifest){completeCalls++;Object.assign(row,{state:'PUBLISHED',manifest:canonical(manifest),manifest_hash:digest(canonical(manifest)),public_hash:manifest.publicHash});return publicationStatus(row);}};
-  const publication=createManualPublication({repository,artifacts,storage,readSource:async(staff,id,upload)=>({photo:photos[upload.side]})});
+  const publication=createManualPublication({repository,artifacts,storage,readSource:async(staff,id,upload)=>({photo:photos[upload.side]}),onError});
   return {cardId,actionId,actorId,row,draft,approval,full,geometry,photos,bytes,artifacts,records,storage,repository,publication,save,get completeCalls(){return completeCalls;},failRead(value=true){failRead=value;},corruptBytes(value=true){corruptBytes=value;},loseWriteReply(){loseWriteReply=true;}};
 }

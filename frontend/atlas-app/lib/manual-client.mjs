@@ -15,6 +15,7 @@ export function manualMessage(error){
   return ({SIGN_IN_REQUIRED:'Your session ended. Sign in again to continue.',CSRF_REQUIRED:'Your session changed. Reload before saving.',
     MANUAL_DETAILS_STALE:'The card details changed. Reload the saved details before continuing.',MANUAL_PHOTOS_CHANGED:'The photos changed. Open the saved photo pair to continue.',
     MANUAL_CARD_PROFILE_REQUIRED:'Choose Sports or Pokémon to continue.',MANUAL_CERTIFICATION_REQUIRED:'A currently trained reviewer must approve the final report.',
+    MANUAL_PUBLICATION_REPORT_INVALID:'Your grade is saved. ATLAS could not prepare the public report because its format needs attention. Try Finish report and label after the update.',
     INTAKE_CARD_HAS_COMMITTED_OBLIGATIONS:'A card is linked to a customer order or active finishing work. Resolve that connection before deleting it. Your saved photos are unchanged.',
     INTAKE_CARD_NOT_FOUND:'This card is no longer available. Your saved photos are unchanged. Reload your cards before trying again.',
     INTAKE_CARD_DELETED:'This card was deleted from your workspace. Return to your cards to continue.',

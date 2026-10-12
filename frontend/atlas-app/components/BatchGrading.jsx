@@ -66,7 +66,7 @@ function RapidReviewDialog({ job, staff, csrf, busy, error, onClose, onQueued })
   useEffect(()=>{const element=dialog.current,previous=document.activeElement,overflow=document.body.style.overflow;element?.showModal();document.body.style.overflow='hidden';return()=>{element?.close();document.body.style.overflow=overflow;previous?.focus?.();};},[]);
   return <dialog className={styles.rapidDialog} ref={dialog} aria-labelledby="rapid-review-title" onCancel={event=>{event.preventDefault();if(!locked&&!busy)onClose();}}>
     <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">Review card <span>· {job.evidence?.name||job.label||'Card'}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></div></header>
-    <div className={styles.rapidBody}>
+    <div className={styles.rapidBody} data-review-scroll>
     {error&&<p className={styles.error} role="alert">{error}</p>}
     {job.needsSetup?<ManualCards key={job.key} embedded staff={staff} cardId={job.cardId} reviewSession={reviewSession.current} onBusyChange={setLocked} onQueued={onQueued}/>:<ManualWorkspace key={job.key} initialInspection={job.initialInspection} initialReviewStage={job.initialInspection?'defects':null} reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>}
     </div><footer id="atlas-rapid-actions" className="mc-rapid-actions" aria-label="Review controls"><div id="atlas-rapid-edits" className="mc-rapid-edit-dock"/></footer>

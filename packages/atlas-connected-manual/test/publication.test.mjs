@@ -52,3 +52,37 @@ test('approval hydration is solely the immutable approval action; report evidenc
  const full=structuredClone(f.full);full.identity.playerName='later draft';
  assert.throws(()=>projectApprovedManualReport({row:f.row,approval:f.approval,full,geometry:f.geometry,images:{}}),{code:'MANUAL_PUBLICATION_REPORT_MISMATCH'});
 });
+
+test('Pokémon publication retains the approved manufacturer and historical omission without changing approval evidence',async()=>{
+ for(const manufacturer of ['Pokémon',undefined]){
+  const identity={cardName:'Synthetic Pokémon report',year:'2026',...(manufacturer?{manufacturer}:{}),productSet:'Local only',parallel:'English Cosmos Holofoil',cardNumber:'025/165',layoutType:'POKEMON'};
+  const f=await publicationFixture({cardProfile:'POKEMON',identity});
+  const before={report:f.row.report,reportHash:f.row.report_hash,sourceHash:f.row.source_hash,result:f.row.result};
+  assert.equal((await publish(f)).state,'PUBLISHED');
+  const p=await packet(f);
+  assert.deepEqual(p.report.identity,f.full.identity);
+  assert.equal(Object.hasOwn(p.report.identity,'manufacturer'),manufacturer!==undefined);
+  assert.deepEqual(p.report.grade,f.full.grade);assert.equal(p.report.finalGrade,f.full.finalGrade);
+  assert.deepEqual({report:f.row.report,reportHash:f.row.report_hash,sourceHash:f.row.source_hash,result:f.row.result},before);
+  assert.deepEqual(parsePublicManualReport(p),p);
+  for(const alter of [v=>{v.report.identity.manufacturer='';},v=>{v.report.identity.manufacturer='x'.repeat(121);},v=>{v.report.identity.manufacturer=null;},v=>{v.report.identity.privateProposal='staff-only';}]){
+   const invalid=structuredClone(p);alter(invalid);assert.throws(()=>parsePublicManualReport(invalid));
+  }
+ }
+});
+
+test('publication validation failures expose only a typed code and remain observable after approval',async()=>{
+ const logged=[];
+ const f=await publicationFixture({onError:value=>{logged.push(value);throw Error('diagnostic sink unavailable');}});
+ const before=structuredClone(f.row);
+ // A malformed assigned report number reaches the actual public projection;
+ // its raw private value must never become an HTTP error or diagnostic.
+ f.row.report_number='private-invalid-number';
+ await assert.rejects(publish(f),{status:503,code:'MANUAL_PUBLICATION_REPORT_INVALID',message:'MANUAL_PUBLICATION_REPORT_INVALID'});
+ assert.deepEqual(logged,[{code:'MANUAL_PUBLICATION_REPORT_INVALID'}]);
+ assert.equal(f.row.report,before.report);assert.equal(f.row.state,'PENDING');assert.equal(f.completeCalls,0);
+ f.row.report_number=before.report_number;f.failRead();
+ await assert.rejects(publish(f),/private storage unavailable/);
+ assert.deepEqual(logged.at(-1),{code:'MANUAL_PUBLICATION_INTERRUPTED'});
+ f.failRead(false);assert.equal((await publish(f)).state,'PUBLISHED');assert.equal(f.row.action_id,before.action_id);
+});

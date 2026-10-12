@@ -35,6 +35,21 @@ export const codexImageReservationKey = (request,imageSha) => `atlas-codex-reser
 export const codexChoices = catalog => [...new Map(catalog.candidates
   .filter(c => c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'))
   .map(c => { const choice=variantCodexChoice(c); return [choice.key,choice]; })).values()].sort((a,b)=>a.key.localeCompare(b.key));
+/** Keep provider context outside the stable card/printing identity. Scrydex's
+ * year comes from the base expansion, while a printing may have a later origin.
+ * These are source claims supplied for review, never physical-card approval. */
+export function codexCatalogContext(catalog) {
+  return catalog.candidates.filter(c => c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW')).map(candidate => {
+    const scrydex = candidate.source.provider === 'scrydex';
+    const origin = scrydex ? candidate.diagnostics.find(d => d.id === 'scrydex:variant-origin')?.description
+      .match(/^Provider-reported variant origin: (.+)\. The base card release date does not establish this printing's release date\.$/)?.[1] ?? null : null;
+    return { candidateKey: variantCodexChoice(candidate).key,
+      identityYearMeaning: scrydex ? 'BASE_EXPANSION_RELEASE_YEAR' : 'CATALOG_IDENTITY_YEAR',
+      printingOrigin: origin, diagnostics: candidate.diagnostics,
+      source: { provider: candidate.source.provider, recordId: candidate.source.recordId,
+        url: candidate.source.url, sha256: candidate.source.sha256 } };
+  }).sort((a,b)=>a.candidateKey.localeCompare(b.candidateKey));
+}
 /** A card's acquired photo pool includes unmatched evidence. Pool membership
  * never claims that the photographed card is the requested identity. */
 export function validateCodexPhotoPool(saved,choice) {
@@ -78,30 +93,42 @@ const labelWords = value => String(value ?? '').normalize('NFC').toLowerCase().r
 const labelLanguages = { en: 'english', ja: 'japanese', fr: 'french', de: 'german', es: 'spanish', it: 'italian',
   pt: 'portuguese', ko: 'korean', zh: 'chinese' };
 /** Reassociation is a local projection of permanent OCR, not another image or
- * model request. Only a newly admitted choice with an exact, separately printed
- * label line and all identity anchors can resolve a formerly unmatched reading.
- * Abbreviations, missing language/number/year and ambiguous finishes stay null. */
-export function reassociateCodexReading(reading, catalog, previousChoices = []) {
+ * model request. A new choice or newly supplied sourced printing origin still
+ * needs an exact printing line and full literal identity anchors. Abbreviations,
+ * missing language/number/year and ambiguous finishes remain unmatched. */
+export function reassociateCodexReading(reading, catalog, previousChoices = [], previousContext = []) {
   if (reading.candidateKey !== null || !reading.labelText || !reading.gradingCompany) return reading;
   const oldKeys = new Set(previousChoices.map(choice => choice.key));
   const text = ` ${labelWords(reading.labelText)} `;
   const contains = value => Boolean(value) && text.includes(` ${labelWords(value)} `);
   const lines = new Set(reading.labelText.split(/\r?\n/).map(labelWords));
   const years = [...reading.labelText.matchAll(/\b(?:19|20)\d{2}\b/g)].map(match => match[0]);
+  const contexts = codexCatalogContext(catalog);
   const matches = codexChoices(catalog).filter(choice => {
     const identity = choice.identity;
-    return !oldKeys.has(choice.key) && lines.has(labelWords(choice.parallel))
-      && [identity.name, identity.year, identity.cardNumber, ...String(identity.setName ?? '').split(/\s+[—–]\s+/u)].every(contains)
-      && years.every(year => labelWords(identity.year).split(' ').includes(year))
+    const context = contexts.find(value => value.candidateKey === choice.key);
+    const origin = context?.identityYearMeaning === 'BASE_EXPANSION_RELEASE_YEAR' ? context.printingOrigin : null;
+    const originYears = origin?.match(/\b(?:19|20)\d{2}\b/g) ?? [];
+    // A prior refusal can be revisited only with separately sourced origin
+    // context that the original request did not receive. Require literal full
+    // identity and printing lines; no seller text, abbreviations or guessed
+    // language/collector denominator enter this deterministic projection.
+    const addedOrigin = origin && originYears.length === 1 && contains(origin)
+      && !previousContext.some(value => value.candidateKey === choice.key && value.printingOrigin === origin);
+    const identityAnchors = addedOrigin ? [identity.name, identity.cardNumber, origin]
+      : [identity.name, identity.year, identity.cardNumber, ...String(identity.setName ?? '').split(/\s+[—–]\s+/u)];
+    const allowedYears = addedOrigin ? [identity.year, ...originYears] : labelWords(identity.year).split(' ');
+    return (!oldKeys.has(choice.key) || addedOrigin) && lines.has(labelWords(choice.parallel))
+      && identityAnchors.every(contains) && years.every(year => allowedYears.includes(year))
       && (!identity.manufacturer || contains(identity.manufacturer))
       && (!identity.language || contains(identity.language) || contains(labelLanguages[identity.language]));
   });
   if (matches.length !== 1) return reading;
   return { ...reading, candidateKey: matches[0].key,
-    reason: 'Exact literal label identity and printing match a newly available catalog choice. Original label reading is retained.' };
+    reason: 'Exact literal label identity and printing match newly available catalog identity or sourced printing-origin context. Original label reading is retained.' };
 }
-export function projectCodexReading(reading,catalog,previousChoices = null) {
-  if (previousChoices !== null) reading = reassociateCodexReading(reading,catalog,previousChoices);
+export function projectCodexReading(reading,catalog,previousChoices = null,previousContext = []) {
+  if (previousChoices !== null) reading = reassociateCodexReading(reading,catalog,previousChoices,previousContext);
   const image=catalog.referencePhotos.find(i=>i.sha256===reading.sha256);
   const matches=catalog.candidates.filter(c=>variantCodexChoice(c).key===reading.candidateKey);
   const candidate=matches.length===1?matches[0]:null;

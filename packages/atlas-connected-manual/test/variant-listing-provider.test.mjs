@@ -313,6 +313,24 @@ test('named requests share a durable public printing key and reject language con
  assert.throws(()=>prepare({...identity,language:'ja'},{name:'Reverse Holofoil',language:'en'}),/LANGUAGE/);
  assert.throws(()=>prepare(identity,{name:'Reverse Holofoil',language:'en',cardId:'private'}),/PRINTING/);
 });
+test('graded insert searches remove only the repeated explicit insert and preserve old paid query reads',async()=>{
+ const target={...sports,name:'Jaxson Dart',cardNumber:'DTBH-JDT'},printing={name:'Donruss Threads Blue Hyper',language:null};
+ const request=prepare(target,printing,{graded:true});
+ assert.equal(request.query,'2025 panini donruss optic football jaxson dart donruss threads blue hyper #dtbh-jdt graded');
+ assert.equal(request.identity.cardNumber,'dtbh-jdt');assert.equal(request.printing.name,'donruss threads blue hyper');
+ assert.equal(prepare(target,{name:'Donruss Threads',language:null},{graded:true}).query,
+  '2025 panini donruss optic football jaxson dart donruss threads #dtbh-jdt graded');
+ const old=prepareRetainedVariantListingRequest(target,printing,{photoPool:true});
+ assert.match(old.query,/donruss threads donruss threads blue hyper/);assert.notEqual(old.requestKey,request.requestKey);
+ assert.equal(project(old,source(old,[item(1)])).listings.length,1,'Exact historical paid responses remain readable');
+ await assert.rejects(provider({fetchImpl:noNetwork}).fetchSource(old),{code:'VARIANT_LISTING_RETIRED_REQUEST'});
+ for(const [savedIdentity,savedPrinting] of [[identity,{name:'Reverse Holofoil',language:'en'}],
+  [target,{name:'Blue Hyper',language:null}],[target,{name:'Donruss Threadsman Blue',language:null}],
+  [{...target,setName:'Donruss Optic Football'},printing]])
+  assert.deepEqual(prepare(savedIdentity,savedPrinting,{graded:true}),
+   prepareRetainedVariantListingRequest(savedIdentity,savedPrinting,{photoPool:true}),'An unchanged query keeps its exact paid key');
+ assert.match(prepare(target,printing).query,/donruss threads donruss threads blue hyper/,'Retired ungraded identities stay unchanged');
+});
 test('named searches attach explicit finish claims without inventing extra variants or requiring a seller language word',async()=>{
  const printing={name:'Reverse Holofoil',language:'en'},request=prepare(identity,printing),bytes=await png();
  const p=provider({cache:cacheFixture(),now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});

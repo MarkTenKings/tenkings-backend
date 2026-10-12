@@ -181,7 +181,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       for(const photo of request.photos)if(!readings.has(photo.sha256)){
         const saved=await listingRead(tx,codexReadingKey(request,photo.sha256));
         if(saved){requireThat(saved.schemaVersion==='atlas-codex-reading/v1'&&saved.policy===VARIANT_LABEL_POLICY&&saved.reading.sha256===photo.sha256
-          &&Array.isArray(saved.choices)&&(saved.reading.candidateKey===null||saved.choices.some(c=>c.key===saved.reading.candidateKey)),503,'VARIANT_CODEX_READING_INVALID');readings.set(photo.sha256,projectCodexReading(saved.reading,catalog,saved.choices));}
+          &&Array.isArray(saved.choices)&&(saved.reading.candidateKey===null||saved.choices.some(c=>c.key===saved.reading.candidateKey)),503,'VARIANT_CODEX_READING_INVALID');readings.set(photo.sha256,projectCodexReading(saved.reading,catalog,saved.choices,saved.catalogContext??[]));}
       }
       return validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',catalogHash:catalog.snapshotHash,readings:[...readings.values()]},catalog);
     });},
@@ -199,7 +199,8 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const libraries=new Map();
       for(const r of labels.readings){
         const reading={sha256:r.sha256,candidateKey:r.canonicalPrintingKey,gradingCompany:r.gradingCompany,labelText:r.labelText,reason:r.reason};
-        const record={schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices,reading,responseHash:digest(response.bodyText),requestKey:request.requestKey};
+        const record={schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices,reading,responseHash:digest(response.bodyText),requestKey:request.requestKey,
+          ...(request.catalogContext ? {catalogContext:request.catalogContext} : {})};
         const key=codexReadingKey(request,r.sha256);await listingLock(tx,key);
         const existing=await listingRead(tx,key);if(existing)requireThat(canonical(existing)===canonical(record),409,'VARIANT_CODEX_READING_CONFLICT');else await listingWrite(tx,key,canonical(record));
         if(!reading.candidateKey)continue;
@@ -284,11 +285,12 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
         const source=response?listingResponse(response,retained):null;
         if(!retainedOnly)await tx.$executeRawUnsafe(`UPDATE ${table} j SET audit=audit||jsonb_build_array(jsonb_build_object('event',$3::text,'requestKey',$4::text,'dispatchId',$5::text)),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,source?'LISTING_REUSE':'LISTING_UNKNOWN',request.requestKey,retained.dispatchId);
         return source?{state:'REUSED',source}:{state:'UNKNOWN',code:'LISTING_SOURCE_OUTCOME_UNKNOWN'};}
-      // Only ordinary reads consult the exact old paid journal. Explicit
-      // refresh generations acquire the current unrestricted query. There is
-      // no old-query dispatch path, including after an uncertain old outcome.
-      if(!request.generation){
-        const previousRequest=prepareRetainedVariantListingRequest(request.identity,request.printing??null);
+      // Query compaction may not buy again under a changed key, including on
+      // retry of an existing refresh generation. Older 40-row queries remain
+      // ordinary-read fallbacks only. None of these old queries is dispatched.
+      const previousRequests=[prepareRetainedVariantListingRequest(request.identity,request.printing??null,{photoPool:true,generation:request.generation??null}),
+        ...(!request.generation?[prepareRetainedVariantListingRequest(request.identity,request.printing??null)]:[])];
+      for(const previousRequest of previousRequests.filter(previous=>previous.requestKey!==request.requestKey)){
         await listingLock(tx,previousRequest.requestKey);
         const previous=await listingRead(tx,listingDispatchKey(previousRequest.requestKey)),previousResponse=await listingRead(tx,listingResponseKey(previousRequest.requestKey));
         requireThat(!previousResponse||previous,503,'VARIANT_LISTING_JOURNAL_CONFLICT');

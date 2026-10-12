@@ -88,7 +88,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const variantJobs=variantReviewEnabled?createVariantJobStore({boundary,intakeRepository}):null;
   const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
   const publicationRepository=createPublicationRepository({boundary,validateAccess});
-  const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
+  const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource,onError:onWorkerError});
   const finishing=createManualFinishing({repository:publicationRepository,artifacts});
   const station=stationConfig?createFinishingStationService({...stationConfig,finishing,repository:createFinishingStationRepository({boundary,validateAccess})}):null;
   const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix,validateAccess}):null;
