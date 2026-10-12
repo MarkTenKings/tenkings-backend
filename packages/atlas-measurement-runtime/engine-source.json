@@ -1,10 +1,10 @@
 {
   "version": "atlas-manual-cpu-measurement-v1",
   "sources": {
-    "manual_measurement_worker.py": "b7adcb6bfdc3f82b1f840482da182106317eb9748eab4c4cfb25c2c312664499",
-    "manual_measurement.py": "7c2cc539c47226ac25a0bab471c582b650e2ed2f90478740f829c6b093c130b9",
+    "manual_measurement_worker.py": "59ce1b5c4d869ca11b62463eb7ae4654ff37ad4613788d1b613de26d7e1f17e7",
+    "manual_measurement.py": "4980093ee4a815b139296cc431c8195929dfcd2be41f45b902b69ee051ad1d0e",
     "card_geometry.py": "7eac86c8e54e1577d7059511f309cfa052f7cdbdbe782eb6417b67cc22ae11a4",
-    "defect_math.py": "0bac45bb6a5ca617c493603284c091ddb0a85d35c1774b053fbbc424e6c27cd6",
+    "defect_math.py": "5e4207d623c8ff237df6f528c1c94cf103fbc572b84c56f08bedda9990dc5ec8",
     "trace_rle.py": "2bed10e729ce82d403eb8f83e2917e1ee009aefe00b1ab96f27ba25c3954beb4"
   }
 }

@@ -1,11 +1,11 @@
-import {variantSelectionParallel,validateVariantReviewSnapshot,variantSnapshotHash,createManufacturerChecklistVariantProvider} from '@tenkings/card-catalog-evidence';
+import {variantSelectionParallel,compareVariantCardNumber,validateVariantReviewSnapshot,variantSnapshotHash,createManufacturerChecklistVariantProvider} from '@tenkings/card-catalog-evidence';
 import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
-import {prepareVariantListingRequest,prepareRetainedVariantListingRequest,variantChecklistListingIdentity,VARIANT_GRADED_LISTING_REVISION} from './variant-listing-provider.mjs';
-import {codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
-import {prepareVariantLabelRequest,projectVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from './variant-photo-provider.mjs';
+import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION} from './variant-listing-provider.mjs';
+import {CODEX_ASSOCIATION_REVISION,variantCodexAliases,codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
+import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from './variant-photo-provider.mjs';
 
 export const VARIANT_POLICY='atlas-visual-variant-v1';
 const table='atlas_manual_connected.variant_job';
@@ -29,7 +29,7 @@ function evidenceText(value,field,bodyLimit){
  requireThat(Buffer.byteLength(text)<=8388608,413,'VARIANT_EVIDENCE_TOO_LARGE');return text;
 }
 export const variantIdentityHash=identity=>digest(canonical(identity));
-export const variantJobKey=input=>digest(canonical([VARIANT_POLICY,input.cardId,input.sourceHash,input.identityRevision,input.identityHash,input.generation??null]));
+export const variantJobKey=input=>digest(canonical([VARIANT_POLICY,input.cardId,input.sourceHash,input.identityRevision,input.identityHash,input.generation??null,...(input.catalogRevision?[input.catalogRevision]:[])]));
 export const variantRefreshable=job=>Boolean(job&&(job.state==='READY'||['FAILED','STALE'].includes(job.state)&&!job.dispatch_id));
 const unpack=row=>{
  if(!row)return null;
@@ -123,27 +123,29 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
   async function checkAction(tx,card,action){validateVariantAction(action);const b=variantBinding(card);
     requireThat(b.sourceHash===action.sourceHash,409,'VARIANT_SOURCE_STALE');requireThat(b.identityRevision===action.identityRevision&&b.identityHash===action.identityHash,409,'VARIANT_IDENTITY_STALE');
     let job=null;if(action.jobId!==null){const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid`,action.jobId,card.cardId);job=unpack(row);
-      requireThat(job?.state==='READY'&&job.result_hash===action.resultHash&&job.source_hash===b.sourceHash&&(job.identity_revision===b.identityRevision&&job.identity_hash===b.identityHash||(await confirmation(tx,card))?.job_key===job.key),409,'VARIANT_RESULT_STALE');}
-    return {job,identity:variantSelectedIdentity(card,action,job?.result)};
+      requireThat(job?.catalog&&(job.result_hash===action.resultHash||job.catalog_hash===action.resultHash)&&job.source_hash===b.sourceHash&&(job.identity_revision===b.identityRevision&&job.identity_hash===b.identityHash||(await confirmation(tx,card))?.job_key===job.key),409,'VARIANT_RESULT_STALE');}
+    return {job,identity:variantSelectedIdentity(card,action,job?.result??(job?.catalog?{catalog:job.catalog}:null))};
   }
   async function approvalCheck(tx,card){const row=await confirmation(tx,card);requireThat(['SELECTED','MANUAL'].includes(row?.decision),409,'VARIANT_CONFIRMATION_REQUIRED');
     return row;}
   return Object.freeze({
     async discover(limit=25){requireThat(Number.isInteger(limit)&&limit>=1&&limit<=100,500,'VARIANT_CONFIG_INVALID');return machine(async({tx})=>{
-      const rows=await tx.$queryRawUnsafe(`SELECT c.id,c.owner_id,c.content,atlas_manual_connected.display_owner_version(c.owner_id) access_version FROM atlas_manual.card c
+      const rows=await tx.$queryRawUnsafe(`SELECT c.id,c.owner_id,c.content,previous.key AS previous_key,atlas_manual_connected.display_owner_version(c.owner_id) access_version
+       FROM atlas_manual.card c LEFT JOIN LATERAL (SELECT key FROM ${table} p WHERE p.card_id=c.id AND p.source_hash=c.content::jsonb->'source'->>'sourceHash' AND p.state IN('READY','FAILED') AND (p.identity_revision=(c.content::jsonb->>'identityRevision')::int OR EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.job_key=p.key AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int)) ORDER BY p.created_at DESC,p.key DESC LIMIT 1) previous ON true
        WHERE atlas_manual_connected.display_owner_version(c.owner_id) IS NOT NULL AND EXISTS(SELECT 1 FROM atlas_manual_connected.identification i WHERE i.card_id=c.id AND i.state='COMPLETE' AND i.source_hash=c.content::jsonb->'source'->>'sourceHash')
        AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=c.id)
-       AND NOT EXISTS(SELECT 1 FROM atlas_manual.approval a WHERE a.card_id=c.id AND a.source_hash=c.content_hash)
-       AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.source_hash=c.content::jsonb->'source'->>'sourceHash' AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int AND v.decision IN('SELECTED','MANUAL'))
-       AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND j.identity_revision=(c.content::jsonb->>'identityRevision')::int AND j.policy=$1)
-       ORDER BY c.id LIMIT $2`,VARIANT_POLICY,limit);
-      let count=0;for(const row of rows){const d=JSON.parse(row.content),input={...variantBinding({cardId:row.id,draft:d}),identity:variantCatalogIdentity('playerName'in d.identity?'SPORTS':'POKEMON',d.identity)};const value=canonical(input);
-       // Serialize with explicit initial preparation. A new statement after
-       // the lock sees a job committed while this discovery scan was pending.
+       AND (previous.key IS NOT NULL OR (NOT EXISTS(SELECT 1 FROM atlas_manual.approval a WHERE a.card_id=c.id AND a.source_hash=c.content_hash)
+        AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.source_hash=c.content::jsonb->'source'->>'sourceHash' AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int AND v.decision IN('SELECTED','MANUAL'))))
+       AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND j.identity_revision=(c.content::jsonb->>'identityRevision')::int AND j.state IN('QUEUED','RUNNING','REQUESTED'))
+       AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND (j.identity_revision=(c.content::jsonb->>'identityRevision')::int OR EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.job_key=j.key AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int)) AND j.policy=$1 AND j.input::jsonb->>'catalogRevision'=$3)
+       ORDER BY c.id LIMIT $2`,VARIANT_POLICY,limit,CODEX_ASSOCIATION_REVISION);
+      let count=0;for(const row of rows){const d=JSON.parse(row.content),input={...variantBinding({cardId:row.id,draft:d}),identity:variantCatalogIdentity('playerName'in d.identity?'SPORTS':'POKEMON',d.identity),catalogRevision:CODEX_ASSOCIATION_REVISION,
+        ...(row.previous_key?{reuseJobKey:row.previous_key,localOnly:true,generation:randomUUID()}:{})};const value=canonical(input);
        await preparationLock(tx,row.id);
-       const [existing]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND policy=$4 LIMIT 1`,row.id,input.sourceHash,input.identityRevision,VARIANT_POLICY);
+       const [existing]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND policy=$4 AND (input::jsonb->>'catalogRevision'=$5 OR state IN('QUEUED','RUNNING','REQUESTED')) LIMIT 1`,row.id,input.sourceHash,input.identityRevision,VARIANT_POLICY,CODEX_ASSOCIATION_REVISION);
        if(existing)continue;
-       count+=await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,source_hash,identity_revision,identity_hash,input,input_hash) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,variantJobKey(input),row.id,row.owner_id,row.access_version,VARIANT_POLICY,input.sourceHash,input.identityRevision,input.identityHash,value,digest(value));}return count;});},
+       count+=await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,source_hash,identity_revision,identity_hash,input,input_hash,generation) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid) ON CONFLICT DO NOTHING`,variantJobKey(input),row.id,row.owner_id,row.access_version,VARIANT_POLICY,input.sourceHash,input.identityRevision,input.identityHash,value,digest(value),input.generation??'00000000-0000-0000-0000-000000000000');}return count;});},
+    async priorCatalog(job){if(!job.input.reuseJobKey)return null;return machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,job.input.reuseJobKey,job.card_id,job.source_hash);return unpack(row)?.catalog??null;});},
     async read(staff,cardId){uuid(cardId);const savedRead=await boundary.transaction(staff,async({tx,principal})=>{const card=await authorized(tx,principal,cardId);const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);const saved=await confirmation(tx,card);let latest=row;if(!latest&&saved?.job_key){[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
       const [approved]=await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual.approval WHERE card_id=$1::uuid AND source_hash=$2 LIMIT 1',cardId,card.contentHash);
       let approvalReady=Boolean(approved),reason=null;try{if(!approved)await approvalCheck(tx,card);approvalReady=true;}catch(e){if(e.code!=='VARIANT_CONFIRMATION_REQUIRED')throw e;reason=e.code;}
@@ -158,7 +160,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const [historic]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND generation=$2::uuid`,cardId,input.requestId);
       if(historic){const saved=unpack(historic);requireThat(saved.input.sourceHash===input.sourceHash&&saved.input.identityRevision===input.identityRevision&&saved.input.identityHash===input.identityHash&&saved.input.reuseJobKey===input.jobId,409,'VARIANT_REFRESH_CONFLICT');return saved.key;}
       requireThat(b.sourceHash===input.sourceHash,409,'VARIANT_SOURCE_STALE');requireThat(b.identityRevision===input.identityRevision&&b.identityHash===input.identityHash,409,'VARIANT_IDENTITY_STALE');
-      const nextInput={...b,identity:variantCatalogIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',card.draft.identity),generation:input.requestId,reuseJobKey:input.jobId},key=variantJobKey(nextInput);
+      const nextInput={...b,catalogRevision:CODEX_ASSOCIATION_REVISION,identity:variantCatalogIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',card.draft.identity),generation:input.requestId,reuseJobKey:input.jobId},key=variantJobKey(nextInput);
       const [existing]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1`,key);
       if(existing){requireThat(canonical(unpack(existing).input)===canonical(nextInput),409,'VARIANT_REFRESH_CONFLICT');return key;}
       let [latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);
@@ -167,31 +169,31 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const [owner]=await tx.$queryRawUnsafe('SELECT owner_id,atlas_manual_connected.display_owner_version(owner_id) access_version FROM atlas_manual.card WHERE id=$1::uuid',cardId);requireThat(owner?.access_version,409,'VARIANT_SOURCE_STALE');
       const value=canonical(nextInput);await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,generation,source_hash,identity_revision,identity_hash,input,input_hash) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7,$8,$9,$10,$11)`,key,cardId,owner.owner_id,owner.access_version,VARIANT_POLICY,input.requestId,b.sourceHash,b.identityRevision,b.identityHash,value,digest(value));return key;
     });},
-    async reusableResult(job,snapshot){if(!job.input.reuseJobKey)return null;return machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT source.* FROM ${table} source JOIN ${table} j ON j.key=$1 WHERE source.key=$2 AND source.card_id=j.card_id AND source.source_hash=j.source_hash AND source.identity_revision=j.identity_revision AND source.identity_hash=j.identity_hash AND source.state='READY' AND source.catalog_hash=$3 AND ${current}`,job.key,job.input.reuseJobKey,snapshot.snapshotHash);const prior=unpack(row);return prior?.result?.catalog?.snapshotHash===snapshot.snapshotHash?prior.result:null;});},
+    async reusableResult(job,snapshot){if(!job.input.reuseJobKey||job.input.localOnly)return null;return machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT source.* FROM ${table} source JOIN ${table} j ON j.key=$1 WHERE source.key=$2 AND source.card_id=j.card_id AND source.source_hash=j.source_hash AND source.identity_revision=j.identity_revision AND source.identity_hash=j.identity_hash AND source.state='READY' AND source.catalog_hash=$3 AND ${current}`,job.key,job.input.reuseJobKey,snapshot.snapshotHash);const prior=unpack(row);return prior?.result?.catalog?.snapshotHash===snapshot.snapshotHash?prior.result:null;});},
     async resolve(staff,card,action){return boundary.transaction(staff,async({tx,principal})=>{const actual=await authorized(tx,principal,card.cardId,true);requireThat(actual.contentHash===card.contentHash,409,'MANUAL_DRAFT_STALE');return checkAction(tx,card,action);});},
     async assertApproval(staff,card){return boundary.transaction(staff,async({tx,principal})=>{await authorized(tx,principal,card.cardId);return approvalCheck(tx,card);});},
     async validateCommit({tx,principal,cardId,input,draft}){if(input.action.type==='APPROVE_REPORT'){await approvalCheck(tx,{cardId,draft});return;}if(input.action.type!=='VARIANT_CONFIRM')return;
       const card=await authorized(tx,principal,cardId,true),{job,identity}=await checkAction(tx,card,input.action),changed=variantIdentityHash(identity)!==variantIdentityHash(card.draft.identity),revision=card.draft.identityRevision+(changed?1:0);
       requireThat(variantIdentityHash(draft.identity)===variantIdentityHash(identity)&&draft.identityRevision===revision,409,'VARIANT_IDENTITY_STALE');
-      await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,job_key,result_hash,catalog_hash,candidate_id,decision,reprocess_required) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,false)`,cardId,input.actionId,principal.id,input.action.sourceHash,revision,variantIdentityHash(identity),job?.key??null,job?.result_hash??null,job?.catalog_hash??null,input.action.candidateId,input.action.decision);
-      if(['SELECTED','MANUAL'].includes(input.action.decision)){const candidate=job?.result?.catalog?.candidates.find(c=>c.candidateId===input.action.candidateId);const observedAt=new Date().toISOString(),payload={decision:input.action.decision,cardId,actionId:input.actionId,sourceHash:input.action.sourceHash,identityRevision:revision,identityHash:variantIdentityHash(identity),identity:{...variantCatalogIdentity('playerName'in identity?'SPORTS':'POKEMON',identity),language:candidate?.identity.language??null},parallel:identity.parallel,catalog:job?.catalog??null,candidateId:input.action.candidateId,observedAt,referencePermission:input.action.referencePermission??null},text=canonical(payload,{maxBytes:2097152});
+      await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,job_key,result_hash,catalog_hash,candidate_id,decision,reprocess_required) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,false)`,cardId,input.actionId,principal.id,input.action.sourceHash,revision,variantIdentityHash(identity),job?.key??null,input.action.resultHash,job?.catalog_hash??null,input.action.candidateId,input.action.decision);
+      if(['SELECTED','MANUAL'].includes(input.action.decision)){const candidate=job?.catalog?.candidates.find(c=>c.candidateId===input.action.candidateId);const observedAt=new Date().toISOString(),payload={decision:input.action.decision,cardId,actionId:input.actionId,sourceHash:input.action.sourceHash,identityRevision:revision,identityHash:variantIdentityHash(identity),identity:{...variantCatalogIdentity('playerName'in identity?'SPORTS':'POKEMON',identity),language:candidate?.identity.language??null},parallel:identity.parallel,catalog:job?.catalog??null,candidateId:input.action.candidateId,observedAt,referencePermission:input.action.referencePermission??null},text=canonical(payload,{maxBytes:2097152});
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_contribution(action_id,card_id,actor_id,access_version,payload,payload_hash) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6)`,input.actionId,cardId,principal.id,principal.accessVersion,text,digest(text));}
     },
     async codexReadings(job){return machine(async({tx})=>{
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');const catalog=unpack(live).catalog,request=prepareVariantLabelRequest(catalog),readings=new Map();
       await retainPhotoPool(tx,catalog);
-      for(const choice of request.choices){
+      for(const candidate of catalog.candidates)for(const choice of variantCodexAliases(candidate)){
         const [row]=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 ORDER BY created_at DESC LIMIT 1',codexLibraryKey(choice));
         if(row){requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');const library=validateCodexLibrary(JSON.parse(row.snapshot),choice);
-          for(const ref of library.references)if(request.photos.some(p=>p.sha256===ref.image.sha256))readings.set(ref.image.sha256,projectCodexReading(ref.reading,catalog));}
+          for(const ref of library.references)if(request.photos.some(p=>p.sha256===ref.image.sha256))readings.set(ref.image.sha256,projectCodexReading(ref.reading,catalog,[library.choice]));}
       }
       for(const photo of request.photos)if(!readings.has(photo.sha256)){
         const saved=await listingRead(tx,codexReadingKey(request,photo.sha256));
         if(saved){requireThat(saved.schemaVersion==='atlas-codex-reading/v1'&&saved.policy===VARIANT_LABEL_POLICY&&saved.reading.sha256===photo.sha256
           &&Array.isArray(saved.choices)&&(saved.reading.candidateKey===null||saved.choices.some(c=>c.key===saved.reading.candidateKey)),503,'VARIANT_CODEX_READING_INVALID');readings.set(photo.sha256,projectCodexReading(saved.reading,catalog,saved.choices,saved.catalogContext??[]));}
       }
-      return validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',catalogHash:catalog.snapshotHash,readings:[...readings.values()]},catalog);
+      return validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',associationRevision:CODEX_ASSOCIATION_REVISION,catalogHash:catalog.snapshotHash,readings:[...readings.values()]},catalog);
     });},
     async publishLabelSource(job,request){return machine(async({tx})=>{
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`,job.key,job.claim_id);requireThat(live,409,'VARIANT_LEASE_LOST');
@@ -201,13 +203,13 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       requireThat(schemaVersion==='variant-label-response/v1'&&reservationHash===digest(canonical(reservation))&&canonical(response.requestEvidence)===canonical(reservation.evidence)
         &&canonical(request)===canonical(reservation.request),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
       const catalog=validateVariantReviewSnapshot(reservation.catalog);
-      const labels=projectVariantLabelResponse(response,catalog),choices=codexChoices(catalog);
+      const labels=projectVariantLabelResponse(response,catalog),literal=readVariantLabelResponse(response,catalog),choices=codexChoices(catalog);
       for(const key of labels.readings.map(r=>codexReadingKey(request,r.sha256)).sort())await listingLock(tx,key);
       for(const key of [...new Set(labels.readings.filter(r=>r.canonicalPrintingKey).map(r=>codexLibraryKey(choices.find(c=>c.key===r.canonicalPrintingKey))))].sort())await listingLock(tx,key);
       const libraries=new Map();
       for(const r of labels.readings){
-        const reading={sha256:r.sha256,candidateKey:r.canonicalPrintingKey,gradingCompany:r.gradingCompany,labelText:r.labelText,reason:r.reason};
-        const record={schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices,reading,responseHash:digest(response.bodyText),requestKey:request.requestKey,
+        const reading={sha256:r.sha256,candidateKey:r.canonicalPrintingKey,gradingCompany:r.gradingCompany,labelText:r.labelText,reason:r.reason,evidenceKind:r.evidenceKind};
+        const record={schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices:literal.request.choices,reading:literal.readings.find(v=>v.sha256===r.sha256),responseHash:digest(response.bodyText),requestKey:request.requestKey,
           ...(request.catalogContext ? {catalogContext:request.catalogContext} : {})};
         const key=codexReadingKey(request,r.sha256);await listingLock(tx,key);
         const existing=await listingRead(tx,key);if(existing)requireThat(canonical(existing)===canonical(record),409,'VARIANT_CODEX_READING_CONFLICT');else await listingWrite(tx,key,canonical(record));
@@ -286,12 +288,14 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       // Only immutable local manufacturer evidence may fill a missing year
       // for a reference request. Never trust a supplied catalog or request year.
       const discovered=job.input.identity.year?null:await checklist.prepare(job.input.identity);
-      const listingIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year):job.input.identity;
+      const resolvedIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year):job.input.identity;
+      requireThat(compareVariantCardNumber(resolvedIdentity.cardNumber,request.identity?.cardNumber)==='match',409,'VARIANT_LISTING_REQUEST_CHANGED');
+      const listingIdentity={...resolvedIdentity,cardNumber:request.identity.cardNumber};
       const identityEvidence=discovered?discovered.candidates.filter(c=>c.identity.year===listingIdentity.year
-        &&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,{name:c.label,language:c.identity.language},{graded:true,...(request.generation?{generation:request.generation}:{})})))
+        &&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,{name:c.label,language:c.identity.language},{...(request.generation?{generation:request.generation}:{})})))
         .map(c=>({candidateId:c.candidateId,source:c.source})):null;
       requireThat(!identityEvidence||identityEvidence.length>0,409,'VARIANT_LISTING_REQUEST_CHANGED');
-      requireThat(typeof retainedOnly==='boolean'&&request.revision===VARIANT_GRADED_LISTING_REVISION&&(!request.generation||job.input.reuseJobKey!==null&&request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,request.printing??null,{graded:true,...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
+      requireThat(typeof retainedOnly==='boolean'&&request.revision===VARIANT_LISTING_REVISION&&(!request.generation||job.input.reuseJobKey!==null&&request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,request.printing??null,{...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
       await listingLock(tx,request.requestKey);
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} AND j.state='RUNNING' FOR UPDATE`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');
@@ -302,22 +306,6 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
         const source=response?listingResponse(response,retained):null;
         if(!retainedOnly)await tx.$executeRawUnsafe(`UPDATE ${table} j SET audit=audit||jsonb_build_array(jsonb_build_object('event',$3::text,'requestKey',$4::text,'dispatchId',$5::text)),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,source?'LISTING_REUSE':'LISTING_UNKNOWN',request.requestKey,retained.dispatchId);
         return source?{state:'REUSED',source}:{state:'UNKNOWN',code:'LISTING_SOURCE_OUTCOME_UNKNOWN'};}
-      // Query compaction may not buy again under a changed key, including on
-      // retry of an existing refresh generation. Older 40-row queries remain
-      // ordinary-read fallbacks only. None of these old queries is dispatched.
-      const previousRequests=[prepareRetainedVariantListingRequest(request.identity,request.printing??null,{photoPool:true,generation:request.generation??null}),
-        ...(!request.generation?[prepareRetainedVariantListingRequest(request.identity,request.printing??null)]:[])];
-      for(const previousRequest of previousRequests.filter(previous=>previous.requestKey!==request.requestKey)){
-        await listingLock(tx,previousRequest.requestKey);
-        const previous=await listingRead(tx,listingDispatchKey(previousRequest.requestKey)),previousResponse=await listingRead(tx,listingResponseKey(previousRequest.requestKey));
-        requireThat(!previousResponse||previous,503,'VARIANT_LISTING_JOURNAL_CONFLICT');
-        if(previous){
-          requireThat(previous.schemaVersion==='variant-listing-dispatch/v1'&&canonical(previous.request)===canonical(previousRequest),503,'VARIANT_LISTING_JOURNAL_CONFLICT');
-          const source=previousResponse?listingResponse(previousResponse,previous):null;
-          if(!retainedOnly)await tx.$executeRawUnsafe(`UPDATE ${table} j SET audit=audit||jsonb_build_array(jsonb_build_object('event',$3::text,'requestKey',$4::text,'dispatchId',$5::text)),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,source?'LISTING_REUSE':'LISTING_UNKNOWN',previousRequest.requestKey,previous.dispatchId);
-          return source?{state:'REUSED',source,request:previousRequest}:{state:'UNKNOWN',code:'LISTING_SOURCE_OUTCOME_UNKNOWN'};
-        }
-      }
       if(retainedOnly)return {state:'MISSING'};
       const reservation={schemaVersion:'variant-listing-dispatch/v1',request,dispatchId:randomUUID(),jobKey:job.key,claimId:job.claim_id,reservedAt:new Date().toISOString(),...(identityEvidence?{identityEvidence}:{})};
       await listingWrite(tx,listingDispatchKey(request.requestKey),canonical(reservation));
@@ -344,8 +332,6 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     defer:(job,code='VARIANT_GRADING_PRIORITY_DEFERRED')=>{requireThat(['VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING'].includes(code),500,'VARIANT_CONFIG_INVALID');return machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='QUEUED',claim_id=NULL,lease_until=NULL,code=$3,available_at=clock_timestamp()+interval '5 seconds',updated_at=clock_timestamp() WHERE ${active} AND state='RUNNING' AND dispatch_id IS NULL AND response IS NULL`,job.key,job.claim_id,code))===1);},
     renew:job=>machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE ${table} j SET lease_until=clock_timestamp()+($3*interval '1 millisecond'),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,leaseMs))===1),
     saveCatalog:(job,catalog)=>machine(async({tx})=>{validateVariantReviewSnapshot(catalog);const value=canonical(catalog,{maxBytes:1048576});const saved=(await tx.$executeRawUnsafe(`UPDATE ${table} j SET catalog=$3,catalog_hash=$4,updated_at=clock_timestamp() WHERE ${active} AND catalog IS NULL`,job.key,job.claim_id,value,catalog.snapshotHash))===1;if(saved)await retainPhotoPool(tx,catalog);return saved;}),
-    dispatch:(job,evidence=null)=>machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='REQUESTED',dispatch_id=$2::uuid,audit=audit||jsonb_build_array(jsonb_build_object('event','DISPATCH','id',$2::text,'evidence',$3::jsonb)),updated_at=clock_timestamp() WHERE ${active} AND state='RUNNING' AND dispatch_id IS NULL AND response IS NULL AND catalog IS NOT NULL`,job.key,job.claim_id,canonical(evidence)))===1),
-    response:(job,response)=>machine(async({tx})=>{const value=evidenceText(response,'bodyText',1048576);return(await tx.$executeRawUnsafe(`UPDATE ${table} SET response=$3,response_hash=$4,audit=audit||jsonb_build_array(jsonb_build_object('event','RESPONSE','hash',$4::text)),updated_at=clock_timestamp() WHERE key=$1 AND dispatch_id=$2::uuid AND response IS NULL AND ($5::jsonb IS NULL OR $5::jsonb=(SELECT event->'evidence' FROM jsonb_array_elements(audit) event WHERE event->>'event'='DISPATCH' AND event->>'id'=$2::text))`,job.key,job.claim_id,value,digest(value),response.requestEvidence?canonical(response.requestEvidence):null))===1;}),
     finish:(job,outcome)=>machine(async({tx})=>{const result=outcome.result?canonical(outcome.result,{maxBytes:2097152}):null;const state=result?'READY':outcome.state==='RETRY'?(job.attempts<6?'QUEUED':'FAILED'):outcome.state;requireThat(['READY','QUEUED','FAILED','UNKNOWN','STALE'].includes(state),500,'VARIANT_OUTCOME_INVALID');return(await tx.$executeRawUnsafe(`UPDATE ${table} j SET state=$3,claim_id=NULL,lease_until=NULL,result=$4,result_hash=$5,code=$6,available_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,state,result,result?digest(result):null,outcome.code??null))===1;}),
     async claimContribution(){return machine(async({tx})=>{await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(721930,78)');await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_contribution SET state='FAILED',claim_id=NULL,lease_until=NULL,code=CASE WHEN attempts>=6 THEN 'VARIANT_CONTRIBUTION_EXHAUSTED' ELSE 'VARIANT_CONTRIBUTION_ACCESS_REVOKED' END WHERE state IN('QUEUED','RUNNING') AND (lease_until IS NULL OR lease_until<=clock_timestamp()) AND (attempts>=6 OR NOT atlas_manual_connected.display_owner_current(actor_id,access_version))");const [busy]=await tx.$queryRawUnsafe("SELECT 1 FROM atlas_manual_connected.variant_contribution WHERE state='RUNNING' AND lease_until>clock_timestamp() LIMIT 1");if(busy)return null;const [row]=await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_connected.variant_contribution WHERE attempts<6 AND ((state='QUEUED' AND available_at<=clock_timestamp()) OR (state='RUNNING' AND lease_until<=clock_timestamp())) AND atlas_manual_connected.display_owner_current(actor_id,access_version) ORDER BY created_at,action_id LIMIT 1 FOR UPDATE SKIP LOCKED`);if(!row)return null;const [claimed]=await tx.$queryRawUnsafe("UPDATE atlas_manual_connected.variant_contribution SET state='RUNNING',claim_id=$2::uuid,lease_until=clock_timestamp()+interval '60 seconds',attempts=attempts+1 WHERE action_id=$1::uuid RETURNING *",row.action_id,randomUUID());requireThat(digest(claimed.payload)===claimed.payload_hash&&(!claimed.reference_packet||digest(claimed.reference_packet)===claimed.reference_packet_hash),503,'VARIANT_CONTRIBUTION_CORRUPT');const job={...claimed,payload:JSON.parse(claimed.payload),referencePacket:claimed.reference_packet?JSON.parse(claimed.reference_packet):null};if(job.referencePacket)validateVariantContributionPacket(job,job.referencePacket);return job;});},
     async saveContributionPacket(job,packet){validateVariantContributionPacket(job,packet);const value=canonical(packet,{maxBytes:16384});return machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.variant_contribution SET reference_packet=$3,reference_packet_hash=$4 WHERE action_id=$1::uuid AND claim_id=$2::uuid AND state='RUNNING' AND lease_until>clock_timestamp() AND payload_hash=$5 AND atlas_manual_connected.display_owner_current(actor_id,access_version) AND jsonb_typeof(payload::jsonb->'referencePermission')='object' AND (reference_packet IS NULL OR reference_packet=$3 AND reference_packet_hash=$4)`,job.action_id,job.claim_id,value,digest(value),job.payload_hash))===1);},

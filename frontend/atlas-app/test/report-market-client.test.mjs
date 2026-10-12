@@ -145,3 +145,18 @@ test('confirmed expired provider evidence buys no search on read and uses a new 
   const fresh = await f.client.preview(); assert.notEqual(fresh.previewId, first.previewId); assert.equal(f.searches, 2);
   assert.equal(f.client.pending().search.requestId, fresh.previewId); assert.equal(f.client.pending().previewId, undefined);
 });
+
+test('load older sales retains its exact parent and request across a lost reply without purchasing another page', async () => {
+  const f = fixture(), parent = randomUUID();
+  f.marketSearch = { state: 'READY', previewId: parent, refreshable: true, approvalActionId: f.approvalActionId,
+    preview: { binding: { approvalVersion: 1 }, pagination: { page: 1, hasNextPage: true } } };
+  let committed;
+  f.search = body => { committed ??= structuredClone(body); throw Error('lost page reply'); };
+  await assert.rejects(f.client.preview({ afterPreviewId: parent }));
+  assert.equal(committed.afterPreviewId, parent);
+  f.client = createReportMarketClient(f.options);
+  f.search = body => { assert.deepEqual(body, committed); return { state: 'READY', previewId: body.requestId,
+    preview: { binding: { approvalVersion: 1 }, pagination: { page: 2, hasNextPage: false } } }; };
+  await f.client.preview(); assert.deepEqual(f.client.pending().search, committed);
+  assert.equal(f.searches, 2); // Two HTTP attempts of the same idempotent server reservation.
+});

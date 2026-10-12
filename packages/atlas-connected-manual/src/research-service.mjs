@@ -1,7 +1,8 @@
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {researchCardSubject,createResearchCatalogAdapter,researchCatalogScopeResolver,StaffInventoryResearchResultSchema,inspectStaffInventoryResearchTitle} from '@tenkings/card-research-core';
 import {EBAY_SOLD_COMPS_V2_ENGINE_VERSION,EBAY_SOLD_COMPS_V2_SOURCE} from '@tenkings/ebay-sold-comps-v2';
-import {projectResearchMarketPreview,publishedMarketQuery} from './presentation-market.mjs';
+import {projectResearchMarketPreview} from './presentation-market.mjs';
+import {publishedResearchQuery} from './research-market-query.mjs';
 import {createAtlasCatalogClient} from './research-catalog.mjs';
 import {createResearchJournal} from './research-journal.mjs';
 import {createResearchEffects} from './research-effects.mjs';
@@ -76,7 +77,7 @@ export function createAtlasResearchService({boundary,repository,approved,intake,
     fail(init.policyHash===policyHash&&init.kind==='RESEARCH'&&init.approvalActionId===input.approvalActionId,'RESEARCH_REQUEST_KIND_CONFLICT');
     const source=await approved.loadPacket(staff,cardId,input.approvalActionId);fail(source.publicHash===init.publicHash,'RESEARCH_PUBLICATION_CHANGED');
     const saved=await artifacts.read(init.inputRef,{cardId,kind:'RESEARCH_INPUT',sourceHash:init.publicHash});
-    fail(saved.input.subject.id===cardId&&saved.input.subject.revision===source.publicHash&&saved.context.query===publishedMarketQuery(source,{savedQuery:saved.context.query,savedInput:saved.context.input,queryContext:saved.context.marketQueryContext}).query,'RESEARCH_INPUT_CONFLICT');
+    fail(saved.input.subject.id===cardId&&saved.input.subject.revision===source.publicHash&&saved.context.query===publishedResearchQuery(source,{savedQuery:saved.context.query,savedInput:saved.context.input,queryContext:saved.context.marketQueryContext}).query,'RESEARCH_INPUT_CONFLICT');
     const loaded=await readResearchPhotos({artifacts,cardId,sourceHash:init.publicHash,input:saved.input,lineage:saved.lineage});
     const fetchImpl=createResearchEffects({journal,artifacts,staff,cardId,requestId:input.requestId,sourceHash:init.publicHash,fetchImpl:config.fetchImpl,secrets});
     const deps={env:{OPENAI_API_KEY:config.openaiApiKey,SOLDCOMPS_API_KEY:config.soldCompsApiKey,STAFF_INVENTORY_RESEARCH_FULL_RES_IMAGES:'true'},
@@ -106,7 +107,7 @@ export function createAtlasResearchService({boundary,repository,approved,intake,
       object(input,['requestId','approvalActionId','expectedRevision']);uuid(input.requestId);uuid(input.approvalActionId);
       const key=`${cardId}:${input.requestId}`;
       if(active.has(key)){await repository.market(staff,cardId,input.requestId);return {state:'PENDING',previewId:input.requestId};}
-      const source=await approved.loadPacket(staff,cardId,input.approvalActionId),context=publishedMarketQuery(source,{queryStyle:'legacy'});
+      const source=await approved.loadPacket(staff,cardId,input.approvalActionId),context=publishedResearchQuery(source,{});
       // Read-only lookup before photo processing; a missing exact request has no effects.
       let existing=null;try{existing=await repository.market(staff,cardId,input.requestId);}catch(error){if(error?.code!=='PRESENTATION_MARKET_NOT_FOUND')throw error;}
       if(existing)fail(canonical(existing.input)===canonical(input),'PRESENTATION_REQUEST_CONFLICT');

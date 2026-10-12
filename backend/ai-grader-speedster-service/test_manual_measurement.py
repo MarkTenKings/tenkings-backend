@@ -421,22 +421,18 @@ print('CPU import and manual measurement passed without optional packages')
         with self.assertRaises(cpu.ManualMeasurementError):
             cpu.measure_manual_side([], "FRONT", "SQUARE", findings=[invalid_existing])
 
-    def test_checked_entry_rejects_unreconciled_requested_mark_instead_of_empty_success(self):
+    def test_raw_requested_trace_is_retained_when_shadowed_or_outside_material(self):
         mask = rectangle(500, 700, 7, 5)
         requested = exact_finding("requested", mask, defect_type="FAINT_COLOR_VARIATION")
         covering = detector_finding("covering", mask, defect_type="LIFTING_DEFORMATION")
-        low_level = cpu.measure_marks([requested], "FRONT", "SQUARE", findings=[covering])
-        self.assertNotIn("requested", [item["id"] for item in low_level["defects"]])
-        with self.assertRaises(cpu.ManualMeasurementError) as failure:
-            cpu.measure_manual_side([requested], "FRONT", "SQUARE", findings=[covering])
-        self.assertEqual(failure.exception.code, "REQUESTED_TRACE_NOT_RECONCILED")
-        self.assertEqual(failure.exception.finding_ids, ("requested",))
-        # Square-corner pixels outside rounded material likewise cannot become
-        # a successful save with a silently missing source record.
+        result = cpu.measure_manual_side([requested], "FRONT", "SQUARE", findings=[covering])
+        kept = next(item for item in result["defects"] if item["id"] == "requested")
+        self.assertEqual(kept["finalTrace"], requested["finalTrace"])
+        self.assertEqual(kept["measurementRegions"], [])
         clipped = exact_finding("outside-material", rectangle(0, 0, 1, 1))
-        with self.assertRaises(cpu.ManualMeasurementError) as failure:
-            cpu.measure_manual_side([clipped], "FRONT", "ROUNDED_3_18_MM")
-        self.assertEqual(failure.exception.finding_ids, ("outside-material",))
+        result = cpu.measure_manual_side([clipped], "FRONT", "ROUNDED_3_18_MM")
+        self.assertEqual(result["defects"][0]["finalTrace"], clipped["finalTrace"])
+        self.assertEqual(result["defects"][0]["measurementRegions"], [])
         self.assertEqual(cpu.measure_manual_side([], "FRONT", "SQUARE"), {"defects": []})
 
     def test_four_pixel_fusion_threshold_transitivity_and_source_view_rule(self):

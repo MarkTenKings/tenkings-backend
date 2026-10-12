@@ -52,7 +52,7 @@ test('retired reclassification jobs fail without publication, projection or prov
     await f.worker.drainOnce();await f.worker.drainOnce();
     assert.equal(f.rows[0].state,'FAILED');assert.equal(f.rows[0].code,'MARKET_RECLASSIFICATION_RETIRED');
     assert.equal(f.calls(),0);assert.equal(f.writes(),0);assert.equal(f.publicationCalls(),0);assert.deepEqual(f.rows[0].response,before);
-    const status=marketJobStatus(f.rows[0]);assert.equal(status.refreshable,false);assert.equal(status.refreshAction,undefined);
+    const status=marketJobStatus(f.rows[0]);assert.equal(status.refreshable,true);assert.equal(status.refreshAction,undefined);
   }
   const store=createMarketJobStore({boundary:{machineTransaction(){throw Error('must remain cold');}}});
   for(const name of ['reclassificationPlan','reclassify','reclassificationSource','recordReclassification'])assert.equal(name in store,false);
@@ -103,7 +103,7 @@ test('unprocessed historical responses are retained without executing the retire
   await f.worker.drainOnce();await f.worker.drainOnce();
   assert.equal(f.rows[0].state,'FAILED');assert.equal(f.rows[0].code,'MARKET_PROVIDER_POLICY_INVALID');
   assert.equal(f.calls(),0);assert.equal(f.writes(),0);assert.deepEqual(f.rows[0].response,f.original);
-  assert.equal(marketJobStatus(f.rows[0]).refreshable,false);assert.equal(marketJobStatus(f.rows[0]).refreshAction,undefined);
+  assert.equal(marketJobStatus(f.rows[0]).refreshable,true);assert.equal(marketJobStatus(f.rows[0]).refreshAction,undefined);
 });
 
 test('new raw market pool is saved before labels; label retry and artifact retry reuse the one paid response', async () => {
@@ -127,7 +127,7 @@ test('new raw market pool is saved before labels; label retry and artifact retry
   await f.worker.drainOnce(); assert.equal(f.rows[0].state, 'QUEUED'); assert.deepEqual(f.rows[0].response, original);
   await f.worker.drainOnce(); assert.equal(f.rows[0].state, 'QUEUED');
   await f.worker.drainOnce(); assert.equal(f.rows[0].state, 'READY');
-  assert.equal(f.calls(), 1); assert.equal(queries, 1); assert.equal(labels, 3);
+  assert.equal(f.calls(), 1); assert.equal(queries, 0); assert.equal(labels, 3);
   assert.deepEqual(f.rows[0].response, original); assert.deepEqual(f.fixture.row, f.before);
   const result = f.rows[0].result;
   const preview = await f.fixture.artifacts.read(result.ref, { cardId: f.fixture.cardId, kind: 'MARKET_PREVIEW', sourceHash: result.artifactHash });

@@ -15,6 +15,7 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
     if (saved) check(saved.version === 1 && saved.cardId === cardId && saved.staffId === staffId
       && uuid(saved.search?.requestId) && uuid(saved.search?.approvalActionId)
       && Number.isSafeInteger(saved.search?.expectedRevision) && saved.search.expectedRevision >= 0
+      && (!saved.search.afterPreviewId || uuid(saved.search.afterPreviewId))
       && (!saved.previewId || uuid(saved.previewId))
       && (!saved.selection || (uuid(saved.selection.requestId) && saved.selection.previewId === (saved.previewId ?? saved.search.requestId)
         && Array.isArray(saved.selection.selectedIds) && saved.selection.selectedIds.length > 0)), 'MARKET_PENDING_INVALID');
@@ -55,13 +56,16 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
   }
   return Object.freeze({
     pending, read: current,
-    preview: () => exclusive(async () => {
+    preview: ({ afterPreviewId } = {}) => exclusive(async () => {
+      if (afterPreviewId !== undefined) check(uuid(afterPreviewId), 'MARKET_PREVIEW_MISMATCH');
       let saved = pending(); check(!saved?.selection, 'MARKET_SELECTION_PENDING');
       check(!saved || saved.search.approvalActionId === approvalActionId, 'MARKET_APPROVAL_STALE');
       if (!saved || sawReady) {
         const status = await current();
         if (autoDiscovery && status.marketSearch?.refreshable === false) return status.marketSearch;
-        saved = { version: 1, cardId, staffId, search: { requestId: cryptoImpl.randomUUID(), approvalActionId, expectedRevision: status.revision } };
+        if (afterPreviewId) check(status.marketSearch?.state === 'READY' && status.marketSearch.previewId === afterPreviewId
+          && status.marketSearch.preview?.pagination?.hasNextPage === true, 'MARKET_NEXT_PAGE_UNAVAILABLE');
+        saved = { version: 1, cardId, staffId, search: { requestId: cryptoImpl.randomUUID(), approvalActionId, expectedRevision: status.revision, ...(afterPreviewId ? { afterPreviewId } : {}) } };
         save(saved); sawReady = false;
       }
       let result;

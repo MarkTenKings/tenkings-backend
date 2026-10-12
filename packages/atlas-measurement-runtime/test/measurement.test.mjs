@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { measureDefectWorkspaceEdit } from '../src/index.mjs';
 import { runMeasurementWorker } from '../src/process.mjs';
-import { applyDefectMeasurement, defectBase, discardPendingDefectEdit, replaceDefectFrame,
+import { parseDefectWorkspace, applyDefectMeasurement, defectBase, discardPendingDefectEdit, replaceDefectFrame,
   markDefectSideInspected, confirmDefectFindings } from '../../atlas-manual-workspace/src/defect-actions.mjs';
 import { workspace, edit, measurements, traceAction, clone } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 
@@ -165,4 +165,20 @@ test('timeout and cancellation actually terminate/reap a blocked child before re
 test('worker rejects changed CPU source manifest before accepting or writing an output', async () => {
   const worker = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/manual_measurement_worker.py', import.meta.url));
   await assert.rejects(runMeasurementWorker(python, worker, { expectedSources: {} }, { timeoutMs: 10000 }), /MEASUREMENT_SOURCE_MISMATCH/);
+});
+
+test('a raw corner trace survives with zero measured damage outside material; photo contour changes only the intersection', async () => {
+  let state = workspace(false);
+  state = parseDefectWorkspace({ ...state, sides: { ...state.sides, FRONT: { ...state.sides.FRONT, cornerShape: 'ROUNDED_3_18_MM' } } });
+  const action = traceAction('FRONT', null, [0, 0, 2, 2], 'raw-corner');
+  const pending = edit(state, action);
+  const result = await run(pending);
+  const adopted = applyDefectMeasurement(pending, result).state.sides.FRONT.findings.find(f => f.id === 'raw-corner');
+  assert.equal(adopted.finalTrace.sha256, action.trace.traceProvenance.finalTraceSha256);
+  assert.deepEqual(adopted.measurementRegions, []);
+  const frame = { ...state.sides.FRONT.frame, materialContour: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }] };
+  state = parseDefectWorkspace({ ...state, sides: { ...state.sides, FRONT: { ...state.sides.FRONT, frame } } });
+  const onCard = edit(state, action), measured = applyDefectMeasurement(onCard, await run(onCard)).state.sides.FRONT.findings.find(f => f.id === 'raw-corner');
+  assert.equal(measured.finalTrace.sha256, adopted.finalTrace.sha256);
+  assert.equal(measured.measurementRegions.reduce((sum,r)=>sum+r.measurement.areaMm2,0), .01);
 });

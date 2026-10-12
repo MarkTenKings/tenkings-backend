@@ -27,11 +27,13 @@ const specimen = (i, extra) => ({ sale: { id: `atlas-sale:${i}`, title: `Abomasn
   slabReading: { sha256: photoSha, imageUrl: 'https://i.ebayimg.com/fixture-unused.webp' } });
 const candidates = [specimen(0, { listingUrl: 'https://www.ebay.com/itm/123456789000', priceBasis: 'sold', priceMinor: 4250, currency: 'USD' }),
   specimen(1, { grader: 'Grading company unread', grade: '9.5', identityStatus: 'UNKNOWN', labelText: 'SYNTHETIC LABEL FIXTURE\n2022 ABOMASNOW\nTG01/TG30 C.Holo' }),
-  specimen(2, { grader: 'Other Company', grade: '9', priceBasis: 'accepted_offer_unknown', reportedPrice: '40.00', currency: 'EUR' })];
+  specimen(2, { grader: 'Other Company', grade: '5', evidenceKind: 'SLABBED', identityStatus: 'DIFFERENT', priceBasis: 'accepted_offer_unknown', reportedPrice: '40.00', currency: 'EUR' }),
+  specimen(3, { raw: true, evidenceKind: 'RAW', grader: null, grade: null, labelText: null }),
+  specimen(4, { raw: false, evidenceKind: 'UNCERTAIN', grader: null, grade: null, labelText: null })];
 const preview = { version: 'atlas-market-preview-v2', responsePolicy: 'ATLAS_SLAB_V1',
-  query: '2022 Astral Radiance Trainer Gallery Abomasnow TG01/TG30 grade 10', atlasGrade: approved.packet.report.finalGrade,
+  query: 'Abomasnow TG01/TG30', atlasGrade: approved.packet.report.finalGrade,
   retrievedAt: '2026-10-10T02:00:00.000Z', binding: { approvalVersion: 1 }, candidates,
-  counts: { returned: 7, missingImage: 1, unreadGrade: 1, differentIdentity: 1, outsideGrade: 1, shown: 3 } };
+  counts: { returned: 5, missingImage: 0, unreadGrade: 2, raw: 1, recommended: 1, differentIdentity: 1, outsideGrade: 1, shown: 5 } };
 let state = 'READY', revision = 0, published = [], failSelectionOnce = false;
 const posts = [], checks = [], receipts = new Map(), imageReads = [];
 const marketSearch = () => ({ state, previewId, approvalActionId, refreshable: state === 'READY', ...(state === 'READY' ? { preview } : {}) });
@@ -73,19 +75,19 @@ try {
     await context.addCookies([{ name: 'atlas-fixture', value: 'authorized', url: origin }]);
     page.on('pageerror', error => errors.push(error.message));
     await context.route(/^https?:\/\//, route => { assert.equal(new URL(route.request().url()).origin, origin, 'No external provider or image request'); return route.continue(); });
-    await page.goto(origin); await page.getByRole('tab', { name: /Recent graded/ }).waitFor();
+    await page.goto(origin); await page.getByRole('tab', { name: /Sold listings/ }).waitFor();
     assert.equal(posts.length, 0); assert.equal(await page.getByRole('tab').count(), 1);
-    assert.equal(await page.getByRole('checkbox').count(), 3); assert.equal(await page.getByRole('checkbox').first().isChecked(), false);
+    assert.equal(await page.getByRole('checkbox').count(), 5); assert.equal(await page.getByRole('checkbox').first().isChecked(), false);
     assert.equal(await page.getByRole('button', { name: 'Publish references', exact: true }).isDisabled(), true);
-    await page.getByText('7 listings returned · 3 comps within one grade point · Most recent first', { exact: true }).waitFor();
-    const rows = page.locator('tbody tr'); assert.equal(await rows.count(), 3);
+    await page.getByText('5 listings returned · 1 raw · 2 without a readable grade · 1 matched within one grade point · 5 selectable · Most recent first', { exact: true }).waitFor();
+    const rows = page.locator('tbody tr'); assert.equal(await rows.count(), 5);
     assert.match(await rows.nth(1).innerText(), /Sold amount unavailable/);
     assert.equal(await rows.nth(1).locator('a[href^="https://www.ebay.com"]').count(), 0);
     assert.match(await rows.nth(2).innerText(), /Accepted offer/);
     assert.equal(await rows.nth(1).locator('p').first().textContent(), candidates[1].sale.labelText);
-    const images = page.getByRole('img', { name: /Graded card photograph/ });
-    for (let i = 0; i < 3; i++) { await images.nth(i).scrollIntoViewIfNeeded(); await images.nth(i).evaluate(image => image.decode()); }
-    assert.equal(await images.count(), 3);
+    const images = page.getByRole('img', { name: /Sold card photograph/ });
+    for (let i = 0; i < 5; i++) { await images.nth(i).scrollIntoViewIfNeeded(); await images.nth(i).evaluate(image => image.decode()); }
+    assert.equal(await images.count(), 5);
     const imageFacts = await images.evaluateAll(images => images.map(image => ({ src: new URL(image.src).pathname + new URL(image.src).search,
       loaded: image.complete && image.naturalWidth > 0, width: image.getBoundingClientRect().width, height: image.getBoundingClientRect().height })));
     assert(imageFacts.every(image => image.src === imagePath && image.loaded && image.width >= 100 && image.height >= 200));
@@ -97,18 +99,20 @@ try {
     await rows.nth(1).screenshot({ path: resolve(output, `${name}-unknown-sale-detail.png`) });
     const read = await context.request.get(origin + imagePath); assert.equal(read.status(), 200);
     assert.equal(createHash('sha256').update(await read.body()).digest('hex'), photoSha);
-    await page.reload(); await page.getByRole('tab', { name: /Recent graded/ }).waitFor(); assert.equal(posts.length, 0);
-    await page.getByRole('checkbox').nth(1).check();
+    await page.reload(); await page.getByRole('tab', { name: /Sold listings/ }).waitFor(); assert.equal(posts.length, 0);
+    await page.getByText('Raw · Condition not verified', { exact: true }).waitFor();
+    await page.getByText('Unread · Grade not verified', { exact: true }).waitFor();
+    await page.getByRole('checkbox').nth(3).check();
     await page.getByText('1 selected across all groups', { exact: true }).waitFor();
     failSelectionOnce = true; await page.getByRole('button', { name: 'Publish references', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'The result is not confirmed yet' }).waitFor();
-    assert.equal(posts.length, 1); assert.deepEqual(posts[0].body.selectedIds, ['atlas-sale:1']);
+    assert.equal(posts.length, 1); assert.deepEqual(posts[0].body.selectedIds, ['atlas-sale:3']);
     await page.reload(); await page.getByRole('button', { name: 'Resume saved selection', exact: true }).click();
     await page.getByText('Sales references published.', { exact: true }).waitFor();
     assert.equal(posts.length, 2); assert.deepEqual(posts[0], posts[1]); assert.equal(receipts.size, 1);
-    await page.reload(); await page.getByRole('tab', { name: /Recent graded/ }).waitFor(); assert.equal(posts.length, 2);
+    await page.reload(); await page.getByRole('tab', { name: /Sold listings/ }).waitFor(); assert.equal(posts.length, 2);
     assert.equal(posts.filter(post => post.kind === 'search').length, 0); assert.deepEqual(errors, []);
-    checks.push({ name, viewport, noOverflow: true, literalMultilineLabel: true, nullableLink: true, unknownPrice: true,
+    checks.push({ name, viewport, noOverflow: true, literalMultilineLabel: true, nullableLink: true, unknownPrice: true, rawAndUnreadSelectable: true,
       imageFacts, exactPhotoSha256: photoSha, imageGetCount: imageReads.length, searchPosts: 0,
       selectionAttempts: posts.length, uniqueSelectionReceipts: receipts.size, sameRequestRecoveredAfterReload: true, errors });
     await context.close();

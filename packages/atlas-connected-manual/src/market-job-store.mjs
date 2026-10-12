@@ -44,7 +44,7 @@ export function marketJobStatus(row) {
     : row.response && row.response.responsePolicy !== 'ATLAS_SLAB_V1' ? 'MARKET_PROVIDER_POLICY_INVALID' : null);
   return { state, previewId: row.request_id, approvalActionId: row.approval_action_id,
     updatedAt: new Date(row.updated_at ?? row.created_at).toISOString(), ...((retired ?? row.code) ? { reason: retired ?? row.code } : {}),
-    refreshable: !retired && !['QUEUED','SEARCHING','UNKNOWN'].includes(state),
+    refreshable: !['QUEUED','SEARCHING','UNKNOWN'].includes(state),
     ...(state === 'FAILED' && !retired && row.response ? { refreshAction: 'RETRY_SAVED_RESPONSE' } : {}) };
 }
 
@@ -55,8 +55,8 @@ export async function recordApprovalMarket({ tx, principal, cardId, actionId }) 
   return insert(tx, { cardId, actionId, requestId: actionId, actorId: principal.id,
     accessVersion: principal.accessVersion, mode: principal.mode, expectedRevision: 0, origin: 'APPROVAL' });
 }
-async function insert(tx, { cardId, actionId, requestId, actorId, accessVersion, mode, expectedRevision, origin }) {
-  const input = { requestId, approvalActionId: actionId, expectedRevision }, request = canonical(input);
+async function insert(tx, { cardId, actionId, requestId, actorId, accessVersion, mode, expectedRevision, origin, afterPreviewId = null }) {
+  const input = { requestId, approvalActionId: actionId, expectedRevision, ...(afterPreviewId ? { afterPreviewId } : {}) }, request = canonical(input);
   const [approval] = await tx.$queryRawUnsafe(`SELECT a.source_hash,a.report_hash,p.mode FROM atlas_manual.approval a
     JOIN atlas_manual.publication p USING(card_id,action_id) WHERE a.card_id=$1::uuid AND a.action_id=$2::uuid`, cardId, actionId);
   requireThat(approval?.mode === mode && Number.isInteger(accessVersion), 409, 'MARKET_APPROVAL_REQUIRED');
@@ -128,7 +128,8 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       });
     },
     async reserve(staff, cardId, input) {
-      object(input, ['requestId','approvalActionId','expectedRevision']); uuid(input.requestId); uuid(input.approvalActionId);
+      object(input, ['requestId','approvalActionId','expectedRevision', ...(Object.hasOwn(input ?? {}, 'afterPreviewId') ? ['afterPreviewId'] : [])]); uuid(input.requestId); uuid(input.approvalActionId);
+      if (input.afterPreviewId !== undefined) uuid(input.afterPreviewId);
       requireThat(Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0 && input.expectedRevision < 2147483647);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const publication = await scope(tx, principal, cardId, input.approvalActionId, true);
@@ -144,6 +145,17 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         if (prior) { requireThat(prior.card_id === cardId && prior.request_actor === principal.id && prior.request_hash === digest(canonical(input)), 409, 'PRESENTATION_REQUEST_CONFLICT'); return stored(prior); }
         const [existingRequest] = await tx.$queryRawUnsafe('SELECT request_id FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid', cardId, input.requestId);
         requireThat(!existingRequest, 409, 'PRESENTATION_REQUEST_CONFLICT');
+        if (input.afterPreviewId) {
+          const [parent] = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE j.request_id=$1::uuid
+            AND j.card_id=$2::uuid AND j.approval_action_id=$3::uuid AND j.state='READY'`, input.afterPreviewId, cardId, input.approvalActionId);
+          const evidence = stored(parent)?.response;
+          requireThat(evidence?.pagination?.hasNextPage === true && Number.isInteger(evidence.pagination.page)
+            && evidence.pagination.page >= 1 && evidence.pagination.page < 100, 409, 'MARKET_NEXT_PAGE_UNAVAILABLE');
+          const [child] = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j JOIN atlas_manual.presentation_market m USING(card_id,request_id)
+            WHERE j.card_id=$1::uuid AND j.approval_action_id=$2::uuid AND m.request::jsonb->>'afterPreviewId'=$3
+            AND (j.state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN','READY') OR j.state='FAILED' AND j.response IS NOT NULL) ORDER BY j.created_at DESC LIMIT 1`, cardId, input.approvalActionId, input.afterPreviewId);
+          if (child) return stored(child);
+        }
         const [busy] = await tx.$queryRawUnsafe(`SELECT state FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid
           AND state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN') LIMIT 1`, cardId, input.approvalActionId);
         requireThat(!busy, 409, busy?.state === 'UNKNOWN' ? 'MARKET_OUTCOME_RECONCILIATION_REQUIRED' : 'MARKET_SEARCH_IN_PROGRESS');
@@ -154,17 +166,14 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         requireThat(revision.revision === input.expectedRevision, 409, 'PRESENTATION_REVISION_STALE');
         const [recoverable]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid
           ORDER BY created_at DESC,request_id DESC LIMIT 1`,cardId,input.approvalActionId);
-        if (recoverable?.state === 'FAILED') {
-          requireThat(!marketHasRetiredReclassification(recoverable), 409, 'MARKET_RECLASSIFICATION_RETIRED');
-          requireThat(!recoverable.response || JSON.parse(recoverable.response).responsePolicy === 'ATLAS_SLAB_V1', 409, 'MARKET_PROVIDER_POLICY_INVALID');
-        }
-        if(recoverable?.state==='FAILED'&&recoverable.response){
+        if(!input.afterPreviewId&&recoverable?.state==='FAILED'&&recoverable.response
+          && !marketHasRetiredReclassification(recoverable) && JSON.parse(recoverable.response).responsePolicy === 'ATLAS_SLAB_V1'){
           return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET state='QUEUED',attempts=0,recoveries=recoveries+1,code='MARKET_RESPONSE_RECOVERED',
             available_at=clock_timestamp(),updated_at=clock_timestamp(),audit=audit||jsonb_build_array(jsonb_build_object('event','RECOVERY','requestId',$2::text,'requestHash',$3::text,'actorId',$4::text,'at',clock_timestamp()))
             WHERE request_id=$1::uuid RETURNING *`,recoverable.request_id,input.requestId,digest(canonical(input)),principal.id))[0]);
         }
         return insert(tx, { cardId, actionId: publication.action_id, requestId: input.requestId, actorId: principal.id,
-          accessVersion: principal.accessVersion, mode: principal.mode, expectedRevision: input.expectedRevision, origin: 'REFRESH' });
+          accessVersion: principal.accessVersion, mode: principal.mode, expectedRevision: input.expectedRevision, origin: 'REFRESH', afterPreviewId: input.afterPreviewId });
       });
     },
     latest(staff, cardId) {
@@ -192,6 +201,18 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         if (!row) return null;
         return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET state='RUNNING',claim_id=$2::uuid,
           lease_until=clock_timestamp()+$3*interval '1 millisecond',attempts=attempts+1,updated_at=clock_timestamp() WHERE request_id=$1::uuid RETURNING *`, row.request_id, randomUUID(), leaseMs))[0]);
+      });
+    },
+    pageContext(job) {
+      return machine(async ({ tx }) => {
+        const [request] = await tx.$queryRawUnsafe('SELECT request,request_hash FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid', job.card_id, job.request_id);
+        requireThat(request && digest(request.request) === request.request_hash, 503, 'MARKET_REQUEST_CORRUPT');
+        const input = JSON.parse(request.request);
+        if (!input.afterPreviewId) return null;
+        const [parent] = await tx.$queryRawUnsafe(`SELECT j.*,m.result,m.result_hash FROM ${table} j JOIN atlas_manual.presentation_market m USING(card_id,request_id)
+          WHERE j.card_id=$1::uuid AND j.approval_action_id=$2::uuid AND j.request_id=$3::uuid AND j.state='READY'`, job.card_id, job.approval_action_id, input.afterPreviewId);
+        requireThat(parent?.result && digest(parent.result) === parent.result_hash, 503, 'MARKET_PREVIEW_CORRUPT');
+        return { previewId: input.afterPreviewId, response: stored(parent).response, record: JSON.parse(parent.result) };
       });
     },
     renew(job) { return machine(async ({ tx }) => (await tx.$executeRawUnsafe(`UPDATE ${table} j SET lease_until=clock_timestamp()+$3*interval '1 millisecond',updated_at=clock_timestamp() WHERE ${active}`, job.request_id, job.claim_id, leaseMs)) === 1); },

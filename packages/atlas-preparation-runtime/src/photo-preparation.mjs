@@ -27,8 +27,8 @@ export async function preparationRuntimeIdentity(pythonExecutable) {
         'import hashlib,json,pathlib,sys,importlib.util',
         "p=pathlib.Path(sys.argv[1]);s=importlib.util.spec_from_file_location('atlas_preparation_identity',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)",
         'h=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()',
-        "names=['card_geometry.py','color_geometry.py','atlas_photo_geometry.py','defect_math.py','preparation_pixels.py','preparation_encoding.py']",
-        "identity={'opencv':m.cv2.__version__,'numpy':m.np.__version__,'physicalProposalPolicy':m.POLICY_VERSION,'sources':{n:h(p.parent/n) for n in names}}",
+        "names=['card_geometry.py','defect_math.py','preparation_pixels.py','preparation_encoding.py']",
+        "identity={'opencv':m.cv2.__version__,'numpy':m.np.__version__,'preparationPolicy':'atlas-deterministic-preparation-v1','sources':{n:h(p.parent/n) for n in names}}",
         'roots=[pathlib.Path(mod.__file__).parent for mod in [m.cv2,m.np]]',
         "roots += [roots[0].parent/n for n in ['opencv_python.libs','opencv_python_headless.libs','numpy.libs']]",
         "native={str(root.name+'/'+str(q.relative_to(root))):h(q) for root in roots if root.is_dir() for q in sorted(root.rglob('*')) if q.is_file() and ('.so' in q.name or q.suffix=='.dylib')}",
@@ -84,7 +84,6 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
     const frameDescriptorSha256 = descriptorSha256(frame);
     const id = descriptorSha256({ mode, matColor, quad: quad ?? null, frameDescriptorSha256, engine, proposal: result.proposal,
       ...(mode === 'PREPARE' ? { outputContract } : {}) });
-    if (mode === 'PHYSICAL') return { id, frameDescriptorSha256, identity: result.identity, proposal: result.proposal };
     requireThat(sameEncoder(result.encoderSettings, encoderSettings), 'PREPARATION_OUTPUT_INVALID');
     requireThat(result.outputContract === outputContract && result.frames && Object.keys(result.frames).length === names.length
       && names.every(name => Object.hasOwn(result.frames, name)), 'PREPARATION_OUTPUT_INVALID');
@@ -110,7 +109,6 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
       ...(inspectionPreview ? { inspectionPreview } : {}) };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
-export const proposePhotoGeometry = input => run('PHYSICAL', input);
 export const preparePhotoGeometry = input => run('PREPARE', input);
 
 /** Lazy reveals start from the verified working PNG and the retained physical
@@ -125,40 +123,21 @@ export async function prepareDeferredPhotoReveals({ prepared, ...input }) {
   requireThat(retained.frameDescriptorSha256 === descriptorSha256(frame)
     && descriptorSha256(retained.identity) === descriptorSha256(input.engine.identity), 'PREPARATION_SOURCE_MISMATCH');
   requireThat(retained.id === descriptorSha256({ mode: 'PREPARE', matColor: input.matColor, quad: retained.sourceQuad,
-    frameDescriptorSha256: retained.frameDescriptorSha256, engine: input.engine, proposal: retained.proposal,
+    frameDescriptorSha256: retained.frameDescriptorSha256, engine: input.engine, proposal: retained.actor === 'ASTRA' ? null : retained.proposal,
     outputContract: PREPARATION_CORE_V1 }), 'PREPARATION_SOURCE_MISMATCH');
   validatePreparedPhotoFrame(retained.frame, photoImage(input.source), retained.sourceQuad);
   const legacy = sameEncoder(retained.encoderSettings, PREPARATION_LEGACY_SETTINGS);
   requireThat(legacy || sameEncoder(retained.encoderSettings, PREPARATION_LOSSLESS_SETTINGS), 'PREPARATION_OUTPUT_INVALID');
-  // Historical callers supply their immutable engine. This qualified physical
-  // proposal update does not run when a retained quad is prepared. Pin both
-  // versions rather than accepting arbitrary future detector/adapter changes;
-  // all pixel sources/native binaries and every saved core byte must match.
+  // Historical prepared photographs are immutable. Deferred presentation
+  // derives from the retained original/quad and verifies the exact saved core
+  // pixels. Retired visual-proposer source hashes do not execute again.
   const currentEngine = await preparationRuntimeIdentity(input.pythonExecutable);
   const equal = (a, b) => descriptorSha256({ value: a }) === descriptorSha256({ value: b });
-  const historicalIdentity = structuredClone(input.engine.identity);
-  const physicalOnly = historicalIdentity.physicalProposalPolicy === 'atlas-native-photo-outer-ranking-v2'
-    && historicalIdentity.sources['atlas_photo_geometry.py'] === '19f71cd33e2ce3a780f5a70638503d27a66ac648e1cf3d83d71f6438a24d36dc'
-    && currentEngine.identity.physicalProposalPolicy === 'atlas-native-photo-outer-ranking-v3'
-    && currentEngine.identity.sources['atlas_photo_geometry.py'] === 'bd2f34dbfad3067c96742e7722b67f918a0f36fe52368bdd05b6e6688cba137c';
-  if (physicalOnly) {
-    historicalIdentity.physicalProposalPolicy = currentEngine.identity.physicalProposalPolicy;
-    historicalIdentity.sources['atlas_photo_geometry.py'] = currentEngine.identity.sources['atlas_photo_geometry.py'];
-  }
-  if (legacy) {
-    const identity = structuredClone(currentEngine.identity);
-    delete identity.sources['preparation_encoding.py'];
-    requireThat(equal(historicalIdentity, identity)
-      && ['native', 'python', 'executableSha256'].every(key => equal(input.engine[key], currentEngine[key])), 'PREPARATION_ENGINE_CHANGED');
-  } else {
-    const historicalEngine = { ...input.engine, identity: historicalIdentity };
-    if (physicalOnly && input.engine.adapterSha256 === '577707037436c234895d6d3c96e6af532d343be7f77a9f8a67810171b479056b')
-      historicalEngine.adapterSha256 = currentEngine.adapterSha256;
-    requireThat(equal(historicalEngine, currentEngine), 'PREPARATION_ENGINE_CHANGED');
-  }
+  requireThat(['card_geometry.py','preparation_pixels.py','preparation_encoding.py'].every(name => !input.engine.identity.sources[name] && legacy || input.engine.identity.sources[name] === currentEngine.identity.sources[name]), 'PREPARATION_ENGINE_CHANGED');
+  requireThat(['native', 'python', 'executableSha256'].every(key => equal(input.engine[key], currentEngine[key])), 'PREPARATION_ENGINE_CHANGED');
   const result = await run('PREPARE', { ...input, engine: currentEngine, quad: retained.sourceQuad, outputContract: PREPARATION_FULL_V1 },
     legacy ? PREPARATION_LEGACY_SETTINGS : PREPARATION_LOSSLESS_SETTINGS);
-  requireThat(equal(result.proposal, retained.proposal) && equal(result.encoderSettings, retained.encoderSettings)
+  requireThat(equal(result.encoderSettings, retained.encoderSettings)
     && ['rectified', 'inspection', 'sourceToRectified'].every(key => equal(result.frame[key], retained.frame[key])),
   'PREPARATION_SOURCE_MISMATCH');
   const outputContract = PREPARATION_REVEALS_V1;

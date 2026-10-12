@@ -1,14 +1,15 @@
-# Approved-report presentation images
+# Upfront card images and report presentation
 
-This optional pipeline runs generative OpenAI background editing after a report is durably published. It automatically discovers both sides of every eligible publication and recovers discovery after process restart. It uses the existing deployment-authenticated manual machine boundary, PostgreSQL work leases, immutable photo storage, and private public-reader bridge. It does not change photographs, geometry, masks, grades, approval snapshots, public packet hashes, or staff authority.
+OpenAI generative background removal starts after a new upload is verified and its working raster is prepared. Each side has a durable intake intent; automatic identification and geometry wait for that edit to settle without occupying processing slots. Ready cutouts are reused in staff previews, as additional Astra inputs, and in published reports. A missing or failed cutout does not prevent manual review. Originals remain retained and control all coordinates and measurements. Publication binds an existing ready image and never starts another edit.
 
 ## Processing and authority
 
+- `card_image_intent` admits the exact new upload and `card_image_binding` immutably binds its side and original SHA to a shared job. No historical intake backfill runs.
 - `report_image_binding` pins a publication/action/side/manifest to a cache job. Its rows are immutable.
-- `report_image_job` deduplicates the exact source raster SHA and canonical model/prompt/output recipe SHA across publications. READY bytes and result are immutable. Changing a recipe affects subsequently bound publications; it does not rewrite an existing publication's selected presentation.
-- Discovery uses the exact published inspection raster, rather than a mutable intake upload. Provider inputs are verified private bytes in a multipart upload, never public or presigned URLs.
+- `report_image_job` deduplicates the exact source raster SHA and canonical model/prompt/output recipe SHA across uploads and publications. READY bytes and result are immutable. Changing a recipe affects subsequently admitted uploads; it does not rewrite an existing publication's selected presentation.
+- Discovery verifies the current upload, original/working decode chain and saved intent, then uses the full working raster. Equivalent encodings with identical working pixels can reuse a job while each binding retains its own original SHA. Provider inputs are verified private bytes in a multipart upload, never public or presigned URLs.
 - A deployment-authenticated worker takes a PostgreSQL advisory capacity lock, claims with `SKIP LOCKED`, and renews a 300-second lease every 30 seconds. Default concurrency is two, configurable from one to eight, and is enforced across worker processes. API timeout is 180 seconds.
-- Workers claim only their exact recipe hash and recheck recipe equality before source reads or paid dispatch. Older queued recipes remain queued for a compatible worker; they cannot be silently edited using a newer model/prompt. The original photograph remains the fallback. Paid response receipts must match the claimed model/prompt/recipe/source/request/output before adoption; mismatches retain their receipt and terminate without storing a result.
+- Workers claim only their exact recipe hash and recheck recipe equality before source reads or paid dispatch. Older queued recipes remain queued for a compatible worker; they cannot be silently edited using a newer model/prompt. The original photograph remains available for review. Paid response receipts must match the claimed model/prompt/recipe/source/request/output before adoption; mismatches retain their receipt and terminate without storing a result.
 - A durable REQUESTED marker precedes each paid POST. A network failure, timeout, server error, or expired REQUESTED lease becomes UNKNOWN. Images edits have no asserted idempotency guarantee; `X-Client-Request-Id` is audit correlation only. UNKNOWN never automatically purchases a replacement edit.
 - Explicit HTTP 429 rejections and pre-dispatch operational failures retry with capped backoff, at most six attempts. Deterministic invalid output is terminal. Late response/usage receipts remain appendable to the actual dispatched request even after publication retirement or lease loss; late bytes cannot be adopted through lost authority.
 - Outputs must fully decode as PNG, have alpha 0 on at least 0.1% of pixels and a near-opaque foreground (alpha at least 250/255) on at least 10%, remain within 8,294,400 pixels and 4 MiB, and fit the shared public descriptor bounds. Actual OpenAI canaries peaked at 254 with foreground primarily 252–253; requiring an exact-255 pixel incorrectly rejected genuine cutouts. Exact-255 and near-opaque counts are recorded separately, with the threshold explicit, and returned bytes are never normalized. Drawn checkerboards, opaque/empty/faint images and speck-only alpha do not qualify. An alpha check does not prove that generated card details are unchanged.
@@ -19,7 +20,7 @@ This optional pipeline runs generative OpenAI background editing after a report 
 
 ## Runtime and schema
 
-The feature defaults off. Apply and record the additive staff migration `20260930170000_report_presentation_images` through the release owner's normal exact-source process. Apply only `reportImageGrantSQL(actual_manual_serving_role)` from `src/report-image-store.mjs`; it gives the existing scoped manual role SELECT/INSERT on the two new tables, narrowly selected job-state/receipt UPDATE columns, and publication SELECT. It gives no deletion or source/recipe mutation capability.
+The feature defaults off. The existing image tables originate in `20260930170000_report_presentation_images`. Apply and record the additive intake migration `20261012231000_card_image_intake` through the release owner's normal exact-source process. Apply only `reportImageGrantSQL(actual_manual_serving_role)` from `src/report-image-store.mjs`; it gives the existing scoped manual role SELECT/INSERT on the image job, publication binding, intake intent and intake binding tables, narrowly selected job-state/receipt UPDATE columns, and publication SELECT. It gives no deletion or source/recipe mutation capability.
 
 Configure the private manual service:
 
@@ -46,13 +47,13 @@ node packages/atlas-connected-manual/scripts/report-image-canary.mjs \
 
 The canary saves an intent, output, safe receipt, and real-alpha validation. Its IMAGE_BYTES_QUALIFIED status still requires visual acceptance. Do not rerun an UNKNOWN request as though it were a confirmed rejection.
 
-## Approved prototype import
+## Historical images
 
-`connected.reportImages.seed(publicationRow, side, pngBytes, evidence)` is a release-only method with no HTTP route. Use a cold runtime and import before starting the worker. Evidence must contain `execution: 'OPENAI_BUILT_IN'`, `model: null`, exact side/source SHA/report hash/report version/output SHA/dimensions, `promptVersion`, and the retained actual `prompt`. It verifies the private approved source and true-alpha output, writes through immutable photo storage, then atomically pins the new job/binding. A conflicting existing publication binding is explicitly refused. This preserves the real provenance of the owner-selected prototype; it never labels a built-in output as an API canary or as a known model.
+Previously imported `OPENAI_BUILT_IN` ready images remain readable with their original provenance. The prototype import method and publication enqueue path have been deleted. New work uses the intake API pipeline only.
 
 ## Public contract and validation
 
-The separate `reportImages` response envelope uses `parseReportImages(value, {packet, publicHash})` from `@atlas/report-view/report-images-contract`. Its descriptor includes the exact public token/version/hash, side, original source SHA, output SHA/bytes/dimensions, relative image URL, execution/model/prompt version, and explicit presentation-only/approximate-alignment flags. It exposes no bucket key, source descriptor, API key, or provider response body. Existing `packet.images` is unchanged.
+The separate `reportImages` response envelope uses `parseReportImages(value, {packet, publicHash})` from `@atlas/report-view/report-images-contract`. Its descriptor includes the exact public token/version/hash, side, published inspection source SHA, optional original/generation source SHAs, output SHA/bytes/dimensions, relative image URL, execution/model/prompt version, and explicit presentation-only/approximate-alignment flags. It exposes no bucket key, source descriptor, API key, or provider response body. Existing `packet.images` is unchanged.
 
 Run focused provider/worker/alpha/binding and bridge tests with:
 
@@ -62,6 +63,6 @@ node --test packages/atlas-connected-manual/test/report-images.test.mjs \
   packages/atlas-service-bridge/test/manual-public.test.mjs
 ```
 
-`scripts/validate-report-images-postgres.mjs` uses the existing finite owned PostgreSQL harness and real staff/machine authentication. It verifies cross-publication deduplication, concurrency, leases, retry exhaustion, late paid receipts, retirement, seed conflict, narrow grants, and immutable publication preservation. Its explicit fixture arguments are required; it refuses ambient database URLs. The release owner controls remote fixture execution and production changes.
+`scripts/validate-report-images-postgres.mjs` uses the existing finite owned PostgreSQL harness and real staff/machine authentication. It verifies cross-publication deduplication, concurrency, leases, retry exhaustion, late paid receipts, retirement, intake admission and retake binding, ready-image publication reuse, narrow grants, and immutable publication preservation. Its explicit fixture arguments are required; it refuses ambient database URLs. The release owner controls remote fixture execution and production changes.
 
 Official API references checked September 30, 2026: [Images edit](https://developers.openai.com/api/reference/resources/images/methods/edit), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), and [image generation](https://developers.openai.com/api/docs/guides/image-generation). These establish request parameters and model naming, not account access or per-card visual accuracy.

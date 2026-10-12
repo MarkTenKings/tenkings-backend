@@ -45,7 +45,14 @@ def _rasterize(contour: List[Dict[str, float]]) -> np.ndarray:
     return mask
 
 
-def material_mask(corner_shape: str) -> np.ndarray:
+def material_mask(corner_shape: str, material_contour=None) -> np.ndarray:
+    if material_contour is not None:
+        if not isinstance(material_contour, list) or not 3 <= len(material_contour) <= 128:
+            raise ValueError("Invalid photographic material contour")
+        points = np.asarray([[p["x"], p["y"]] for p in material_contour], dtype=np.float64)
+        if not np.isfinite(points).all() or (points < 0).any() or (points > 1).any():
+            raise ValueError("Invalid photographic material contour")
+        return _rasterize(material_contour)
     if corner_shape == "SQUARE":
         return np.ones((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
     if corner_shape != "ROUNDED_3_18_MM":
@@ -168,7 +175,7 @@ def _finding_instrumentation_provenance(primary: dict, source_members: List[dict
     }
 
 
-def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
+def measure_defects(proposals: List[dict], corner_shape: str, material_contour=None) -> List[dict]:
     """Fuse canonical detector proposals and return one measurement per occupied zone."""
 
     prepared = []
@@ -193,7 +200,7 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
             mask = _rasterize(proposal["canonicalContour"])
         prepared.append({**proposal, "mask": mask})
 
-    material = material_mask(corner_shape)
+    material = material_mask(corner_shape, material_contour)
     zones = _zone_masks(material)
     pixel_area_mm2 = CARD_WIDTH_MM * CARD_HEIGHT_MM / (GRID_WIDTH * GRID_HEIGHT)
     results = []

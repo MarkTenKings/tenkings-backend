@@ -32,21 +32,21 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
     if (!savedSource || savedRequest.current) return;
     if (validSource(savedSource)) {
       setSource(savedSource); setSearchPending(false);
-      if (savedSource.previewId !== source?.previewId) { setSelected([]); setActiveGroup(''); setStatus(''); setError(''); }
-    } else if (savedSource.state !== 'READY') { setSource(null); setStatus(''); }
+      if (savedSource.previewId !== source?.previewId) { if (savedSource.preview.previousPreviewId !== source?.previewId) setSelected([]); setActiveGroup(''); setStatus(''); setError(''); }
+    } else if (savedSource.state !== 'READY') { setStatus(''); }
     // Retain user selection while a poll confirms the same saved result.
   }, [savedSource, scopeKey]);
-  async function search() {
+  async function search(older = false) {
     if (disabled || !available || lock.current || savedRequest.current || typeof callbacks.current.onPreview !== 'function') return;
     lock.current = true; const version = generation.current; setBusy('Finding sold cards…'); setError(''); setStatus('');
     try {
-      const value = await callbacks.current.onPreview();
+      const value = await callbacks.current.onPreview(older ? { afterPreviewId: source.previewId } : undefined);
       if (version !== generation.current) return;
       if (['QUEUED', 'SEARCHING', 'PENDING', 'UNKNOWN', 'FAILED', 'UNAVAILABLE'].includes(value?.state)) {
         setSearchPending(value.state === 'UNKNOWN' || value.state === 'PENDING'); setStatus(marketSearchMessage(value)); return;
       }
       if (!validSource(value)) throw new Error('MARKET_PREVIEW_INVALID');
-      setSearchPending(false); setSource(value); setSelected([]); setActiveGroup('');
+      setSearchPending(false); setSource(value); if (!older) setSelected([]); setActiveGroup('');
     } catch (failure) { if (version === generation.current) {
       const refused = failure?.code === 'MARKET_SEARCH_REVIEW_REQUIRED'; setSearchPending(!refused);
       setError(refused ? 'The report presentation changed before this search began. Find sold cards again using its current version.'
@@ -74,8 +74,8 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   const blocked = disabled || Boolean(busy) || pending, current = savedSource?.state === 'READY' ? source : savedSource ?? source;
   const waiting = ['QUEUED', 'SEARCHING', 'PENDING'].includes(current?.state), uncertain = current?.state === 'UNKNOWN';
   const slabComps = source?.preview.version === 'atlas-market-preview-v2';
-  const groups = slabComps ? source.preview.candidates.length ? [{ key: 'recent', label: 'Recent graded',
-    identityLabel: 'Card and grade read from the photographed label', needsReview: false,
+  const groups = slabComps ? source.preview.candidates.length ? [{ key: 'recent', label: 'Sold listings',
+    identityLabel: 'Raw, graded and unread cards · AI evidence assists your selection', needsReview: false,
     candidates: source.preview.candidates }] : [] : groupSoldReferences(source?.preview.candidates);
   const active = groups.find(group => group.key === activeGroup) ?? groups[0];
   const notice = busy || status || marketSearchMessage(current);
@@ -95,28 +95,33 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
       {card?.parallel && <span className={styles.variant}>{card.parallel}</span>}<p>{[card?.year, card?.manufacturer, card?.productSet].filter(Boolean).join(' · ')}</p><small>Approved ATLAS identity · Unrecorded variant details remain unconfirmed</small></div></div>}
     <p className={styles.note}>{note}</p>
     {notice && <p className={styles.searchStatus} role="status">{notice}</p>}
-    {!notice && !error && <p className={styles.searchStatus} role="status">{source ? source.preview.candidates.length ? `${source.preview.candidates.length} sold ${source.preview.candidates.length === 1 ? 'comp' : 'comps'} ready for your review` : 'Search saved · No qualifying sales'  : automatic ? automaticEnabled ? 'Saved results appear here automatically after approval.' : 'Saved results appear here. Start a search when needed.' : 'Search when needed · no lookup starts from opening this tool'}</p>}
+    {!notice && !error && <p className={styles.searchStatus} role="status">{source ? source.preview.candidates.length ? `${source.preview.candidates.length} sold ${source.preview.candidates.length === 1 ? 'comp' : 'comps'} ready for your review` : 'Search saved · No sales returned'  : automatic ? automaticEnabled ? 'Saved results appear here automatically after approval.' : 'Saved results appear here. Start a search when needed.' : 'Search when needed · no lookup starts from opening this tool'}</p>}
     {source && <><div className={styles.query}><span>Search: {source.preview.query}</span><span>ATLAS {source.preview.atlasGrade} · Retrieved {saleDateLabel(source.preview.retrievedAt)}</span></div>
-      {!groups.length && <div className={styles.empty}><strong>No qualifying sold listings</strong><p>The saved search returned no selectable sales for this card. Your approved grade is unchanged.</p></div>}
-      {slabComps && source.preview.labelProcessing?.state === 'PARTIAL' && <p className={styles.error} role="status">Some label readings could not finish: {source.preview.labelProcessing.failed} failed · {source.preview.labelProcessing.unknown} unconfirmed. Completed matches are available below.</p>}
-      {slabComps && <p className={styles.note}>{Number.isSafeInteger(source.preview.counts?.returned) && source.preview.counts.returned >= 0 ? `${source.preview.counts.returned} listings returned` : 'Returned listing count unavailable'}{source.preview.labelProcessing && <> · {source.preview.labelProcessing.completed} photos checked · {source.preview.labelProcessing.unavailable} without a photo</>} · {source.preview.candidates.length} comps within one grade point · Most recent first</p>}
+      {!groups.length && <div className={styles.empty}><strong>No sold listings returned</strong><p>This page returned no sales. Try older sales when another page is available.</p></div>}
+      {slabComps && source.preview.labelProcessing?.state === 'PARTIAL' && <p className={styles.error} role="status">Some label readings could not finish: {source.preview.labelProcessing.failed} failed · {source.preview.labelProcessing.unknown} unconfirmed. All returned listings remain available below.</p>}
+      {slabComps && <p className={styles.note}>{Number.isSafeInteger(source.preview.counts?.returned) && source.preview.counts.returned >= 0 ? `${source.preview.counts.returned} listings returned` : 'Returned listing count unavailable'}{source.preview.labelProcessing && <> · {source.preview.labelProcessing.completed} photos checked · {source.preview.labelProcessing.unavailable} without a photo</>} · {source.preview.counts?.raw ?? 0} raw · {source.preview.counts?.unreadGrade ?? 0} without a readable grade · {source.preview.counts?.recommended ?? 0} matched within one grade point · {source.preview.candidates.length} selectable · Most recent first</p>}
+      {slabComps && source.preview.pagination && <p className={styles.note}>Pages loaded: {source.preview.pages?.length ?? 1} · Latest page {source.preview.pagination.page}{source.preview.pagination.totalResults && <> · Provider estimates {source.preview.pagination.totalResults} results</>}{source.preview.counts?.duplicates > 0 && <> · {source.preview.counts.duplicates} repeated listings already shown</>}</p>}
       {groups.length > 0 && <><div className={styles.groupTabs} ref={tabs} role="tablist" aria-label="Sales by grade, condition and variant">{groups.map((group, index) => <button key={group.key} id={`${tabPrefix}-tab-${index}`} type="button" role="tab" aria-selected={group.key === active.key} aria-controls={`${tabPrefix}-sales`} tabIndex={group.key === active.key ? 0 : -1}
         onClick={() => setActiveGroup(group.key)} onKeyDown={event => keyTab(event, index)}><strong>{group.label}</strong><span>{group.candidates.length} observed {group.candidates.length === 1 ? 'sale' : 'sales'}</span><small>{group.identityLabel}</small>{group.needsReview && <small>Identity needs review</small>}</button>)}</div>
         <div id={`${tabPrefix}-sales`} role="tabpanel" aria-labelledby={`${tabPrefix}-tab-${groups.indexOf(active)}`}><div className={styles.groupHeading}><h4>{active.label} sales</h4><span>Most recent first</span></div>
           <p className={styles.groupIdentity}>{active.identityLabel}. {active.needsReview ? 'Unspecified identity details remain unverified.' : 'Recorded identity details.'}</p>
           <div className={styles.tableWrap}><table><caption className={styles.srOnly}>{active.label} sold references · Most recent first</caption><thead><tr><th scope="col">Use</th><th scope="col">Date</th><th scope="col">Sold listing</th><th scope="col">Sold price</th></tr></thead><tbody>
-            {active.candidates.map(({ sale, match, matchReason, slabReading }) => { const imageUrl=cardId && slabReading?.sha256
+            {active.candidates.map(({ sale, match, matchReason, slabReading, recommended, nearbyGrade }) => {
+              const closeGrade = nearbyGrade ?? (sale.grade != null && Number.isFinite(Number(sale.grade)) && Math.abs(Number(sale.grade) - source.preview.atlasGrade) <= 1);
+              const preferred = recommended ?? (match === 'MATCH' && closeGrade);
+              const imageUrl=cardId && slabReading?.sha256
               ? `/admin/api/staff/manual-connected/cards/${cardId}/presentation/market?preview=${encodeURIComponent(source.previewId)}&image=${slabReading.sha256}` : sale.imageUrl;
               return <tr key={sale.id}><td className={styles.choose}><label><input type="checkbox" aria-label={`Use sale ${sale.title}`} checked={selected.includes(sale.id)} disabled={blocked}
               onChange={event => { if (blocked || lock.current) return; setSelected(event.target.checked ? [...selected, sale.id] : selected.filter(id => id !== sale.id)); }}/><span className={styles.mobileOnly}>Include</span></label></td>
               <td className={styles.soldDate}>{sale.soldAt ? <time dateTime={sale.soldAt}>{saleDateLabel(sale.soldAt)}</time> : 'Date unavailable'}</td>
-              <td className={styles.saleTitle}>{slabComps && <strong>{sale.grader} · Grade {sale.grade}</strong>}
-                {imageUrl && <a href={imageUrl} target="_blank" rel="noopener noreferrer" className={styles.compPhoto}><img src={imageUrl} alt={`Graded card photograph · ${sale.grader} ${sale.grade}`} loading="lazy"/><span>Enlarge photo ↗</span></a>}
+              <td className={styles.saleTitle}>{slabComps && <strong>{sale.raw ? 'Raw · Condition not verified' : sale.evidenceKind === 'UNCERTAIN' || !sale.grade ? 'Unread · Grade not verified' : `Graded · ${sale.grader ?? 'Company unread'} · Grade ${sale.grade}`}</strong>}
+                {imageUrl && <a href={imageUrl} target="_blank" rel="noopener noreferrer" className={styles.compPhoto}><img src={imageUrl} alt={`Sold card photograph · ${sale.raw ? 'Raw' : sale.grade ? `${sale.grader ?? 'Company unread'} ${sale.grade}` : 'Unread'}`} loading="lazy"/><span>Enlarge photo ↗</span></a>}
                 {sale.listingUrl ? <a href={sale.listingUrl} target="_blank" rel="noopener noreferrer">{sale.title}<span aria-hidden="true"> ↗</span></a> : <span>{sale.title}</span>}
                 {sale.labelText && <p className={styles.slabLabel}>{sale.labelText}</p>}
-                <small>{match === 'UNKNOWN' || sale.identityStatus === 'UNKNOWN' ? 'Identity / variant needs review' : slabComps ? 'Matched from the photographed label' : 'Verify card identity'}</small>{matchReason && <details><summary>Match details</summary><p>{matchReason}</p></details>}</td>
+                <small>{match === 'DIFFERENT' || sale.identityStatus === 'DIFFERENT' ? 'AI found a different card or variant · Human review required' : match !== 'MATCH' || sale.identityStatus === 'UNKNOWN' ? 'Identity / variant uncertain · Human review required' : slabComps ? 'AI matched the photographed card / label' : 'Verify card identity'}</small>{slabComps && sale.grade && <small>{preferred ? 'Recommended comparison · Within one grade point' : closeGrade ? 'Within one grade point · Identity needs review' : 'Outside one grade point · Available for your review'}</small>}{matchReason && <details><summary>Match details</summary><p>{matchReason}</p></details>}</td>
               <td className={styles.money}>{saleAmountLabel(sale)}</td></tr>;})}
           </tbody></table></div></div></>}
+      {slabComps && source.preview.pagination?.hasNextPage && <button type="button" disabled={blocked || waiting} onClick={() => void search(true)}>Load older sales</button>}
       {!slabComps && excludedCount > 0 && <p className={styles.note}>{excludedCount} results were excluded by the rules used for this historical search.</p>}
       {groups.length > 0 && <div className={styles.actions}><span>{selected.length} selected across all groups</span><button type="button" disabled={disabled || Boolean(busy) || !selected.length} onClick={() => void save()}>{pending ? 'Retry saved selection' : 'Publish references'}</button></div>}
       <p className={styles.footnote}>Saved results are staff review evidence. Only the references you publish appear on the customer report.</p>

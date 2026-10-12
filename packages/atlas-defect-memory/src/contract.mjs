@@ -1,3 +1,4 @@
+import { validMaterialContour } from '../../atlas-manual-workspace/src/material-contour.mjs';
 import { canonical, digest, immutable, object, requireThat, uuid } from '../../atlas-manual-service/src/contract.mjs';
 
 export { canonical, digest, immutable, object, requireThat, uuid };
@@ -52,7 +53,8 @@ export function validateDesign(design) {
 }
 export function designKey(design) { validateDesign(design); const { cardNumber: _card, ...family } = design; return digest(canonical(family)); }
 export function validateFrame(frame) {
-  object(frame, ['imageVersion', 'originalSha256', 'preparationVersion', 'frameId', 'inspectionImageSha256', 'rectifiedImageSha256']);
+  object(frame, ['imageVersion', 'originalSha256', 'preparationVersion', 'frameId', 'inspectionImageSha256', 'rectifiedImageSha256'].concat(frame.materialContour ? ['materialContour'] : []));
+  if (frame.materialContour) requireThat(validMaterialContour(frame.materialContour));
   text(frame.frameId);
   for (const field of ['imageVersion', 'preparationVersion']) requireThat(Number.isSafeInteger(frame[field]) && frame[field] > 0, 503, 'MEMORY_FRAME_INVALID');
   for (const field of ['originalSha256', 'inspectionImageSha256', 'rectifiedImageSha256']) hash(frame[field]);

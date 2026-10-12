@@ -1,9 +1,10 @@
 import sharp from 'sharp';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { parseDerivative } from '@atlas/photo-core';
+import { parseDerivative, descriptorSha256 } from '@atlas/photo-core';
+import { processedPhoto } from '@atlas/manual-intake';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { parseReportImages, reportImageURL } from '@atlas/report-view/report-images-contract';
-import { reportImageJobKey, reportImageRecipeHash } from './report-image-provider.mjs';
+import { reportImageRecipeHash } from './report-image-provider.mjs';
 
 const SIDES = ['FRONT','BACK'];
 const safeCode = error => /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'REPORT_IMAGE_INTERRUPTED';
@@ -48,15 +49,18 @@ function sourceMatches(saved, packet, side, cardId) {
 }
 function outputDescriptor(job, output, keyPrefix) {
   const source = job.sourceMedia, image = source.descriptor, dimensions = image.raster.dimensions;
-  const sx = output.width / dimensions.width, sy = output.height / dimensions.height, h = image.frameToDerivative;
+  const sx = output.width / dimensions.width, sy = output.height / dimensions.height;
+  const h = image.kind === 'decoded-frame' ? [1,0,0,0,1,0,0,0,1] : image.frameToDerivative;
   // Approximate display frame only. No consumer may use this generated raster
   // or its transform for condition measurement or evidence inspection.
   const transform = [sx*h[0]+(sx-1)/2*h[6],sx*h[1]+(sx-1)/2*h[7],sx*h[2]+(sx-1)/2*h[8],
     sy*h[3]+(sy-1)/2*h[6],sy*h[4]+(sy-1)/2*h[7],sy*h[5]+(sy-1)/2*h[8],...h.slice(6)];
-  return parseDerivative({ ...image, id: `report-presentation:${job.key}`, purpose: 'reveal', frameToDerivative: transform,
+  return parseDerivative({ schemaVersion: 1, kind: 'derivative',
+    originalDescriptorSha256: source.frame.originalDescriptorSha256, frameDescriptorSha256: descriptorSha256(source.frame),
+    id: `card-cutout:${job.key}`, purpose: 'reveal', frameToDerivative: transform,
     raster: { content: { mime: 'image/png', sha256: output.sha256, byteCount: output.byteCount },
       dimensions: { width: output.width, height: output.height },
-      object: { key: `${keyPrefix}/derived/${job.source_card_id}/report-presentation/${job.key}/${output.sha256}.png`, versionId: null } },
+      object: { key: `${keyPrefix}/derived/${job.source_card_id}/card-cutout/${job.key}/${output.sha256}.png`, versionId: null } },
     encoder: { name: job.recipe.execution === 'OPENAI_BUILT_IN' ? 'openai-built-in-image-edit' : 'openai-images-edit',
       version: job.recipe.model ?? 'model-not-reported', settingsSha256: reportImageRecipeHash(job.recipe) } },
   source.frame, source.original, source.decodePlan);
@@ -83,12 +87,25 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
   }
   let discoveryCursor = '';
   async function discover(signal) {
+    for (const row of await store.photoCandidates()) {
+      try {
+        signal.throwIfAborted();
+        const saved = JSON.parse(row.source), plan = JSON.parse(row.plan), verification = JSON.parse(row.verification);
+        const source = await artifacts.read(saved.ref, { cardId: row.card_id, kind: 'PHOTO_SOURCE', sourceHash: saved.photoSourceHash }, { signal });
+        const photo = processedPhoto(source, plan, verification);
+        await store.enqueuePhoto(row, { descriptor: photo.workingFrame, frame: photo.workingFrame,
+          original: photo.original, decodePlan: photo.decodePlan }, provider.recipe);
+      } catch (error) { emit(error); if (signal.aborted) throw error; }
+    }
     let publications = await store.candidates(8, discoveryCursor);
     if (!publications.length && discoveryCursor) { discoveryCursor = ''; publications = await store.candidates(8, ''); }
     for (const row of publications) {
       discoveryCursor = `${row.card_id}:${row.action_id}`;
       try { signal.throwIfAborted(); const { packet, media } = await publicationSource(row, signal);
-        for (const side of SIDES) { sourceMatches(media[side], packet, side, row.card_id); await store.enqueue(row, side, mediaOnly(media[side]), provider.recipe); }
+        for (const side of SIDES) {
+          sourceMatches(media[side], packet, side, row.card_id);
+          await store.bindPhotoToPublication(row, side, mediaOnly(media[side]));
+        }
       } catch (error) { emit(error); if (signal.aborted) throw error; }
     }
   }
@@ -109,7 +126,10 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
       // Never execute today's provider under yesterday's immutable cache key.
       requireThat(job.recipe_hash === reportImageRecipeHash(job.recipe)
         && job.recipe_hash === reportImageRecipeHash(provider.recipe), 503, 'REPORT_IMAGE_RECIPE_UNSUPPORTED');
-      const source = await storage.readDerivative({ ...job.sourceMedia, signal: controller.signal });
+      const source = job.sourceMedia.descriptor.kind === 'decoded-frame'
+        ? await storage.readDecodedFrame({ frame: job.sourceMedia.frame, original: job.sourceMedia.original,
+          decodePlan: job.sourceMedia.decodePlan, signal: controller.signal })
+        : await storage.readDerivative({ ...job.sourceMedia, signal: controller.signal });
       requireThat(digest(source.bytes) === job.source_hash, 503, 'REPORT_IMAGE_SOURCE_MISMATCH');
       controller.signal.throwIfAborted();
       // If the dispatch transaction itself loses its reply, assume it may
@@ -148,13 +168,18 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
   }
   function checked(job, packet, publicHash, side) {
     const result = job.result, descriptor = result?.media?.descriptor;
-    requireThat(result?.version === 'atlas-report-image-result-v1' && result.sourceSha256 === packet.images[side].sha256
+    const publicationBound = job.report_source_hash != null;
+    requireThat(result?.version === 'atlas-report-image-result-v1'
+      && (publicationBound ? job.report_source_hash === packet.images[side].sha256
+        && /^[a-f0-9]{64}$/.test(job.original_sha256 ?? '') : result.sourceSha256 === packet.images[side].sha256)
       && job.source_hash === result.sourceSha256 && result.recipeHash === job.recipe_hash && descriptor?.purpose === 'reveal'
       && descriptor.raster.content.sha256 === result.output.sha256 && descriptor.raster.content.byteCount === result.output.byteCount
       && descriptor.raster.dimensions.width === result.output.width && descriptor.raster.dimensions.height === result.output.height
       && qualifiedAlpha(result.output.alpha, result.output.width * result.output.height), 503, 'REPORT_IMAGE_BINDING_INVALID');
     const value = { publicToken: packet.publicToken, approvalVersion: packet.approvalVersion, publicHash, side,
-      sourceSha256: result.sourceSha256, sha256: result.output.sha256, width: result.output.width, height: result.output.height,
+      sourceSha256: packet.images[side].sha256,
+      ...(publicationBound ? { generationSourceSha256: result.sourceSha256, originalSha256: job.original_sha256 } : {}),
+      sha256: result.output.sha256, width: result.output.width, height: result.output.height,
       byteCount: result.output.byteCount, contentType: 'image/png', transparent: true, presentationOnly: true,
       preservesOriginalRGB: false, alignment: 'approximate-frame-fit', promptVersion: job.recipe.promptVersion,
       model: job.recipe.model, execution: job.recipe.execution };
@@ -171,31 +196,49 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
   }
   return Object.freeze({
     manifest,
+    async isPhotoPrepared({cardId,uploadId,side}) {
+      if (!await store.photoIntent(cardId,uploadId,side)) return true;
+      const job=await store.photo(cardId,uploadId,side);
+      return ['READY','FAILED','UNKNOWN'].includes(job?.state);
+    },
+    async photo({ cardId, uploadId, side }) {
+      requireThat(SIDES.includes(side), 404, 'REPORT_IMAGE_NOT_FOUND');
+      return store.photo(cardId, uploadId, side);
+    },
+    async readCleanPhoto({ cardId, uploadId, side, signal, waitMs = 240000 }) {
+      requireThat(SIDES.includes(side) && Number.isInteger(waitMs) && waitMs >= 0 && waitMs <= 240000, 400, 'REPORT_IMAGE_INPUT_INVALID');
+      const deadline = Date.now() + waitMs;
+      if (!await store.photoIntent(cardId, uploadId, side)) return null;
+      while (true) {
+        signal?.throwIfAborted();
+        const job = await store.photo(cardId, uploadId, side);
+        if (job?.state === 'READY') {
+          const found = await storage.readDerivative({ ...job.result.media, signal });
+          requireThat(digest(found.bytes) === job.result.output.sha256 && found.bytes.length === job.result.output.byteCount,
+            503, 'REPORT_IMAGE_OUTPUT_INVALID');
+          // The upload may have changed while reading. Never attach its cutout
+          // to a replacement photograph, even when the card id is the same.
+          const current = await store.photo(cardId, uploadId, side);
+          requireThat(current?.key === job.key, 409, 'REPORT_IMAGE_SOURCE_CHANGED');
+          return { bytes: found.bytes, contentType: 'image/png', sha256: job.result.output.sha256,
+            width: job.result.output.width, height: job.result.output.height };
+        }
+        if (job && ['FAILED','UNKNOWN'].includes(job.state) || Date.now() >= deadline) return null;
+        await new Promise((resolve, reject) => {
+          const abort = () => { timers.clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal.reason); };
+          const timer = timers.setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, Math.min(1000, deadline - Date.now()));
+          signal?.addEventListener('abort', abort, { once: true });
+          if (signal?.aborted) abort();
+        });
+      }
+    },
+    wake() { return cycle(); },
     async image(row, packet, side, outputSha256, signal) {
       const job = await store.ready(row, side); if (!job) return null;
       const value = checked(job, packet, row.public_hash, side); if (value.sha256 !== outputSha256) return null;
       const found = await storage.readDerivative({ ...job.result.media, signal });
       requireThat(found.bytes.length === value.byteCount && digest(found.bytes) === value.sha256, 503, 'REPORT_IMAGE_OUTPUT_INVALID');
       return { bytes: found.bytes, contentType: 'image/png' };
-    },
-    // Release-only import: callers must supply a source/report/output-bound
-    // owner-approved built-in record. Not exposed as a staff/public HTTP route.
-    async seed(row, side, bytes, evidence) {
-      const signal = AbortSignal.timeout(120000), { packet, media } = await publicationSource(row, signal);
-      sourceMatches(media[side], packet, side, row.card_id);
-      requireThat(evidence.execution === 'OPENAI_BUILT_IN' && evidence.model === null && evidence.reportHash === row.public_hash
-        && evidence.reportVersion === row.version && evidence.side === side && evidence.sourceSha256 === packet.images[side].sha256
-        && evidence.sha256 === digest(bytes) && typeof evidence.prompt === 'string' && evidence.prompt.length <= 8192,
-      409, 'REPORT_IMAGE_SEED_INVALID');
-      const recipe = { version: 'atlas-report-image-recipe-v1', execution: 'OPENAI_BUILT_IN', model: null,
-        promptVersion: evidence.promptVersion, prompt: evidence.prompt, output_format: 'png', background: 'transparent' };
-      const job = { key: reportImageJobKey(evidence.sourceSha256, recipe), recipe, source_hash: evidence.sourceSha256,
-        source_card_id: row.card_id, sourceMedia: mediaOnly(media[side]) };
-      const qualified = await inspect(bytes);
-      requireThat(qualified.width === evidence.width && qualified.height === evidence.height, 409, 'REPORT_IMAGE_SEED_INVALID');
-      const result = await persist(job, bytes, { ...evidence, promptSha256: digest(evidence.prompt), importedAt: new Date().toISOString() }, signal);
-      requireThat(result.output.width === evidence.width && result.output.height === evidence.height, 409, 'REPORT_IMAGE_SEED_INVALID');
-      return store.enqueue(row, side, job.sourceMedia, recipe, result);
     },
     start() { if (closed || !stopped) return; stopped = false; timer = timers.setInterval(() => { void cycle(); }, intervalMs); timer?.unref?.(); void cycle(); },
     async tick() { if (closed) return; const wasStopped = stopped; stopped = false; await cycle(); await Promise.allSettled([...tasks]); stopped = wasStopped; },

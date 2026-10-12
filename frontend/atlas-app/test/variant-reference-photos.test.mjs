@@ -15,7 +15,7 @@ function result() {
 test('retains unmatched slab and raw photos, with exact saved text and no association or source mutation', () => {
   const saved = result(), before = JSON.stringify(saved), photos = unmatchedVariantReferences(saved);
   assert.deepEqual(photos.map(image => image.sha256), [photo(2).sha256, photo(3).sha256]);
-  assert.deepEqual(photos[0].labelReading, { company: 'CGC', text: 'Pokémon (2024)\nCostco Exclusive', reason: 'Catalog year differs' });
+  assert.deepEqual(photos[0].labelReading, { company: 'CGC', text: 'Pokémon (2024)\nCostco Exclusive', evidenceKind: 'SLABBED', reason: 'Catalog year differs' });
   assert.equal(photos[1].labelReading.text, null);
   assert(photos.every(image => image.associationStatus === 'UNASSIGNED'));
   assert.equal(JSON.stringify(saved), before);

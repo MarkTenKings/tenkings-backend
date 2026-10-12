@@ -9,5 +9,5 @@ export function createSoldReferenceProvider({ apiKey, fetchImpl = globalThis.fet
   // The dedicated credential is sent only to the engine's fixed provider URL.
   // A redirect is an uncertain failed request, never another authorized hop.
   const fetchProvider = (url, init) => fetchImpl(url, { ...init, redirect: 'error' });
-  return input => searchAtlasSoldPhotoPool(input, { apiKey, requestCount: 240, fetch: fetchProvider });
+  return (input, { page = 1 } = {}) => searchAtlasSoldPhotoPool(input, { apiKey, requestCount: 240, page, fetch: fetchProvider });
 }

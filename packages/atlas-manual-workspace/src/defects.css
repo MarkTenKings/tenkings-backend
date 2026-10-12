@@ -43,3 +43,7 @@
 @media(prefers-reduced-motion:reduce){.ad-workspace *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 
 .ad-analysis-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;flex:none;padding:8px 10px;background:#fff7e8;border-bottom:1px solid #e6d8bc;font-size:12px;line-height:1.4}.ad-analysis-status p{margin:0;flex:1;min-width:220px}.ad-analysis-status>div{display:flex;flex-wrap:wrap;gap:6px}.ad-analysis-status [role=alert]{color:#9b2938}
+
+.ad-exact-traces g[aria-disabled="true"] .ad-trace-hit { pointer-events:none; }
+.ad-observation small,.ad-live-impact small { display:block;color:#59616d;font-size:.8rem;line-height:1.45;margin-top:.3rem; }
+.ad-live-impact { font-size:.875rem;line-height:1.5; }

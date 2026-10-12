@@ -5,6 +5,7 @@ const binding = { publicToken: z.string().regex(/^ar_[A-Za-z0-9_-]{24}$/),
   approvalVersion: z.number().int().positive().max(2147483647), publicHash: sha };
 export const reportImageSchema = z.strictObject({ ...binding,
   side: z.enum(['FRONT', 'BACK']), sourceSha256: sha, sha256: sha,
+  generationSourceSha256: sha.optional(), originalSha256: sha.optional(),
   width: z.number().int().min(2).max(4096), height: z.number().int().min(2).max(4096),
   byteCount: z.number().int().positive().max(4 * 1024 * 1024), contentType: z.literal('image/png'),
   url: z.string().max(256), transparent: z.literal(true), presentationOnly: z.literal(true),
@@ -26,6 +27,7 @@ export function parseReportImages(value, { packet, publicHash } = {}) {
     if (image.side !== side || ['publicToken', 'approvalVersion', 'publicHash'].some(key => image[key] !== parsed[key])
       || image.url !== reportImageURL(image) || image.width * image.height > 8_294_400
       || (image.execution === 'OPENAI_IMAGES_API' && image.model === null)
+      || (image.generationSourceSha256 === undefined) !== (image.originalSha256 === undefined)
       || (packet && image.sourceSha256 !== packet.images[side].sha256)) throw new Error('REPORT_IMAGES_BINDING_INVALID');
   }
   return parsed;

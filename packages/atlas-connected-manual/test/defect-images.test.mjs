@@ -95,3 +95,15 @@ test('reviewed crop and exact disconnected mask survive immutable storage; overl
   const corrupted = structuredClone(lesson); corrupted.exemplar.trace.sha256 = '0'.repeat(64);
   await assert.rejects(f.effects.lessonImages({ lessons: [corrupted] }), { code: 'DEFECT_LESSON_UNVERIFIED' });
 });
+
+test('generated auxiliary inputs bind exact upload and original hash without changing inspection evidence',async()=>{
+ const bytes=await sharp({create:{width:100,height:140,channels:4,background:'#aa8822ff'}}).png().toBuffer(),calls=[];
+ const effects=createDefectImageEffects({artifacts:{},readPrepared:()=>assert.fail('No original reread required'),readCleanPhoto:async input=>{
+  calls.push(input);return input.side==='FRONT'?{bytes,sha256:digest(bytes)}:null;
+ }});
+ const card={cardId:randomUUID(),draft:{source:{uploads:{FRONT:randomUUID(),BACK:randomUUID()}}}},binding={sides:{FRONT:{frame:{originalSha256:'a'.repeat(64)}},BACK:{frame:{originalSha256:'b'.repeat(64)}}}};
+ const result=await effects.generatedViews({},card,binding);
+ assert.equal(result.length,1);assert.equal(result[0].side,'FRONT');assert.equal(result[0].generatedSha256,digest(bytes));assert.equal(result[0].originalSha256,'a'.repeat(64));
+ assert.deepEqual(calls.map(c=>[c.side,c.uploadId]),Object.entries(card.draft.source.uploads));
+ assert.deepEqual(await sharp(result[0].bytes).raw().toBuffer(),await sharp(bytes).raw().toBuffer());
+});

@@ -182,7 +182,7 @@ test('material-only revision retains exact source findings as pending remeasurem
 test('defect actions only import pure grading and source-geometry validators, never old orchestration', () => {
   const source = readFileSync(new URL('../src/defect-actions.mjs', import.meta.url), 'utf8');
   const imports = [...source.matchAll(/from ['"]([^'"]+)['"]/g)].map(match => match[1]);
-  assert.ok(imports.length > 0 && imports.every(path => path.startsWith('@atlas/grading-core/') || path === './geometry-actions.mjs'));
+  assert.ok(imports.length > 0 && imports.every(path => path.startsWith('@atlas/grading-core/') || ['./geometry-actions.mjs','./material-contour.mjs'].includes(path)));
   assert.ok(!/atlas-operator|atlasWorkspace|sam3_detector|fetch\(/.test(source));
 });
 

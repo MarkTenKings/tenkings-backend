@@ -7,7 +7,7 @@ const SIDES = ['FRONT', 'BACK'];
  * artifact and reauthorizes after its read; current brackets the whole batch.
  * Each side verifies/signs one image at a time, bounding raster reads to two.
  */
-export function createImageDescriptors({ current, readSource, readManifest, imageReadUrl, imageUrl, reviewDisplay = null }) {
+export function createImageDescriptors({ current, readSource, readManifest, imageReadUrl, imageUrl, reviewDisplay = null, readCleanDescriptor = null }) {
   return async function imageDescriptors({ card, state, staff, imageScope = 'all' }) {
     requireThat(['all', 'inspection'].includes(imageScope), 400, 'MANUAL_IMAGE_SCOPE_INVALID');
     await current(staff, card);
@@ -23,6 +23,10 @@ export function createImageDescriptors({ current, readSource, readManifest, imag
             byteCount: content.byteCount, mime: content.mime };
       }
       if (imageScope === 'all') images.original = await descriptor('original', source.photo.workingFrame);
+      if (readCleanDescriptor) {
+        const clean = await readCleanDescriptor({ cardId:card.cardId, uploadId:card.draft.source.uploads[side], side, photo:source.photo });
+        if (clean) images.clean = clean;
+      }
       if (slot.prepared && saved) {
         requireThat(saved.frameId === slot.prepared.frame.id, 503, 'MANUAL_IMAGE_BINDING_INVALID');
         for (const [kind, image] of Object.entries(saved.images))

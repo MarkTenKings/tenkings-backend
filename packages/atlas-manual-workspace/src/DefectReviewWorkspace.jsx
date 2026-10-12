@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { decodeSpeedsterTraceRleV1, encodeSpeedsterTraceRleV1, speedsterTraceRleV1Spans } from '@atlas/grading-core/trace-codec';
 import { decodeSpeedsterTraceBitmapWireV1, encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
-import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevision, clipSpeedsterTraceToEditorBounds,
+import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevision,
   createEmptySpeedsterTrace, initializeSpeedsterHighlighterStrokes, isNonEmptySpeedsterTrace,
   rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
+import { findingImpact, traceAreaPreview } from './finding-impact.mjs';
 import { defectBase } from './defect-actions.mjs';
 import { useVerifiedImage } from './verified-image.mjs';
 import { astraReviewState, proposalFrameMatches, validProposalContour } from './astra-review-ui.mjs';
@@ -97,6 +98,9 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
   const traceId = editor?.findingId ?? (pendingTrace ? pendingAction.findingId ?? pendingAction.trace.id : null);
   const shapes = useMemo(() => findings.map((entry, index) => ({ finding: entry, number: index + 1, ...exactTraceShape(entry) })), [slot.findings]);
   const draftShape = useMemo(() => currentTrace ? exactTraceShape(null, currentTrace) : null, [currentTrace]);
+  const selectedProposal = finding && (astra?.findingObservations ?? astra?.proposals ?? []).find(p => p.side === side && (finding.id === `astra-${p.id}` || finding.id === p.id || finding.detectorId === p.id || finding.id === p.findingId));
+  const impact = useMemo(() => finding ? findingImpact(findings, finding.id) : [], [slot.findings, finding?.id]);
+  const tracePreview = useMemo(() => currentTrace ? traceAreaPreview(currentTrace, slot.cornerShape, slot.frame.materialContour) : null, [currentTrace, slot.cornerShape, slot.frame]);
   const bounds = useMemo(() => finding && inspectionBounds(finding), [finding]);
   const proposalsCurrent = astra?.status === 'READY' && proposalFrameMatches(workspace, astra, side);
   const proposals = astra?.enabled && proposalsCurrent ? (astra.proposals ?? []).filter(proposal => proposal.side === side && proposal.reviewStatus === 'UNREVIEWED') : [];
@@ -179,7 +183,7 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
   };
   const correctProposal = proposal => {
     if (editDisabled || editor || !onReviewProposal || !TYPES[proposal.defectType] || !validProposalContour(proposal) && !needsProposalRedraw(proposal)) return;
-    const trace = needsProposalRedraw(proposal) ? createEmptySpeedsterTrace() : clipSpeedsterTraceToEditorBounds(rasterizeSpeedsterCanonicalContour(proposal.canonicalContour), FULL_CROP, slot.cornerShape);
+    const trace = needsProposalRedraw(proposal) ? createEmptySpeedsterTrace() : rasterizeSpeedsterCanonicalContour(proposal.canonicalContour);
     setNewType(proposal.defectType); setError(''); setPeek(false); setPanMode(false);
     setEditor({ trace, base, baseKey, findingId: null, sourceViewId: `${side}:inspection`, cropTransform: FULL_CROP, id: crypto.randomUUID(), undo: [],
       proposal: { analysisId: astra.analysisId, proposalId: proposal.id } });
@@ -193,7 +197,7 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
     const captured = strokeRef.current; strokeRef.current = null; setStroke([]);
     if (!captured?.points.length || !editor || stale || editDisabled) return;
     const next = applyCompletedSpeedsterTraceStroke({ trace: editor.trace, points: captured.points, tool: captured.tool, strokeWidthPixels: captured.brush }).trace;
-    const trace = clipSpeedsterTraceToEditorBounds(next, editor.cropTransform, slot.cornerShape);
+    const trace = next;
     setEditor(previous => ({ ...previous, trace, undo: [...previous.undo.slice(-19), previous.trace] }));
   };
   const gesturePoint = (event, clean) => {
@@ -308,8 +312,8 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
                 {ready && !peek && <svg className="ad-exact-traces" viewBox="0 0 1270 1778" role="group" aria-label={`${name(side)} all finding markings`}>
                   {shapes.filter(shape => shape.path && !(currentTrace && shape.finding.id === traceId)).map(shape => <g key={shape.finding.id} role="button" tabIndex={editor ? -1 : 0}
                     aria-label={`Inspect ${name(side)} finding ${shape.number}: ${TYPES[shape.finding.defectType]}`} aria-pressed={shape.finding.id === findingId} aria-disabled={Boolean(editor)} data-finding-id={shape.finding.id}
-                    onPointerDown={event => event.stopPropagation()} onClick={() => choose(shape.finding)} onKeyDown={event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); event.stopPropagation(); choose(shape.finding); } }}>
-                    <path className="ad-trace-hit" d={shape.path}/><path className="ad-exact-trace" d={shape.path}/>
+                    onPointerDown={event => { if (!editor) event.stopPropagation(); }} onClick={() => choose(shape.finding)} onKeyDown={event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); event.stopPropagation(); choose(shape.finding); } }}>
+                    {!editor && <path className="ad-trace-hit" d={shape.path}/>}<path className="ad-exact-trace" d={shape.path}/>
                     {view.zoom < 2 && shape.anchor && <g className="ad-trace-number"><circle cx={shape.anchor.x} cy={shape.anchor.y} r="27"/><text x={shape.anchor.x} y={shape.anchor.y}>{shape.number}</text></g>}
                   </g>)}
                   {draftShape?.path && <path className="ad-exact-trace ad-draft-trace" d={draftShape.path}/>}
@@ -331,20 +335,22 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
         <div className="ad-list-heading"><strong>All {name(side).toLowerCase()} findings</strong><button type="button" disabled={editDisabled || Boolean(editor) || !onEdit} onClick={() => start(null)}>Add finding</button></div>
         <ol className="ad-findings" aria-label={`${name(side)} findings`}>{shapes.map(({ finding: entry, number }) => <li key={entry.id}><button type="button" className="ad-finding-name" aria-pressed={entry.id === findingId} disabled={viewingDisabled || Boolean(editor)} onClick={() => choose(entry)} aria-label={`Inspect ${name(side)} finding ${number}`}><b>{number}</b><span><strong>{TYPES[entry.defectType]}</strong><small>{areaOf(entry).toLocaleString('en-US', { maximumFractionDigits: 6 })} mm² · {regionsOf(entry).map(region => region.zone.toLowerCase()).join(', ')}</small></span></button></li>)}</ol>
         {!findings.length && <p className="ad-status">{astra?.enabled && !['READY','STALE'].includes(astra.status) ? 'AI inspection has not completed. No saved findings on this side.' : `No findings recorded on ${name(side).toLowerCase()}.`} Add any visible damage.</p>}
-        {finding && !editor && <section className="ad-finding-details" aria-label="Selected finding measurements"><h3>{TYPES[finding.defectType]}</h3><dl><div><dt>Measured area</dt><dd>{areaOf(finding).toLocaleString('en-US', { maximumFractionDigits: 6 })} mm²</dd></div>{bounds && <div><dt>Region bounds</dt><dd>{(bounds.width * 63.5).toFixed(3)} × {(bounds.height * 88.9).toFixed(3)} mm</dd></div>}</dl>
+        {finding && !editor && <section className="ad-finding-details" aria-label="Selected finding measurements"><h3>{TYPES[finding.defectType]}</h3>{selectedProposal && <p className="ad-observation">{selectedProposal.observation}<small>AI uncertainty: {selectedProposal.uncertainty?.level ?? selectedProposal.uncertainty ?? 'Not recorded'}</small></p>}<dl><div><dt>Measured area</dt><dd>{areaOf(finding).toLocaleString('en-US', { maximumFractionDigits: 6 })} mm²</dd></div>{bounds && <div><dt>Region bounds</dt><dd>{(bounds.width * 63.5).toFixed(3)} × {(bounds.height * 88.9).toFixed(3)} mm</dd></div>}</dl>
+          {impact.length > 0 && <div className="ad-live-impact" aria-label="Current category impact">{impact.map(row => <p key={row.zone}>{row.zone.charAt(0) + row.zone.slice(1).toLowerCase()}: {row.score} with this finding · {row.withoutScore} without it<small>{row.scoringPercent.toFixed(4)}% scoring damage, including 1.5×. Comparison uses saved measurements; removing overlapping findings recalculates ownership.</small></p>)}</div>}
           <label>Defect type<select aria-label={`${name(side)} finding type`} value={finding.defectType} disabled={editDisabled || !onEdit} onChange={event => edit({ type: 'CHANGE_TYPE', defectId: finding.id, defectType: event.target.value })}>{Object.entries(TYPES).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <div className="ad-edit-actions"><button type="button" disabled={editDisabled || !onEdit} onClick={() => start(finding)}>Edit trace</button><button type="button" disabled={editDisabled || !onEdit} onClick={() => edit({ type: 'REMOVE', defectIds: [finding.id] })}>Remove finding</button></div>
         </section>}
-        {editor && <section className="ad-trace-tools" aria-label={`${name(side)} trace editor`}><h3>{editor.findingId ? 'Correct trace' : 'Add finding'}</h3><p>Trace visible damage on the marked photo.</p>
+        {editor && <section className="ad-trace-tools" aria-label={`${name(side)} trace editor`}><h3>{editor.findingId ? 'Correct trace' : 'Add finding'}</h3><p>Trace visible damage on the marked photo. The full stroke is saved; only its intersection with the card contributes damage.</p>
+          {tracePreview && <p className="ad-live-impact" aria-live="polite">Stroke {tracePreview.rawAreaMm2.toFixed(4)} mm² · estimated on-card {tracePreview.onCardAreaMm2.toFixed(4)} mm²<small>Exact area and category scores update after saving.{tracePreview.outsidePixels > 0 ? ' Part of this stroke is outside the material outline and will not count as damage.' : ''}</small></p>}
           {editor.findingId === null && <label>Defect type<select aria-label={`${name(side)} new finding type`} value={newType} disabled={busy} onChange={event => setNewType(event.target.value)}>{Object.entries(TYPES).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
           <div className="ad-edit-actions"><button type="button" disabled={busy || stroke.length > 0} aria-pressed={tool === 'BRUSH'} onClick={() => setTool('BRUSH')}>Brush</button><button type="button" disabled={busy || stroke.length > 0} aria-pressed={tool === 'ERASER'} onClick={() => setTool('ERASER')}>Eraser</button><button type="button" disabled={busy || stroke.length > 0} aria-pressed={panMode} onClick={() => setPanMode(value => !value)}>Pan image</button></div>
-          <label>Width<select aria-label={`${name(side)} brush width`} disabled={busy || stroke.length > 0} value={brush} onChange={event => setBrush(Number(event.target.value))}>{[1,2,4,8,16,32].map(width => <option key={width} value={width}>{width} px</option>)}</select></label>
+          <label>Width<select aria-label={`${name(side)} brush width`} disabled={busy || stroke.length > 0} value={brush} onChange={event => setBrush(Number(event.target.value))}>{[1,2,4,8,16,32].map(width => <option key={width} value={width}>{(width * .05).toFixed(2)} mm ({width} px)</option>)}</select></label>
           <button type="button" disabled={busy || stroke.length > 0 || !editor.undo.length} onClick={() => setEditor(previous => ({ ...previous, trace: previous.undo.at(-1), undo: previous.undo.slice(0,-1) }))}>Undo stroke</button>
           {stale && !busy && !resumeSavedTrace && <p role="alert">The saved side changed. Your trace is retained; cancel it to use the current version.</p>}
           {(renderEditActions ?? (children => children))(<div className="ad-edit-actions"><button type="button" className="ad-save-trace" disabled={!canSave} onClick={saveTrace}>{busy ? 'Saving…' : 'Save trace'}</button><button type="button" disabled={busy} onClick={() => { strokeRef.current = null; gestures.current.clear(); setStroke([]); setEditor(null); setError(''); }}>Cancel trace</button></div>, side)}
         </section>}
         {pending && !busy && <div className="ad-pending" role="status"><p>Measurement pending. Your change is retained.</p>{onRetry && <button type="button" disabled={locked} onClick={() => perform(() => onRetry(side))}>Retry measurement</button>}{onDiscardPending && <button type="button" disabled={locked} onClick={() => perform(() => onDiscardPending({ side, base }))}>Discard pending change</button>}</div>}
-        {proposals.length > 0 && <details className="ad-proposals"><summary>Additional suggestions ({proposals.length})</summary><ul>{proposals.map(proposal => <li key={proposal.id}><strong>{TYPES[proposal.defectType] ?? 'Unrecognized suggestion'}</strong><div className="ad-edit-actions"><button type="button" disabled={editDisabled || Boolean(editor) || !onReviewProposal || !validProposalContour(proposal) || needsProposalRedraw(proposal)} onClick={() => reviewProposal(proposal, 'ACCEPT')}>Add suggestion</button><button type="button" disabled={editDisabled || Boolean(editor) || !onReviewProposal} onClick={() => correctProposal(proposal)}>Correct trace</button><button type="button" disabled={editDisabled || Boolean(editor) || !onReviewProposal} onClick={() => reviewProposal(proposal, 'REJECT')}>Dismiss suggestion</button></div></li>)}</ul></details>}
+        {proposals.length > 0 && <details className="ad-proposals"><summary>Additional suggestions ({proposals.length})</summary><ul>{proposals.map(proposal => <li key={proposal.id}><strong>{TYPES[proposal.defectType] ?? 'Unrecognized suggestion'}</strong><p>{proposal.observation}</p><small>AI uncertainty: {proposal.uncertainty?.level ?? proposal.uncertainty ?? 'Not recorded'}</small><div className="ad-edit-actions"><button type="button" disabled={editDisabled || Boolean(editor) || !onReviewProposal || !validProposalContour(proposal) || needsProposalRedraw(proposal)} onClick={() => reviewProposal(proposal, 'ACCEPT')}>Add suggestion</button><button type="button" disabled={editDisabled || Boolean(editor) || !onReviewProposal} onClick={() => correctProposal(proposal)}>Correct trace</button><button type="button" disabled={editDisabled || Boolean(editor) || !onReviewProposal} onClick={() => reviewProposal(proposal, 'REJECT')}>Dismiss suggestion</button></div></li>)}</ul></details>}
         {historical.length > 0 && <details className="ad-history"><summary>Removed / excluded ({historical.length})</summary><ul>{historical.map(entry => <li key={entry.id}><span>{TYPES[entry.defectType]}{entry.geometryExclusion ? ' · Earlier outline' : ''}</span>{!entry.geometryExclusion && <button type="button" disabled={editDisabled || Boolean(editor) || !onEdit} onClick={() => edit({ type: 'UNDO', defectIds: [entry.id] })}>Restore finding</button>}</li>)}</ul></details>}
         {error && <p role="alert">{error}</p>}
       </aside>

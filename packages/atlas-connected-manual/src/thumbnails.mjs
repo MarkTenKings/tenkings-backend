@@ -3,7 +3,7 @@ import { rethrowPreviewControlFailure } from './inspection-preview.mjs';
 
 /** Lightweight navigation evidence. No hydration, full-image grant, decode,
  * preparation, publication, or model work is reachable from this reader. */
-export function createThumbnailReader({ intake, workflow, readManifest, imageReadUrl, reviewDisplay }) {
+export function createThumbnailReader({ intake, workflow, readManifest, imageReadUrl, reviewDisplay, readCleanDescriptor = null }) {
   return async function thumbnails(staff,cardId) {
     const {card}=await intake.read(staff,cardId);
     let manual=null;
@@ -11,6 +11,10 @@ export function createThumbnailReader({ intake, workflow, readManifest, imageRea
     const images=Object.fromEntries(await Promise.all(['FRONT','BACK'].map(async side=>{
       const upload=card.sides[side].upload;if(!upload?.source)return[side,{state:'PENDING'}];
       const {photo}=await intake.readSource(staff,cardId,upload.uploadId);
+      if(readCleanDescriptor){
+        const clean=await readCleanDescriptor({cardId,uploadId:upload.uploadId,side,photo});
+        if(clean)return[side,{state:'READY',preview:clean}];
+      }
       if(manual?.draft.source?.sourceHash===card.sourceHash){
         const saved=await readManifest(manual,side);
         if(saved?.images?.inspection&&reviewDisplay){

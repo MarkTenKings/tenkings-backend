@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { machineGeometryCandidate, machineGeometryReview, PRINTED_CANDIDATE_POLICY } from '../src/machine-geometry.mjs';
+import { machineGeometryCandidate, machineGeometryReview } from '../src/machine-geometry.mjs';
 
 const quad = [{ x: .1, y: .08 }, { x: .9, y: .08 }, { x: .9, y: .92 }, { x: .1, y: .92 }];
 function candidate() {
   return { mode: 'PRINTED_FRAME', outcome: 'ABSTAIN', authority: 'PROPOSER_ONLY', proposal: null,
     ambiguity: { ambiguous: true }, advisory: { code: 'AMBIGUOUS_PRINTED_FRAME' },
-    diagnosticCandidate: { policy: PRINTED_CANDIDATE_POLICY, authority: 'PROPOSER_ONLY', reason: 'AMBIGUOUS_SUPPORTED_TRANSITIONS', quad },
+    diagnosticCandidate: { policy: 'atlas-supported-printed-candidate-v1', authority: 'PROPOSER_ONLY', reason: 'AMBIGUOUS_SUPPORTED_TRANSITIONS', quad },
     sideEvidence: Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side,
       { medianContrastDeltaE: 20, supportFraction: .8, sampleCount: 200, candidateCount: 2 }])) };
 }
-test('supported ambiguous candidate is usable without rewriting native refusal or asserting human review', () => {
+test('retired native ABSTAIN diagnostic is retained as evidence but never adopted', () => {
   const proposal = candidate(), before = structuredClone(proposal), result = machineGeometryCandidate(proposal);
-  assert.deepEqual(result, { quad, ambiguous: true, provisional: true });
+  assert.equal(result, null);
   assert.deepEqual(proposal, before);
 });
 for (const [name, change] of [

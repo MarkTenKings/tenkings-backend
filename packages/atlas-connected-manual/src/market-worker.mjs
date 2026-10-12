@@ -1,4 +1,4 @@
-import { digest, requireThat } from '@atlas/manual-service/contract';
+import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { EbaySoldCompsV2Error } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarket, publishedMarketQuery, marketPreviewHash } from './presentation-market.mjs';
 import { marketHasRetiredReclassification } from './market-job-store.mjs';
@@ -14,9 +14,43 @@ export function marketProviderFailure(error) {
   return { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' };
 }
 
+/** Extend only the same publication/query using already saved page evidence. */
+export function mergeMarketPages(prior, current, previousPreviewId) {
+  const next = current.preview;
+  requireThat(prior.version === 'atlas-market-preview-v2' && prior.query === next.query
+    && canonical(prior.binding) === canonical(next.binding) && prior.identityHash === next.identityHash
+    && prior.pagination?.page + 1 === next.pagination?.page, 409, 'MARKET_PAGE_MISMATCH');
+  const candidates = [...prior.candidates], seen = new Set(candidates.map(row => row.sourceItem.providerItemId ?? row.sale.listingUrl).filter(Boolean));
+  let duplicates = 0;
+  for (const candidate of next.candidates) {
+    const key = candidate.sourceItem.providerItemId ?? candidate.sale.listingUrl;
+    if (key && seen.has(key)) { duplicates++; continue; }
+    if (key) seen.add(key);
+    candidates.push(candidate);
+  }
+  candidates.sort((a, b) => (Date.parse(b.sale.soldAt) || 0) - (Date.parse(a.sale.soldAt) || 0));
+  const counts = Object.fromEntries(Object.keys(next.counts).map(key => [key, (prior.counts?.[key] ?? 0) + next.counts[key]]));
+  counts.shown = candidates.length;
+  counts.raw = candidates.filter(row => row.sale.raw).length;
+  counts.graded = candidates.filter(row => row.sale.evidenceKind === 'SLABBED').length;
+  counts.unreadGrade = candidates.filter(row => row.sale.grade == null).length;
+  counts.differentIdentity = candidates.filter(row => row.match === 'DIFFERENT').length;
+  counts.outsideGrade = candidates.filter(row => row.sale.grade != null && !row.nearbyGrade).length;
+  counts.recommended = candidates.filter(row => row.recommended).length;
+  counts.duplicates = (prior.counts.duplicates ?? 0) + duplicates;
+  const labelProcessing = { ...next.labelProcessing,
+    state: prior.labelProcessing?.state === 'PARTIAL' || next.labelProcessing.state === 'PARTIAL' ? 'PARTIAL' : 'COMPLETE',
+    reasons: [...new Set([...(prior.labelProcessing?.reasons ?? []), ...next.labelProcessing.reasons])] };
+  for (const key of ['completed','failed','unknown','unavailable']) labelProcessing[key] += prior.labelProcessing?.[key] ?? 0;
+  const pages = prior.pages ?? [{ page: prior.pagination.page, retrievedAt: prior.retrievedAt, returned: prior.counts.returned }];
+  const preview = { ...next, candidates, counts, labelProcessing, previousPreviewId,
+    pages: [...pages, { page: next.pagination.page, retrievedAt: next.retrievedAt, returned: next.counts.returned }] };
+  return { ...current, preview, sourceHash: marketPreviewHash(preview) };
+}
+
 /** Cold construction. Only start/cycle executes durable, human-admitted jobs.
  * Leases bound process concurrency, never the number of approved cards. */
-export function createMarketWorker({ store, approved, publication, artifacts, provider, authorityFor, queryContextResolver = null, labelMarket = null,
+export function createMarketWorker({ store, approved, publication, artifacts, provider, authorityFor, labelMarket = null,
   concurrency = 2, intervalMs = 2000, heartbeatMs = 30000, timers = globalThis, onError = () => {} }) {
   requireThat(typeof provider === 'function' && typeof authorityFor === 'function' && Number.isInteger(concurrency)
     && concurrency >= 1 && concurrency <= 16 && Number.isInteger(intervalMs) && intervalMs >= 10
@@ -38,32 +72,41 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       const source = await approved.loadPacket(staff, job.card_id, job.approval_action_id);
       requireThat(!leaseLost && await store.bind(job, source), 409, 'MARKET_LEASE_LOST');
       let response = job.response;
-      const queryContext = response?.marketQueryContext ?? (!response && queryContextResolver
-        ? await queryContextResolver({ source, staff, job }) : null);
-      const context = publishedMarketQuery(source, { ...(response ? { savedQuery: response.query } : {}), queryContext });
+      const previous = typeof store.pageContext === 'function' ? await store.pageContext(job) : null;
+      const context = publishedMarketQuery(source, response ? { savedQuery: response.query } : {});
+      const page = previous ? previous.response.pagination.page + 1 : 1;
+      requireThat(!previous || previous.response.query === publishedMarketQuery(source).query
+        && previous.response.pagination.hasNextPage, 409, 'MARKET_NEXT_PAGE_UNAVAILABLE');
       if (!response) {
         // An uncertain dispatch-transaction reply is itself a no-repeat fence.
         dispatched = true;
         requireThat(!leaseLost && await store.dispatch(job), 409, 'MARKET_LEASE_LOST');
-        try { response = await provider(structuredClone(context.input)); }
+        try { response = await provider(structuredClone(context.input), { page }); }
         catch (error) { providerFailed = marketProviderFailure(error); throw error; }
-        if (context.marketQueryContext) response = { ...response, marketQueryContext: context.marketQueryContext };
         requireThat(await store.recordResponse(job, response), 503, 'MARKET_RESPONSE_NOT_SAVED');
         responseSaved = true;
       }
       requireThat(response.responsePolicy === 'ATLAS_SLAB_V1', 502, 'MARKET_PROVIDER_POLICY_INVALID');
+      requireThat(!response.pagination || response.query === publishedMarketQuery(source).query && response.pagination.page === page, 502, 'MARKET_PROVIDER_RESULT_INVALID');
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
       const evidence = await labelMarket({ source, response: structuredClone(response), job });
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
-      const result = market.project(source, evidence);
+      let result = market.project(source, evidence);
+      if (previous) {
+        const record = previous.record;
+        const prior = await artifacts.read(record.ref, { cardId: job.card_id, kind: 'MARKET_PREVIEW', sourceHash: record.artifactHash });
+        requireThat(digest(JSON.stringify(prior)) === record.artifactHash && marketPreviewHash(prior) === record.sourceHash,
+          503, 'MARKET_PREVIEW_CORRUPT');
+        result = mergeMarketPages(prior, result, previous.previewId);
+      }
       const artifactHash = digest(JSON.stringify(result.preview));
       const ref = await artifacts.write(result.preview, { cardId: job.card_id, kind: 'MARKET_PREVIEW', sourceHash: artifactHash });
       requireThat(result.sourceHash === marketPreviewHash(result.preview), 503, 'MARKET_PREVIEW_CORRUPT');
       await store.finish(job, { result: { state: 'READY', ref, artifactHash, sourceHash: result.sourceHash } });
     } catch (error) {
       emit(error);
-      const terminal = /^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE|MARKET_PROVIDER_POLICY_INVALID|MARKET_RECLASSIFICATION_RETIRED)$/.test(error?.code ?? '');
+      const terminal = /^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE|MARKET_PROVIDER_RESULT_INVALID|MARKET_PROVIDER_POLICY_INVALID|MARKET_RECLASSIFICATION_RETIRED)$/.test(error?.code ?? '');
       const failure = providerFailed ?? (terminal ? { code: error.code, disposition: 'FAILED' } : error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'RETRY' } : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
         : dispatched ? { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' }
         : { code: 'MARKET_PREPARATION_INTERRUPTED', disposition: 'RETRY' });

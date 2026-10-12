@@ -1,3 +1,4 @@
+import { validMaterialContour } from '../../atlas-manual-workspace/src/material-contour.mjs';
 import { createHash } from 'node:crypto';
 
 export class DefectAnalysisError extends Error {
@@ -35,7 +36,8 @@ export const SIDES = Object.freeze(['FRONT', 'BACK']);
 export const DEFECT_TYPES = Object.freeze(['FAINT_COLOR_VARIATION', 'VISIBLE_WHITENING', 'FRAYING', 'CHIPPING_EXPOSED_STOCK',
   'LIFTING_DEFORMATION', 'LIGHT_SCRATCH_SCUFF', 'VISIBLE_SCRATCH_PRINT_COATING_LOSS', 'DENT_MATERIAL_DAMAGE', 'PEELING_HEAVY_DAMAGE']);
 export function frame(value) {
-  object(value, ['imageVersion', 'originalSha256', 'preparationVersion', 'frameId', 'inspectionImageSha256', 'rectifiedImageSha256']);
+  object(value, ['imageVersion', 'originalSha256', 'preparationVersion', 'frameId', 'inspectionImageSha256', 'rectifiedImageSha256'].concat(value.materialContour ? ['materialContour'] : []));
+  if (value.materialContour) check(validMaterialContour(value.materialContour));
   integer(value.imageVersion, 1); integer(value.preparationVersion, 1); string(value.frameId);
   for (const k of ['originalSha256', 'inspectionImageSha256', 'rectifiedImageSha256']) sha(value[k]);
   check(value.inspectionImageSha256 !== value.rectifiedImageSha256);

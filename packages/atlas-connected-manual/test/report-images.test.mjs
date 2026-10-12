@@ -100,6 +100,7 @@ function fixture({ count = 1, failure = null, dispatch = true } = {}) {
   const f = { jobs, generations: 0, reads: 0, writes: 0, active: 0, peak: 0, errors: [], objects: new Map(), dispatches: 0 };
   const store = {
     async candidates() { return []; },
+    async photoCandidates() { return []; },
     async claim(_concurrency, recipeHash) { const job = jobs.find(x => x.state === 'QUEUED' && (!recipeHash || x.recipe_hash === recipeHash)); if (!job) return null;
       job.state = 'RUNNING'; job.attempts++; job.claim_id = randomUUID(); return structuredClone(job); },
     async dispatch(job) { f.dispatches++; if (!dispatch) return false; jobs.find(x => x.key === job.key).state = 'REQUESTED'; return true; },
@@ -126,7 +127,7 @@ function fixture({ count = 1, failure = null, dispatch = true } = {}) {
     timers: { setInterval: () => ({ unref() {} }), clearInterval() {} } });
   f.packet = { publicToken: 'ar_' + 'a'.repeat(24), approvalVersion: 1, images: { FRONT: { sha256: descriptor.raster.content.sha256 }, BACK: { sha256: 'b'.repeat(64) } } };
   f.row = { public_hash: 'c'.repeat(64) };
-  f.store = store; f.provider = provider;
+  f.store = store; f.provider = provider; f.storage = storage;
   return f;
 }
 test('cold construction and read-only missing manifest never enqueue or call the provider', async () => {
@@ -234,4 +235,43 @@ test('public manifest allowlist refuses source/report swaps, external URLs and i
   for (const change of [{ sourceSha256: 'd'.repeat(64) }, { side: 'BACK' }, { publicHash: 'd'.repeat(64) }, { url: 'https://example.com/x' }, { key: 'private/object' }, { model: null }, { byteCount: 4 * 1024 * 1024 + 1 }])
     assert.throws(() => parseReportImages({ ...manifest, images: { FRONT: { ...descriptor, ...change } } }, { packet: f.packet, publicHash: f.row.public_hash }));
   assert.equal(canonical(f.packet), canonical(f.packet));
+});
+
+
+test('upfront working-frame edit is reused for clean reads and a differently prepared published report', async()=>{
+  const f=fixture(),job=f.jobs[0];job.sourceMedia.descriptor=job.sourceMedia.frame;
+  f.storage.readDecodedFrame=async()=>({bytes:working.png});
+  f.store.photoIntent=async()=>true;f.store.photo=async()=>job;
+  await f.service.tick();assert.equal(job.state,'READY');assert.equal(f.generations,1);
+  const clean=await f.service.readCleanPhoto({cardId:'synthetic-card',uploadId:'synthetic-upload',side:'FRONT',waitMs:0});
+  assert.deepEqual(clean.bytes,output);assert.equal(clean.sha256,digest(output));
+  const reportSource=digest('a later human-corrected inspection crop');
+  job.report_source_hash=reportSource;job.original_sha256=photo.original.content.sha256;
+  const packet={...f.packet,images:{FRONT:{sha256:reportSource}}};
+  f.store.readyMany=async()=>[{...job,side:'FRONT'}];
+  const shown=await f.service.manifest(f.row,packet);
+  assert.equal(shown.images.FRONT.sourceSha256,reportSource);
+  assert.equal(shown.images.FRONT.generationSourceSha256,job.source_hash);
+  assert.equal(shown.images.FRONT.originalSha256,photo.original.content.sha256);
+  assert.deepEqual((await f.service.image(f.row,packet,'FRONT',digest(output))).bytes,output);
+  await f.service.tick();assert.equal(f.generations,1,'report reuse never buys another edit');
+  job.report_source_hash=digest('different inspection source');
+  await assert.rejects(f.service.manifest(f.row,packet),{code:'REPORT_IMAGE_BINDING_INVALID'});
+});
+
+test('pending/failed clean views do not hold a read and replaced uploads cannot receive stale pixels',async()=>{
+  const f=fixture(),args={cardId:'synthetic-card',uploadId:'synthetic-upload',side:'FRONT',waitMs:0};
+  f.store.photoIntent=async()=>true;f.store.photo=async()=>null;
+  assert.equal(await f.service.readCleanPhoto(args),null);assert.equal(f.generations,0);
+  f.store.photo=async()=>({state:'FAILED'});assert.equal(await f.service.readCleanPhoto(args),null);
+  await f.service.tick();let count=0;f.store.photo=async()=>++count===1?f.jobs[0]:null;
+  await assert.rejects(f.service.readCleanPhoto(args),{code:'REPORT_IMAGE_SOURCE_CHANGED'});
+});
+
+test('upfront preparation readiness defers only live image work and never starts provider work',async()=>{
+ const f=fixture(),input={cardId:'synthetic-card',uploadId:'synthetic-upload',side:'FRONT'};
+ f.store.photoIntent=async()=>true;f.store.photo=async()=>f.jobs[0];
+ for(const state of ['QUEUED','RUNNING','REQUESTED']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),false);}
+ for(const state of ['READY','FAILED','UNKNOWN']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),true);}
+ f.store.photoIntent=async()=>false;assert.equal(await f.service.isPhotoPrepared(input),true);assert.equal(f.generations,0);
 });

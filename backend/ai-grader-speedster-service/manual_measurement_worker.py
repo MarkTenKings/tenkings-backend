@@ -38,7 +38,7 @@ def execute(request):
     require(len(payload["findings"]) + len(payload["marks"]) <= request["maxFindings"], "MEASUREMENT_LIMIT")
     cv2.setNumThreads(1)
     try:
-        result = measure_manual_side(payload["marks"], payload["side"], payload["cornerShape"], findings=payload["findings"])
+        result = measure_manual_side(payload["marks"], payload["side"], payload["cornerShape"], findings=payload["findings"], material_contour=payload["frame"].get("materialContour"))
     except ManualMeasurementError as error:
         raise ValueError("MEASUREMENT_EDIT_INVALID") from error
     encoded = json.dumps(result, allow_nan=False, separators=(",", ":")).encode()

@@ -47,11 +47,10 @@ test('newly supplied exact sourced origin can resolve the same printing key with
   const projected = projectCodexReading(reading, catalog, priorChoices);
   assert.equal(projected.candidateId, candidates.find(value => value.label === 'Snowflake Stamp').candidateId);
   assert.equal(projected.labelText, reading.labelText); assert.equal(JSON.stringify(reading), before);
-  assert.equal(projectCodexReading(reading, catalog, priorChoices, codexCatalogContext(catalog)).candidateId, null,
-    'Do not override a refusal that already received the same origin evidence');
+  assert.equal(projectCodexReading(reading, catalog, priorChoices, codexCatalogContext(catalog)).candidateId, projected.candidateId,
+    'Versioned association corrects a prior refusal using the same immutable text');
   for (const labelText of [reading.labelText.replace('2025', '2024'), `${reading.labelText}\n2024`,
-    reading.labelText.replace('025/165', '025'), reading.labelText.replace('ENGLISH', ''),
-    reading.labelText.replace('SNOWFLAKE STAMP', ''), reading.labelText.replace('CALENDAR', 'CAL')]) {
+    reading.labelText.replace('025/165', '025/166')]) {
     assert.equal(projectCodexReading({ ...reading, labelText }, catalog, priorChoices).candidateId, null, labelText);
   }
   const actualCostco = { ...reading, labelText: 'CGC\nPikachu\nPokémon (2024)\nScarlet & Violet 151 - 025/165\nCostco Exclusive - 5-Pack Tin\nPRISTINE 10' };

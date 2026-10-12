@@ -5,7 +5,7 @@ const SIDES = ['FRONT', 'BACK'];
 /** Background preparation needs current card facts, not display URLs. Only an
  * explicit internal false skips preview reads; authorization and source fences
  * are identical to the normal interactive read. */
-export function createConnectedCardReader({ intake, details, workflow, identification, earlyGeometry, imageReadUrl }) {
+export function createConnectedCardReader({ intake, details, workflow, identification, earlyGeometry, imageReadUrl, readCleanDescriptor = null }) {
   return async function open(staff, cardId, { includePreviews = true } = {}) {
     const [{ card }, saved] = await Promise.all([intake.read(staff, cardId), details.read(staff, cardId)]);
     let manual = null;
@@ -17,6 +17,12 @@ export function createConnectedCardReader({ intake, details, workflow, identific
       const { photo } = await intake.readSource(staff, cardId, card.sides[side].upload.uploadId);
       previews[side] = await imageReadUrl({ kind: 'original', descriptor: photo.workingFrame, photo,
         photoSource: card.sides[side].upload.source, contextOnly: true });
+      // Geometry overlays retain the original frame. The clean view is a
+      // separate presentation image, never a replacement coordinate system.
+      if (readCleanDescriptor) {
+        const clean = await readCleanDescriptor({cardId,uploadId:card.sides[side].upload.uploadId,side,photo});
+        if (clean) previews[side] = {...previews[side],clean};
+      }
     }));
     const identificationState = await identification.status(staff, cardId);
     const geometryState = await earlyGeometry.status(staff, cardId);

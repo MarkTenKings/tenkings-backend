@@ -10,6 +10,9 @@ export const reportImageRecipeHash = recipe => digest(canonical(recipe));
 export const reportImageJobKey = (sourceSha256, recipe) => digest(canonical({ sourceSha256, recipeHash: reportImageRecipeHash(recipe) }));
 const error = (code, disposition = 'UNKNOWN', receipt = null) => Object.assign(new Error(code), { code, disposition, receipt });
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+// Upfront edits receive the full working PNG, before any geometry crop. The
+// Images API accepts input images below 50 MB; output remains independently bounded.
+const MAX_INPUT_IMAGE_BYTES = 50 * 1024 * 1024;
 async function boundedJSON(response, signal) {
   requireThat(response.body?.getReader, 503, 'REPORT_IMAGE_RESPONSE_INVALID');
   const reader = response.body.getReader(), chunks = []; let length = 0;
@@ -35,7 +38,7 @@ export function createReportImageProvider({ apiKey, fetchImpl = fetch, timeoutMs
     && canonical(recipe) === canonical(REPORT_IMAGE_RECIPE) && timeoutMs >= 1000 && timeoutMs <= 240000,
   503, 'REPORT_IMAGE_CONFIG_INVALID');
   return Object.freeze({ recipe, async edit({ bytes, contentType, sourceSha256, requestId, signal }) {
-    requireThat(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= MAX_IMAGE_BYTES
+    requireThat(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length < MAX_INPUT_IMAGE_BYTES
       && ['image/png','image/webp','image/jpeg'].includes(contentType) && digest(bytes) === sourceSha256
       && requestID(requestId), 503, 'REPORT_IMAGE_INPUT_INVALID');
     signal?.throwIfAborted();

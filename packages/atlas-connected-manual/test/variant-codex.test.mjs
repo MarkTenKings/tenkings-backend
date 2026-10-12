@@ -94,19 +94,21 @@ test('new exact catalog printing can reuse a permanent unmatched label without c
  const resolved=projectCodexReading(reading,expanded,priorChoices);
  assert.equal(resolved.canonicalPrintingKey,variantCodexChoice(expanded.candidates.find(c=>c.label==='Costco Exclusive')).key);
  assert.equal(resolved.labelText,reading.labelText);assert.equal(JSON.stringify(reading),before);
- assert.equal(projectCodexReading(reading,expanded,codexChoices(expanded)).candidateId,null,'Never override the same catalog model refusal');
+ assert.equal(projectCodexReading(reading,expanded,codexChoices(expanded)).candidateId,resolved.candidateId,'Association revision can correct a prior refusal without changing OCR');
  assert.equal(projectCodexReading(reading,original,priorChoices).candidateId,null,'Association is a projection of the current catalog');
 });
 
-test('local reassociation leaves abbreviated, conflicting, missing and ambiguous label identities unmatched',()=>{
+test('local reassociation accepts literal abbreviations and omitted language but rejects conflicts and ambiguity',()=>{
  const original=labelCatalog({photos:1}),expanded=labelCatalog({count:2,photos:1,candidateTransform:(c,index)=>{if(index)c.parallel=c.label='Costco Exclusive';}});
  const literal='2020 POKEMON REBEL CLASH\nMAGIKARP\n#039/192\nCostco Exclusive\nPRISTINE 10';
  const reading={sha256:original.referencePhotos[0].sha256,candidateKey:null,gradingCompany:'CGC',labelText:literal,reason:'Catalog printing absent.'};
- for(const labelText of [literal.replace('2020','2024'),literal+'\n2024',literal.replace('Costco Exclusive','Costco Excl.'),literal.replace('#039/192','#039'),literal.replace('MAGIKARP','PIKACHU'),literal.replace('REBEL CLASH','BASE SET'),literal.replace('Costco Exclusive','')])
+ for(const labelText of [literal.replace('2020','2024'),literal+'\n2024',literal.replace('#039/192','#039/193'),literal.replace('MAGIKARP','PIKACHU'),literal.replace('REBEL CLASH','BASE SET'),literal.replace('Costco Exclusive','')])
   assert.equal(projectCodexReading({...reading,labelText},expanded,codexChoices(original)).candidateId,null,labelText);
  const ambiguous=labelCatalog({count:3,photos:1,candidateTransform:(c,index)=>{if(index)c.parallel=c.label='Costco Exclusive';}});
  assert.equal(projectCodexReading(reading,ambiguous,codexChoices(original)).candidateId,null);
  const english=labelCatalog({count:2,photos:1,candidateTransform:(c,index)=>{if(index){c.parallel=c.label='Costco Exclusive';c.identity.language='en';}}});
- assert.equal(projectCodexReading(reading,english,codexChoices(original)).candidateId,null,'Unknown language is not inferred');
- assert.equal(projectCodexReading({...reading,gradingCompany:null},expanded,codexChoices(original)).candidateId,null);
+ assert.notEqual(projectCodexReading(reading,english,codexChoices(original)).candidateId,null,'A unique catalog language does not require a printed language word');
+ assert.equal(projectCodexReading({...reading,labelText:literal+' Japanese'},english,codexChoices(original)).candidateId,null);
+ for(const labelText of [literal.replace('Costco Exclusive','Costco Excl.'),literal.replace('#039/192','#039')])assert.notEqual(projectCodexReading({...reading,labelText},expanded,codexChoices(original)).candidateId,null);
+ assert.notEqual(projectCodexReading({...reading,gradingCompany:null,evidenceKind:'RAW'},expanded,codexChoices(original)).candidateId,null);
 });

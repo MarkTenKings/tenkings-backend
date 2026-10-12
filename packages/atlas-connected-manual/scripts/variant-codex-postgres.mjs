@@ -5,7 +5,7 @@ import {createMachineStaffBoundary} from '@atlas/manual-service/machine-auth';
 import {createVariantJobStore} from '../src/variant-job-store.mjs';
 import {variantWorkerRoleSQL,variantWorkerGrantSQL} from '../src/variant-worker-grants.mjs';
 import {prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
-import {createVariantPhotoProvider,prepareVariantLabelRequest,projectVariantPhotoResponse} from '../src/variant-photo-provider.mjs';
+import {createVariantPhotoProvider,prepareVariantLabelRequest} from '../src/variant-photo-provider.mjs';
 import {createVariantCatalogService} from '../src/variant-catalog.mjs';
 import {createVariantWorker} from '../src/variant-worker.mjs';
 import {codexLibraryKey,variantCodexChoice,codexReadingKey} from '../src/variant-codex.mjs';
@@ -30,7 +30,12 @@ export async function validateCodexJournal({fixture,connection,store,staff,seed,
     return Response.json(labelResponse({photos:hashes.map(sha256=>({sha256})),choices},readings));}});
   const selections=[catalog.referencePhotos.slice(0,8),catalog.referencePhotos.slice(2,10)].map(photos=>photos.map(p=>p.sha256));
   const requests=selections.map(shas=>prepareVariantLabelRequest(catalog,shas)),prepared=await Promise.all(selections.map(photoShas=>provider.prepare({catalog,photoShas})));
-  const reservations=await Promise.all([store.labelSource(jobs[0],requests[0],prepared[0].evidence),second.labelSource(jobs[1],requests[1],prepared[1].evidence)]);
+  const stores=[store,second],attempts=await Promise.allSettled(stores.map((value,index)=>value.labelSource(jobs[index],requests[index],prepared[index].evidence)));
+  // Remote fixture latency can exhaust the serving boundary's 1.5s lock
+  // wait. That contender has no reservation or paid capability. Observe its
+  // next worker turn after the winning transaction commits; never retry HTTP.
+  const reservations=[];for(let index=0;index<attempts.length;index++){const attempt=attempts[index];
+   if(attempt.status==='fulfilled')reservations.push(attempt.value);else{assert.equal(attempt.reason.meta?.code,'55P03');reservations.push(await stores[index].labelSource(jobs[index],requests[index],prepared[index].evidence));}}
   assert.deepEqual(reservations.map(r=>r.state).sort(),['PENDING','RESERVED']);const winner=reservations.findIndex(r=>r.state==='RESERVED');
   const response=await provider({prepared:prepared[winner]});assert(await store.saveLabelSource(reservations[winner].reservation,response));
   assert(await second.saveLabelSource(reservations[winner].reservation,response));await assert.rejects(store.saveLabelSource(reservations[winner].reservation,{...response,bodyText:'{}'}),{code:'VARIANT_LABEL_RESPONSE_CONFLICT'});
@@ -48,7 +53,7 @@ export async function validateCodexJournal({fixture,connection,store,staff,seed,
   const forbid=()=>assert.fail('A saved card type must not acquire/search/read/model again');
   const service=createVariantCatalogService({cache:store.cache,providers:[{prepare:async()=>({candidates:updated.candidates,problems:[],truncated:false})}],listingProvider:{fetchSource:forbid,acquireImages:forbid},now:()=>Date.parse(updated.capturedAt)});
   const restarted=createVariantPhotoProvider({apiKey:'synthetic-secret-not-a-key',readReferenceImage:forbid,fetchImpl:forbid});
-  const worker=createVariantWorker({store,catalog:service,provider:restarted,loadPhotos:forbid,projectResponse:projectVariantPhotoResponse});await worker.drainOnce();
+  const worker=createVariantWorker({store,catalog:service,provider:restarted});await worker.drainOnce();
   const after=await review.status(staff,later);assert.equal(after.state,'READY');assert.equal(after.result.referenceLabels.readings.length,10);assert.equal(calls,2);
   assert(after.result.referenceLabels.readings.every(r=>after.result.catalog.candidates.some(c=>c.candidateId===r.candidateId)));assert.deepEqual(await review.status(staff,cards[0]),firstResult);
   // Only an explicit saved refresh generation can authorize a fresh missing-reference source key.

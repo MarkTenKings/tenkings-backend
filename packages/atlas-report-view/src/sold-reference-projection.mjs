@@ -16,22 +16,27 @@ export function projectSelectedSlabReferences(result, selectedIds, atlasGrade) {
     const items = result.items.filter(item => item.id === id), readings = result.imageMatch.readings.filter(reading => reading.rowId === id);
     if (items.length !== 1 || readings.length !== 1) invalid();
     const item = items[0], reading = readings[0];
-    if (!Number.isFinite(reading.numericGrade) || Math.abs(reading.numericGrade - atlasGrade) > 1
-      || !['MATCH', 'UNCERTAIN'].includes(reading.identityMatch)) invalid();
-    const company = String(reading.gradingCompany ?? '').trim().slice(0, 180) || 'Grading company unread';
+    if (!['MATCH', 'UNCERTAIN', 'DIFFERENT'].includes(reading.identityMatch)) invalid();
+    const evidenceKind = reading.evidenceKind ?? (Number.isFinite(reading.numericGrade) ? 'SLABBED' : 'UNCERTAIN');
+    if (!['RAW', 'SLABBED', 'UNCERTAIN'].includes(evidenceKind)) invalid();
+    const raw = evidenceKind === 'RAW';
+    const company = raw ? null : String(reading.gradingCompany ?? '').trim().slice(0, 180) || null;
+    const grade = !raw && Number.isFinite(reading.numericGrade) ? String(reading.numericGrade) : null;
     const literalLabel = typeof reading.labelText === 'string' ? reading.labelText : '';
-    const title = literalLabel.replace(/\s+/g, ' ').trim().slice(0, 500) || `${company} · Grade ${reading.numericGrade}`;
+    const title = String(item.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 500)
+      || literalLabel.replace(/\s+/g, ' ').trim().slice(0, 500) || 'Sold card listing';
     const priceMinor = item.priceBasis === 'EXACT' && Number.isSafeInteger(item.soldPriceCents)
       && item.soldPriceCents >= 0 ? item.soldPriceCents : null;
     const time = item.soldDate == null ? NaN : Date.parse(item.soldDate);
     return { id, title, listingUrl: optionalUrl(item.listingUrl, 'listingUrl'),
-      grader: company, grade: String(reading.numericGrade), raw: false, rawCondition: null, designation: null,
+      grader: company, grade, raw, rawCondition: raw ? 'Condition not verified' : null, designation: null, evidenceKind,
+      matchReason: typeof reading.reason === 'string' ? reading.reason.slice(0, 2000) : null,
       soldAt: Number.isFinite(time) ? new Date(time).toISOString() : null,
       priceMinor, currency: /^[A-Z]{3}$/.test(item.currency ?? '') ? item.currency : null,
       priceBasis: priceMinor !== null ? 'sold' : item.priceBasis === 'UPPER_BOUND' ? 'accepted_offer_unknown' : 'unknown',
       reportedPrice: item.reportedPrice == null ? null : String(item.reportedPrice).slice(0, 500),
       imageUrl: optionalUrl(reading.imageUrl ?? item.imageUrl ?? null, 'imageUrl'),
-      labelText: literalLabel.slice(0, 6000), identityStatus: reading.identityMatch === 'MATCH' ? 'MATCH' : 'UNKNOWN' };
+      labelText: literalLabel.slice(0, 6000), identityStatus: reading.identityMatch === 'UNCERTAIN' ? 'UNKNOWN' : reading.identityMatch };
   }).sort((a, b) => (Date.parse(b.soldAt) || 0) - (Date.parse(a.soldAt) || 0)
     || Math.abs(Number(a.grade) - atlasGrade) - Math.abs(Number(b.grade) - atlasGrade));
   return schema.parse({ observedAt: result.retrievedAt, sales });

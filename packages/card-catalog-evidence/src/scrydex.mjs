@@ -93,16 +93,16 @@ function validateScrydexEnvelope(value) {
 export function createScrydexVariantProvider({ reader, imageReader = null } = {}) {
   if (!reader?.json || !reader?.retained) throw new Error('SCRYDEX_NOT_CONFIGURED');
   return Object.freeze({ id: 'scrydex', revision: SCRYDEX_VARIANT_PROVIDER_REVISION,
-    async prepare(identity, { signal } = {}) {
+    async prepare(identity, { signal, retainedOnly = false } = {}) {
       const target = normalizeVariantIdentity(identity);
       if (target.category !== 'POKEMON') return { candidates: [], problems: ['PROVIDER_NOT_SUPPORTED'], truncated: false };
-      const found = await reader.json(scrydexVariantSearchUrl(target), { signal, budget: { remaining: 1 } });
+      const found = await reader.json(scrydexVariantSearchUrl(target), { signal, budget: { remaining: 1 }, retainedOnly });
       validateScrydexEnvelope(found.data);
       const choices = found.data.data.flatMap(card => importScrydexVariantCandidates({ identity: target, card, source: found.source })), candidates = [];
       let count = 0;
       for (const choice of choices.slice(0, 48)) {
         const c = structuredClone(choice);
-        for (const image of c.images) if (image.relationship === 'exact' && imageReader && count < 8) {
+        for (const image of c.images) if (!retainedOnly && image.relationship === 'exact' && imageReader && count < 8) {
           signal?.throwIfAborted(); count++;
           try { const acquired = await imageReader.read(image.url, { signal });
             for (const field of ['sha256', 'mimeType', 'width', 'height']) image[field] = acquired[field];

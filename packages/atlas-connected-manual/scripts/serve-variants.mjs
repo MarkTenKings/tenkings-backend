@@ -6,7 +6,7 @@ import sharp from 'sharp';
 import { createAtlasCatalogClient } from '../src/research-catalog.mjs';
 import { createVariantCatalogService } from '../src/variant-catalog.mjs';
 import { createVariantListingProvider } from '../src/variant-listing-provider.mjs';
-import { createVariantPhotoProvider, projectVariantPhotoResponse } from '../src/variant-photo-provider.mjs';
+import { createVariantPhotoProvider } from '../src/variant-photo-provider.mjs';
 import { createVariantWorker } from '../src/variant-worker.mjs';
 import { createVariantWorkers } from './variant-workers.mjs';
 import { createVariantAdmission } from '../src/variant-admission.mjs';
@@ -48,8 +48,8 @@ async function backgroundMaintenance() {
     await store.finishContribution(job, { code: 'VARIANT_CONTRIBUTION_RETRY' });
   }
 }
-const worker = createVariantWorker({ store, catalog, loadPhotos: runtime.readVariantPhotos, provider,
-  projectResponse: projectVariantPhotoResponse, concurrency: settings.concurrency, intervalMs: settings.intervalMs,
+const worker = createVariantWorker({ store, catalog, provider,
+  concurrency: settings.concurrency, intervalMs: settings.intervalMs,
   onError, maintenance: backgroundMaintenance, admitDispatch });
 const workers = createVariantWorkers({ worker, reconciler: runtime.analysisReconciler,
   onEvent: event => console.log(JSON.stringify(event)) });

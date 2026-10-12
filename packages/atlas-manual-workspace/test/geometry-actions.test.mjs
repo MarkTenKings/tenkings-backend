@@ -350,7 +350,7 @@ test('rehydration validates derived centering, revision, source, printed-frame a
 test('new core has only pure grading-core imports and no service, database, old operator or provider dependency', () => {
   const source = readFileSync(new URL('../src/geometry-actions.mjs', import.meta.url), 'utf8');
   const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(match => match[1]);
-  assert.deepEqual(imports.sort(), ['@atlas/grading-core/geometry', '@atlas/grading-core/scoring']);
+  assert.deepEqual(imports.sort(), ['./material-contour.mjs', '@atlas/grading-core/geometry', '@atlas/grading-core/scoring']);
   assert.doesNotMatch(source, /\b(?:fetch|WebSocket|localStorage|indexedDB|process\.env)\b/);
 });
 

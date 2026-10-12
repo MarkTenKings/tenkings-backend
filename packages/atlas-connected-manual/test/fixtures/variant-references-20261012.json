@@ -1,0 +1,687 @@
+{
+  "lamelo": {
+    "catalog": {
+      "candidates": [
+        {
+          "applicability": "unknown",
+          "authority": "provider_candidate",
+          "candidateId": "variant-choice:v1:dd675b89541fd4a2f06d99e1b20ca2d7df23867e9947dbfe52dac47ff07b69ca",
+          "canonical": null,
+          "diagnostics": [
+            {
+              "description": "Official checklist season: 2025-26. Requested starting year: 2025. Source locator: page:14;row:25.",
+              "id": "manufacturer-checklist-season"
+            }
+          ],
+          "identity": {
+            "cardNumber": "BD-13",
+            "category": "SPORTS",
+            "language": null,
+            "manufacturer": "Topps",
+            "name": "LaMelo Ball",
+            "setName": "Topps Chrome \u2014 Ball of Duty",
+            "year": "2025"
+          },
+          "images": [],
+          "label": "BALL OF DUTY",
+          "parallel": "BALL OF DUTY",
+          "source": {
+            "provider": "manufacturer_checklist",
+            "recordId": "manufacturer-row:v1:a21e940e7ebfe22cb35baada4a325fb023a9d79bbdaadd6abf9d9b61972b90c1",
+            "references": [],
+            "sha256": "d63c903fd5609901be188aca3424830c50d4e75c5dca77cf7c4ca1d98abac955",
+            "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2025-26_Topps_Chrome_Basketball_Checklist.pdf?v=1763392799"
+          },
+          "warnings": [
+            "APPLICABILITY_UNCONFIRMED",
+            "REFERENCE_IMAGE_MISSING"
+          ]
+        }
+      ],
+      "capturedAt": "2026-10-11T00:50:25.934Z",
+      "coverage": {
+        "applicability": "unknown",
+        "images": "partial",
+        "metadata": "partial"
+      },
+      "demandKey": "variant-demand:v1:aeb0d1d94e909a6de1a7a9829d7421f352e55be639915c922959e7adf2a3eeb5",
+      "problems": [
+        "LANGUAGE_UNCONFIRMED",
+        "NO_DIAGNOSTIC_PHOTOS",
+        "PROVIDER_NOT_SUPPORTED"
+      ],
+      "referencePhotos": [
+        {
+          "height": 643,
+          "imageId": "listing-image:534d5b3079fc086ae8ff2cb97ff61a0013a61229021b8cd4edb64f0aa4227c5a",
+          "listing": {
+            "id": "178374817037",
+            "title": "2025 Topps Chrome LaMelo Ball PSA 10 GEM Ball of Duty #BD-13 Charlotte Hornets",
+            "url": "https://www.ebay.com/itm/178374817037"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "da9fb0ab0f2f9618e9dfcf4e416bf3222a06c44e7657380ab748be4dcb67ac89",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=2025+topps+chrome+lamelo+ball+ball+of+duty+%23bd-13+%28PSA%2CCGC%2CBGS%2CSGC%29&ebaySite=ebay.com&count=40&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "a61d0ea474f7e7e547f9b7cd6e6fd75954c0c87bafb054c3efcd613ee75790bd",
+          "sourceResponseSha256": "da9fb0ab0f2f9618e9dfcf4e416bf3222a06c44e7657380ab748be4dcb67ac89",
+          "url": "https://i.ebayimg.com/images/g/DiEAAeSw0Vtqcm8r/s-l1600.webp",
+          "visibleDiagnosticIds": [],
+          "width": 380
+        },
+        {
+          "height": 1600,
+          "imageId": "listing-image:e1cb4efc6f587db900433039fafbe689e8d02572facdad5384897d71a6b981db",
+          "listing": {
+            "id": "198576432425",
+            "title": "Topps 2025-26 Chrome LaMelo Ball Ball of Duty #BD-13 PSA 10 Hornets",
+            "url": "https://www.ebay.com/itm/198576432425"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "da9fb0ab0f2f9618e9dfcf4e416bf3222a06c44e7657380ab748be4dcb67ac89",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=2025+topps+chrome+lamelo+ball+ball+of+duty+%23bd-13+%28PSA%2CCGC%2CBGS%2CSGC%29&ebaySite=ebay.com&count=40&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "8eb76e180a3a33223ab01a0e35584d3f43663263a2a056d4c6cd2d34bcd90248",
+          "sourceResponseSha256": "da9fb0ab0f2f9618e9dfcf4e416bf3222a06c44e7657380ab748be4dcb67ac89",
+          "url": "https://i.ebayimg.com/images/g/-fUAAeSwf-hqOJ-N/s-l1600.webp",
+          "visibleDiagnosticIds": [],
+          "width": 1600
+        }
+      ],
+      "schemaVersion": "atlas-variant-catalog/v1",
+      "snapshotHash": "b154eebc1a3c7c331ff9a9dc9bbe2b8ebeb7031492d4e194b46fa492293f6b3a"
+    },
+    "referenceLabels": {
+      "catalogHash": "b154eebc1a3c7c331ff9a9dc9bbe2b8ebeb7031492d4e194b46fa492293f6b3a",
+      "readings": [
+        {
+          "candidateId": "variant-choice:v1:dd675b89541fd4a2f06d99e1b20ca2d7df23867e9947dbfe52dac47ff07b69ca",
+          "canonicalCardKey": "atlas-codex-card:v1:804a47f26e3bfcfcb91325493a997025de771fc12c41911478ffa41fa449bad5",
+          "canonicalPrintingKey": "atlas-codex-printing:v1:ac894cacb703765c1a2f3bc5dff695995f887e7c127bb05687ae277f16e60d81",
+          "gradingCompany": "PSA",
+          "imageId": "listing-image:e1cb4efc6f587db900433039fafbe689e8d02572facdad5384897d71a6b981db",
+          "labelText": "2025 TOPPS CHROME\nLaMELO BALL\nBALL OF DUTY\n#BD-13\nGEM MT\n10\n152399815",
+          "reason": "Label explicitly identifies the matching year, product, player, number and Ball of Duty insert; visible card corroborates it. No language is specified.",
+          "sha256": "8eb76e180a3a33223ab01a0e35584d3f43663263a2a056d4c6cd2d34bcd90248"
+        },
+        {
+          "candidateId": "variant-choice:v1:dd675b89541fd4a2f06d99e1b20ca2d7df23867e9947dbfe52dac47ff07b69ca",
+          "canonicalCardKey": "atlas-codex-card:v1:804a47f26e3bfcfcb91325493a997025de771fc12c41911478ffa41fa449bad5",
+          "canonicalPrintingKey": "atlas-codex-printing:v1:ac894cacb703765c1a2f3bc5dff695995f887e7c127bb05687ae277f16e60d81",
+          "gradingCompany": "PSA",
+          "imageId": "listing-image:534d5b3079fc086ae8ff2cb97ff61a0013a61229021b8cd4edb64f0aa4227c5a",
+          "labelText": "2025 TOPPS CHROME\nLaMELO BALL\nBALL OF DUTY\n#BD-13\nGEM MT\n10\n155732012",
+          "reason": "Label explicitly identifies the matching year, product, player, number and Ball of Duty insert; visible card corroborates it. No language is specified.",
+          "sha256": "a61d0ea474f7e7e547f9b7cd6e6fd75954c0c87bafb054c3efcd613ee75790bd"
+        }
+      ],
+      "version": "atlas-slab-label-associations/v1"
+    }
+  },
+  "pikachu": {
+    "catalog": {
+      "candidates": [
+        {
+          "applicability": "unknown",
+          "authority": "provider_candidate",
+          "candidateId": "variant-choice:v1:6678ddfb70277300cb1eefba240adbf4a0c0282ad26c4499bc596db6872714c4",
+          "canonical": null,
+          "diagnostics": [
+            {
+              "description": "The provider labels this variant \u201cPok\u00e9mon Together Stamp\u201d. Compare the actual stamp, border and foil pattern; the image may not reveal every feature.",
+              "id": "scrydex:variant-reference"
+            }
+          ],
+          "identity": {
+            "cardNumber": "025/165",
+            "category": "POKEMON",
+            "language": "en",
+            "manufacturer": null,
+            "name": "Pikachu",
+            "setName": "151",
+            "year": "2023"
+          },
+          "images": [
+            {
+              "height": null,
+              "imageId": "scrydex:art:v1:fac51dcb1c0485a71bd487fb45ab36fe803deb03e032e4276825529e133b9250",
+              "mimeType": null,
+              "provenance": {
+                "provider": "scrydex",
+                "sourceSha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "sourceUrl": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages",
+                "usage": "provider_reference"
+              },
+              "publication": null,
+              "relationship": "card_art_only",
+              "sha256": null,
+              "url": "https://images.scrydex.com/pokemon/sv3pt5-25/large",
+              "visibleDiagnosticIds": [],
+              "width": null
+            }
+          ],
+          "label": "Pok\u00e9mon Together Stamp",
+          "parallel": "Pok\u00e9mon Together Stamp",
+          "source": {
+            "provider": "scrydex",
+            "recordId": "sv3pt5-25:variant:pokemonTogetherStamp",
+            "references": [
+              {
+                "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+              }
+            ],
+            "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+            "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+          },
+          "warnings": [
+            "APPLICABILITY_UNCONFIRMED",
+            "LANGUAGE_UNCONFIRMED",
+            "CARD_ART_ONLY"
+          ]
+        },
+        {
+          "applicability": "unknown",
+          "authority": "provider_candidate",
+          "candidateId": "variant-choice:v1:739bf78a42435883c079e53a63e7ce8e94fa7a5b3401b10e7ea1508c9494e2c7",
+          "canonical": null,
+          "diagnostics": [
+            {
+              "description": "The provider labels this variant \u201cNormal\u201d. Compare the actual stamp, border and foil pattern; the image may not reveal every feature.",
+              "id": "scrydex:variant-reference"
+            }
+          ],
+          "identity": {
+            "cardNumber": "025/165",
+            "category": "POKEMON",
+            "language": "en",
+            "manufacturer": null,
+            "name": "Pikachu",
+            "setName": "151",
+            "year": "2023"
+          },
+          "images": [
+            {
+              "height": null,
+              "imageId": "scrydex:art:v1:fac51dcb1c0485a71bd487fb45ab36fe803deb03e032e4276825529e133b9250",
+              "mimeType": null,
+              "provenance": {
+                "provider": "scrydex",
+                "sourceSha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "sourceUrl": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages",
+                "usage": "provider_reference"
+              },
+              "publication": null,
+              "relationship": "card_art_only",
+              "sha256": null,
+              "url": "https://images.scrydex.com/pokemon/sv3pt5-25/large",
+              "visibleDiagnosticIds": [],
+              "width": null
+            }
+          ],
+          "label": "Normal",
+          "parallel": "Normal",
+          "source": {
+            "provider": "scrydex",
+            "recordId": "sv3pt5-25:variant:normal",
+            "references": [
+              {
+                "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+              }
+            ],
+            "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+            "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+          },
+          "warnings": [
+            "APPLICABILITY_UNCONFIRMED",
+            "LANGUAGE_UNCONFIRMED",
+            "CARD_ART_ONLY"
+          ]
+        },
+        {
+          "applicability": "unknown",
+          "authority": "provider_candidate",
+          "candidateId": "variant-choice:v1:ca8580fef4cf5665c740f34860ee635e375fe9ad22a1db674aaa149b9a10d7a9",
+          "canonical": null,
+          "diagnostics": [
+            {
+              "description": "The provider labels this variant \u201cReverse Holofoil\u201d. Compare the actual stamp, border and foil pattern; the image may not reveal every feature.",
+              "id": "scrydex:variant-reference"
+            }
+          ],
+          "identity": {
+            "cardNumber": "025/165",
+            "category": "POKEMON",
+            "language": "en",
+            "manufacturer": null,
+            "name": "Pikachu",
+            "setName": "151",
+            "year": "2023"
+          },
+          "images": [
+            {
+              "height": null,
+              "imageId": "scrydex:art:v1:fac51dcb1c0485a71bd487fb45ab36fe803deb03e032e4276825529e133b9250",
+              "mimeType": null,
+              "provenance": {
+                "provider": "scrydex",
+                "sourceSha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "sourceUrl": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages",
+                "usage": "provider_reference"
+              },
+              "publication": null,
+              "relationship": "card_art_only",
+              "sha256": null,
+              "url": "https://images.scrydex.com/pokemon/sv3pt5-25/large",
+              "visibleDiagnosticIds": [],
+              "width": null
+            }
+          ],
+          "label": "Reverse Holofoil",
+          "parallel": "Reverse Holofoil",
+          "source": {
+            "provider": "scrydex",
+            "recordId": "sv3pt5-25:variant:reverseHolofoil",
+            "references": [
+              {
+                "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+              }
+            ],
+            "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+            "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+          },
+          "warnings": [
+            "APPLICABILITY_UNCONFIRMED",
+            "LANGUAGE_UNCONFIRMED",
+            "CARD_ART_ONLY"
+          ]
+        },
+        {
+          "applicability": "unknown",
+          "authority": "provider_candidate",
+          "candidateId": "variant-choice:v1:d9779ba55a31824005624bd6a45174da91a0dd17ac59d04df2e29c8bb5661f43",
+          "canonical": null,
+          "diagnostics": [
+            {
+              "description": "The provider labels this variant \u201cCosmos Holofoil\u201d. Compare the actual stamp, border and foil pattern; the image may not reveal every feature.",
+              "id": "scrydex:variant-reference"
+            }
+          ],
+          "identity": {
+            "cardNumber": "025/165",
+            "category": "POKEMON",
+            "language": "en",
+            "manufacturer": null,
+            "name": "Pikachu",
+            "setName": "151",
+            "year": "2023"
+          },
+          "images": [
+            {
+              "height": null,
+              "imageId": "scrydex:art:v1:fac51dcb1c0485a71bd487fb45ab36fe803deb03e032e4276825529e133b9250",
+              "mimeType": null,
+              "provenance": {
+                "provider": "scrydex",
+                "sourceSha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "sourceUrl": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages",
+                "usage": "provider_reference"
+              },
+              "publication": null,
+              "relationship": "card_art_only",
+              "sha256": null,
+              "url": "https://images.scrydex.com/pokemon/sv3pt5-25/large",
+              "visibleDiagnosticIds": [],
+              "width": null
+            }
+          ],
+          "label": "Cosmos Holofoil",
+          "parallel": "Cosmos Holofoil",
+          "source": {
+            "provider": "scrydex",
+            "recordId": "sv3pt5-25:variant:cosmosHolofoil",
+            "references": [
+              {
+                "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+              }
+            ],
+            "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+            "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+          },
+          "warnings": [
+            "APPLICABILITY_UNCONFIRMED",
+            "LANGUAGE_UNCONFIRMED",
+            "CARD_ART_ONLY"
+          ]
+        },
+        {
+          "applicability": "unknown",
+          "authority": "provider_candidate",
+          "candidateId": "variant-choice:v1:ebf066e424ab5be960d1537b492888e637f697c844ffc5565e3d560a0d0d921b",
+          "canonical": null,
+          "diagnostics": [
+            {
+              "description": "The provider labels this variant \u201cSnowflake Stamp\u201d. Compare the actual stamp, border and foil pattern; the image may not reveal every feature.",
+              "id": "scrydex:variant-reference"
+            },
+            {
+              "description": "Provider-reported variant origin: Holiday Calendar 2025. The base card release date does not establish this printing's release date.",
+              "id": "scrydex:variant-origin"
+            }
+          ],
+          "identity": {
+            "cardNumber": "025/165",
+            "category": "POKEMON",
+            "language": "en",
+            "manufacturer": null,
+            "name": "Pikachu",
+            "setName": "151",
+            "year": "2023"
+          },
+          "images": [
+            {
+              "height": 1024,
+              "imageId": "scrydex:variant-image:v1:210df7bf4d463a91f840c586f87ba0e745599c29afde21ccb2511e1b67d22aee",
+              "mimeType": "image/webp",
+              "provenance": {
+                "provider": "scrydex",
+                "sourceSha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "sourceUrl": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages",
+                "usage": "provider_reference"
+              },
+              "publication": null,
+              "relationship": "exact",
+              "sha256": "d300a56d25af1ee2567044e16a6ae8147f1be598ef538a6f6eec113e886c1a9a",
+              "url": "https://images.scrydex.com/pokemon/sv3pt5-25ss/large",
+              "visibleDiagnosticIds": [],
+              "width": 726
+            }
+          ],
+          "label": "Snowflake Stamp",
+          "parallel": "Snowflake Stamp",
+          "source": {
+            "provider": "scrydex",
+            "recordId": "sv3pt5-25:variant:snowflakeStamp",
+            "references": [
+              {
+                "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+                "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+              }
+            ],
+            "sha256": "42efd0d8bb2d1d3bc37e0821d7b6bae1dfbfc173138d961465a7012cb1a2da28",
+            "url": "https://api.scrydex.com/pokemon/v1/cards?q=%21name%3A%22Pikachu%22+%28number%3A%22025%22+OR+number%3A%2225%22%29&page=1&page_size=7&casing=snake&select=id%2Cname%2Cnumber%2Cprinted_number%2Cexpansion%2Clanguage_code%2Cvariants%2Cimages"
+          },
+          "warnings": [
+            "APPLICABILITY_UNCONFIRMED",
+            "LANGUAGE_UNCONFIRMED"
+          ]
+        }
+      ],
+      "capturedAt": "2026-10-12T17:25:38.904Z",
+      "coverage": {
+        "applicability": "unknown",
+        "images": "partial",
+        "metadata": "truncated"
+      },
+      "demandKey": "variant-demand:v1:198620708bf08316c7711a1ec702d07ff90d6b7280493ad45315f102b8ec13d1",
+      "problems": [
+        "LANGUAGE_UNCONFIRMED",
+        "PROVIDER_TRUNCATED"
+      ],
+      "referencePhotos": [
+        {
+          "height": 1600,
+          "imageId": "listing-image:d6f530898a93abf2cf7d10a3441f3b85ca9febe37dc095114d976cf73bce0430",
+          "listing": {
+            "id": "198603385109",
+            "title": "2023 Pokemon 151 Pikachu Pokemon Together Pop Up Exclusive 25/165 PSA 9",
+            "url": "https://www.ebay.com/itm/198603385109"
+          },
+          "mimeType": "image/jpeg",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "963600df63630b599ecad2feb4050c5a36c918325edabf031e20968ff2028417",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=pokemon+pikachu+25%2F165+%28PSA%2CCGC%2CBGS%2CSGC%29&ebaySite=ebay.com&count=40&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "cccab97b2a726aaa506bb22d0b0eac7e71b6280acff56650d62eaa57f6739c1d",
+          "sourceResponseSha256": "963600df63630b599ecad2feb4050c5a36c918325edabf031e20968ff2028417",
+          "url": "https://i.ebayimg.com/images/g/8ccAAeSw6wpqcr9N/s-l1600.jpg",
+          "visibleDiagnosticIds": [],
+          "width": 955
+        },
+        {
+          "height": 1600,
+          "imageId": "listing-image:fc2e3362a353544da15ca42f4473e203488b413a56b8efb350f80f4920bdce8a",
+          "listing": {
+            "id": "198603385109",
+            "title": "2023 Pokemon 151 Pikachu Pokemon Together Pop Up Exclusive 25/165 PSA 9",
+            "url": "https://www.ebay.com/itm/198603385109?nordt=true"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=pokemon+pikachu+25%2F165+graded&ebaySite=ebay.com&count=240&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "72d0f4cbfa35b446904915dbc429d732f75963b98c46261f9e6eb4aca473cd48",
+          "sourceResponseSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+          "url": "https://i.ebayimg.com/images/g/8ccAAeSw6wpqcr9N/s-l1600.webp",
+          "visibleDiagnosticIds": [],
+          "width": 955
+        },
+        {
+          "height": 140,
+          "imageId": "listing-image:ec3041e6b3543e5ce8a150ceb80a1d892f71b886b98225e41cf32388da2af0ee",
+          "listing": {
+            "id": "198561603597",
+            "title": "2023 Pokemon 151 Pikachu Pokemon Together Pop Up Exclusive 25/165 PSA 9",
+            "url": "https://www.ebay.com/itm/198561603597?nordt=true"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=pokemon+pikachu+25%2F165+graded&ebaySite=ebay.com&count=240&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "fd6e294e9c53c2e276cb613e8fa46679e126db492e480107dedf49d46ceb7906",
+          "sourceResponseSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+          "url": "https://i.ebayimg.com/images/g/8ccAAeSw6wpqcr9N/s-l140.webp",
+          "visibleDiagnosticIds": [],
+          "width": 83
+        },
+        {
+          "height": 1599,
+          "imageId": "listing-image:59ffb0a4be79c6732f244e48e9dd0ff947a7dacbc030dd61184ea0fead5745de",
+          "listing": {
+            "id": "318850240175",
+            "title": "Pok\u00e9mon TCG Pikachu JP 151 Reverse Holo 25/165\ufffc",
+            "url": "https://www.ebay.com/itm/318850240175?nordt=true"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=pokemon+pikachu+25%2F165+graded&ebaySite=ebay.com&count=240&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "8632778dea4fcde4a50992b734a0c3cf1e5be8c3c0f9c55b57d2c8777dec177e",
+          "sourceResponseSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+          "url": "https://i.ebayimg.com/images/g/8V4AAeSwDWdqoeLW/s-l1600.webp",
+          "visibleDiagnosticIds": [],
+          "width": 1199
+        },
+        {
+          "height": 1600,
+          "imageId": "listing-image:c14cd4e5a4e28db4d2d5a241683740fcf0ad784ff7cd03775e5cbe2a9d68e606",
+          "listing": {
+            "id": "168613228642",
+            "title": "2023 Pokemon 151 Pikachu Pokemon Together Pop Up Exclusive 25/165 NM Card",
+            "url": "https://www.ebay.com/itm/168613228642?nordt=true"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=pokemon+pikachu+25%2F165+graded&ebaySite=ebay.com&count=240&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "9d64deac155e2f9eaae170b4e90c4e90170ff791078d0da3948ecc5e1795374d",
+          "sourceResponseSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+          "url": "https://i.ebayimg.com/images/g/ycoAAeSwiX5qfwC2/s-l1600.webp",
+          "visibleDiagnosticIds": [],
+          "width": 1600
+        },
+        {
+          "height": 1600,
+          "imageId": "listing-image:90ff5c5d4b5bbc1ba430e9660bd148b8c2ec7c3311507c024cb0bea533af0655",
+          "listing": {
+            "id": "327322814004",
+            "title": "Pokemon Pikachu Cosmos Holo #25/165 Scarlet & Violet 151 Costco CGC 10 PRISTINE",
+            "url": "https://www.ebay.com/itm/327322814004?nordt=true"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=pokemon+pikachu+25%2F165+graded&ebaySite=ebay.com&count=240&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "10f5b98d40b199f438e295ad8eb9d0f78393ac8b0b8bf6e216d75546d7b8b37d",
+          "sourceResponseSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+          "url": "https://i.ebayimg.com/images/g/hj4AAeSw2bhqiv-U/s-l1600.webp",
+          "visibleDiagnosticIds": [],
+          "width": 1600
+        },
+        {
+          "height": 1600,
+          "imageId": "listing-image:6a2b68b1180a6bf29da8f897c26ac04d4ebe7fb0bba2f44db9c54c0afdf2001d",
+          "listing": {
+            "id": "317995461884",
+            "title": "Pokemon Holiday Calendar Pikachu Galaxy Holo 25/165 PSA 9",
+            "url": "https://www.ebay.com/itm/317995461884?nordt=true"
+          },
+          "mimeType": "image/webp",
+          "provenance": {
+            "provider": "ebay_sold_comps_v2",
+            "sourceSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+            "sourceUrl": "https://api.sold-comps.com/v1/scrape?keyword=pokemon+pikachu+25%2F165+graded&ebaySite=ebay.com&count=240&page=1&sold=true&includeCompleteListing=true&exactMatch=true&hydrateBoa=false",
+            "usage": "provider_reference"
+          },
+          "publication": null,
+          "relationship": "listing_photo",
+          "sha256": "11fbc9fc94d1446e6f4e6fa3fe5027b120dee8ef92d52bc2580e831d23f33467",
+          "sourceResponseSha256": "d7f5b6ce63e72e5d126e75eb0fc83111f90f522a6d7ba1743e7e0dc0bad51a71",
+          "url": "https://i.ebayimg.com/images/g/SyYAAeSwLnJqT~zs/s-l1600.webp",
+          "visibleDiagnosticIds": [],
+          "width": 1200
+        }
+      ],
+      "schemaVersion": "atlas-variant-catalog/v1",
+      "snapshotHash": "f8c7d359e6cbe83ae4381db52f4c9682589d6af7f17a4d8662c5b6a0e86634c4"
+    },
+    "referenceLabels": {
+      "catalogHash": "f8c7d359e6cbe83ae4381db52f4c9682589d6af7f17a4d8662c5b6a0e86634c4",
+      "readings": [
+        {
+          "candidateId": "variant-choice:v1:6678ddfb70277300cb1eefba240adbf4a0c0282ad26c4499bc596db6872714c4",
+          "canonicalCardKey": "atlas-codex-card:v1:3807392cf4a54e69d486e5e874e90a33a6d4197e905f284cd9c1dab4ded30428",
+          "canonicalPrintingKey": "atlas-codex-printing:v1:5da28da03309156662cf243e661f43cc02622ce52493cb5e69a481c0d9584c51",
+          "gradingCompany": "PSA",
+          "imageId": "listing-image:d6f530898a93abf2cf7d10a3441f3b85ca9febe37dc095114d976cf73bce0430",
+          "labelText": "2023 POKEMON MEW EN\nPIKACHU\nPOKE POST POP-UP EXCLUSIVE\n#025\nMINT\n9\nPSA\n86604078",
+          "reason": "Label identifies 2023 English Pikachu #025, MEW (151), Poke Post exclusive. Visible 025/165 and Pok\u00e9mon Together stamp corroborate the stamped choice.",
+          "sha256": "cccab97b2a726aaa506bb22d0b0eac7e71b6280acff56650d62eaa57f6739c1d"
+        },
+        {
+          "candidateId": "variant-choice:v1:6678ddfb70277300cb1eefba240adbf4a0c0282ad26c4499bc596db6872714c4",
+          "canonicalCardKey": "atlas-codex-card:v1:3807392cf4a54e69d486e5e874e90a33a6d4197e905f284cd9c1dab4ded30428",
+          "canonicalPrintingKey": "atlas-codex-printing:v1:5da28da03309156662cf243e661f43cc02622ce52493cb5e69a481c0d9584c51",
+          "gradingCompany": "PSA",
+          "imageId": "listing-image:fc2e3362a353544da15ca42f4473e203488b413a56b8efb350f80f4920bdce8a",
+          "labelText": "2023 POKEMON MEW EN #025\nPIKACHU\nPOKE POST POP-UP EXCLUSIVE\nMINT 9\n86604078",
+          "reason": "English MEW Pikachu 025/165 and the visible Pok\u00e9mon Together stamp corroborate the labeled pop-up exclusive printing.",
+          "sha256": "72d0f4cbfa35b446904915dbc429d732f75963b98c46261f9e6eb4aca473cd48"
+        },
+        {
+          "candidateId": "variant-choice:v1:6678ddfb70277300cb1eefba240adbf4a0c0282ad26c4499bc596db6872714c4",
+          "canonicalCardKey": "atlas-codex-card:v1:3807392cf4a54e69d486e5e874e90a33a6d4197e905f284cd9c1dab4ded30428",
+          "canonicalPrintingKey": "atlas-codex-printing:v1:5da28da03309156662cf243e661f43cc02622ce52493cb5e69a481c0d9584c51",
+          "gradingCompany": "PSA",
+          "imageId": "listing-image:ec3041e6b3543e5ce8a150ceb80a1d892f71b886b98225e41cf32388da2af0ee",
+          "labelText": "2023 POKEMON MEW EN #025\nPIKACHU\nPOKE POST POP-UP EXCLUSIVE\nGEM MT 10",
+          "reason": "The pop-up exclusive label and visible Pok\u00e9mon Together stamp support this printing. Certification number is unreadable at this resolution.",
+          "sha256": "fd6e294e9c53c2e276cb613e8fa46679e126db492e480107dedf49d46ceb7906"
+        },
+        {
+          "candidateId": null,
+          "canonicalCardKey": null,
+          "canonicalPrintingKey": null,
+          "gradingCompany": "CGC",
+          "imageId": "listing-image:90ff5c5d4b5bbc1ba430e9660bd148b8c2ec7c3311507c024cb0bea533af0655",
+          "labelText": "CGC\nCERTIFIED GUARANTY COMPANY\nPikachu\nPok\u00e9mon (2024)\nScarlet & Violet 151 - 025/165\nCostco Exclusive - 5-Pack Tin\nPRISTINE\n10\n6120711012",
+          "reason": "Label specifies a 2024 Costco-exclusive printing, conflicting with the supplied 2023 choices. Visible reverse foil alone does not establish an exact match.",
+          "sha256": "10f5b98d40b199f438e295ad8eb9d0f78393ac8b0b8bf6e216d75546d7b8b37d"
+        },
+        {
+          "candidateId": null,
+          "canonicalCardKey": null,
+          "canonicalPrintingKey": null,
+          "gradingCompany": "PSA",
+          "imageId": "listing-image:6a2b68b1180a6bf29da8f897c26ac04d4ebe7fb0bba2f44db9c54c0afdf2001d",
+          "labelText": "2025 POKEMON HOLIDAY CAL #025\nPIKACHU\nMINT 9\n131420744",
+          "reason": "Visible snowflake stamp, but the label identifies the 2025 Holiday Calendar release, conflicting with the supplied 2023 printing metadata.",
+          "sha256": "11fbc9fc94d1446e6f4e6fa3fe5027b120dee8ef92d52bc2580e831d23f33467"
+        },
+        {
+          "candidateId": null,
+          "canonicalCardKey": null,
+          "canonicalPrintingKey": null,
+          "gradingCompany": "PSA",
+          "imageId": "listing-image:59ffb0a4be79c6732f244e48e9dd0ff947a7dacbc030dd61184ea0fead5745de",
+          "labelText": "2023 POKEMON SV2a JP #025\nPIKACHU\nREVERSE HOLO\nMINT 9\n85242959",
+          "reason": "Label and card identify a Japanese printing; all supplied choices are English.",
+          "sha256": "8632778dea4fcde4a50992b734a0c3cf1e5be8c3c0f9c55b57d2c8777dec177e"
+        },
+        {
+          "candidateId": null,
+          "canonicalCardKey": null,
+          "canonicalPrintingKey": null,
+          "gradingCompany": null,
+          "imageId": "listing-image:c14cd4e5a4e28db4d2d5a241683740fcf0ad784ff7cd03775e5cbe2a9d68e606",
+          "labelText": null,
+          "reason": "Raw card without a slab or grading-company label.",
+          "sha256": "9d64deac155e2f9eaae170b4e90c4e90170ff791078d0da3948ecc5e1795374d"
+        }
+      ],
+      "version": "atlas-slab-label-associations/v1"
+    }
+  }
+}

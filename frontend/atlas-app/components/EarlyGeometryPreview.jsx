@@ -10,24 +10,28 @@ const statusCopy={
 };
 export function EarlyGeometryStatus({status,settingsChanged=false,retrying=false,onRetry}){
   if(!status)return null;
-  const [title,detail]=status.state==='READY'&&!status.printed
+  const [title,detail]=status.error==='GEOMETRY_REFRESH_AVAILABLE'
+    ?['Saved geometry retained','Your existing geometry is saved. You can edit it or request a new Astra proposal.']
+    :status.state==='READY'&&!status.printed
     ?['Printed border needs review','The physical outline is ready. Use Edit geometry below to place or review the printed border.']
     :statusCopy[status.state]??statusCopy.WAITING_PHOTO;
   return <div className={`mc-geometry-status mc-geometry-${status.state.toLowerCase()}`}>
     <div role="status"><span className="mc-status-dot" aria-hidden="true"/><strong>{settingsChanged?'Photo settings changed':title}</strong></div>
     <p>{settingsChanged?'Use Edit geometry below to save these settings and review the updated geometry.':detail}</p>
-    {!settingsChanged&&status.canRetry&&<button type="button" disabled={retrying} onClick={onRetry}>{retrying?'Retrying geometry…':'Retry geometry'}</button>}
+    {!settingsChanged&&status.canRetry&&<button type="button" disabled={retrying} onClick={onRetry}>{retrying?'Requesting geometry…':status.error==='GEOMETRY_REFRESH_AVAILABLE'?'Request Astra geometry':'Retry geometry'}</button>}
   </div>;
 }
-export default function EarlyGeometryPreview({src,side,status,settingsChanged=false}){
-  const [size,setSize]=useState(null),[failed,setFailed]=useState(false);
-  const quad=!settingsChanged&&status?.physical;
+export default function EarlyGeometryPreview({src,cleanSrc=null,side,status,settingsChanged=false}){
+  const [size,setSize]=useState(null),[failed,setFailed]=useState(false),[showOriginal,setShowOriginal]=useState(false);
+  const clean=Boolean(cleanSrc&&!showOriginal),displaySrc=clean?cleanSrc:src;
+  const quad=!clean&&!settingsChanged&&status?.physical;
   const points=size&&Array.isArray(quad)&&quad.length===4&&quad.every(point=>Number.isFinite(point.x)&&Number.isFinite(point.y))
     ?quad.map(point=>`${point.x*size.width},${point.y*size.height}`).join(' '):null;
-  return <div className="mc-photo-preview">
-    <img alt={`${side} SDR working view`} src={src} onLoad={event=>{setFailed(false);setSize({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight});}} onError={()=>{setSize(null);setFailed(true);}}/>
+  return <div><div className="mc-photo-preview">
+    <img key={displaySrc} alt={`${side} ${clean?'clean card view':'original working view'}`} src={displaySrc} onLoad={event=>{setFailed(false);setSize({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight});}} onError={()=>{setSize(null);setFailed(true);}}/>
     {points&&<svg viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="xMidYMid meet" aria-label="Automatically detected physical edge"><polygon points={points} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke"/>{quad.map((point,i)=><circle key={i} cx={point.x*size.width} cy={point.y*size.height} r={Math.max(size.width,size.height)/160} fill="currentColor"/>)}</svg>}
     {failed&&<span className="mc-preview-unavailable" role="status">Photo preview unavailable. The saved original is retained.</span>}
     {points&&<span className="mc-preview-caption">Physical edge · automatic proposal</span>}
-  </div>;
+    {clean&&<span className="mc-preview-caption">Clean card view</span>}
+  </div>{cleanSrc&&<button type="button" onClick={()=>{setSize(null);setFailed(false);setShowOriginal(value=>!value);}}>{clean?'View original and geometry':'View clean card'}</button>}</div>;
 }

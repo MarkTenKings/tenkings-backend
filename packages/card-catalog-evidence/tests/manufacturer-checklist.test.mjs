@@ -45,6 +45,19 @@ const lameloIdentity = { category:'SPORTS',name:'LaMelo Ball',year:'2025',setNam
 const lameloSource = {manufacturer:'Topps',manufacturerAliases:[],sport:'basketball',year:'2025-26',setName:'2025-26 Topps Chrome® Basketball',aliases:[],url:'https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2025-26_Topps_Chrome_Basketball_Checklist.pdf?v=1763392799',sha256:'d63c903fd5609901be188aca3424830c50d4e75c5dca77cf7c4ca1d98abac955'};
 const lameloCatalog = {schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[lameloSource],rows:[[0,'BALL OF DUTY','BD-13','LaMelo Ball','page:14;row:25']]};
 
+test('bundled Ball of Duty player rows join exact official odds printings, not base-set parallels',async()=>{
+ const p=createManufacturerChecklistVariantProvider();
+ const result=await p.prepare({...lameloIdentity,year:null});
+ assert.equal(result.candidates.length,16);
+ assert.deepEqual(result.candidates.map(c=>c.parallel).sort(),['BALL OF DUTY',...['Refractor','RayWave Refractor','Magenta Refractor','Teal Refractor','Yellow Refractor','Aqua Refractor','Blue Refractor','Green Refractor','Purple Refractor','Gold Refractor','Orange Refractor','Black Refractor','Red Refractor','Superfractor','Pulsar Refractor'].map(n=>`BALL OF DUTY ${n}`)].sort());
+ for(const c of result.candidates){assert.equal(c.identity.year,'2025-26');assert.equal(c.identity.cardNumber,'BD-13');assert.equal(c.applicability,'unknown');validateVariantCandidate(c);}
+ const blue=result.candidates.find(c=>c.parallel==='BALL OF DUTY Blue Refractor');
+ assert.equal(blue.source.sha256,'f1394a48d438d6ed93c791de9bfe8aafd57ee2de1d176b17aa3b1c3cb8996a1a');
+ assert.equal(blue.source.references[0].sha256,lameloSource.sha256);
+ assert.match(blue.diagnostics.find(d=>d.id==='manufacturer-parallel-family').description,/Ball of Duty Refractors Blue/);
+ for(const patch of [{year:'2024-25'},{setName:'Topps Cosmic Chrome — Ball of Duty'},{cardNumber:'BD-99'},{name:'Lonzo Ball'}])assert.equal((await p.prepare({...lameloIdentity,...patch})).candidates.length,0);
+});
+
 test('current LaMelo composite identity finds its explicit official season row without changing saved identity',async()=>{
  const result=await createManufacturerChecklistVariantProvider({catalog:lameloCatalog}).prepare(lameloIdentity);
  assert.equal(result.candidates.length,1);const c=result.candidates[0];
@@ -82,7 +95,7 @@ test('ambiguous season product aliases fail closed while duplicate same-product 
 test('frozen official bundle exposes Jaxson insert variants while retaining the different printed number',async()=>{
  const provider=createManufacturerChecklistVariantProvider();
  const r=await provider.prepare(lameloIdentity);
- assert.equal(r.candidates.length,1);assert.equal(r.candidates[0].label,'BALL OF DUTY');
+ assert.equal(r.candidates.length,16);assert.equal(r.candidates[0].label,'BALL OF DUTY');
  assert.equal(r.candidates[0].source.sha256,lameloSource.sha256);
  assert.equal(r.candidates[0].identity.year,'2025');assert.match(r.candidates[0].diagnostics[0].description,/2025-26/);
  const jaxson={category:'SPORTS',name:'Jaxson Dart',year:'2025',setName:'Donruss Optic Football — Donruss Threads',cardNumber:'DTBH-JDT',manufacturer:'Panini',language:null};
@@ -294,7 +307,7 @@ test('unknown year can find an oldest exact card beyond sixteen matching seasons
 });
 test('frozen manufacturer source identifies the unknown-year LaMelo number as a candidate only',async()=>{
  const input={...lameloIdentity,year:null},result=await createManufacturerChecklistVariantProvider().prepare(input);
- assert.equal(result.candidates.length,1);assert.equal(result.candidates[0].identity.year,'2025-26');
+ assert.equal(result.candidates.length,16);assert.equal(result.candidates[0].identity.year,'2025-26');
  assert.equal(result.candidates[0].identity.cardNumber,'BD-13');assert.equal(result.candidates[0].source.sha256,lameloSource.sha256);
  assert.equal(input.year,null);assert.equal(result.candidates[0].applicability,'unknown');
 });

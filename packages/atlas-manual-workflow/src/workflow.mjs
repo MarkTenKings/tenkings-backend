@@ -21,7 +21,8 @@ export function frameFromGeometry(geometry, side) {
   requireThat(slot.prepared, 409, 'MANUAL_GEOMETRY_REQUIRED');
   return { imageVersion: slot.image.version, originalSha256: slot.image.originalSha256,
     preparationVersion: slot.prepared.frame.version, frameId: slot.prepared.frame.id,
-    inspectionImageSha256: slot.prepared.frame.inspection.sha256, rectifiedImageSha256: slot.prepared.frame.rectified.sha256 };
+    inspectionImageSha256: slot.prepared.frame.inspection.sha256, rectifiedImageSha256: slot.prepared.frame.rectified.sha256,
+    ...(slot.prepared.frame.materialContour ? { materialContour: slot.prepared.frame.materialContour } : {}) };
 }
 
 /** Server-only composition. Authentication/ACL and CAS belong to manual-service.

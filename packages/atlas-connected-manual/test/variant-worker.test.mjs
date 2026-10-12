@@ -37,13 +37,11 @@ test('catalog contribution maintenance never overlaps an active label read, incl
  worker.start();for(let i=0;i<20&&!providerActive;i++)await new Promise(r=>setImmediate(r));assert.equal(providerActive,true);assert.equal(maintenance,1);await Promise.all([worker.wake(),worker.wake(),worker.wake()]);assert.equal(maintenance,1);finish();await worker.stop();assert.equal(providerActive,false);
 });
 
-test('retired physical comparison supports saved response replay but cannot dispatch new work',async()=>{
- for(const response of [null,{version:'atlas-variant-photo-comparison-v1',retained:true}]){
-  const row={key:'legacy',input:variantBinding(card),catalog,...(response?{response,dispatch_id:'historic'}:{})};let claimed=false,finished;
-  const store={discover:async()=>{},claim:async()=>{if(claimed)return null;claimed=true;return row;},renew:async()=>true,finish:async(_j,o)=>{finished=o;}};
-  const worker=createVariantWorker({store,catalog:{},provider:()=>assert.fail('retired provider'),loadPhotos:()=>assert.fail('physical photos'),projectResponse:saved=>{assert.equal(saved,response);return {candidateId:null,reason:'Historical response'};}});
-  await worker.drainOnce();assert(finished.result);assert.equal(finished.result.suggestion.candidateId,null);
- }
+test('retired physical comparison is archived without replay or dispatch',async()=>{
+ const row={key:'legacy',input:variantBinding(card),catalog,response:{version:'atlas-variant-photo-comparison-v1'},dispatch_id:'historic'};let claimed=false,finished;
+ const store={discover:async()=>{},claim:async()=>claimed?null:(claimed=true,row),renew:async()=>true,finish:async(_j,o)=>{finished=o;}};
+ await createVariantWorker({store,catalog:{},provider:()=>assert.fail('retired provider')}).drainOnce();
+ assert.equal(finished.state,'FAILED');assert.equal(finished.code,'VARIANT_LEGACY_WORKFLOW_RETIRED');
 });
 
 test('read-only source probes cannot dispatch even if a store incorrectly returns a reservation',async()=>{
@@ -62,11 +60,12 @@ for(const scenario of ['success','uncertain','saved_acknowledgement_lost','retai
  const store={discover:async()=>{},claim:async()=>{if(claimed)return null;claimed=true;return row;},renew:async()=>true,
   reserveListingSource:async()=>{events.push('reserve committed');return scenario==='retained'?{state:'REUSED',source}:{state:'RESERVED',reservation};},
   saveListingSource:async(r,s)=>{assert.equal(r,reservation);assert.equal(s,source);events.push('response committed');if(scenario==='saved_acknowledgement_lost')throw Error('acknowledgement lost');return true;},
-  saveCatalog:async()=>true,finish:async(_job,result)=>{finished=result;return true;},defer:async()=>{events.push('deferred');return true;},
+  codexReadings:async()=>({readings:[]}),publishLabelSource:async()=>{},saveCatalog:async()=>true,finish:async(_job,result)=>{finished=result;return true;},defer:async()=>{events.push('deferred');return true;},
   dispatch:async()=>assert.fail('No photo-model dispatch for an empty reference snapshot')};
+ const noModel=()=>assert.fail('No model call');noModel.labelRequest=prepareVariantLabelRequest;
  let outcome,admissions=0;const worker=createVariantWorker({store,catalog:{prepare:async(_input,{executeListingSource})=>{
   outcome=await executeListingSource({requestKey:'public-identity'},async()=>{assert.equal(events[0],'reserve committed');events.push('HTTP');sourceCalls++;if(scenario==='uncertain')throw Error('transport lost');return source;});
-  return {...catalog,candidates:[]};}},loadPhotos:async()=>assert.fail('No private photos loaded'),provider:async()=>assert.fail('No model call'),projectResponse:()=>assert.fail('No model projection'),
+  return labelCatalog({count:0,photos:0});}},loadPhotos:async()=>assert.fail('No private photos loaded'),provider:noModel,projectResponse:()=>assert.fail('No model projection'),
   admitDispatch:async()=>scenario!=='priority'||++admissions<2});
  await worker.drainOnce();
  assert.equal(sourceCalls,['retained','priority'].includes(scenario)?0:1);

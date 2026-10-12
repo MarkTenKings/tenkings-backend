@@ -2,14 +2,14 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { defectBase, parseDefectWorkspace } from '@atlas/manual-workspace/defect-actions';
 import { encodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
-import { rasterizeSpeedsterCanonicalContour, clipSpeedsterTraceToEditorBounds,
+import { rasterizeSpeedsterCanonicalContour,
   buildSpeedsterTraceProvenanceRevision } from '@atlas/grading-core/trace-editor';
 
 const FULL_CROP = { version: 'speedster-canonical-crop-affine-v1', crop: { x: 0, y: 0, width: 1269, height: 1777 } };
 export function proposalTrace({ proposal, cornerShape }) {
   requireThat(!proposal.measurementHold && proposal.canonicalContour.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1),
     409, 'MANUAL_PROPOSAL_RETRACE_REQUIRED');
-  return clipSpeedsterTraceToEditorBounds(rasterizeSpeedsterCanonicalContour(proposal.canonicalContour), FULL_CROP, cornerShape);
+  return rasterizeSpeedsterCanonicalContour(proposal.canonicalContour);
 }
 export function proposalRle({ proposal, review }) {
   return encodeSpeedsterTraceRleV1(proposalTrace({ proposal, cornerShape: review.base.cornerShape }));
@@ -17,8 +17,8 @@ export function proposalRle({ proposal, review }) {
 export function proposalEdit(proposal, side, cornerShape) {
   return editFromBitmap(proposal, side, proposalTrace({ proposal, cornerShape }));
 }
-/** Machine proposals with no in-card pixels remain visible but unmeasurable.
- * Build the edit from that same clipped bitmap, without rasterizing twice. */
+/** Preserve the full model trace. Material intersection happens once in the
+ * checked measurement pass, independently of visible/raw trace evidence. */
 export function measurableProposalEdit(proposal, side, cornerShape) {
   const bitmap = proposalTrace({ proposal, cornerShape });
   return bitmap.some(pixel => pixel !== 0) ? editFromBitmap(proposal, side, bitmap) : null;

@@ -1,3 +1,4 @@
+import { validMaterialContour } from './material-contour.mjs';
 import { sanitizeSpeedsterUnitQuad } from '@atlas/grading-core/geometry';
 import {
   calculateCenteringBalance, calculateCenteringScore, combineFrontBackScore,
@@ -114,7 +115,8 @@ function inverse(m) {
   return [e*i-f*h,c*h-b*i,b*f-c*e,f*g-d*i,a*i-c*g,c*d-a*f,d*h-e*g,b*g-a*h,a*e-b*d].map(n => n/det);
 }
 function preparedFrame(frame, side) {
-  object(frame, ['id', 'version', 'rectified', 'inspection', 'sourceToRectified']);
+  object(frame, ['id', 'version', 'rectified', 'inspection', 'sourceToRectified'], ['materialContour']);
+  if (frame.materialContour) requireThat(validMaterialContour(frame.materialContour), 'ATLAS_GEOMETRY_MATERIAL_INVALID');
   text(frame.id); integer(frame.version, 1);
   object(frame.rectified, ['sha256', 'width', 'height']); sha(frame.rectified.sha256);
   requireThat(frame.rectified.width === CARD.width && frame.rectified.height === CARD.height, 'ATLAS_GEOMETRY_PREPARED_FRAME_INVALID');
@@ -165,7 +167,8 @@ function validateState(state) {
     if (side.image !== null) { image(side.image); requireThat(side.image.version === side.imageRevision); }
     else requireThat(side.imageRevision === 0 && side.physical === null && side.prepared === null && side.printed === null);
     if (side.physical !== null) {
-      object(side.physical, ['revision', 'quad', 'actor', 'proposal', 'sourceImage']); validQuad(side.physical.quad);
+      object(side.physical, ['revision', 'quad', 'actor', 'proposal', 'sourceImage'], ['materialContour']);
+      if (side.physical.materialContour) requireThat(validMaterialContour(side.physical.materialContour), 'ATLAS_GEOMETRY_MATERIAL_INVALID'); validQuad(side.physical.quad);
       provenance(side.physical.actor, side.physical.proposal);
       requireThat(side.image && side.physical.revision === side.physicalRevision && side.physicalRevision > 0);
       matches(side.physical.sourceImage, side.image);
@@ -261,7 +264,8 @@ export function markPrintedBorderAbsent(state, action) {
       frameId: side.prepared.frame.id, frameSha256: side.prepared.frame.rectified.sha256 } }, ['centering', 'geometryReview']);
 }
 export function applyGeometryEdit(state, action) {
-  validateState(state); object(action, ['side', 'kind', 'base', 'quad', 'actor'], ['proposal']);
+  validateState(state); object(action, ['side', 'kind', 'base', 'quad', 'actor'], ['proposal','materialContour']);
+  if (action.materialContour) requireThat(validMaterialContour(action.materialContour), 'ATLAS_GEOMETRY_MATERIAL_INVALID');
   requireThat(['PHYSICAL', 'PRINTED'].includes(action.kind));
   matches(action.base, baseFor(state, action.side, action.kind));
   const { printedAbsence, ...side } = state.sides[action.side], quad = validQuad(action.quad), proposal = action.proposal ?? null;
@@ -269,7 +273,8 @@ export function applyGeometryEdit(state, action) {
   if (action.kind === 'PHYSICAL') {
     const physicalRevision = next(side.physicalRevision);
     return change(state, action.side, { ...side, physicalRevision,
-      physical: { revision: physicalRevision, quad, actor: action.actor, proposal, sourceImage: side.image },
+      physical: { revision: physicalRevision, quad, actor: action.actor, proposal, sourceImage: side.image,
+        ...((action.materialContour ?? side.physical?.materialContour) ? { materialContour: action.materialContour ?? side.physical.materialContour } : {}) },
       prepared: null, printed: null, confirmation: null },
     ['preparation', 'printed', 'centering', 'mapRegistration', 'findings', 'measurement', 'inspection', 'geometryReview']);
   }

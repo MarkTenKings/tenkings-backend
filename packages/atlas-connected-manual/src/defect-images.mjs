@@ -8,7 +8,7 @@ const dimensions = { inspection: [1350, 1858], rectified: [1270, 1778] };
 
 /** Decode only verified prepared images. Every crop preserves source pixels;
  * the PNG hash and original preparation hash describe different encodings. */
-export function createDefectImageEffects({ readPrepared, artifacts, limited = work => work() }) {
+export function createDefectImageEffects({ readPrepared, artifacts, readCleanPhoto = null, limited = work => work() }) {
   // Each publication owns one immutable card snapshot. Weak ownership prevents
   // cross-request reuse and releases the at-most-two decoded rasters afterwards.
   const publicationSources = new WeakMap();
@@ -62,6 +62,23 @@ export function createDefectImageEffects({ readPrepared, artifacts, limited = wo
       }
       return result;
     }),
+    async generatedViews(_staff, card, binding, { signal } = {}) {
+      if (!readCleanPhoto) return [];
+      const result = [];
+      for (const side of SIDES) {
+        const uploadId = card.draft.source.uploads[side];
+        const found = await readCleanPhoto({ cardId: card.cardId, uploadId, side, signal });
+        if (!found) continue;
+        requireThat(found.bytes instanceof Uint8Array && digest(found.bytes) === found.sha256, 503, 'DEFECT_GENERATED_VIEW_INVALID');
+        // Generated pixels are auxiliary only; PNG conversion/fit has no effect
+        // on any original inspection crop or its coordinate transform.
+        const { data, info } = await limited(() => sharp(found.bytes, { limitInputPixels: 12000000, failOn: 'warning' })
+          .resize({ width: 1350, height: 1858, fit: 'inside', withoutEnlargement: true }).png().toBuffer({ resolveWithObject: true }));
+        result.push({ side, originalSha256: binding.sides[side].frame.originalSha256, generatedSha256: found.sha256,
+          mime: 'image/png', sha256: digest(data), width: info.width, height: info.height, bytes: data });
+      }
+      return result;
+    },
     createExemplar: input => limited(async () => {
       const { staff, card, side, frame, cropTransform, trace } = input;
       let sources = publicationSources.get(card);

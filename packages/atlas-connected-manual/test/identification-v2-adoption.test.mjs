@@ -43,7 +43,7 @@ function deferred() {
 // unique effect claims. They do not establish PostgreSQL or staff-session proof.
 async function fixture({ category = 'Sports cards', values = {}, pauseModel = false,
   engineVersion=V2,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false,
-  clock=()=>Date.now(), limited } = {}) {
+  clock=()=>Date.now(), limited, readCleanPhoto=null, isCleanPhotoPrepared=null } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID(), edit: true };
   const sourceHash = digest('original synthetic pair'), objects = new Map();
   const db = { attempts: new Map(), details: new Map(), actions: new Map(), events: new Map() };
@@ -54,11 +54,11 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
   const modelReceiptSaved = deferred();
   const original = { FRONT: { side: 'FRONT', sha256: digest('native front original') },
     BACK: { side: 'BACK', sha256: digest('native back original') } };
-  let pair = { sourceHash, sides: {} };
+  let pair = { cardId, sourceHash, sides: {} };
   const workingBytes = {};
   for (const [side, background] of [['FRONT', '#aa3322'], ['BACK', '#2255bb']]) {
     workingBytes[side] = await sharp({ create: { width: 18, height: 25, channels: 3, background } }).png().toBuffer();
-    pair.sides[side] = { photo: { original: original[side], workingFrame: { side, sha256: digest(workingBytes[side]) },
+    pair.sides[side] = { upload:{uploadId:randomUUID()}, photo: { original: original[side], workingFrame: { side, sha256: digest(workingBytes[side]) },
       decodePlan: { policy: 'synthetic-verified-working-frame' } } };
   }
   const originalPair = clone(pair);
@@ -201,7 +201,7 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
     },
   });
   const details = createDetailsStore({ boundary, intakeRepository });
-  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, clock, limited, ...(engineVersion?{engineVersion}:{}) };
+  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, clock, limited, readCleanPhoto, isCleanPhotoPrepared, ...(engineVersion?{engineVersion}:{}) };
   const identification = createIdentification(config);
   return { cardId, staff, sourceHash, originalPair, workingBytes, objects, db, calls, artifacts, details,
     identification, proposed, modelEntered, modelRelease,
@@ -1032,4 +1032,31 @@ test('optional per-side mat edits preserve legacy records, identification, actio
   assert.equal(geometrySideSettings(inherited.details, 'BACK').matColor, 'MAGENTA');
   f.setWorkspace(); await assert.rejects(f.save({ backMatColor: 'WHITE' }), { code: 'MANUAL_USE_WORKSPACE_IDENTITY' });
   assert.deepEqual(await f.details.read(f.staff, f.cardId), inherited);
+});
+
+
+test('upfront generated clean views accompany originals and retry reuses exact retained auxiliary bytes', async()=>{
+  const bytes=await sharp({create:{width:24,height:32,channels:4,background:'#33445580'}}).png().toBuffer();
+  const cleanCalls=[];
+  const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,httpStatus:429,modelError:exhausted,
+    readCleanPhoto:async input=>{cleanCalls.push(input);return{bytes,sha256:digest(bytes),contentType:'image/png',width:24,height:32};}});
+  await f.identification.run(f.staff,f.cardId);
+  assert.equal(cleanCalls.length,2);assert(cleanCalls.every(call=>call.cardId===f.cardId&&call.uploadId));
+  const model=f.calls.http.find(call=>call.url.hostname==='api.openai.com');
+  const clean=model.body.input.filter(item=>item.content?.[0]?.text?.startsWith('ATLAS generated background-removed view:'));
+  assert.equal(clean.length,2);assert.equal(model.body.reasoning.effort,'xhigh');
+  assert.equal(f.artifactsOf('IDENTIFICATION_IMAGE').length,2,'original inputs remain retained');
+  const command=retryInput(f);f.setModel(200);
+  assert.equal((await f.restart().retry(f.staff,f.cardId,command)).state,'COMPLETE');
+  assert.equal(cleanCalls.length,2,'retry never reads a newer clean view');
+  const models=f.calls.http.filter(call=>call.url.hostname==='api.openai.com');
+  assert.equal(models[1].init.body,models[0].init.body);
+});
+
+test('queued upfront cutouts defer new identification without occupying a model attempt or buying calls',async()=>{
+ let ready=false;const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,isCleanPhotoPrepared:async()=>ready});
+ const waiting=await f.identification.run(f.staff,f.cardId);assert.equal(waiting.state,'RETRY_WAIT');
+ assert.equal(f.calls.http.length,0);assert.equal(f.db.attempts.size,0);
+ ready=true;assert.equal((await f.identification.run(f.staff,f.cardId)).state,'COMPLETE');
+ assert.equal(f.calls.http.length,3);
 });

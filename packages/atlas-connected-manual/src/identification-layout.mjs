@@ -48,7 +48,7 @@ export function parseAtlasIdentificationResult(value,expectedInput,engineVersion
  return {...parsed,layout:{authority:'MACHINE_PROPOSAL',...proposal,front_sha256:input.photos.front.sha256},provenance:{...parsed.provenance,...timing,engine_version:engineVersion,input_sha256:atlasIdentificationInputHash(input,engineVersion),reasoning_effort:xhigh?'xhigh':'low'}};
 }
 export async function identifyAtlasCard(input,effects,options={}){
- const {engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,...runtimeOptions}=options;
+ const {engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,cleanViews=[],...runtimeOptions}=options;
  bad(ATLAS_IDENTIFICATION_LAYOUT_VERSIONS.includes(engineVersion));
  const xhigh=engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION;
  // Historical retries rebuild their exact original request; only new v2
@@ -63,6 +63,7 @@ export async function identifyAtlasCard(input,effects,options={}){
    const request=structuredClone(base);request.instructions=request.instructions.replace('Output only the eight requested fields.','Output the eight descriptive fields and layout_type.')+' '+policy;
    request.text.format.name='atlas_card_details_layout_v1';request.text.format.schema.required.push('layout_type');request.text.format.schema.properties.layout_type=layoutSchema;
    if(xhigh){request.reasoning={effort:ATLAS_IDENTIFICATION_XHIGH_POLICY.reasoningEffort};request.max_output_tokens=ATLAS_IDENTIFICATION_XHIGH_POLICY.maxOutputTokens;request.text.format.name='atlas_card_details_layout_v2';}
+   if(cleanViews.length)request.input.push(...structuredClone(cleanViews));
    requestHash=digest(JSON.stringify(request));
    // The durable adapter sees/acknowledges the actual augmented request and
    // complete raw response before this local compatibility projection occurs.

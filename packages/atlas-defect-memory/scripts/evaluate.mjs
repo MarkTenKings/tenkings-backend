@@ -34,7 +34,7 @@ if (command === 'baseline') {
     'packages/atlas-defect-memory/src/retrieval-policy.mjs', 'packages/atlas-defect-memory/src/evaluation.mjs',
     'packages/atlas-defect-memory/src/release-plan.mjs', 'packages/atlas-defect-memory/src/role-learning.mjs',
     'packages/atlas-defect-memory/src/role-repository.mjs', 'packages/atlas-defect-memory/src/binding-facts.mjs', 'packages/atlas-defect-memory/src/domain-evaluation.mjs',
-    'packages/atlas-defect-memory/src/promotion.mjs', 'packages/atlas-connected-manual/src/geometry-learning.mjs',
+    'packages/atlas-defect-memory/src/promotion.mjs', 'packages/atlas-connected-manual/src/astra-geometry.mjs',
     'packages/atlas-grading-core/src/scoring.ts'];
   const sources = [];
   for (const path of files) sources.push({ path, sha256: digest(await readFile(resolve(root, path))) });

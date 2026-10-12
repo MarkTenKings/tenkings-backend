@@ -88,10 +88,10 @@ test('confirmed choices create idempotent unreviewed metadata proposals; replay 
   const {observedFeatures,...withoutNote}=payload;assert.ok(prepareVariantCatalogObservation({...withoutNote,decision:'MANUAL',candidateId:null}).proposal);
 });
 
-test('Pokémon uses configured Scrydex only: no shared demand or secondary metadata acquisition',async()=>{
+test('Pokémon queries the published catalog alongside provider metadata',async()=>{
  let calls=0;const fail=async()=>{calls++;throw Error('unexpected lookup')};
  const service=createVariantCatalogService({catalogClient:{findCurrentSetCatalogPublications:fail,prepareSetDemand:fail},fetchImpl:fail,now});
- const result=await service.prepare({identity:clientFixture('POKEMON').identity});assert.equal(calls,0);assert.equal(result.candidates.length,0);
+ const result=await service.prepare({identity:clientFixture('POKEMON').identity});assert.equal(calls,1);assert.equal(result.candidates.length,0);
 });
 
 

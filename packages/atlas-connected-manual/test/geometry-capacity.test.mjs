@@ -32,8 +32,8 @@ test('constructing or stopping a geometry worker is cold even with persisted dis
   assert.throws(() => createEarlyGeometry({ geometryConcurrency: 13 }), { code: 'GEOMETRY_PROCESSING_CONFIG_INVALID' });
 });
 
-for (const [capacity, native, expected] of [[12, 12, 12], [12, 3, 3], [2, 12, 2]]) {
-  test(`geometry ${capacity} reserves at most ${expected} claims behind native ${native}`, async () => {
+for (const [capacity, native, expected] of [[12, 12, 12], [12, 3, 12], [2, 12, 2]]) {
+  test(`geometry ${capacity} reserves at most ${expected} model claims independently of native ${native}`, async () => {
     const gate = deferred(), entered = [];
     const worker = createEarlyGeometry({ geometryConcurrency: capacity, geometryDiscoveryPageSize: 8,
       runtimeIdentity: async () => ({ fixture: 'native' }), limits: {}, limited: createWorkLimiter(native, { maxQueue: 32 }), intervalMs: 5,

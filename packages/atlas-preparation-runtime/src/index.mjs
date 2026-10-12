@@ -11,7 +11,7 @@ import { PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, sameEncoder
 export { describePreparationPreview, PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, INSPECTION_PREVIEW_POLICY } from './encoding.mjs';
 
 export { PreparationError };
-export { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, prepareDeferredPhotoReveals } from './photo-preparation.mjs';
+export { preparationRuntimeIdentity, preparePhotoGeometry, prepareDeferredPhotoReveals } from './photo-preparation.mjs';
 export { PREPARATION_FULL_V1, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, preparationOutputNames } from './output-contract.mjs';
 import { PREPARATION_FULL_V1 } from './output-contract.mjs';
 export { adoptGeometryPreparation, adoptPhysicalGeometryProposal } from '@atlas/manual-workspace/preparation-result';
@@ -47,7 +47,7 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
     && dimensions.width * dimensions.height <= limits.maxPixels, 'PREPARATION_LIMIT');
   const bytes = Buffer.from(source.bytes);
   requireThat(await hashOwnedBytes(bytes, signal) === content.sha256, 'PREPARATION_SOURCE_MISMATCH');
-  const base = mode === 'PHYSICAL' ? geometryBase(state, side, 'PHYSICAL') : preparationBase(state, side);
+  const base = preparationBase(state, side);
   const request = { mode, matColor: state.sides[side].matColor,
     source: { ...dimensions, sha256: content.sha256, byteCount: bytes.length }, limits: { ...limits } };
   if (mode === 'PREPARE') request.quad = state.sides[side].physical.quad;
@@ -60,7 +60,6 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
       matColor: state.sides[side].matColor, cornerShape: state.sides[side].cornerShape };
     const id = descriptorSha256({ ...binding, identity: result.identity, proposal: result.proposal });
     requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
-    if (mode === 'PHYSICAL') return { ...binding, id, identity: result.identity, proposal: result.proposal };
     requireThat(sameEncoder(result.encoderSettings, PREPARATION_LOSSLESS_SETTINGS), 'PREPARATION_OUTPUT_INVALID');
     requireThat(result.outputContract === PREPARATION_FULL_V1 && result.frames && Object.keys(result.frames).length === NAMES.length
       && NAMES.every(name => Object.hasOwn(result.frames, name)), 'PREPARATION_OUTPUT_INVALID');
@@ -84,6 +83,12 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
       rectified: { sha256: outputs.rectified.sha256, width: 1270, height: 1778 },
       inspection: { sha256: outputs.inspection.sha256, width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
       sourceToRectified: outputs.rectified.frameToDerivative };
+    const contour = state.sides[side].physical.materialContour;
+    if (contour) {
+      const [a,b,c,d,e,f,g,h,i] = prepared.sourceToRectified;
+      prepared.materialContour = contour.map(p => { const x=p.x*dimensions.width, y=p.y*dimensions.height, w=g*x+h*y+i;
+        return { x: Math.max(0,Math.min(1,(a*x+b*y+c)/w/1269)), y: Math.max(0,Math.min(1,(d*x+e*y+f)/w/1777)) }; });
+    }
     // Validate the actual warp against the captured source quad before returning
     // an adoptable frame. This does not persist or change the supplied workspace.
     applyPreparedFrame(state, { side, base, frame: prepared });
@@ -92,7 +97,6 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-export const proposePhysicalGeometry = input => run('PHYSICAL', input);
 export const prepareGeometry = input => run('PREPARE', input);
 
 /** Describe actual prepared bytes against a destination subsequently observed

@@ -81,6 +81,7 @@ export type AtlasSoldPhotoPool = {
     reportedPrice: string | null; soldPriceCents: number | null; currency: string | null;
     priceBasis: "EXACT" | "UPPER_BOUND" | "UNKNOWN";
   }>;
+  pagination: { page: number; pageSize: number; hasNextPage: boolean; totalResults: string | null };
   acquisitionDiagnostics: { returnedItemCount: number; retainedItemCount: number; missingImageCount: number };
 };
 
@@ -752,6 +753,7 @@ async function fetchPayload(
   expectedQuery: string,
   fetcher: EbaySoldCompsV2Fetch,
   timeoutMs: number | null,
+  expectedPage = 1,
 ) {
   const controller = new AbortController();
   let timedOut = false;
@@ -803,7 +805,7 @@ async function fetchPayload(
     }
     if (
       cleanText(payload.keyword) !== expectedQuery ||
-      payload.page !== 1 ||
+      payload.page !== expectedPage ||
       !Number.isSafeInteger(payload.totalItems) ||
       (payload.totalItems as number) < 0 ||
       typeof payload.hasNextPage !== "boolean" ||
@@ -830,21 +832,22 @@ async function fetchPayload(
  * classifier, deduplication, or retained-candidate limit applies here. */
 export async function searchAtlasSoldPhotoPool(
   input: EbaySoldCompsV2SearchInput,
-  runtimeInput: Omit<EbaySoldCompsV2Runtime, "timeoutMs">,
+  runtimeInput: Omit<EbaySoldCompsV2Runtime, "timeoutMs"> & { page?: number },
 ): Promise<AtlasSoldPhotoPool> {
   validatedSearchInput(input);
   const apiKey = cleanText(runtimeInput.apiKey);
   if (!apiKey) throw new EbaySoldCompsV2Error("SOLDCOMPS_CREDENTIAL_MISSING", "A SoldComps credential is required.");
   const requestCount = runtimeInput.requestCount ?? EBAY_SOLD_COMPS_V2_REQUEST_COUNT;
   if (!Number.isSafeInteger(requestCount) || requestCount < 1 || requestCount > EBAY_SOLD_COMPS_V2_REQUEST_COUNT) invalidInput("Request count must be between 1 and 240.");
-  const query = buildEbaySoldCompsV2Query(input);
-  const params = new URLSearchParams({ keyword: query, ebaySite: "ebay.com", count: String(requestCount), page: "1" });
-  const payload = await fetchPayload(`${SOLDCOMPS_ENDPOINT}?${params.toString()}`, apiKey, query, runtimeInput.fetch ?? defaultFetch, null);
+  const query = buildEbaySoldCompsV2Query(input), page = runtimeInput.page ?? 1;
+  if (!Number.isSafeInteger(page) || page < 1 || page > 100) invalidInput("Page must be between 1 and 100.");
+  const params = new URLSearchParams({ keyword: query, ebaySite: "ebay.com", count: String(requestCount), page: String(page), exactMatch: "true" });
+  const payload = await fetchPayload(`${SOLDCOMPS_ENDPOINT}?${params.toString()}`, apiKey, query, runtimeInput.fetch ?? defaultFetch, null, page);
   const items: AtlasSoldPhotoPool["items"] = (payload.items as unknown[]).map((raw, sourceIndex) => {
     const row = isRecord(raw) ? raw : {};
     const amount = cleanText(row.soldPrice), currency = cleanText(row.soldCurrency);
     const cents = amount === null ? null : decimalSoldPriceCents(amount);
-    return { id: `atlas-sale:${sourceIndex}`, sourceIndex, title: cleanText(row.title),
+    return { id: page === 1 ? `atlas-sale:${sourceIndex}` : `atlas-sale:${page}:${sourceIndex}`, sourceIndex, title: cleanText(row.title),
       listingUrl: safeEbaySourceUrl(row.url), providerItemId: cleanText(row.itemId), imageUrl: ebayImageUrl(row.fullResThumbnailUrl) ?? firstImageUrl(row),
       soldDate: normalizeEbaySoldCompsV2Date(row.endedAt), reportedPrice: amount,
       soldPriceCents: cents, currency,
@@ -852,6 +855,8 @@ export async function searchAtlasSoldPhotoPool(
   });
   return { responsePolicy: "ATLAS_SLAB_V1", source: EBAY_SOLD_COMPS_V2_SOURCE, engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
     query, retrievedAt: (runtimeInput.now ?? (() => new Date()))().toISOString(), items,
+    pagination: { page, pageSize: requestCount, hasNextPage: payload.hasNextPage as boolean && page < 100,
+      totalResults: cleanText(payload.totalResults) },
     acquisitionDiagnostics: { returnedItemCount: items.length, retainedItemCount: items.length, missingImageCount: items.filter(row => row.imageUrl === null).length } };
 }
 

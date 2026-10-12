@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import * as traceCodec from '@atlas/grading-core/trace-codec';
 import * as traceWire from '@atlas/grading-core/trace-bitmap-wire';
 import * as traceEditor from '@atlas/grading-core/trace-editor';
+import * as findingImpact from '../src/finding-impact.mjs';
 import * as actions from '../src/defect-actions.mjs';
 import * as presentation from '../src/astra-review-ui.mjs';
 import * as inspectionViewport from '../src/inspection-viewport.mjs';
@@ -54,6 +55,7 @@ function harness(initial = {}, browser) {
     if (name === '@atlas/grading-core/trace-codec') return traceCodec;
     if (name === '@atlas/grading-core/trace-bitmap-wire') return traceWire;
     if (name === '@atlas/grading-core/trace-editor') return traceEditor;
+    if (name === './finding-impact.mjs') return findingImpact;
     if (name === './defect-actions.mjs') return actions;
     if (name === './astra-review-ui.mjs') return presentation;
     if (name === './inspection-viewport.mjs') return inspectionViewport;

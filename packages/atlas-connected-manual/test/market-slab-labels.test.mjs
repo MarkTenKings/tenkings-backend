@@ -37,7 +37,7 @@ async function fixture({photos=2,failSend=false,failPublication=false,priorRefer
 }
 test('every returned sale gets a photo reading; any company/fractional grade/newlines and unknown sale facts survive; next physical copy reuses all bytes and labels',async()=>{
  const f=await fixture({photos:10}),before=JSON.stringify(f.response),out=await f.label(f);assert.equal(out.imageMatch.policy,MARKET_SLAB_POLICY);
- assert.equal(out.imageMatch.readings.length,10);assert.equal(f.calls.model,2);assert.equal(f.calls.images,10);assert.deepEqual(f.requests.map(r=>r.text.format.schema.properties.readings.items.properties.sha256.enum.length),[8,2]);
+ assert.equal(out.imageMatch.readings.length,10);assert(f.requests.every(r=>r.reasoning.effort==='xhigh'));assert.equal(f.calls.model,2);assert.equal(f.calls.images,10);assert.deepEqual(f.requests.map(r=>r.text.format.schema.properties.readings.items.properties.sha256.enum.length),[8,2]);
  assert(out.imageMatch.readings.every(r=>r.gradingCompany==='TAG'&&r.numericGrade===8.5&&r.labelText.includes('\n')&&r.canonicalPrintingKey));assert.equal(JSON.stringify(f.response),before);assert.deepEqual(out.marketQueryContext,f.response.marketQueryContext);
  const repeated=await f.label({...f,job:{...f.job,card_id:'different physical copy'}});assert.deepEqual(repeated,out);assert.deepEqual(f.calls,{images:10,model:2});
  const codex=[...f.rows.entries()].filter(([k])=>k.startsWith('atlas-codex-market-reading:')&&!k.endsWith(':reservation')).map(([,v])=>JSON.parse(v[0].snapshot));
@@ -52,14 +52,14 @@ test('unknown label dispatch never repeats on another physical copy; rows remain
  const f=await fixture({failSend:true}),first=await f.label(f),again=await f.label({...f,job:{...f.job,card_id:'another'}});
  assert.equal(f.calls.model,1);assert.equal(first.imageMatch.counts.uncertain,2);assert.deepEqual(again,first);assert(first.imageMatch.readings.every(r=>r.numericGrade===null&&r.reason.includes('not be charged again')));
  assert.equal(first.imageMatch.counts.unknown,2);assert.equal([...f.rows.keys()].filter(key=>key.endsWith(':failure')).length,1);
- assert.throws(()=>createPresentationMarket().project(f.source,first),{code:'MARKET_LABEL_OUTCOME_UNKNOWN'});
+ assert.equal(createPresentationMarket().project(f.source,first).preview.candidates.length,2);
 });
 test('previous canonical reference with an explicitly read overall grade is reused without a model call',async()=>{
  const f=await fixture({photos:1,priorReference:true,priorReferenceGrade:9});const out=await f.label(f);assert.equal(f.calls.model,0);assert.equal(out.imageMatch.readings[0].numericGrade,9);assert.equal(out.imageMatch.readings[0].gradingCompany,'PSA');
 });
-test('legacy literal autograph/card grade text is read once rather than inferred as the overall grade',async()=>{
- const f=await fixture({photos:1,priorReference:true}),out=await f.label(f);assert.equal(f.calls.model,1);assert.equal(out.imageMatch.readings[0].numericGrade,8.5);
- assert.deepEqual(await f.label(f),out);assert.equal(f.calls.model,1);
+test('saved literal autograph/card grade text stays unread without inferring a grade or purchasing OCR again',async()=>{
+ const f=await fixture({photos:1,priorReference:true}),out=await f.label(f);assert.equal(f.calls.model,0);assert.equal(out.imageMatch.readings[0].numericGrade,null);
+ assert.deepEqual(await f.label(f),out);assert.equal(f.calls.model,0);
 });
 test('missing photos and duplicate rows remain visible while identical photo bytes cost one reading',async()=>{
  const f=await fixture({photos:1});f.response.items.push({...f.response.items[0],id:'atlas-sale:1',sourceIndex:1});f.response.items.push({...f.response.items[0],id:'atlas-sale:2',sourceIndex:2,imageUrl:null});
@@ -78,7 +78,7 @@ test('unread company and literal outer whitespace are preserved; malformed per-p
  const invalid=out.imageMatch.readings.find(r=>r.numericGrade===null),valid=out.imageMatch.readings.find(r=>r.numericGrade===8.5);assert.equal(invalid.identityMatch,'UNCERTAIN');
  assert.equal(valid.gradingCompany,null);assert.equal(valid.labelText,'\n  C. HOLO\n8.5 \n');
  assert.deepEqual(await f.label(f),out);assert.equal(f.calls.model,1);
- const preview=createPresentationMarket().project(f.source,out).preview;assert.equal(preview.candidates.length,1);assert.deepEqual(preview.labelProcessing,{state:'PARTIAL',completed:1,failed:1,unknown:0,unavailable:0,reasons:['MARKET_LABEL_READING_INVALID']});
+ const preview=createPresentationMarket().project(f.source,out).preview;assert.equal(preview.candidates.length,2);assert.deepEqual(preview.labelProcessing,{state:'PARTIAL',completed:1,failed:1,unknown:0,unavailable:0,reasons:['MARKET_LABEL_READING_INVALID']});
 });
 test('concurrent overlapping physical jobs wait for a live owner then reuse the same paid response',async()=>{
  let release,entered;const gate=new Promise(r=>release=r),started=new Promise(r=>entered=r);const f=await fixture({modelGate:gate,onModel:entered});
@@ -104,7 +104,7 @@ test('HTTP refusal, malformed JSON and incomplete model bodies remain durable fa
  for(const [responseMode,code] of [['http','MARKET_LABEL_RESPONSE_REJECTED'],['json','MARKET_LABEL_RESPONSE_INVALID'],['incomplete','MARKET_LABEL_RESPONSE_INCOMPLETE'],['null','MARKET_LABEL_RESPONSE_INCOMPLETE']]){
   const f=await fixture({responseMode}),out=await f.label(f);
   assert.equal(out.imageMatch.counts.failed,2);assert.equal(out.imageMatch.counts.completed,0);
-  assert.throws(()=>createPresentationMarket().project(f.source,out),{code});
+  const preview=createPresentationMarket().project(f.source,out).preview;assert.equal(preview.candidates.length,2);assert(preview.labelProcessing.reasons.includes(code));
   const receipt=[...f.rows.entries()].find(([key])=>key.endsWith(':response'))[1][0].snapshot;
   assert.deepEqual(await f.label(f),out);assert.equal(f.calls.model,1);
   assert.equal([...f.rows.entries()].find(([key])=>key.endsWith(':response'))[1][0].snapshot,receipt);
@@ -112,16 +112,16 @@ test('HTTP refusal, malformed JSON and incomplete model bodies remain durable fa
 });
 test('a failed batch retains successful sibling batches as selectable partial evidence',async()=>{
  const f=await fixture({photos:10,failBatches:[1]}),out=await f.label(f),preview=createPresentationMarket().project(f.source,out).preview;
- assert.equal(preview.candidates.length,2);assert.deepEqual(preview.labelProcessing,{state:'PARTIAL',completed:2,failed:0,unknown:8,unavailable:0,reasons:['MARKET_LABEL_OUTCOME_UNKNOWN']});
+ assert.equal(preview.candidates.length,10);assert.deepEqual(preview.labelProcessing,{state:'PARTIAL',completed:2,failed:0,unknown:8,unavailable:0,reasons:['MARKET_LABEL_OUTCOME_UNKNOWN']});
  assert.deepEqual(await f.label(f),out);assert.equal(f.calls.model,2);assert.equal(f.calls.images,10);
 });
-test('successfully read but unreadable grades are honest complete zero-result previews',async()=>{
+test('successfully read but unreadable grades remain visible without an invented grade',async()=>{
  const f=await fixture({unreadGrade:true}),out=await f.label(f),preview=createPresentationMarket().project(f.source,out).preview;
- assert.equal(preview.candidates.length,0);assert.equal(preview.counts.unreadGrade,2);assert.equal(preview.labelProcessing.state,'COMPLETE');assert.equal(preview.labelProcessing.completed,2);
+ assert.equal(preview.candidates.length,2);assert.equal(preview.counts.unreadGrade,2);assert.equal(preview.labelProcessing.state,'COMPLETE');assert.equal(preview.labelProcessing.completed,2);
  assert.deepEqual(await f.label(f),out);assert.equal(f.calls.model,1);
 });
 test('unavailable photograph failures cannot be reported as a successful empty label search',async()=>{
  const f=await fixture({failImage:true}),out=await f.label(f);
  assert.equal(f.calls.model,0);assert.equal(out.imageMatch.counts.failed,2);
- assert.throws(()=>createPresentationMarket().project(f.source,out),{code:'MARKET_PHOTO_UNAVAILABLE'});
+ const preview=createPresentationMarket().project(f.source,out).preview;assert.equal(preview.candidates.length,2);assert.equal(preview.labelProcessing.failed,2);
 });

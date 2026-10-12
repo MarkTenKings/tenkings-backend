@@ -78,6 +78,7 @@ def measure_manual_side(
     inspection_frame: Optional[dict] = None,
     evidence_failed: bool = False,
     fingerprint_trace: Optional[FingerprintTrace] = None,
+    material_contour=None,
 ) -> dict:
     """Measure one active side or raise; never silently accept a missing mark.
 
@@ -141,7 +142,7 @@ def measure_manual_side(
         marks, side, corner_shape, findings=findings,
         evidence_image=evidence_image, evidence_view_id=evidence_view_id,
         inspection_frame=inspection_frame, evidence_failed=evidence_failed,
-        fingerprint_trace=fingerprint_trace,
+        fingerprint_trace=fingerprint_trace, material_contour=material_contour,
     )
     if result.get("traceErrors"):
         raise ManualMeasurementError(
@@ -567,6 +568,7 @@ def measure_marks(
     inspection_frame: Optional[dict] = None,
     evidence_failed: bool = False,
     fingerprint_trace: Optional[FingerprintTrace] = None,
+    material_contour=None,
     findings: Optional[list[dict]] = None,
 ) -> dict:
     """Return baseline-compatible side measurements; fingerprinting is opt-in."""
@@ -746,7 +748,7 @@ def measure_marks(
         }
         for mark, mask in exact_marks
     ]
-    measured = measure_defects(proposals, corner_shape) if proposals else []
+    measured = measure_defects(proposals, corner_shape, material_contour) if proposals else []
     for result in measured:
         evidence = evidence_by_id.get(result.get("proposalId"), {})
         result.update(evidence)
@@ -758,7 +760,7 @@ def measure_marks(
     )
     measured_ids = {defect["id"] for defect in defects}
     appended_trace_ids = set()
-    for finding, _mask in trace_findings:
+    for finding, _mask in trace_findings + exact_marks:
         if finding["id"] in measured_ids or finding["id"] in appended_trace_ids:
             continue
         defects.append(

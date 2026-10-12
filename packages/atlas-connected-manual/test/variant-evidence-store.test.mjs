@@ -23,11 +23,14 @@ test('public image evidence accepts the exact 4MiB byte cap and rejects one addi
  const tooLarge=Buffer.alloc(4194305,0x65);await assert.rejects(f.store.cache.put('invalid',{...entry,body:tooLarge.toString('base64'),sha256:digest(tooLarge)}),{code:'VARIANT_IMAGE_CACHE_INVALID'});
  await assert.rejects(f.store.cache.put('invalid',{...entry,sha256:digest('foreign bytes')}),{code:'VARIANT_IMAGE_CACHE_INVALID'});assert.equal(f.writes.length,1);
 });
-test('raw model response remains exact before projection while its actual 1MiB byte cap stays enforced',async()=>{
- const f=fixture(),bodyText=JSON.stringify({output:'x'.repeat(65536),untrusted:'https://example.invalid/?token=opaque-evidence'}),response={httpStatus:200,bodyText,requestEvidence:{requestSha256:digest('request')}};
- assert(await f.store.response({key:'job',claim_id:'claim'},response));const saved=f.writes[0].args[2];assert.deepEqual(JSON.parse(saved),response);assert.equal(digest(saved),f.writes[0].args[3]);
- assert.equal(f.writes[0].args[4],canonical(response.requestEvidence));
- await assert.rejects(f.store.response({},{...response,bodyText:'é'.repeat(524289)}),{code:'VARIANT_EVIDENCE_BODY_TOO_LARGE'});assert.equal(f.writes.length,1);
+test('literal label response remains exact before projection while its 1MiB byte cap stays enforced',async()=>{
+ const f=fixture(),requestKey='variant-label-source:v1:'+digest('request'),evidence={policy:'atlas-slab-label-association-v1',requestSha256:digest('request')};
+ const reservation={schemaVersion:'variant-label-dispatch/v1',request:{requestKey},evidence};
+ const snapshot=canonical(reservation);f.rows.set(`variant-label-dispatch:v1:${requestKey}`,{snapshot,snapshot_hash:digest(snapshot)});
+ const bodyText=JSON.stringify({output:'x'.repeat(65536),untrusted:'https://example.invalid/?token=opaque-evidence'}),response={version:'atlas-slab-label-association-v1',httpStatus:200,bodyText,requestEvidence:evidence};
+ assert(await f.store.saveLabelSource(reservation,response));const saved=f.writes.find(w=>w.sql.startsWith('INSERT')).args;
+ assert.equal(JSON.parse(saved[1]).bodyText,bodyText);assert.equal(digest(saved[1]),saved[2]);
+ const count=f.writes.length;await assert.rejects(f.store.saveLabelSource(reservation,{...response,bodyText:'é'.repeat(524289)}),{code:'VARIANT_EVIDENCE_BODY_TOO_LARGE'});assert.equal(f.writes.length,count);
 });
 test('large-field exception cannot broaden metadata, binary values, accessors or manual action envelopes',async()=>{
  const f=fixture(),entry=metadata('normal');

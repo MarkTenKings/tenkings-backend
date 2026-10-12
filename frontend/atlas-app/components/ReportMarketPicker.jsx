@@ -73,7 +73,7 @@ export default function ReportMarketPicker({ cardId, staffId, approvalActionId, 
   </section>;
   return <>{status && <p role="status">{status}</p>}<MarketReferencePicker {...pickerOptions} cardId={cardId} scopeKey={`${staffId}:${cardId}:${approvalActionId}`} available={available} disabled={disabled || busy}
     automatic={automatic} automaticEnabled={automaticEnabled} savedSource={automatic ? preview : null} onCheck={() => recover()}
-    onPreview={async () => { const value = client.current, version = generation.current, result = await value.preview();
+    onPreview={async (options) => { const value = client.current, version = generation.current, result = await value.preview(options);
       if (version === generation.current) { setPreview(result); setError(''); } return result; }} onSave={async input => {
       const value = client.current, version = generation.current, result = await value.select(input);
       if (version === generation.current) changed.current?.(result); return result;

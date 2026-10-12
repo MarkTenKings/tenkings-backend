@@ -58,13 +58,19 @@ try {
   const publication = { publish: (actor, cardId, actionId) => publishServices.get(cardId).publish(actor, cardId, actionId) };
   const approved = createManualFinishing({ repository: pubRepo, artifacts: storeArtifacts });
   const presentationRepo = createPresentationRepository({ boundary: machine, keyPrefix: 'market-fixture' });
-  let providerCalls = 0;
-  const provider = async input => {
-    providerCalls++;
-    const { buildEbaySoldCompsV2Query } = await import('@tenkings/ebay-sold-comps-v2');
-    return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: buildEbaySoldCompsV2Query(input), retrievedAt: new Date().toISOString(), responsePolicy:'ATLAS_SLAB_V1', items:[], acquisitionDiagnostics:{returnedItemCount:0,retainedItemCount:0,missingImageCount:0} };
+  let providerCalls = 0, paginate = false; const providerRequests = [];
+  const provider = async (input, { page = 1 } = {}) => {
+    providerCalls++; providerRequests.push({ query: input.queryOverride, page });
+    const items = !paginate ? [] : (page === 1 ? ['123456789012'] : ['123456789012','123456789013']).map((id,index) => ({
+      id: `atlas-sale:${page}:${index}`, providerItemId: id, title: `Synthetic raw listing ${id}`,
+      listingUrl: `https://www.ebay.com/itm/${id}`, imageUrl: null, soldDate: '2026-09-01', soldPriceCents: 1234,
+      currency: 'USD', reportedPrice: '12.34', priceBasis: 'EXACT' }));
+    return { source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION, query: input.queryOverride,
+      retrievedAt: new Date().toISOString(), responsePolicy:'ATLAS_SLAB_V1', items,
+      pagination: { page, pageSize: 240, hasNextPage: paginate && page === 1, totalResults: String(items.length) },
+      acquisitionDiagnostics:{returnedItemCount:items.length,retainedItemCount:items.length,missingImageCount:items.length} };
   };
-  const worker = createMarketWorker({ store, approved, publication, artifacts: storeArtifacts, provider, labelMarket:async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}}),
+  const worker = createMarketWorker({ store, approved, publication, artifacts: storeArtifacts, provider, labelMarket:async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:response.items.map(item=>({rowId:item.id,sha256:null,evidenceKind:'RAW',gradingCompany:null,numericGrade:null,labelText:null,identityMatch:'UNCERTAIN',reason:'Synthetic raw card evidence.'})),counts:{}}}),
     authorityFor: job => machine.machineOwner({ ownerId: job.actor_id, accessVersion: job.access_version }), concurrency: 2 });
   const service = createPresentationMarketService({ repository: presentationRepo, approved, artifacts: storeArtifacts, provider, jobs: store, worker });
   async function approve({ enqueue = true, publish = false } = {}) {
@@ -209,10 +215,16 @@ try {
   await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.market_job SET available_at=clock_timestamp()-interval '1 second' WHERE request_id=$1::uuid",rejectedJob.request_id);
   const beforeRetired=providerCalls;await worker.drainOnce();
   const rejectedStatus=await service.status(staff,rejected.cardId);
-  assert.equal(rejectedStatus.state,'FAILED');assert.equal(rejectedStatus.reason,'MARKET_PROVIDER_POLICY_INVALID');assert.equal(rejectedStatus.refreshable,false);assert.equal(rejectedStatus.refreshAction,undefined);
-  await assert.rejects(service.preview(staff,rejected.cardId,{requestId:randomUUID(),approvalActionId:rejected.actionId,expectedRevision:0}),{code:'MARKET_PROVIDER_POLICY_INVALID'});
-  assert.equal(providerCalls,beforeRetired);assert.deepEqual((await store.latest(staff,rejected.cardId)).response,legacyResponse);
-  checks.push('fresh or retained non-slab responses cannot re-enter title-only projection through a recovery request; no reclassification creation/execute APIs remain; exact paid bytes remain unchanged');
+  assert.equal(rejectedStatus.state,'FAILED');assert.equal(rejectedStatus.reason,'MARKET_PROVIDER_POLICY_INVALID');assert.equal(rejectedStatus.refreshable,true);assert.equal(rejectedStatus.refreshAction,undefined);
+  const rejectedBefore = await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid', rejectedJob.request_id);
+  const rejectedRefresh = {requestId:randomUUID(),approvalActionId:rejected.actionId,expectedRevision:0};
+  const rejectedQueued = await service.preview(staff,rejected.cardId,rejectedRefresh);
+  assert.equal(rejectedQueued.previewId,rejectedRefresh.requestId); assert.notEqual(rejectedQueued.previewId,rejectedJob.request_id);
+  assert.deepEqual(await service.preview(staff,rejected.cardId,rejectedRefresh),rejectedQueued);
+  assert.equal(providerCalls,beforeRetired);
+  await worker.drainOnce();assert.equal(providerCalls,beforeRetired+1);assert.equal((await service.status(staff,rejected.cardId)).state,'READY');
+  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',rejectedJob.request_id),rejectedBefore);
+  checks.push('retired title-only provider bytes never project or dispatch; explicit staff refresh creates one new current-path request and preserves old job evidence unchanged');
 
   const retired=await approve({publish:true}),retiredMarker={event:'RECLASSIFY',version:'atlas-market-reclassification-v1'};
   await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.market_job SET audit=audit||$2::jsonb WHERE request_id=$1::uuid",retired.actionId,JSON.stringify([retiredMarker]));
@@ -221,10 +233,39 @@ try {
   await assert.rejects(async()=>store.dispatch(retiredJob),{code:'MARKET_RECLASSIFICATION_RETIRED'});
   assert.equal(await store.dispatch({...retiredJob,audit:[]}),false,'Stored marker still refuses dispatch if a caller drops its copy');
   await store.finish(retiredJob,{code:'MARKET_RECLASSIFICATION_RETIRED',disposition:'FAILED'});
-  assert.equal((await service.status(staff,retired.cardId)).refreshable,false);
-  await assert.rejects(service.preview(staff,retired.cardId,{requestId:randomUUID(),approvalActionId:retired.actionId,expectedRevision:0}),{code:'MARKET_RECLASSIFICATION_RETIRED'});
-  assert.equal(providerCalls,beforeRetired);
-  checks.push('historical reclassification marker is a permanent no-dispatch/no-refresh fence, including when omitted by an in-memory caller; no substitute paid request is purchased');
+  assert.equal((await service.status(staff,retired.cardId)).refreshable,true);
+  const retiredBefore=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',retired.actionId);
+  const freshRetired={requestId:randomUUID(),approvalActionId:retired.actionId,expectedRevision:0};
+  assert.equal((await service.preview(staff,retired.cardId,freshRetired)).previewId,freshRetired.requestId);
+  await worker.drainOnce();assert.equal(providerCalls,beforeRetired+2);
+  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid',retired.actionId),retiredBefore);
+  checks.push('historical reclassification marker permanently fences its own dispatch, while human refresh starts the current workflow using the existing approval without changing history');
+
+  paginate=true;
+  const paged=await approve({publish:true});
+  const pageApproval=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.approval WHERE card_id=$1::uuid',paged.cardId);
+  const beforePages=providerCalls;await worker.drainOnce();assert.equal(providerCalls,beforePages+1);
+  const firstPage=await service.status(staff,paged.cardId);assert.equal(firstPage.state,'READY');assert.equal(firstPage.preview.pagination.page,1);
+  const older={requestId:randomUUID(),approvalActionId:paged.actionId,expectedRevision:0,afterPreviewId:firstPage.previewId};
+  const next=await service.preview(staff,paged.cardId,older);assert.equal(next.previewId,older.requestId);
+  assert.deepEqual(await service.preview(staff,paged.cardId,older),next);
+  const samePage=await service.preview(staff,paged.cardId,{...older,requestId:randomUUID()});assert.equal(samePage.previewId,next.previewId);
+  const storedRequest=(await fixture.admin.$queryRawUnsafe('SELECT request FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid',paged.cardId,older.requestId))[0];
+  assert.deepEqual(JSON.parse(storedRequest.request),older);
+  await worker.drainOnce();assert.equal(providerCalls,beforePages+2);
+  const secondPage=await service.status(staff,paged.cardId);assert.equal(secondPage.state,'READY');assert.equal(secondPage.preview.pagination.page,2);
+  assert.equal(secondPage.preview.previousPreviewId,firstPage.previewId);assert.equal(secondPage.preview.candidates.length,2);
+  assert.equal(secondPage.preview.counts.returned,3);assert.equal(secondPage.preview.counts.duplicates,1);assert.equal(secondPage.preview.counts.raw,2);
+  assert.deepEqual(providerRequests.slice(-2).map(x=>x.page),[1,2]);assert.equal(providerRequests.at(-1).query,providerRequests.at(-2).query);
+  assert.equal((await service.preview(staff,paged.cardId,{...older,requestId:randomUUID()})).previewId,older.requestId);
+  await assert.rejects(service.preview(staff,paged.cardId,{...older,requestId:randomUUID(),afterPreviewId:secondPage.previewId}),{code:'MARKET_NEXT_PAGE_UNAVAILABLE'});
+  await assert.rejects(service.preview(staff,a.cardId,{...older,requestId:randomUUID(),approvalActionId:a.actionId}),{code:'MARKET_NEXT_PAGE_UNAVAILABLE'});
+  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.approval WHERE card_id=$1::uuid',paged.cardId),pageApproval);
+  assert.equal(Number((await fixture.admin.$queryRawUnsafe('SELECT count(*) n FROM atlas_manual.presentation WHERE card_id=$1::uuid',paged.cardId))[0].n),0);
+  const selected=await service.select(staff,paged.cardId,{requestId:randomUUID(),approvalActionId:paged.actionId,expectedRevision:0,previewId:secondPage.previewId,selectedIds:[secondPage.preview.candidates[0].sale.id]});
+  assert(selected);assert.equal(Number((await fixture.admin.$queryRawUnsafe('SELECT count(*) n FROM atlas_manual.presentation WHERE card_id=$1::uuid',paged.cardId))[0].n),1);
+  assert.equal(providerCalls,beforePages+2);
+  checks.push('actual staff grants persist afterPreviewId immutably; same-query page2 deduplicates rows and requests, retains raw choices, rejects exhausted/foreign parents, and publishes nothing before explicit human selection');
   await worker.stop();
   const evidence={version:'atlas-market-jobs-postgres-v1',synthetic:true,fixtureDirectory:fixture.cluster.directory,providerCalls,checks,productionTouched:false,paidProviderCalls:0};
   await writeFile(join(output,'result.json'),JSON.stringify(evidence,null,2)+'\n',{mode:0o600});

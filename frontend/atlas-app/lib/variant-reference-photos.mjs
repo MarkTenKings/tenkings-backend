@@ -12,9 +12,10 @@ export function unmatchedVariantReferences(result) {
     if (seen.has(image.sha256)) return [];
     seen.add(image.sha256);
     const reading = readings.find(value => value.sha256 === image.sha256 && value.imageId === image.imageId);
-    if (reading?.candidateId && candidates.has(reading.candidateId) && reading.labelText && reading.gradingCompany) return [];
+    if (reading?.candidateId && candidates.has(reading.candidateId) && reading.labelText) return [];
     return [{ ...image, associationStatus: 'UNASSIGNED', labelReading: {
       company: reading?.gradingCompany ?? null, text: reading?.labelText ?? null,
+      evidenceKind:reading?.evidenceKind??(reading?.gradingCompany?'SLABBED':'UNCERTAIN'),
       reason: reading?.reason ?? 'No saved label association is available for this photograph.',
     } }];
   });

@@ -45,3 +45,17 @@ test('ATLAS one-page retrieval retains every row for image matching without lega
   assert.equal(result.acquisitionDiagnostics.retainedItemCount, 240); assert.equal(result.items.length, 240);
   assert.equal(Object.hasOwn(result, 'candidates'), false); assert.equal(Object.hasOwn(result.items[0], 'parallelMatch'), false);
 });
+
+test('older sales use the identical query, one page request and distinct row IDs with retained page metadata', async () => {
+  const seen = [], provider = createSoldReferenceProvider({ apiKey: 'sc_fixture_only', fetchImpl: async url => {
+    const params = new URL(url).searchParams; seen.push(Object.fromEntries(params));
+    return Response.json({ keyword: params.get('keyword'), page: Number(params.get('page')), totalItems: 1,
+      totalResults: '1,800+', hasNextPage: true, items: [{ itemId: '123456789012', title: 'Raw Pikachu', soldPrice: '2.50',
+        soldCurrency: 'USD', bestOfferAccepted: false, endedAt: '2026-09-01' }] });
+  } });
+  const input = { queryOverride: 'Pikachu 025/165', category: 'POKEMON' };
+  const first = await provider(input), second = await provider(input, { page: 2 });
+  assert.deepEqual(seen.map(row => [row.keyword, row.page, row.count, row.exactMatch]), [['Pikachu 025/165','1','240','true'],['Pikachu 025/165','2','240','true']]);
+  assert.notEqual(first.items[0].id, second.items[0].id); assert.equal(second.items[0].providerItemId, '123456789012');
+  assert.deepEqual(second.pagination, { page: 2, pageSize: 240, hasNextPage: true, totalResults: '1,800+' });
+});

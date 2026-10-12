@@ -22,7 +22,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const variantRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants(?:/(confirm|refresh))?$`);
   const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search|contribute)$`);
   const dealerRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/dealer-offers$`);
-  const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image|thumbnail|display-retry)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
+  const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image|thumbnail|display-retry)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|clean|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
   return async(req,res)=>{
     const url=new URL(req.url,origin);
     if(!/^\/api\/staff\/(manual|manual-intake|manual-connected)(?:\/|$)/.test(url.pathname))return false;

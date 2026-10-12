@@ -1,5 +1,6 @@
 import {ATLAS_IDENTIFICATION_LAYOUT_VERSION,ATLAS_IDENTIFICATION_LAYOUT_VERSIONS,atlasIdentificationRunningWindow,identifyAtlasCard,parseAtlasIdentificationResult} from './identification-layout.mjs';
 import { randomUUID } from 'node:crypto';
+import { identificationCleanViews, retainedIdentificationCleanViews } from './identification-clean-views.mjs';
 import sharp from 'sharp';
 import { CARD_IDENTIFICATION_VERSION, parseCardIdentificationInput, parseCardIdentificationResult } from '@tenkings/card-identification-core';
 import { CARD_IDENTIFICATION_VERSION_V2, CARD_IDENTIFICATION_GOOGLE_TEXT_FIELDS_V2,
@@ -53,7 +54,7 @@ export function identificationEffects({ openaiKey, googleKey, fetchImpl=fetch })
     model:(request,context)=>send('https://api.openai.com/v1/responses',request,{Authorization:`Bearer ${openaiKey}`},context.signal) };
 }
 
-export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,
+export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,readCleanPhoto=null,isCleanPhotoPrepared=null,
   clock = () => Date.now(), limited = work => work() }) {
   requireThat([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
   requireThat(!effects || typeof receiptClient?.$queryRawUnsafe==='function',503,'IDENTIFICATION_RECEIPT_STORE_REQUIRED');
@@ -146,7 +147,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.identification SET state=$1,result=$2,error=$3,finished_at=clock_timestamp() WHERE id=$4::uuid AND state='RUNNING'",state,result?canonical(result):null,error,row.id);
     },{edit:true});
   }
-  async function execute(staff,seedRow,loaded,recovery=null,dispatchSignal=null){
+  async function execute(staff,seedRow,loaded,recovery=null,dispatchSignal=null,cleanViews=[]){
     const saved=storedInput(seedRow);
     const cardId=seedRow.card_id, pair={sourceHash:seedRow.source_hash};
     let row=recovery?null:seedRow, claimError=null, claimStarted=false;
@@ -200,7 +201,8 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
             requireThat(row.won,409,'IDENTIFICATION_RETRY_REPLAY');
             return effect('model')(request,context);
           }:effect('model'),
-        },atlas?{engineVersion:saved.engineVersion}:undefined);
+        },atlas?{engineVersion:saved.engineVersion,cleanViews:recovery
+          ?retainedIdentificationCleanViews(JSON.parse(recovery.model.requestJson)):cleanViews}:undefined);
         const stored=await asset(cardId,'IDENTIFICATION_RESULT',result,pair.sourceHash);
         try {await details.adopt(staff,cardId,pair.sourceHash,result);}
         catch(error){if(error?.status===409){await settle(staff,row,'STALE',stored);return {attemptId:row.id,state:'STALE'};}throw error;}
@@ -337,6 +339,11 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         return checkedResult(staff,cardId,pair.sourceHash,value);
       }
       if(!effects)return {state:'UNAVAILABLE'};
+      // Release the batch slot while upfront edits are queued. This is an AI
+      // dependency only; human review never waits on a generated image.
+      if(isCleanPhotoPrepared && !(await Promise.all(['FRONT','BACK'].map(side=>isCleanPhotoPrepared({
+        cardId,uploadId:pair.sides[side].upload.uploadId,side})))).every(Boolean))return {state:'RETRY_WAIT',retryAfterMs:3000};
+      const cleanViews=await identificationCleanViews({pair,readCleanPhoto,signal:dispatchSignal});
       const photos={},loaded=new Map();
       for(const [side,slot] of Object.entries(pair.sides)){
         // Keep full-resolution reads/decodes inside the native memory bound.
@@ -363,7 +370,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         return {...row,won:count===1};
       },{edit:true,sourceHash:pair.sourceHash});
       if(!row.won)return checkedResult(staff,cardId,pair.sourceHash,await project(staff,row));
-      return execute(staff,row,loaded,null,dispatchSignal);
+      return execute(staff,row,loaded,null,dispatchSignal,cleanViews);
     },
   });
   return api;

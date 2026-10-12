@@ -105,15 +105,33 @@ function shardIndex(data) {
   return { kind: 'shards', sources, cell: (row, column) => row[column] };
 }
 
+// A player checklist and a product odds sheet describe different dimensions.
+// Join only an explicitly retained subset family to its exact checklist bytes;
+// unrelated base-set parallels never imply insert parallels.
+async function bundledParallelFamilies() {
+  const data = JSON.parse(await boundedFile(new URL('../data/manufacturer-parallel-families.json', import.meta.url), 128 * 1024));
+  check(data.schemaVersion === 'manufacturer-parallel-families/v1' && data.complete === false
+    && Array.isArray(data.families) && data.families.length <= 100, 'parallel families');
+  for (const family of data.families) {
+    check(['manufacturer','sport','year','setName','subset'].every(k => string(family[k], 240))
+      && HASH.test(family.checklistSha256) && HASH.test(family.source?.sha256)
+      && string(family.source.url, 2048) && new URL(family.source.url).protocol === 'https:'
+      && Array.isArray(family.printings) && family.printings.length > 0 && family.printings.length <= 47
+      && family.printings.every(p => string(p.parallel,120) && string(p.sourceName,120) && string(p.locator,160))
+      && new Set(family.printings.map(p => norm(p.parallel))).size === family.printings.length, 'parallel family');
+  }
+  return data.families;
+}
+
 /** A server-only reader of retained manufacturer rows. It performs no network
- * request, publication, inference over a parallel family, or human decision.
+ * request, publication, inference from unrelated parallels, or human decision.
  * The bundled catalog is a partial acquisition snapshot, never complete scope.
  */
 export function createManufacturerChecklistVariantProvider({ catalog = null, loadCatalog = null, loadShard = null, limit = 48 } = {}) {
   check(Number.isSafeInteger(limit) && limit > 0 && limit <= 48, 'limit');
   check(catalog === null || loadCatalog === null, 'choose one catalog reader');
   check(loadShard === null || typeof loadShard === 'function', 'shard reader');
-  let loaded, loading = Promise.resolve();
+  let loaded, families, loading = Promise.resolve();
   const cache = new Map(), inFlight = new Map();
   async function load() {
     if (!loaded) loaded = (async () => {
@@ -160,6 +178,9 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       if (!identity.name || !identity.setName || !identity.cardNumber || !identity.manufacturer)
         return { ...empty, problems: ['IDENTITY_INCOMPLETE'] };
       const archive = await load(); signal?.throwIfAborted();
+      // A caller-supplied archive is self-contained. Production's bundled
+      // player rows and supplemental odds metadata form one retained catalog.
+      families ??= catalog || loadCatalog ? [] : await bundledParallelFamilies();
       const { sources, index, cell } = archive;
       const scope = productScope(identity.setName), athlete = athleteName(identity.name);
       const maker = norm(identity.manufacturer);
@@ -265,6 +286,20 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
             url: source.url, sha256: source.sha256, references: [] },
           warnings: ['APPLICABILITY_UNCONFIRMED', 'REFERENCE_IMAGE_MISSING', ...(numberDiffers || !identity.year ? ['SCOPE_UNCONFIRMED'] : [])] };
         candidates.push(validateVariantCandidate({ ...candidate, candidateId: variantCandidateId(candidate) }));
+        for (const family of families.filter(f => f.checklistSha256 === source.sha256 && f.subset === parallel
+          && ['manufacturer','sport','year','setName'].every(k => f[k] === source[k]))) {
+          for (const printing of family.printings) {
+            const printingKey = `${key}|${norm(printing.parallel)}`;
+            if (seen.has(printingKey)) continue;
+            seen.add(printingKey);
+            const expanded = { ...candidate, label: printing.parallel, parallel: printing.parallel,
+              diagnostics: [...candidate.diagnostics, { id: 'manufacturer-parallel-family',
+                description: `Official product odds list ${printing.sourceName}. Odds locator: ${printing.locator}. Player checklist locator: ${cell(row,4)}. Serial numbering is not established by these odds.` }],
+              source: { provider: 'manufacturer_checklist', recordId: `manufacturer-family:v1:${digest([source.sha256,row.slice(1).map((_,i)=>cell(row,i+1)),family.source.sha256,printing])}`,
+                url: family.source.url, sha256: family.source.sha256, references: [{url:source.url,sha256:source.sha256}] } };
+            candidates.push(validateVariantCandidate({ ...expanded, candidateId: variantCandidateId(expanded) }));
+          }
+        }
       }
       candidates.sort((a,b) => Number(!/^(base|rookie|rated rookies?)( cards? [ivx]+)?$/i.test(a.label)) - Number(!/^(base|rookie|rated rookies?)( cards? [ivx]+)?$/i.test(b.label)) || a.label.localeCompare(b.label));
       const truncated = candidates.length > limit;

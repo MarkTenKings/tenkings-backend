@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "manufacturer-parallel-families/v1",
+  "complete": false,
+  "families": [
+    {
+      "manufacturer": "Topps",
+      "sport": "basketball",
+      "year": "2025-26",
+      "setName": "2025-26 Topps Chrome\u00ae Basketball",
+      "checklistSha256": "d63c903fd5609901be188aca3424830c50d4e75c5dca77cf7c4ca1d98abac955",
+      "subset": "BALL OF DUTY",
+      "source": {
+        "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2025-26_Topps_Chrome_Basketball_Odds.pdf?v=1769176241",
+        "sha256": "f1394a48d438d6ed93c791de9bfe8aafd57ee2de1d176b17aa3b1c3cb8996a1a",
+        "linkedFrom": "https://www.topps.com/pages/odds",
+        "byteCount": 240729
+      },
+      "printings": [
+        {
+          "parallel": "BALL OF DUTY Refractor",
+          "sourceName": "Ball of Duty Refractors",
+          "locator": "page:13"
+        },
+        {
+          "parallel": "BALL OF DUTY RayWave Refractor",
+          "sourceName": "Ball of Duty Refractors RayWave",
+          "locator": "page:13"
+        },
+        {
+          "parallel": "BALL OF DUTY Magenta Refractor",
+          "sourceName": "Ball of Duty Refractors Magenta",
+          "locator": "page:13"
+        },
+        {
+          "parallel": "BALL OF DUTY Teal Refractor",
+          "sourceName": "Ball of Duty Refractors Teal",
+          "locator": "page:13"
+        },
+        {
+          "parallel": "BALL OF DUTY Yellow Refractor",
+          "sourceName": "Ball of Duty Refractors Yellow",
+          "locator": "page:13"
+        },
+        {
+          "parallel": "BALL OF DUTY Aqua Refractor",
+          "sourceName": "Ball of Duty Refractors Aqua",
+          "locator": "page:13"
+        },
+        {
+          "parallel": "BALL OF DUTY Blue Refractor",
+          "sourceName": "Ball of Duty Refractors Blue",
+          "locator": "page:13"
+        },
+        {
+          "parallel": "BALL OF DUTY Green Refractor",
+          "sourceName": "Ball of Duty Refractors Green",
+          "locator": "page:14"
+        },
+        {
+          "parallel": "BALL OF DUTY Purple Refractor",
+          "sourceName": "Ball of Duty Refractors Purple",
+          "locator": "page:14"
+        },
+        {
+          "parallel": "BALL OF DUTY Gold Refractor",
+          "sourceName": "Ball of Duty Refractors Gold",
+          "locator": "page:14"
+        },
+        {
+          "parallel": "BALL OF DUTY Orange Refractor",
+          "sourceName": "Ball of Duty Refractors Orange",
+          "locator": "page:14"
+        },
+        {
+          "parallel": "BALL OF DUTY Black Refractor",
+          "sourceName": "Ball of Duty Refractors Black",
+          "locator": "page:14"
+        },
+        {
+          "parallel": "BALL OF DUTY Red Refractor",
+          "sourceName": "Ball of Duty Refractors Red",
+          "locator": "page:14"
+        },
+        {
+          "parallel": "BALL OF DUTY Superfractor",
+          "sourceName": "Ball of Duty Superfractors",
+          "locator": "page:14"
+        },
+        {
+          "parallel": "BALL OF DUTY Pulsar Refractor",
+          "sourceName": "Ball of Duty Refractors Pulsar",
+          "locator": "page:14"
+        }
+      ]
+    }
+  ]
+}

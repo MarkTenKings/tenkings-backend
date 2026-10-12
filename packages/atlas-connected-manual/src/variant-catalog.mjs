@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson, normalizeVariantIdentity, compareVariantCardNumber, variantChoicesFromPublishedLookup,
   createVariantReviewSnapshot, validateVariantCandidate, validateVariantReviewSnapshot, validateVariantReferencePhoto,
   createScrydexVariantProvider, createScrydexMetadataReader, createVariantProviderImageReader, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
-import { variantCodexChoice, codexLibraryKey, validateCodexLibrary, codexPhotoPoolKey, validateCodexPhotoPool,
+import { variantCodexChoice, variantCodexAliases, codexLibraryKey, validateCodexLibrary, codexPhotoPoolKey, validateCodexPhotoPool,
   codexReadingKey, reassociateCodexReading, CODEX_LABEL_POLICY, CODEX_LABEL_MODEL } from './variant-codex.mjs';
 import { prepareVariantCatalogObservation } from './variant-catalog-proposal.mjs';
 import {prepareVariantListingRequest,variantChecklistListingIdentity} from './variant-listing-provider.mjs';
@@ -98,7 +98,8 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       const prepared = prepareVariantCatalogObservation(payload);
       return bounded(signal, timeoutMs, active => catalogClient.submit(prepared.proposal, active));
     },
-    async prepare(input, { signal, executeListingSource } = {}) {
+    async prepare(input, { signal, executeListingSource, priorCatalog = null } = {}) {
+      const localOnly = input.localOnly === true;
       // Initial preparation has a durable browser request ID, but it still
       // reuses ordinary paid journals. Only an explicit refresh of a prior
       // job authorizes a fresh missing-reference acquisition generation.
@@ -115,12 +116,15 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       for (const provider of providers) {
         abort(signal);
         try {
-          const result = await provider.prepare(identity, { signal });
+          const result = await provider.prepare(identity, { signal, retainedOnly:localOnly });
           candidates.push(...result.candidates.map(validateVariantCandidate)); problems.push(...result.problems); truncated ||= result.truncated;
         } catch { abort(signal); problems.push('PROVIDER_UNAVAILABLE'); }
       }
       try {
-        const catalog = identity.category === 'POKEMON' || candidates.length > 0 ? { candidates: [], problems: [], truncated: false } : await catalogChoices(identity, signal); candidates.push(...catalog.candidates); problems.push(...catalog.problems); truncated ||= catalog.truncated;
+        // All catalog adapters contribute to one result. A partial metadata
+        // source cannot suppress independently published printing records.
+        const catalog = localOnly || !catalogClient ? { candidates: [], problems: [], truncated: false } : await catalogChoices(identity, signal); candidates.push(...catalog.candidates); problems.push(...catalog.problems); truncated ||= catalog.truncated;
+        if (localOnly && priorCatalog) candidates.push(...priorCatalog.candidates.filter(c=>c.canonical));
       } catch { abort(signal); problems.push('CATALOG_UNAVAILABLE'); }
       abort(signal);
       return createVariantReviewSnapshot({ identity, candidates, problems, truncated, capturedAt: new Date(now()).toISOString() });
@@ -134,7 +138,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       }
       if(!listingProvider||base.problems.includes('IDENTITY_INCOMPLETE'))return base;
       const identity=normalizeVariantIdentity(input.identity),problems=base.problems.filter(p=>!['NO_VARIANTS_FOUND','NO_DIAGNOSTIC_PHOTOS'].includes(p));
-      let candidates=base.candidates,truncated=base.coverage.metadata==='truncated';const referencePhotos=new Map();let labelPool=false;
+      let candidates=base.candidates,truncated=base.coverage.metadata==='truncated';const referencePhotos=new Map((priorCatalog?.referencePhotos??[]).map(p=>[p.sha256,p]));let labelPool=referencePhotos.size>0;
       // Metadata discovery has its own timeout. Paid listing work follows the
       // worker lease; image reads have their own bounded transport/byte checks.
       if(typeof executeListingSource!=='function')problems.push('LISTING_SOURCE_NOT_CONFIGURED');
@@ -142,17 +146,17 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         // One durable, shared request for each catalog printing, never for each
         // staff visit. Bound fan-out; absent photos do not hide known choices.
         const named = candidates.filter(c => c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'));
-        // Known-year requests retain their exact historic keys. When year is
-        // unknown, each exact manufacturer row is a separate search identity;
+        // A missing sports year may use each exact retained manufacturer row
+        // as its source-bound search identity;
         // the store verifies that row independently before any reservation.
         const searchable = identity.year ? named : named.filter(c => {
           try { variantChecklistListingIdentity(identity, [c], c.identity.year); return true; } catch { return false; }
         });
-        const searches = [...new Map(searchable.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language,
-          ...(!identity.year?{year:c.identity.year}:{})}), {name:c.label,language:c.identity.language,...(!identity.year?{year:c.identity.year}:{})}])).values()];
+        const searches = [...new Map(searchable.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language,cardNumber:c.identity.cardNumber,
+          ...(!identity.year?{year:c.identity.year}:{})}), {name:c.label,language:c.identity.language,cardNumber:c.identity.cardNumber,...(!identity.year?{year:c.identity.year}:{})}])).values()];
         const listingRequest = (printing, generation = null) => prepareVariantListingRequest(
-          identity.year ? identity : variantChecklistListingIdentity(identity, searchable, printing.year),
-          {name:printing.name,language:printing.language},{graded:true,...(generation?{generation}:{})});
+          {...(identity.year ? identity : variantChecklistListingIdentity(identity, searchable, printing.year)),cardNumber:printing.cardNumber},
+          {name:printing.name,language:printing.language},{...(generation?{generation}:{})});
         const populated=new Set(),choiceKeys=new Set(named.map(candidate=>variantCodexChoice(candidate).key)),readings=new Map();
         const revisitReadings=async photos=>{
           for(const image of photos){
@@ -165,17 +169,17 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
           }
         };
         // Permanent Codex references belong to the catalog printing, not this submission.
-        for(const candidate of named) {
-          const choice=variantCodexChoice(candidate),saved=await cache?.getRetained?.(codexLibraryKey(choice));
+        for(const candidate of named) for(const choice of variantCodexAliases(candidate)) {
+          const saved=await cache?.getRetained?.(codexLibraryKey(choice));
           if(saved) {
             const entry=validateCodexLibrary(saved,choice); labelPool=true;
             for(const {image} of entry.references) referencePhotos.set(image.sha256,image);
-            populated.add(choice.key);
+            populated.add(variantCodexChoice(candidate).key);
           }
         }
         // Shared pools also retain photos which had no catalog match. Revisit
         // their literal readings before buying a search for an added printing.
-        const cards=[...new Map(named.map(candidate=>{const choice=variantCodexChoice(candidate);return [choice.cardKey,choice];})).values()];
+        const cards=[...new Map(named.flatMap(candidate=>variantCodexAliases(candidate).map(choice=>[choice.cardKey,choice]))).values()];
         for(const choice of cards){
           const saved=await cache?.getRetained?.(codexPhotoPoolKey(choice));if(!saved)continue;
           const pool=validateCodexPhotoPool(saved,choice);labelPool=true;
@@ -195,10 +199,8 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
                 if(image.sourceResponseSha256!==saved.source.sha256)throw fail('VARIANT_LISTING_SOURCE_INVALID');
               }
               await revisitReadings(evidence.referencePhotos);
-              // A historical source is only a route back to settled readings.
-              // Downloaded but unread siblings must not trigger new OCR merely
-              // because another physical copy opened this catalog.
-              for(const image of evidence.referencePhotos)if((!retainedOnly||readings.get(image.sha256))&&!referencePhotos.has(image.sha256))referencePhotos.set(image.sha256,image);
+              // Retain every saved photograph; local-only refresh never buys OCR.
+              for(const image of evidence.referencePhotos)if(!referencePhotos.has(image.sha256))referencePhotos.set(image.sha256,image);
             }
         };
         // R8 libraries contained only matched photos. Read every current
@@ -220,7 +222,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
         // One permanent ordinary request; deliberate missing-reference
         // generations retain their separate authority for a fresh search.
         const pending=searches.filter(printing=>!hasReference(printing)&&(listingGeneration||retained.get(printing)==='MISSING'));
-        if(!bootstrapFailed||listingGeneration)for (const printing of pending) try {
+        if(!localOnly&&(!bootstrapFailed||listingGeneration))for (const printing of pending) try {
           abort(signal);if(hasReference(printing))continue;
           const request=listingRequest(printing,listingGeneration);
           const saved=await executeListingSource(request,()=>listingProvider.fetchSource(request,{signal}));

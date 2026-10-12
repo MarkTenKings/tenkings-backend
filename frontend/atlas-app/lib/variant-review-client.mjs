@@ -91,7 +91,7 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
       check(variantBindingKey(basis) === variantBindingKey(current), 'VARIANT_REVIEW_CHANGED');
       const chosen = current.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId);
       const expectedChoice = retained()?.draft?.candidateIdentityKey ?? candidateIdentityKey(basis.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId));
-      check(unresolved || manual || current.state === 'READY' && chosen && expectedChoice === candidateIdentityKey(chosen), 'VARIANT_CANDIDATE_STALE');
+      check(unresolved || manual || chosen && expectedChoice === candidateIdentityKey(chosen), 'VARIANT_CANDIDATE_STALE');
       const permission = !unresolved && referencePermission ? referencePermission : null;
       check(!permission || Object.keys(permission).sort().join('|') === 'basis|consumers'
         && ['owned_original','licensed','permission'].includes(permission.basis)

@@ -38,10 +38,9 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
       unmeasurableProposals.push({ ...structuredClone(proposal), reason: 'OUTSIDE_CARD_FRAME' });
       continue;
     }
-    // A valid model contour can lie wholly outside a rounded physical corner,
-    // or cover less than one canonical pixel. Keep that proposal for a human;
-    // an empty clipped mask is neither a measurable finding nor a zero-area
-    // measurement. Malformed contours and other measurement errors still fail.
+    // Preserve the complete raw contour for deterministic material intersection.
+    // A subpixel contour may have no raster samples; retain that proposal as
+    // unresolved evidence rather than fabricating pixels.
     const trace = measurableProposalEdit(proposal, side, slot.cornerShape);
     if (!trace) {
       unmeasurableProposals.push({ ...structuredClone(proposal), reason: 'NO_IN_CARD_RASTER_PIXELS' });

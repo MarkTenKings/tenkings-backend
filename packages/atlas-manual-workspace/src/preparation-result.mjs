@@ -9,7 +9,8 @@ export function adoptPhysicalGeometryProposal(workspace, result) {
   if (result.proposal?.outcome !== 'ACCEPTED') return { state: workspace, proposalApplied: false };
   try {
     return { ...applyGeometryEdit(workspace, { side: result.side, kind: 'PHYSICAL', base: result.base,
-      quad: result.proposal.proposal, actor: 'ENGINE',
+      quad: result.proposal.proposal, actor: result.actor === 'ASTRA' ? 'ASTRA' : 'ENGINE',
+      ...(result.materialContour ? { materialContour: result.materialContour } : {}),
       proposal: { id: result.id, ambiguous: Boolean(result.proposal.ambiguity?.ambiguous) } }), proposalApplied: true };
   } catch (error) {
     if (!invalidAutomaticQuad(error)) throw error;
@@ -28,7 +29,7 @@ export function adoptGeometryPreparation(workspace, result) {
   if (!settingsCurrent || result.proposal?.outcome !== 'ACCEPTED') return { ...applied, proposalApplied: false };
   try {
     const edited = applyGeometryEdit(applied.state, { side: result.side, kind: 'PRINTED', base: geometryBase(applied.state, result.side, 'PRINTED'),
-      quad: result.proposal.proposal, actor: 'ENGINE', proposal: { id: result.id, ambiguous: Boolean(result.proposal.ambiguity?.ambiguous) } });
+      quad: result.proposal.proposal, actor: result.actor === 'ASTRA' ? 'ASTRA' : 'ENGINE', proposal: { id: result.id, ambiguous: Boolean(result.proposal.ambiguity?.ambiguous) } });
     return { ...edited, invalidated: applied.invalidated, proposalApplied: true };
   } catch (error) {
     if (!invalidAutomaticQuad(error)) throw error;

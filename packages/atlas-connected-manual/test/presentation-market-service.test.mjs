@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { parseEbaySoldCompsV2Candidate, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarketService } from '../src/presentation-market-service.mjs';
-import { projectResearchMarketPreview, publishedMarketQuery } from '../src/presentation-market.mjs';
+import { projectResearchMarketPreview } from '../src/presentation-market.mjs';
+import { publishedResearchQuery as publishedMarketQuery } from '../src/research-market-query.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 import { canonical, digest } from '@atlas/manual-service/contract';
 

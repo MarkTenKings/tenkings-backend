@@ -1,9 +1,10 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { isScrydexMetadataUrl, compareVariantCardNumber } from '@tenkings/card-catalog-evidence';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { projectSelectedSoldReferences, projectSelectedSlabReferences } from '@atlas/report-view/sold-reference-projection';
 import { inspectStaffInventoryResearchSale, inspectStaffInventoryResearchTitle } from '@tenkings/card-research-core/decisions';
-import { buildEbaySoldCompsV2Query, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
+import { EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
+
+import { publishedResearchQuery } from './research-market-query.mjs';
 
 export const MARKET_UNAVAILABLE_REASONS = Object.freeze(['PROVIDER_NOT_CONFIGURED', 'PROVIDER_CONFIGURATION_ERROR', 'PROVIDER_QUOTA_REACHED', 'PROVIDER_REQUEST_LIMITED']);
 
@@ -30,116 +31,37 @@ function inspectIdentity(description, candidate) {
   return evidence;
 }
 
-const queryText = value => String(value ?? '').normalize('NFC').replace(/[—–]/g, ' ').replace(/\s+/g, ' ').trim();
-const queryNorm = value => queryText(value).toLowerCase();
-function approvedMarketQuery(input, grade, fullSetName = input.productSet) {
-  const parts = [], append = value => {
-    const part = queryText(value);
-    if (part && !(` ${parts.join(' ').toLowerCase()} `).includes(` ${part.toLowerCase()} `)) parts.push(part);
-  };
-  append(input.year);
-  if (input.category === 'SPORTS' && !queryNorm(fullSetName).includes(queryNorm(input.manufacturer))) append(input.manufacturer);
-  let product = queryText(fullSetName);
-  if (product.toLowerCase().startsWith(`${queryText(input.year).toLowerCase()} `)) product = product.slice(queryText(input.year).length).trim();
-  append(product); append(input.playerName ?? input.cardName); append(input.insert);
-  let printing = queryText(input.parallel).replace(/\bEnglish\b/ig, '').replace(/\bCosmos?\b/ig, 'Cosmo')
-    .replace(/\b(?:Holofoil|Holographic)\b/ig, 'Holo').replace(/\b(?:Base|Standard|Regular|None)(?: Card)?\b/ig, '').trim();
-  const insert = queryText(input.insert);
-  if (insert && printing.toLowerCase().startsWith(`${insert.toLowerCase()} `)) printing = printing.slice(insert.length).trim();
-  append(printing);
-  append(collectorTypography(input.cardNumber ?? '').replace(/#/g, ''));
-  const suffix = `grade ${grade}`, prefix = parts.join(' '), max = 400 - suffix.length - 1;
-  return `${prefix.length <= max ? prefix : prefix.slice(0, max + 1).replace(/\s+\S*$/, '').trim()} ${suffix}`;
-}
-function validatedQueryContext(source, context) {
-  if (context == null) return null;
-  const identity = source.packet.report.identity, expansion = context.expansion, card = context.card;
-  requireThat(context.version === 'atlas-market-query-context-v1' && context.provider === 'scrydex'
-    && source.packet.report.cardProfile === 'POKEMON' && context.publicHash === source.publicHash
-    && context.identityHash === digest(canonical(identity)) && isScrydexMetadataUrl(context.sourceUrl)
-    && /^[a-f0-9]{64}$/.test(context.sourceSha256 ?? '') && typeof expansion?.id === 'string'
-    && [expansion.name, expansion.series, card?.id, card?.name, card?.number, card?.year, context.fullSetName]
-      .every(value => typeof value === 'string' && value.trim() && value.length <= 240 && !/[\x00-\x1f\x7f]/.test(value))
-    && queryNorm(card.name) === queryNorm(identity.cardName) && card.year === identity.year
-    && compareVariantCardNumber(card.number, identity.cardNumber) === 'match'
-    && context.fullSetName === queryText(`${expansion.series} ${expansion.name}`)
-    && [expansion.name, context.fullSetName].map(queryNorm).includes(queryNorm(identity.productSet)),
-  409, 'MARKET_QUERY_CONTEXT_INVALID');
-  return structuredClone(context);
-}
+const queryText = value => String(value ?? '').normalize('NFC').replace(/[—–]/g, '-').replace(/\s+/g, ' ').trim();
 
-/** Reads only the already retained manufacturer metadata. No fetch, credential
- * or cache TTL can purchase another catalog lookup while preparing a search. */
-export function createRetainedMarketQueryResolver({ cache, readCatalog }) {
-  requireThat(typeof cache?.getRetained === 'function' && typeof readCatalog === 'function', 500, 'MARKET_CONFIGURATION_INVALID');
-  return async ({ source, staff, job }) => {
-    if (source.packet.report.cardProfile !== 'POKEMON') return null;
-    const snapshot = await readCatalog(staff, job.card_id), candidates = snapshot?.candidates ?? [];
-    const references = new Map(candidates.filter(candidate => candidate.source?.provider === 'scrydex')
-      .map(candidate => [`${candidate.source.url}:${candidate.source.sha256}`, candidate.source]));
-    const matches = [];
-    for (const reference of references.values()) {
-      if (!isScrydexMetadataUrl(reference.url) || !/^[a-f0-9]{64}$/.test(reference.sha256 ?? '')) continue;
-      const saved = await cache.getRetained(`variant-scrydex-evidence:v1:${digest(reference.url)}:${reference.sha256}`);
-      if (!saved) continue;
-      requireThat(saved.schemaVersion === 'scrydex-source/v1' && saved.url === reference.url && saved.sha256 === reference.sha256
-        && typeof saved.body === 'string' && Buffer.byteLength(saved.body) <= 1048576 && digest(saved.body) === reference.sha256,
-      503, 'MARKET_QUERY_SOURCE_INVALID');
-      const data = JSON.parse(saved.body);
-      requireThat(Array.isArray(data.data) && data.data.length <= 7, 503, 'MARKET_QUERY_SOURCE_INVALID');
-      for (const card of data.data) {
-        const expansion = card.expansion;
-        if (!expansion?.series || expansion.is_online_only !== false) continue;
-        const number = card.printed_number ?? (/^\d+$/.test(card.number) && Number.isSafeInteger(expansion.printed_total)
-          ? `${card.number}/${expansion.printed_total}` : card.number);
-        const context = { version: 'atlas-market-query-context-v1', provider: 'scrydex', publicHash: source.publicHash,
-          identityHash: digest(canonical(source.packet.report.identity)), sourceUrl: reference.url, sourceSha256: reference.sha256,
-          card: { id: card.id, name: card.name, number, year: expansion.release_date?.slice(0, 4) },
-          expansion: { id: expansion.id, name: expansion.name, series: expansion.series }, fullSetName: queryText(`${expansion.series} ${expansion.name}`) };
-        try { matches.push(validatedQueryContext(source, context)); } catch (error) { if (error.code !== 'MARKET_QUERY_CONTEXT_INVALID') throw error; }
-      }
-    }
-    // Conflicting retained expansion names do not authorize a guessed query.
-    return new Set(matches.map(value => value.fullSetName)).size === 1 ? matches[0] : null;
-  };
-}
-
-/** The one query/input context for fresh lookup, saved response projection,
- * stored preview selection and local reclassification. Only the current exact-grade
- * query or the historical generated query can bind to this publication. */
-export function publishedMarketQuery({ packet, publicHash }, { savedQuery, savedInput, queryContext = null, queryStyle = null } = {}) {
+/** One card-level acquisition query. Keep the printed number faithful, including
+ * zeroes, prefixes and denominators. Set, variant and grade are photo evidence. */
+export function publishedMarketQuery({ packet, publicHash }, { savedQuery, savedInput } = {}) {
   requireThat(typeof publicHash === 'string' && /^[a-f0-9]{64}$/.test(publicHash)
     && digest(JSON.stringify(packet)) === publicHash, 409, 'MARKET_PUBLICATION_MISMATCH');
   const parsed = parsePublicManualReport(packet), identity = parsed.report.identity;
-  // The existing engine's targetGrade adds a rounded PSA grade to the query.
-  // ATLAS does not assert that conversion. Keep its exact award as context and
-  // search identity across graders without targetGrade.
   const identityInput = { matchingPolicy: 'ATLAS_IDENTITY_V1', category: parsed.report.cardProfile, year: identity.year, productSet: identity.productSet,
     ...(parsed.report.cardProfile === 'SPORTS' ? { playerName: identity.playerName, manufacturer: identity.manufacturer }
       : { cardName: identity.cardName }), parallel: identity.parallel, cardNumber: identity.cardNumber,
     ...('insert' in identity ? { insert: identity.insert } : {}) };
-  const resolved = validatedQueryContext({ packet, publicHash }, queryContext);
-  const currentQuery = approvedMarketQuery(identityInput, parsed.report.finalGrade, resolved?.fullSetName ?? identity.productSet),
-    legacyQuery = buildEbaySoldCompsV2Query(identityInput);
-  const query = savedQuery === undefined ? queryStyle === 'legacy' ? legacyQuery : currentQuery : savedQuery;
-  requireThat(typeof query === 'string' && [currentQuery, legacyQuery].includes(query), 409, 'MARKET_PUBLICATION_MISMATCH');
+  const currentQuery = [identity.playerName ?? identity.cardName, identity.cardNumber].map(queryText).filter(Boolean).join(' ');
+  // Saved queries are immutable evidence bound by the job/preview to this exact
+  // publication. Reading an old receipt never executes its old query strategy.
+  const query = savedQuery ?? currentQuery;
+  requireThat(typeof query === 'string' && query.trim() === query && query.length > 0 && query.length <= 400
+    && !/[\x00-\x1f\x7f]/.test(query), 409, 'MARKET_PUBLICATION_MISMATCH');
   let input = { ...identityInput, queryOverride: query };
   if (savedInput !== undefined) {
-    // Older signed previews lack an override and sometimes matchingPolicy.
-    // Preserve their exact input shape; no other identity drift is accepted.
-    const expected = { ...identityInput };
-    if (savedInput && !Object.hasOwn(savedInput, 'matchingPolicy')) delete expected.matchingPolicy;
-    if (savedInput && Object.hasOwn(savedInput, 'queryOverride')) expected.queryOverride = query;
-    requireThat(same(expected, savedInput) && buildEbaySoldCompsV2Query(expected) === query, 409, 'MARKET_PUBLICATION_MISMATCH');
-    input = expected;
+    if (!Object.hasOwn(savedInput ?? {}, 'matchingPolicy')) delete input.matchingPolicy;
+    if (!Object.hasOwn(savedInput ?? {}, 'queryOverride')) delete input.queryOverride;
+    requireThat(same(input, savedInput), 409, 'MARKET_PUBLICATION_MISMATCH');
+    input = structuredClone(savedInput);
   }
   return { binding: { publicToken: parsed.publicToken, approvalVersion: parsed.approvalVersion, publicHash },
-    identityHash: digest(canonical(identity)), input, query: buildEbaySoldCompsV2Query(input), atlasGrade: parsed.report.finalGrade,
-    ...(resolved ? { marketQueryContext: resolved } : {}) };
+    identityHash: digest(canonical(identity)), input, query, atlasGrade: parsed.report.finalGrade };
 }
 
 export const marketPreviewHash = preview => digest(canonical(preview, {
-  maxBytes: preview?.version === 'atlas-market-preview-v2' ? 2097152 : 262144,
+  maxBytes: preview?.version === 'atlas-market-preview-v2' ? 16777216 : 262144,
 }));
 
 function prepareSlabPreview(context, result) {
@@ -151,47 +73,47 @@ function prepareSlabPreview(context, result) {
     && new Set(result.imageMatch.readings.map(reading => reading.rowId)).size === result.imageMatch.readings.length
     && result.imageMatch.readings.every(reading => result.items.some(item => item.id === reading.rowId)),
   502, 'MARKET_PROVIDER_RESULT_INVALID');
-  const counts = { returned: result.items.length, missingImage: 0, unreadGrade: 0, differentIdentity: 0, outsideGrade: 0, shown: 0 };
+  const counts = { returned: result.items.length, missingImage: 0, unreadGrade: 0, differentIdentity: 0, outsideGrade: 0, raw: 0, graded: 0, recommended: 0, shown: 0 };
   const labelProcessing = { state: 'COMPLETE', completed: 0, failed: 0, unknown: 0, unavailable: 0, reasons: [] };
-  const eligible = [];
-  for (const item of result.items) {
-    const reading = result.imageMatch.readings.find(value => value.rowId === item.id);
+  const readings = result.items.map(item => {
+    const reading = result.imageMatch.readings.find(value => value.rowId === item.id)
+      ?? { rowId: item.id, imageUrl: item.imageUrl, sha256: null, numericGrade: null, gradingCompany: null, labelText: null,
+        identityMatch: 'UNCERTAIN', evidenceKind: 'UNCERTAIN', reason: 'Photograph has not been read.' };
     if (!item.imageUrl) counts.missingImage++;
-    const outcome = reading?.outcome ?? (!item.imageUrl ? 'UNAVAILABLE' : reading ? 'COMPLETE' : 'FAILED');
+    const outcome = reading.outcome ?? (!item.imageUrl ? 'UNAVAILABLE' : reading.labelText || Number.isFinite(reading.numericGrade) || reading.evidenceKind === 'RAW' ? 'COMPLETE' : 'FAILED');
     requireThat(['COMPLETE','FAILED','UNKNOWN','UNAVAILABLE'].includes(outcome), 502, 'MARKET_PROVIDER_RESULT_INVALID');
     labelProcessing[{ COMPLETE: 'completed', FAILED: 'failed', UNKNOWN: 'unknown', UNAVAILABLE: 'unavailable' }[outcome]]++;
-    if (['FAILED','UNKNOWN'].includes(outcome)) {
-      const code = reading?.failureCode ?? 'MARKET_LABEL_READING_MISSING';
-      requireThat(/^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE)$/.test(code), 502, 'MARKET_PROVIDER_RESULT_INVALID');
-      if (!labelProcessing.reasons.includes(code)) labelProcessing.reasons.push(code);
-      counts.unreadGrade++; continue;
-    }
-    if (reading?.identityMatch === 'DIFFERENT') { counts.differentIdentity++; continue; }
-    if (!reading || !Number.isFinite(reading.numericGrade) || !['MATCH', 'UNCERTAIN'].includes(reading.identityMatch)) { counts.unreadGrade++; continue; }
-    if (Math.abs(reading.numericGrade - context.atlasGrade) > 1) { counts.outsideGrade++; continue; }
-    eligible.push(item.id);
-  }
-  if (labelProcessing.failed || labelProcessing.unknown) {
-    labelProcessing.state = labelProcessing.completed ? 'PARTIAL' : 'FAILED';
-    requireThat(labelProcessing.state !== 'FAILED', 502,
-      labelProcessing.unknown ? 'MARKET_LABEL_OUTCOME_UNKNOWN' : labelProcessing.reasons[0]);
-  }
-  const sales = projectSelectedSlabReferences(result, eligible, context.atlasGrade)?.sales ?? [];
+    if (reading.failureCode && !labelProcessing.reasons.includes(reading.failureCode)) labelProcessing.reasons.push(reading.failureCode);
+    const evidenceKind = reading.evidenceKind ?? (Number.isFinite(reading.numericGrade) ? 'SLABBED' : 'UNCERTAIN');
+    if (evidenceKind === 'RAW') counts.raw++;
+    if (evidenceKind === 'SLABBED') counts.graded++;
+    if (!Number.isFinite(reading.numericGrade)) counts.unreadGrade++;
+    if (reading.identityMatch === 'DIFFERENT') counts.differentIdentity++;
+    const nearbyGrade = Number.isFinite(reading.numericGrade) && Math.abs(reading.numericGrade - context.atlasGrade) <= 1;
+    if (Number.isFinite(reading.numericGrade) && !nearbyGrade) counts.outsideGrade++;
+    const recommended = reading.identityMatch === 'MATCH' && nearbyGrade;
+    if (recommended) counts.recommended++;
+    return { ...reading, evidenceKind, nearbyGrade, recommended };
+  });
+  if (labelProcessing.failed || labelProcessing.unknown) labelProcessing.state = 'PARTIAL';
+  const evidence = { ...result, imageMatch: { ...result.imageMatch, readings } };
+  const sales = projectSelectedSlabReferences(evidence, result.items.map(item => item.id), context.atlasGrade)?.sales ?? [];
   const candidates = sales.map(sale => {
-    const reading = result.imageMatch.readings.find(value => value.rowId === sale.id);
-    // The exact unfiltered item and complete OCR reading already have durable
-    // receipts. Selection needs only the allowlisted display facts; a provider's
-    // unusually long title cannot make a photographed comp unprojectable.
-    const sourceItem = { id: sale.id, listingUrl: sale.listingUrl, imageUrl: sale.imageUrl, soldDate: sale.soldAt,
+    const reading = readings.find(value => value.rowId === sale.id), item = result.items.find(value => value.id === sale.id);
+    const sourceItem = { id: sale.id, title: sale.title, listingUrl: sale.listingUrl, imageUrl: sale.imageUrl, soldDate: sale.soldAt,
+      providerItemId: item.providerItemId ?? null, sourceIndex: item.sourceIndex ?? null,
       reportedPrice: sale.reportedPrice, soldPriceCents: sale.priceMinor, currency: sale.currency,
       priceBasis: sale.priceBasis === 'sold' ? 'EXACT' : sale.priceBasis === 'accepted_offer_unknown' ? 'UPPER_BOUND' : 'UNKNOWN' };
-    const slabReading = { rowId: reading.rowId, sha256: reading.sha256, imageUrl: sale.imageUrl,
-      gradingCompany: reading.gradingCompany, numericGrade: reading.numericGrade, identityMatch: reading.identityMatch };
-    return { sale, match: reading.identityMatch === 'MATCH' ? 'MATCH' : 'UNKNOWN', requiresReview: true, sourceItem, slabReading };
+    const slabReading = { rowId: reading.rowId, sha256: reading.sha256 ?? null, imageUrl: sale.imageUrl,
+      gradingCompany: reading.gradingCompany ?? null, numericGrade: reading.numericGrade ?? null,
+      identityMatch: reading.identityMatch, evidenceKind: reading.evidenceKind, reason: reading.reason ?? null };
+    return { sale, match: reading.identityMatch, matchReason: reading.reason ?? 'Photograph has not been read.',
+      nearbyGrade: reading.nearbyGrade, recommended: reading.recommended, requiresReview: true, sourceItem, slabReading };
   });
   counts.shown = candidates.length;
   return { version: 'atlas-market-preview-v2', ...context, source: result.source, engineVersion: result.engineVersion,
     responsePolicy: result.responsePolicy, retrievedAt: result.retrievedAt, candidates, counts, labelProcessing,
+    ...(result.pagination ? { pagination: structuredClone(result.pagination) } : {}),
     acquisitionDiagnostics: structuredClone(result.acquisitionDiagnostics), imageMatchCounts: structuredClone(result.imageMatch.counts ?? {}) };
 }
 
@@ -248,7 +170,7 @@ function preparePreview(context, result) {
 // Explicit research projects its separately journaled result. This helper has
 // no provider capability and is never an automatic-market fallback.
 export function projectResearchMarketPreview(source, result) {
-  const context = publishedMarketQuery(source, { savedQuery: result?.query, queryContext: result?.marketQueryContext });
+  const context = publishedResearchQuery(source, { savedQuery: result?.query });
   const preview = preparePreview(context, result);
   return { state: 'READY', preview, sourceHash: marketPreviewHash(preview) };
 }
@@ -257,14 +179,14 @@ export function createPresentationMarket() {
   return Object.freeze({
     project(source, result) {
       requireThat(result?.responsePolicy === 'ATLAS_SLAB_V1', 502, 'MARKET_PROVIDER_POLICY_INVALID');
-      const context = publishedMarketQuery(source, { savedQuery: result.query, queryContext: result.marketQueryContext });
+      const context = publishedMarketQuery(source, { savedQuery: result.query });
       const preview = prepareSlabPreview(context, result);
       return { state: 'READY', preview, sourceHash: marketPreviewHash(preview) };
     },
     select({ packet, publicHash, preview, sourceHash, selectedIds }) {
       requireThat(['atlas-market-preview-v1', 'atlas-market-preview-v2'].includes(preview?.version) && /^[a-f0-9]{64}$/.test(sourceHash ?? '')
         && marketPreviewHash(preview) === sourceHash, 409, 'MARKET_PREVIEW_MISMATCH');
-      const context = publishedMarketQuery({ packet, publicHash }, { savedQuery: preview.query, savedInput: preview.input, queryContext: preview.marketQueryContext });
+      const context = (preview.version === 'atlas-market-preview-v1' ? publishedResearchQuery : publishedMarketQuery)({ packet, publicHash }, { savedQuery: preview.query, savedInput: preview.input });
       for (const key of ['binding', 'identityHash', 'input', 'query', 'atlasGrade']) {
         if (!same(context[key], preview[key])) fail('MARKET_PUBLICATION_MISMATCH');
       }

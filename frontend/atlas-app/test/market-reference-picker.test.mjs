@@ -41,7 +41,7 @@ test('photo comps retain any grading company, missing link and undisclosed amoun
     listingUrl: null, priceMinor: null, currency: null, priceBasis: 'unknown', labelText: 'PIKACHU\nC. HOLO\n9',
     imageUrl: 'https://i.ebayimg.com/images/g/fixture/s-l1600.jpg' };
   f.props.savedSource = source; f.render();
-  assert.match(f.text(), /TAG · Grade 9/); assert.match(f.text(), /C. HOLO/); assert.match(f.text(), /Sold amount unavailable/);
+  assert.match(f.text(), /TAG · Grade 9/); assert.match(f.text(), /Within one grade point · Identity needs review/); assert.match(f.text(), /C. HOLO/); assert.match(f.text(), /Sold amount unavailable/);
   assert.match(f.text(), /4 listings returned/); assert.equal(f.find(node => node.type === 'input').length, 1);
   assert.equal(f.find(node => node.type === 'img').length, 1); assert.equal(f.searches, 0); assert.equal(f.saves.length, 0);
 });
@@ -51,7 +51,7 @@ test('optional picker performs no lookup on mount and never preselects even a pr
   f.button('Find sold cards').props.onClick(); f.render(); await flush(); f.render();
   assert.equal(f.searches, 1); assert.equal(f.find(node => node.type === 'input')[0].props.checked, false);
   assert.match(f.text(), /1 sold comp ready for your review/);
-  assert.match(f.text(), /Identity \/ variant needs review/); assert.match(f.text(), /ATLAS 9.5/); assert.match(f.text(), /PSA 9/); assert.match(f.text(), /\$40.00/);
+  assert.match(f.text(), /Identity \/ variant uncertain/); assert.match(f.text(), /ATLAS 9.5/); assert.match(f.text(), /PSA 9/); assert.match(f.text(), /\$40.00/);
   const listing = f.find(node => node.type === 'a')[0]; assert.equal(listing.props.href, ready().preview.candidates[0].sale.listingUrl);
   assert.equal(listing.props.target, '_blank'); assert.equal(listing.props.rel, 'noopener noreferrer');
   f.props.available = false; assert.equal(f.render(), null); assert.equal(f.searches, 1);
@@ -64,7 +64,7 @@ test('explicit search shows running then empty results without claiming ready sa
   assert.match(f.text(), /Finding sold cards…/); assert.doesNotMatch(f.text(), /Manual search|ready for your review/);
   assert.equal(f.button('Find sold cards').props.disabled, true);
   const result = ready(); result.preview.candidates = []; finish(result); await flush(); f.render();
-  assert.match(f.text(), /No qualifying sold listings/); assert.doesNotMatch(f.text(), /comps ready/);
+  assert.match(f.text(), /No sold listings returned/); assert.doesNotMatch(f.text(), /comps ready/);
   assert.equal(f.searches, 1); assert.equal(f.saves.length, 0);
 });
 
@@ -159,4 +159,31 @@ test('unknown provider count is never inferred from normalized or displayed coun
   f.props.savedSource = source; f.render();
   assert.match(f.text(), /Returned listing count unavailable/);
   assert.doesNotMatch(f.text(), /0 listings returned/);
+});
+
+test('raw, unread, different and off-grade rows remain selectable; older pages retain the human selection', async () => {
+  const f = fixture(), first = ready();
+  first.preview.version = 'atlas-market-preview-v2'; first.preview.counts = { returned: 3, raw: 1, unreadGrade: 2, recommended: 0 };
+  first.preview.pagination = { page: 1, hasNextPage: true, totalResults: '100' };
+  const seed = first.preview.candidates[0];
+  first.preview.candidates = [
+    { ...seed, sale: { ...seed.sale, id: 'raw', raw: true, evidenceKind: 'RAW', grade: null, grader: null } },
+    { ...seed, sale: { ...seed.sale, id: 'unread', raw: false, evidenceKind: 'UNCERTAIN', grade: null, grader: null } },
+    { ...seed, match: 'DIFFERENT', nearbyGrade: false, sale: { ...seed.sale, id: 'graded', evidenceKind: 'SLABBED', grade: '5', identityStatus: 'DIFFERENT' } },
+  ];
+  f.props.savedSource = first; f.render();
+  assert.match(f.text(), /Raw · Condition not verified/); assert.match(f.text(), /Unread · Grade not verified/);
+  assert.match(f.text(), /Outside one grade point/); assert.match(f.text(), /AI found a different card or variant/);
+  const choices = f.find(node => node.type === 'input'); assert.equal(choices.length, 3); assert(choices.every(node => !node.props.disabled && !node.props.checked));
+  choices[0].props.onChange({ target: { checked: true } }); f.render();
+  let options;
+  f.props.onPreview = async value => { options = value; return { state: 'QUEUED', previewId: 'page-two', refreshable: false }; };
+  f.render(); f.button('Load older sales').props.onClick(); await flush(); f.render();
+  assert.deepEqual(structuredClone(options), { afterPreviewId: first.previewId });
+  const second = structuredClone(first); second.previewId = 'page-two'; second.preview.previousPreviewId = first.previewId;
+  second.preview.pagination = { page: 2, hasNextPage: false }; second.preview.candidates.push({ ...seed, sale: { ...seed.sale, id: 'older' } });
+  f.props.savedSource = second; f.render();
+  assert.equal(f.find(node => node.type === 'input' && node.props.checked).length, 1);
+  f.button('Publish references').props.onClick(); await flush(); f.render();
+  assert.deepEqual(f.saves, [{ previewId: 'page-two', selectedIds: ['raw'] }]);
 });

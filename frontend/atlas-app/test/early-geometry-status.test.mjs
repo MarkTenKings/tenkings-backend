@@ -20,3 +20,17 @@ test('failed geometry offers manual recovery and changed settings cannot retry t
  assert.match(render({status}),/place the outline yourself/);assert.match(render({status}),/Retry geometry/);
  const pending=render({status,settingsChanged:true});assert.match(pending,/save these settings/);assert.doesNotMatch(pending,/Retry geometry/);
 });
+
+test('upfront clean image is shown separately from original-coordinate geometry',()=>{
+ const props={src:'/original',cleanSrc:'/clean',side:'Front',status:{state:'READY',physical:[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]}};
+ const shown=renderToStaticMarkup(React.createElement(exports.default,props));
+ assert.match(shown,/src="\/clean"/);assert.match(shown,/View original and geometry/);assert.doesNotMatch(shown,/<svg/);
+ const original=renderToStaticMarkup(React.createElement(exports.default,{...props,cleanSrc:null}));
+ assert.match(original,/src="\/original"/);assert.doesNotMatch(original,/View original and geometry/);
+});
+
+
+test('historical geometry offers an explicit Astra refresh without claiming a new result',()=>{
+ const shown=render({status:{state:'NEEDS_REVIEW',error:'GEOMETRY_REFRESH_AVAILABLE',canRetry:true}});
+ assert.match(shown,/Saved geometry retained/);assert.match(shown,/Request Astra geometry/);assert.doesNotMatch(shown,/Geometry queued/);
+});

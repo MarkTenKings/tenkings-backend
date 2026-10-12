@@ -16,6 +16,7 @@ export const LIMITS = frozen({ imageBytes: 10 * 1024 * 1024, totalImageBytes: 32
   requestBytes: 46 * 1024 * 1024, responseBytes: 1048576, outputBytes: 262144,
   lessons: 12, findings: 32, points: 64, timeoutMs: 120000, maxOutputTokens: 32768 });
 const WIDTH = 1350, HEIGHT = 1858;
+const GENERATED_VIEW_MEANING = 'Generated background-removed view of this same card. It may repaint edges, texture or scale. Use only as an auxiliary view; confirm every suspected defect against CURRENT_CARD original-pixel images and return coordinates only from CURRENT_CARD image IDs.';
 const CLEAN_REFERENCE_MEANING = 'No visible defect confirmed in this reference capture. Inspect the current card independently; this does not prove absence of hidden damage.';
 const CLEAN_REFERENCE_METADATA_FIELDS = ['id', 'feedbackSha256', 'sourceCardId', 'side', 'frame', 'imageSha256'];
 const CARD = frozen({ x: 40, y: 40, width: 1270, height: 1778 });
@@ -52,7 +53,7 @@ async function runStepsAsync(steps, signal) {
 // Capture all caller-owned data before the first await, including images not yet
 // reached by the builder. Bound copies by the existing per-image/total limits.
 function snapshotRequestInput(input) {
-  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages', ...(input.cleanLearning ? ['cleanLearning'] : [])]);
+  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages', ...(input.cleanLearning ? ['cleanLearning'] : []), ...(input.generatedViews ? ['generatedViews'] : [])]);
   const metadata = clone({ analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
     cornerShapes: input.cornerShapes, binding: input.binding, knowledge: input.knowledge });
   check(Array.isArray(input.images) && input.images.length === 2 && Array.isArray(input.lessonImages)
@@ -79,7 +80,9 @@ function snapshotRequestInput(input) {
   });
   const cleanLearning = input.cleanLearning ? { evidence: clone(input.cleanLearning.evidence),
     examples: input.cleanLearning.examples.map(e => ({ metadata: clone(e.metadata), image: raster(e.image, ['sourceSha256']) })) } : null;
-  return { ...metadata, images, lessonImages, ...(cleanLearning ? { cleanLearning } : {}) };
+  check(!input.generatedViews || Array.isArray(input.generatedViews) && input.generatedViews.length <= 2);
+  const generatedViews = input.generatedViews?.map(value => raster(value, ['side', 'originalSha256', 'generatedSha256']));
+  return { ...metadata, images, lessonImages, ...(cleanLearning ? { cleanLearning } : {}), ...(generatedViews ? { generatedViews } : {}) };
 }
 
 function validateCleanEvidence(value) {
@@ -188,7 +191,7 @@ export async function buildAstraContextBackgroundDefectRequestAsync(input, { sig
   return runStepsAsync(buildRequest(snapshotRequestInput(input), BACKGROUND_VERSION, INSPECTION_CONTEXT_CROP_LAYOUT), signal);
 }
 function* buildRequest(input, version, cropLayoutVersion) {
-  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages', ...(input.cleanLearning ? ['cleanLearning'] : [])]);
+  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages', ...(input.cleanLearning ? ['cleanLearning'] : []), ...(input.generatedViews ? ['generatedViews'] : [])]);
   uuid(input.analysisId); uuid(input.cardId); check(['SPORTS', 'POKEMON'].includes(input.profile));
   object(input.cornerShapes, SIDES); check(SIDES.every(side => ['SQUARE', 'ROUNDED_3_18_MM'].includes(input.cornerShapes[side])));
   const binding = parseBinding(input.binding), knowledge = validateRetrieval(input.knowledge);
@@ -220,6 +223,22 @@ function* buildRequest(input, version, cropLayoutVersion) {
       images.push(descriptor); byteCount += item.bytes.length;
       check(byteCount <= LIMITS.totalImageBytes, 'DEFECT_ANALYSIS_IMAGE_LIMIT', 413);
       content.push(inputText({ kind: 'CURRENT_CARD', ...descriptor }), inputImage(item));
+      yield null;
+    }
+  }
+  const generatedViews = [];
+  if (input.generatedViews) {
+    check(Array.isArray(input.generatedViews) && input.generatedViews.length <= 2);
+    for (const value of input.generatedViews) {
+      object(value, ['side', 'originalSha256', 'generatedSha256', 'mime', 'sha256', 'width', 'height', 'bytes']);
+      const { side, originalSha256, generatedSha256, ...raster } = value; sha(generatedSha256);
+      check(SIDES.includes(side) && !generatedViews.some(view => view.side === side)
+        && originalSha256 === binding.sides[side].frame.originalSha256, 'DEFECT_ANALYSIS_GENERATED_VIEW_MISMATCH');
+      const loaded = yield* image(raster);
+      byteCount += loaded.bytes.length; check(byteCount <= LIMITS.totalImageBytes, 'DEFECT_ANALYSIS_IMAGE_LIMIT', 413);
+      const descriptor = { side, originalSha256, generatedSha256, ...loaded.descriptor, meaning: GENERATED_VIEW_MEANING };
+      generatedViews.push(descriptor);
+      content.push(inputText({ kind: 'GENERATED_VIEW_AID', ...descriptor }), inputImage(loaded));
       yield null;
     }
   }
@@ -270,7 +289,7 @@ function* buildRequest(input, version, cropLayoutVersion) {
     knowledge: { revision: knowledge.revision, generation: knowledge.generation, sha256: knowledge.sha256,
       status: knowledge.status, lessonIds: knowledge.lessonIds, lessonImages,
       ...(knowledge.freshness ? { freshness: knowledge.freshness } : {}) },
-    ...(cleanLearning ? { cleanLearning } : {}),
+    ...(cleanLearning ? { cleanLearning } : {}), ...(input.generatedViews ? { generatedViews } : {}),
     promptSha256: digest(INSTRUCTIONS), schemaSha256: digest(canonical(RESULT_SCHEMA)), limits: LIMITS };
   const request = { model: MODEL, reasoning: { effort: 'xhigh' }, store: false,
     ...(version === BACKGROUND_VERSION ? { background: true } : {}), max_output_tokens: LIMITS.maxOutputTokens,
@@ -293,7 +312,7 @@ export function validateRequestEvidence(value) {
   if (providerBindingHash !== undefined) sha(providerBindingHash);
   const hasCropLayout = Object.hasOwn(evidence, 'cropLayoutVersion');
   object(evidence, ['version', ...(hasCropLayout ? ['cropLayoutVersion'] : []), 'analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'sourceBindingSha256', 'model',
-    'reasoningEffort', 'images', 'totalImageBytes', 'knowledge', 'promptSha256', 'schemaSha256', 'limits', ...(evidence.cleanLearning ? ['cleanLearning'] : [])]);
+    'reasoningEffort', 'images', 'totalImageBytes', 'knowledge', 'promptSha256', 'schemaSha256', 'limits', ...(evidence.cleanLearning ? ['cleanLearning'] : []), ...(evidence.generatedViews ? ['generatedViews'] : [])]);
   check(!hasCropLayout || (evidence.version === BACKGROUND_VERSION && evidence.cropLayoutVersion === INSPECTION_CONTEXT_CROP_LAYOUT),
     'DEFECT_ANALYSIS_CROP_LAYOUT_INVALID');
   check([VERSION, BACKGROUND_VERSION].includes(evidence.version) && evidence.model === MODEL && evidence.reasoningEffort === 'xhigh'
@@ -317,6 +336,17 @@ export function validateRequestEvidence(value) {
     check(canonical(item.crop) === canonical(spec) && item.width === spec.width && item.height === spec.height
       && canonical(item.cardBounds) === canonical(CARD) && item.coordinateSpace === 'INSPECTION_LOCAL_PIXEL_CENTERS' && item.noResampling === true
       && item.sourceImageSha256 === evidence.binding.sides[item.side].frame.inspectionImageSha256);
+  }
+  if (evidence.generatedViews) {
+    check(Array.isArray(evidence.generatedViews) && evidence.generatedViews.length <= 2);
+    const sides = new Set();
+    for (const view of evidence.generatedViews) {
+      object(view, ['side', 'originalSha256', 'generatedSha256', 'mime', 'sha256', 'width', 'height', 'byteCount', 'meaning']);
+      check(SIDES.includes(view.side) && !sides.has(view.side)
+        && view.originalSha256 === evidence.binding.sides[view.side].frame.originalSha256
+        && view.meaning === GENERATED_VIEW_MEANING, 'DEFECT_ANALYSIS_GENERATED_VIEW_MISMATCH');
+      sha(view.generatedSha256); sides.add(view.side); raster(view); bytes += view.byteCount;
+    }
   }
   const knowledge = evidence.knowledge;
   object(knowledge, ['revision', 'generation', 'sha256', 'status', 'lessonIds', 'lessonImages',
@@ -368,9 +398,9 @@ function* restoreRequest({ requestText, requestHash, evidence, evidenceHash }) {
   let request; try { request = JSON.parse(requestText); } catch { check(false, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID'); }
   yield null;
   const content = request?.input?.[1]?.content;
-  check(Array.isArray(content) && content.length >= 21 && content.length <= 69 && (content.length - 1) % 2 === 0,
+  check(Array.isArray(content) && content.length >= 21 && content.length <= 73 && (content.length - 1) % 2 === 0,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
-  const images = SIDES.map(side => ({ side, whole: null, crops: [] })), lessons = [], lessonImages = [], cleanExamples = [];
+  const images = SIDES.map(side => ({ side, whole: null, crops: [] })), lessons = [], lessonImages = [], cleanExamples = [], generatedViews = [];
   for (let i = 1; i < content.length; i += 2) {
     check(content[i]?.type === 'input_text' && typeof content[i].text === 'string' && content[i + 1]?.type === 'input_image'
       && typeof content[i + 1].image_url === 'string' && content[i + 1].image_url.startsWith('data:image/png;base64,'));
@@ -381,6 +411,9 @@ function* restoreRequest({ requestText, requestHash, evidence, evidenceHash }) {
       const part = { mime: metadata.mime, sha256: metadata.sha256, width: metadata.width, height: metadata.height, bytes };
       if (metadata.id === `${slot.side}:whole`) { check(slot.whole === null); slot.whole = { ...part, sourceSha256: metadata.sourceImageSha256 }; }
       else slot.crops.push({ ...part, id: metadata.id, x: metadata.crop.x, y: metadata.crop.y });
+    } else if (metadata.kind === 'GENERATED_VIEW_AID') {
+      generatedViews.push({ side: metadata.side, originalSha256: metadata.originalSha256, generatedSha256: metadata.generatedSha256,
+        mime: metadata.mime, sha256: metadata.sha256, width: metadata.width, height: metadata.height, bytes });
     } else if (metadata.kind === 'HUMAN_REVIEWED_CLEAN_EXAMPLE') {
       const { kind: _kind, meaning: _meaning, ...fields } = metadata;
       const descriptor = evidence.cleanLearning?.images[cleanExamples.length]; check(descriptor);
@@ -403,6 +436,7 @@ function* restoreRequest({ requestText, requestHash, evidence, evidenceHash }) {
     lessonIds: evidence.knowledge.lessonIds, lessons, sha256: evidence.knowledge.sha256 };
   const restored = yield* buildRequest({ analysisId: evidence.analysisId, cardId: evidence.cardId, profile: evidence.profile,
     cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages,
+    ...(evidence.generatedViews ? { generatedViews } : {}),
     ...(evidence.cleanLearning ? { cleanLearning: { evidence: evidence.cleanLearning.consumer, examples: cleanExamples } } : {}) }, evidence.version, evidence.cropLayoutVersion);
   check(restored.requestText === requestText && restored.requestHash === requestHash && restored.evidenceHash === evidenceHash,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');

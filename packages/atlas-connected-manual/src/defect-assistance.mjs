@@ -3,7 +3,7 @@ import { BATCH_ANALYSIS_RETRY_HTTP_STATUSES } from '@atlas/batch-grading';
 import { geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { defectBase } from '@atlas/manual-workspace/defect-actions';
 import { createDefectMemory, createDefectMemoryRepository, createLearningPublicationRepository, createLearningPublicationWorker, loadAvailableLessonImages,
-  readRoleLearning, consumeCleanLearning, consumeGeometryLearning } from '@atlas/defect-memory';
+  readRoleLearning, consumeCleanLearning } from '@atlas/defect-memory';
 import { learningRetrievalBindingFacts } from '../../atlas-defect-memory/src/binding-facts.mjs';
 import { authorizeManualCard } from '@atlas/defect-memory/repository';
 import { buildAstraContextBackgroundDefectRequestAsync, INSPECTION_CONTEXT_CROP_LAYOUT, defectAnalysisBaselineFacts, cleanLearningConsumerFacts, LIMITS as ANALYSIS_LIMITS } from '@atlas/defect-analysis';
@@ -13,7 +13,7 @@ import { createAnalysisRepository } from '@atlas/defect-analysis/repository';
 import { createAnalysisExecutor, createAnalysisResultReader } from '@atlas/defect-analysis/executor';
 import { proposalRle } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { readConfirmationFence } from './confirmation-fence.mjs';
-import { importedProposalIds } from '../../atlas-manual-workflow/src/final-review.mjs';
+import { importedProposalIds, proposalFindingId } from '../../atlas-manual-workflow/src/final-review.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const MACHINE_PREPARATION = Symbol('atlas-machine-preparation');
@@ -178,6 +178,10 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       : { PREPARED: 'UNKNOWN', DISPATCHED: 'RUNNING' }[run.state] ?? run.state;
     const reviews = state.assistance?.reviews ?? [];
     const imported = state.finalReview?.report.analysisId === run.analysisId ? importedProposalIds(state.finalReview) : [];
+    const findingObservations = (loaded?.result?.proposals ?? []).map(proposal => ({
+      findingId: reviews.find(r => r.analysisId === run.analysisId && r.proposalId === proposal.id)?.findingId ?? proposalFindingId(proposal.id),
+      side: proposal.side, observation: proposal.observation, uncertainty: proposal.uncertainty,
+    }));
     const proposals = (loaded?.result?.proposals ?? []).filter(proposal => !imported.includes(proposal.id)).map(proposal => {
       const review = reviews.find(r => r.analysisId === run.analysisId && r.proposalId === proposal.id);
       return { ...proposal, reviewStatus: review ? { ACCEPT: 'ACCEPTED', TRACE_SAVE: 'CORRECTED', REJECT: 'REJECTED', EXCLUDE: 'EXCLUDED' }[review.action] : 'UNREVIEWED' };
@@ -202,7 +206,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       ? (run.receipts.find(receipt => receipt.kind === 'RESPONSE') ?? run.receipts.find(receipt => receipt.kind === 'OUTCOME'))?.evidence : null;
     return { state: run.state, astra: { enabled: !state.finalReview || proposals.length > 0, requestAvailable: !state.finalReview && Boolean(provider), status, analysisId: run.analysisId, requestActionId: run.actionId,
       ...(status === 'STALE' ? { code: 'DEFECT_ANALYSIS_STALE' } : outcome?.code ? { code: outcome.code, httpStatus: outcome.httpStatus } : {}),
-      base: Object.fromEntries(SIDES.map(side => [side, baseFromRun(run, side)])), proposals,
+      base: Object.fromEntries(SIDES.map(side => [side, baseFromRun(run, side)])), proposals, findingObservations,
       ...(status === 'READY' && loaded?.result ? { proposalReview: confirmationOffer(run, loaded.result, state) } : {}),
       limitations: loaded?.result?.limitations ?? [],
       resumeAvailable: run.state === 'PREPARED', knowledgeRevision: run.requestEvidence.knowledge.revision,
@@ -272,6 +276,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       const binding = defectAnalysisBinding(card, state, preparation);
       requireThat(SIDES.every(side => canonical(input.base[side]) === canonical(defectBase(state.defects, side))), 409, 'DEFECT_ANALYSIS_STALE');
       const images = await imageEffects.currentImages(staff, card, binding, INSPECTION_CONTEXT_CROP_LAYOUT);
+      const generatedViews = await imageEffects.generatedViews?.(staff, card, binding, { signal: dispatchSignal }) ?? [];
       // This is a fresh database retrieval for every new request, after costly
       // image preparation. Lifecycle retrieval excludes unavailable source
       // lessons individually and records the fallback in immutable evidence.
@@ -280,13 +285,14 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       const cleanScope = knowledge.status === 'BASELINE_WITHOUT_EXAMPLES' ? null : await roleSnapshot(staff, card, state, 'CLEAN');
       const authoritativeImageBytes = images.reduce((total, side) => total + side.whole.bytes.byteLength
         + side.crops.reduce((sum, image) => sum + image.bytes.byteLength, 0), 0)
-        + lessonImages.reduce((total, image) => total + image.bytes.byteLength + image.traceOverlay.bytes.byteLength, 0);
+        + lessonImages.reduce((total, image) => total + image.bytes.byteLength + image.traceOverlay.bytes.byteLength, 0)
+        + generatedViews.reduce((total, image) => total + image.bytes.byteLength, 0);
       const cleanLearning = cleanScope && (cleanScope.policy || cleanScope.selection.reason !== 'POLICY_NOT_ACTIVE') ? await consumeCleanLearning({ selection: cleanScope.selection,
         loadImage: imageEffects.cleanImage, limit: Math.min(4, 12 - knowledge.lessons.length),
         remainingImageBytes: Math.max(0, ANALYSIS_LIMITS.totalImageBytes - authoritativeImageBytes) }) : null;
       const prepared = await buildAstraContextBackgroundDefectRequestAsync({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
         cornerShapes: Object.fromEntries(SIDES.map(side => [side, state.defects.sides[side].cornerShape])),
-        binding, images, knowledge, lessonImages, ...(cleanLearning ? { cleanLearning } : {}) }, { signal: dispatchSignal });
+        binding, images, knowledge, lessonImages, ...(generatedViews.length ? { generatedViews } : {}), ...(cleanLearning ? { cleanLearning } : {}) }, { signal: dispatchSignal });
       await executor.prepareAndRun(staff, { cardId, actionId: input.actionId, prepared,
         expiresAt: new Date(Date.now() + 180000).toISOString(), baseHash, dispatchSignal, admitDispatch,
         ...(input.replacement ? { replacement: input.replacement } : {}) });
@@ -305,15 +311,6 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       }
     },
     analyzeMachine: (staff, cardId, input, { dispatchSignal, admitDispatch } = {}) => api.analyze(staff, cardId, input, MACHINE_PREPARATION, dispatchSignal, admitDispatch),
-    // Internal geometry/shadow consumer. Its source-bound advisory cannot
-    // mutate a workspace or certify a native proposal; normal human CAS remains.
-    async geometryLearning(staff, cardId, { side, candidates, engineSha256 }) {
-      requireThat(SIDES.includes(side), 400, 'LEARNING_GEOMETRY_SIDE_INVALID');
-      const { card } = await workflow.service.authorizeEdit(staff, cardId), state = await workflow.hydrate(card);
-      const scope = await roleSnapshot(staff, card, state, 'GEOMETRY', side, { ...learningBindings, modelPromptSha256: engineSha256 });
-      if (!scope?.policy) return { status: 'BASELINE', requiresHumanConfirmation: true };
-      return consumeGeometryLearning({ ...scope, targetFrameSha256: state.geometry.sides[side].image.frameSha256, candidates });
-    },
     status: (staff, cardId, analysisId = null) => project(staff, cardId, analysisId),
     pendingMachineAnalysis: (staff, job) => repository ? repository.pendingMachine(staff, {
       cardId: job.cardId, analysisId: job.analysisActionId, expected: {

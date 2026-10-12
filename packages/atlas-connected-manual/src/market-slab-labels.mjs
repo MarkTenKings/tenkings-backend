@@ -17,8 +17,8 @@ const text = (v, max, multiline = false) => typeof v === 'string' && (multiline 
 const readingKey = (target, sha256) => `atlas-codex-market-reading:v1:${hash({policy:MARKET_SLAB_POLICY,model:CODEX_LABEL_MODEL,target:target.key,sha256})}`;
 const requestKey = request => `atlas-market-label:v1:${hash(request)}`;
 const emptyReading = (row, reason, outcome = 'UNAVAILABLE', failureCode = null) => ({ rowId:row.id,sha256:null,imageUrl:row.imageUrl,gradingCompany:null,numericGrade:null,
-  labelText:null,identityMatch:'UNCERTAIN',reason,outcome,...(failureCode ? {failureCode} : {}),canonicalCardKey:null,canonicalPrintingKey:null });
-const failedReading = (sha256, failureCode) => ({sha256,gradingCompany:null,numericGrade:null,labelText:null,identityMatch:'UNCERTAIN',
+  labelText:null,identityMatch:'UNCERTAIN',evidenceKind:'UNCERTAIN',reason,outcome,...(failureCode ? {failureCode} : {}),canonicalCardKey:null,canonicalPrintingKey:null });
+const failedReading = (sha256, failureCode) => ({sha256,gradingCompany:null,numericGrade:null,labelText:null,identityMatch:'UNCERTAIN',evidenceKind:'UNCERTAIN',
   outcome:failureCode==='MARKET_LABEL_OUTCOME_UNKNOWN'?'UNKNOWN':'FAILED',failureCode,
   reason:failureCode==='MARKET_LABEL_OUTCOME_UNKNOWN'
     ? 'The label request outcome is unknown. Its original reservation is retained and the request will not be charged again.'
@@ -38,11 +38,13 @@ const PROMPT = [
   'Compare the visible card and label to the supplied catalog card and printing. MATCH means the evidence is compatible with that card and printing; DIFFERENT requires an actual visible contradiction; otherwise UNCERTAIN.',
   'Use normal card terminology and grading-company abbreviations. Holo, C. Holo, Cosmo Holo, Cosmos Holofoil and abbreviated set names can be compatible. Missing language, year, full set name or expanded finish words is not by itself a mismatch. Do not require every identity field or exact spelling.',
   'A standard base-card label need not say Base or Normal. Distinct visible variants remain distinct. If multiple cards/slabs are visible, read the clearly identified target slab; if no single target can be associated, return UNCERTAIN instead of inventing a match.',
+  'Classify evidenceKind as RAW for an unslabbed card, SLABBED for a visible grading slab, or UNCERTAIN when the photograph cannot establish either. Raw cards are valid research choices. Never invent a grade for them.',
+  'Leading zeros in collector numbers are typography: 025/165 and 25/165 agree. A missing denominator is incomplete evidence; a visibly different denominator or prefix is a contradiction. Common short set names and full set names can agree.',
   'A raw card or unreadable slab has no verified company/grade. Never infer the submitted physical card grade, and never approve or change a user decision.',
 ].join(' ');
 function schema(photos) {return {type:'object',additionalProperties:false,required:['readings'],properties:{readings:{type:'array',items:{type:'object',additionalProperties:false,
-  required:['sha256','gradingCompany','numericGrade','labelText','identityMatch','reason'],properties:{sha256:{type:'string',enum:photos.map(p=>p.sha256)},
-    gradingCompany:{type:['string','null']},numericGrade:{type:['number','null']},labelText:{type:['string','null']},
+  required:['sha256','gradingCompany','numericGrade','labelText','identityMatch','reason','evidenceKind'],properties:{sha256:{type:'string',enum:photos.map(p=>p.sha256)},
+    evidenceKind:{type:'string',enum:['RAW','SLABBED','UNCERTAIN']},gradingCompany:{type:['string','null']},numericGrade:{type:['number','null']},labelText:{type:['string','null']},
     identityMatch:{type:'string',enum:['MATCH','DIFFERENT','UNCERTAIN']},reason:{type:'string'}}}}}};}
 export function projectMarketSlabResponse(saved, request) {
   requireThat(saved?.requestHash===hash(request),502,'MARKET_LABEL_RESPONSE_INVALID');
@@ -55,7 +57,9 @@ export function projectMarketSlabResponse(saved, request) {
   requireThat(answer&&Object.keys(answer).join() === 'readings'&&Array.isArray(answer.readings),502,'MARKET_LABEL_RESPONSE_INVALID');
   return request.photos.map(photo=>{
     const found=answer.readings.filter(r=>r&&r.sha256===photo.sha256),r=found[0];
-    const valid=found.length===1&&Object.keys(r).sort().join()===['sha256','gradingCompany','numericGrade','labelText','identityMatch','reason'].sort().join()
+    const valid=found.length===1&&Object.keys(r).sort().join()===['sha256','gradingCompany','numericGrade','labelText','identityMatch','reason',...(Object.hasOwn(r,'evidenceKind')?['evidenceKind']:[])].sort().join()
+      && (!Object.hasOwn(r,'evidenceKind') || ['RAW','SLABBED','UNCERTAIN'].includes(r.evidenceKind))
+      && (r.evidenceKind !== 'RAW' || r.numericGrade === null && r.gradingCompany === null)
       &&['MATCH','DIFFERENT','UNCERTAIN'].includes(r.identityMatch)&&text(r.reason,2000,true)
       &&(r.gradingCompany===null||text(r.gradingCompany,120))&&(r.labelText===null||text(r.labelText,4000,true))
       &&(r.numericGrade===null||Number.isFinite(r.numericGrade)&&r.numericGrade>=0&&r.numericGrade<=100)
@@ -119,16 +123,17 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     return failedReading(photo.sha256,'MARKET_LABEL_OUTCOME_UNKNOWN');
   });}
   async function retained(target,photo){return machine(async({tx})=>{const saved=await read(tx,readingKey(target,photo.sha256));if(saved){requireThat(saved.schemaVersion==='atlas-codex-market-reading/v1'&&saved.policy===MARKET_SLAB_POLICY&&saved.target.key===target.key&&saved.image.sha256===photo.sha256&&saved.reading.sha256===photo.sha256,503,'MARKET_LABEL_READING_INVALID');return saved.reading;}
-    // Reuse only a previously read overall grade. Legacy literal text may
-    // contain autograph/subgrades and cannot establish the card's grade.
+    // Reuse saved photographed evidence, including raw and unread cards.
+    // Literal text never supplies a guessed overall grade or another OCR charge.
     const previous=await read(tx,codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},photo.sha256));
-    const r=previous?.reading;if(!r||previous.schemaVersion!=='atlas-codex-reading/v1'||previous.policy!==CODEX_LABEL_POLICY||r.sha256!==photo.sha256||!target.canonicalPrintingKey||r.candidateKey!==target.canonicalPrintingKey)return null;
+    const r=previous?.reading;if(!r||previous.schemaVersion!=='atlas-codex-reading/v1'||previous.policy!==CODEX_LABEL_POLICY||r.sha256!==photo.sha256)return null;
     const grade=Number.isFinite(r.numericGrade)?r.numericGrade:null;
-    if(grade===null)return null;
-    const reading={sha256:photo.sha256,gradingCompany:r.gradingCompany,numericGrade:grade,labelText:r.labelText,identityMatch:'MATCH',reason:'Reused the saved matching reference slab label and its previously read overall numeric grade.'};
+    const identityMatch = r.candidateKey && target.canonicalPrintingKey ? r.candidateKey === target.canonicalPrintingKey ? 'MATCH' : 'DIFFERENT' : 'UNCERTAIN';
+    const reading={sha256:photo.sha256,gradingCompany:r.gradingCompany??null,numericGrade:grade,labelText:r.labelText,identityMatch,
+      evidenceKind:r.evidenceKind??(grade!==null?'SLABBED':'UNCERTAIN'),reason:r.reason??'Reused the saved reference photograph reading. No new OCR request was needed.'};
     await lock(tx,readingKey(target,photo.sha256));const concurrent=await read(tx,readingKey(target,photo.sha256));if(concurrent)return concurrent.reading;
     await write(tx,readingKey(target,photo.sha256),{schemaVersion:'atlas-codex-market-reading/v1',policy:MARKET_SLAB_POLICY,target,image:{sha256:photo.sha256,url:photo.url,mimeType:photo.mimeType,width:photo.width,height:photo.height},reading,responseHash:previous.responseHash,requestKey:previous.requestKey});return reading;});}
-  async function batch(target,photos,job){const request={policy:MARKET_SLAB_POLICY,model:CODEX_LABEL_MODEL,target,photos:photos.map(({sha256,mimeType})=>({sha256,mimeType})).sort((a,b)=>a.sha256.localeCompare(b.sha256))};
+  async function batch(target,photos,job){const request={policy:MARKET_SLAB_POLICY,model:CODEX_LABEL_MODEL,reasoningEffort:'xhigh',target,photos:photos.map(({sha256,mimeType})=>({sha256,mimeType})).sort((a,b)=>a.sha256.localeCompare(b.sha256))};
     const key=requestKey(request);
     const reserved=await machine(async({tx})=>{const keys=request.photos.map(p=>readingKey(target,p.sha256)).sort();for(const k of keys)await lock(tx,k);
       const response=await read(tx,`${key}:response`);if(response){const original=await read(tx,`${key}:request`);return {state:'SAVED',request,response,images:original.images};}
@@ -152,7 +157,7 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     const content=[{type:'input_text',text:stableJson({target})}];for(const p of request.photos){const image=photos.find(x=>x.sha256===p.sha256);
       content.push({type:'input_text',text:`Photograph SHA-256 ${p.sha256}`},{type:'input_image',image_url:`data:${image.mimeType};base64,${image.bytes.toString('base64')}`,detail:'high'});}
     let saved;
-    try {const dispatch=async()=>{const response=await fetchImpl(ENDPOINT,{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:CODEX_LABEL_MODEL,store:false,reasoning:{effort:'medium'},max_output_tokens:6000,input:[{role:'system',content:PROMPT},{role:'user',content}],text:{verbosity:'low',format:{type:'json_schema',name:'atlas_market_slab_labels',strict:true,schema:schema(request.photos)}}})});
+    try {const dispatch=async()=>{const response=await fetchImpl(ENDPOINT,{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:CODEX_LABEL_MODEL,store:false,reasoning:{effort:'xhigh'},max_output_tokens:12000,input:[{role:'system',content:PROMPT},{role:'user',content}],text:{verbosity:'low',format:{type:'json_schema',name:'atlas_market_slab_labels',strict:true,schema:schema(request.photos)}}})});
       requireThat(!response.redirected&&(!response.url||response.url===ENDPOINT),502,'MARKET_LABEL_REDIRECT');const bytes=await readBoundedProviderBody(response,new AbortController().signal,1024*1024),bodyText=bytes.toString('utf8');requireThat(!bodyText.includes(apiKey),502,'MARKET_LABEL_RESPONSE_INVALID');
       saved={requestHash:hash(request),httpStatus:response.status,bodyText};};
       const active=modelTail.then(dispatch);modelTail=active.catch(()=>{});await active;

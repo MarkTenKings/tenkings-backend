@@ -31,11 +31,12 @@ export function createScrydexMetadataReader({ apiKey, teamId, cache, fetchImpl =
       if (!entry || entry.sha256 !== expectedSha256) throw failure('VARIANT_REFERENCE_SOURCE_UNAVAILABLE');
       return validate(entry, url);
     },
-    async json(url, { signal, budget } = {}) {
+    async json(url, { signal, budget, retainedOnly = false } = {}) {
       if (!isScrydexMetadataUrl(url)) throw failure('VARIANT_SOURCE_URL');
       if (!budget || !Number.isInteger(budget.remaining) || budget.remaining < 1) throw failure('VARIANT_SOURCE_BUDGET'); budget.remaining--;
       return boundedProviderOperation(signal, SCRYDEX_METADATA_LIMITS.timeoutMs, async active => {
-        const key = keyFor(url), saved = await cache.get(key);
+        const key = keyFor(url), saved = await (retainedOnly ? cache.getRetained(key) : cache.get(key));
+        if (retainedOnly) { if (!saved) throw failure('VARIANT_REFERENCE_SOURCE_UNAVAILABLE'); return validate(saved,url); }
         if (saved && Date.parse(saved.capturedAt) <= now() && Date.parse(saved.expiresAt) > now()) return validate(saved, url);
         if (!pending.has(key)) pending.set(key, (async () => {
           const time = now(), requestId = randomUUID();

@@ -20,7 +20,7 @@ export async function validateListingSourceJournal({fixture,connection,store,sta
   const second=createVariantJobStore({boundary:createMachineStaffBoundary({boundary:connection.boundary,auth:connection.auth,manualClient:client})});
   const cardA=await seed(),cardB=await seed();
   const [aliasRow]=await fixture.admin.$queryRawUnsafe('SELECT content FROM atlas_manual.card WHERE id=$1::uuid',cardB),aliasDraft=JSON.parse(aliasRow.content);
-  aliasDraft.identity={...aliasDraft.identity,cardName:'MAGIKARP',productSet:'REBEL CLASH',cardNumber:'#39/0192'};aliasDraft.identityRevision++;
+  aliasDraft.identity={...aliasDraft.identity,cardName:'MAGIKARP',productSet:'REBEL CLASH',cardNumber:'039/192'};aliasDraft.identityRevision++;
   await fixture.admin.$executeRawUnsafe('UPDATE atlas_manual.card SET content=$2,content_hash=$3,revision=revision+1 WHERE id=$1::uuid',cardB,canonical(aliasDraft),digest(canonical(aliasDraft)));
   assert.equal(await store.discover(),2);
   const a=await store.claim(2),b=await second.claim(2);assert.deepEqual(new Set([a.card_id,b.card_id]),new Set([cardA,cardB]));

@@ -53,6 +53,9 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
         // Its immutable input is sufficient; only an explicit mutation locks it.
         let rows = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.early_geometry WHERE key=$1', key);
         if (!rows.length) {
+          // A runtime/model change is not permission to purchase a new proposal
+          // for an existing photo. Only an explicit human retry replaces it.
+          if (!retry && (await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual_connected.early_geometry WHERE upload_id=$1::uuid AND engine_hash<>$2 LIMIT 1', input.uploadId, input.engineHash)).length) return null;
           const [count] = await tx.$queryRawUnsafe("SELECT count(*)::int AS count FROM atlas_manual_connected.early_geometry WHERE actor_id=$1::uuid AND state IN ('QUEUED','RUNNING')", principal.id);
           requireThat(count.count < 32, 429, 'GEOMETRY_QUEUE_FULL');
           await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.early_geometry(key,card_id,upload_id,side,actor_id,access_version,engine_hash,input)
@@ -61,16 +64,23 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
         } else if (retry || rows[0].access_version !== principal.accessVersion) {
           rows = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.early_geometry WHERE key=$1 FOR UPDATE', key);
           requireThat(retry || rows[0].actor_id === principal.id, 409, 'GEOMETRY_RETRY_STALE');
-          if (retry) requireThat(['FAILED','NEEDS_REVIEW'].includes(rows[0].state), 409, 'GEOMETRY_RETRY_STALE');
+          if (retry) {
+            requireThat(['FAILED','NEEDS_REVIEW'].includes(rows[0].state), 409, 'GEOMETRY_RETRY_STALE');
+            await tx.$queryRawUnsafe('SELECT atlas_manual_connected.retry_geometry_model($1,$2::uuid,$3::integer)', key, principal.id, principal.accessVersion);
+          }
           await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.early_geometry SET state='QUEUED',result=NULL,error=NULL,claim_id=NULL,lease_until=NULL,
             access_version=$2,attempts=0,updated_at=clock_timestamp() WHERE key=$1`, key, principal.accessVersion);
         }
         return parseGeometryJob((await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.early_geometry WHERE key=$1', key))[0]);
       }, true);
     },
-    async read(staff, cardId, key) {
-      return authorized(staff, cardId, async tx => parseGeometryJob((await tx.$queryRawUnsafe(
-        'SELECT * FROM atlas_manual_connected.early_geometry WHERE card_id=$1::uuid AND key=$2', cardId, key))[0]));
+    async read(staff, cardId, key, input = null) {
+      return authorized(staff, cardId, async tx => {
+        const job = parseGeometryJob((await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.early_geometry WHERE card_id=$1::uuid AND key=$2', cardId, key))[0]);
+        if (job || !input) return job;
+        const prior = await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual_connected.early_geometry WHERE card_id=$1::uuid AND upload_id=$2::uuid AND engine_hash<>$3 LIMIT 1', cardId, input.uploadId, input.engineHash);
+        return prior.length ? { key, state: 'NEEDS_REVIEW', result: null, error: 'GEOMETRY_REFRESH_AVAILABLE' } : null;
+      });
     },
     async claim(engineHash, claimId, geometryConcurrency = 2) {
       geometryProcessingSettings({ geometryConcurrency });
@@ -80,12 +90,29 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
     async pending(engineHash, cursor = null, geometryDiscoveryPageSize = 2) {
       geometryProcessingSettings({ geometryDiscoveryPageSize });
       requireThat(receiptClient, 503, 'GEOMETRY_WORKER_UNAVAILABLE');
-      return workerQuery('SELECT * FROM atlas_manual_connected.pending_early_geometry($1,$2::timestamptz,$3::uuid,$4::integer)',
+      // Keep all cursor rows, including skipped historical uploads, so a full
+      // page of old photos cannot starve later newly uploaded photos.
+      return workerQuery(`SELECT p.*,EXISTS(SELECT 1 FROM atlas_manual_connected.early_geometry j WHERE j.upload_id=p.upload_id AND j.engine_hash<>$1) AS previous_engine
+        FROM atlas_manual_connected.pending_early_geometry($1,$2::timestamptz,$3::uuid,$4::integer) p`,
         engineHash, cursor?.createdAt ?? null, cursor?.uploadId ?? null, geometryDiscoveryPageSize);
     },
     async stage(input) {
       const [row] = await workerQuery('SELECT atlas_manual_connected.queue_early_geometry($1) AS queued', canonical(input, { maxBytes: 32768 }));
       return row?.queued === true;
+    },
+    async readModel(job) {
+      const [row] = await workerQuery('SELECT * FROM atlas_manual_connected.read_geometry_model($1)', job.key);
+      return row ? { attempt: row.attempt, retryAuthorized: Boolean(row.retry_authorized_at), requestHash: row.request_hash, request: JSON.parse(row.request), response: row.response ? JSON.parse(row.response) : null } : null;
+    },
+    async dispatchModel(job, requestHash, evidence) {
+      const [row] = await workerQuery('SELECT atlas_manual_connected.dispatch_geometry_model($1,$2::uuid,$3,$4) AS dispatched', job.key, job.claimId, requestHash, canonical(evidence));
+      return row?.dispatched === true;
+    },
+    async saveModelResponse(job, requestHash, evidence) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { const [row] = await workerQuery('SELECT atlas_manual_connected.receive_geometry_model($1,$2,$3) AS saved', job.key, requestHash, canonical(evidence)); return row?.saved === true; }
+        catch (error) { if (attempt === 2) throw error; }
+      }
     },
     async finish(job, state, result = null, error = null) {
       const [row] = await workerQuery('SELECT atlas_manual_connected.finish_early_geometry($1,$2::uuid,$3,$4,$5) AS committed',
@@ -97,7 +124,8 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
 
 export function earlyGeometryGrantSQL(role) {
   requireThat(/^[a-z][a-z0-9_]{0,62}$/.test(role));
-  return `GRANT SELECT,INSERT ON atlas_manual_connected.early_geometry TO "${role}";
+  return `GRANT EXECUTE ON FUNCTION atlas_manual_connected.read_geometry_model(text),atlas_manual_connected.retry_geometry_model(text,uuid,integer),atlas_manual_connected.dispatch_geometry_model(text,uuid,text,text),atlas_manual_connected.receive_geometry_model(text,text,text) TO "${role}";
+GRANT SELECT,INSERT ON atlas_manual_connected.early_geometry TO "${role}";
 GRANT SELECT,INSERT ON atlas_manual_connected.early_geometry_intent TO "${role}";
 GRANT UPDATE(access_version) ON atlas_manual_connected.early_geometry_intent TO "${role}";
 GRANT UPDATE(state,result,error,claim_id,lease_until,access_version,attempts,updated_at) ON atlas_manual_connected.early_geometry TO "${role}";

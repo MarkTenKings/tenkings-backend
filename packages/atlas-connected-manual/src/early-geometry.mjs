@@ -6,7 +6,8 @@ import { geometryProcessingSettings } from './geometry-processing.mjs';
 import { geometrySideSettings } from './details.mjs';
 import { applyGeometryEdit, geometryBase, preparationBase } from '@atlas/manual-workspace/geometry-actions';
 import { machineGeometryCandidate, MACHINE_GEOMETRY_POLICY } from './machine-geometry.mjs';
-import { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, describePreparationDerivative,
+import { ASTRA_GEOMETRY_POLICY, runAstraGeometry, geometryProposal, originalToCanonical } from './astra-geometry.mjs';
+import { preparationRuntimeIdentity, preparePhotoGeometry, describePreparationDerivative,
   describePreparationPreview,
   adoptPhysicalGeometryProposal, adoptGeometryPreparation, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1,
   preparationOutputNames } from '@atlas/preparation-runtime';
@@ -51,8 +52,10 @@ export function adoptEarlyGeometry(geometry, side, packet, input) {
     && slot.image.frameSha256 === photoFrame.raster.content.sha256
     && slot.image.width === photoFrame.raster.dimensions.width && slot.image.height === photoFrame.raster.dimensions.height,
   409, 'GEOMETRY_CACHE_STALE');
-  for (const result of [packet.physical, packet.preparation].filter(Boolean)) requireThat(
+  for (const result of [packet.preparation].filter(Boolean)) requireThat(
     result.frameDescriptorSha256 === frame && equal(result.identity, input.engine.runtime.identity), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
+  if (packet.physical) requireThat(packet.physical.frameDescriptorSha256 === frame
+    && equal(packet.physical.identity, packet.physical.actor === 'ASTRA' ? ASTRA_GEOMETRY_POLICY : input.engine.runtime.identity), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
   let state = geometry;
   if (packet.physical) state = adoptPhysicalGeometryProposal(state, { ...packet.physical, side, base: geometryBase(state, side, 'PHYSICAL') }).state;
   if (!state.sides[side].physical || !packet.preparation) return { geometry: state, prepared: null };
@@ -60,26 +63,18 @@ export function adoptEarlyGeometry(geometry, side, packet, input) {
   let adopted = adoptGeometryPreparation(state, { ...prepared, side, base: preparationBase(state, side),
     settingsRevision: state.sides[side].settingsRevision, ...input.settings,
     frame: { ...prepared.frame, version: state.sides[side].preparationRevision + 1 } });
-  const candidate = machineGeometryCandidate(prepared.proposal);
-  if (!adopted.state.sides[side].printed && candidate?.provisional) {
-    requireThat(input.engine.machineGeometryPolicy === MACHINE_GEOMETRY_POLICY, 503, 'GEOMETRY_STORED_CONTENT_INVALID');
-    // Preserve the native ABSTAIN packet and its diagnostics. This is an ENGINE
-    // proposal with explicit ambiguity, never a human confirmation.
-    adopted = applyGeometryEdit(adopted.state, { side, kind: 'PRINTED', base: geometryBase(adopted.state, side, 'PRINTED'),
-      quad: candidate.quad, actor: 'ENGINE', proposal: { id: prepared.id, ambiguous: true } });
-  }
   return { geometry: adopted.state, prepared: packet.preparedImages };
 }
 
 export function createEarlyGeometry({ store, intake, details, storage, artifacts, keyPrefix, limited, pythonExecutable, limits,
-  runtimeIdentity = preparationRuntimeIdentity, physical = proposePhotoGeometry, prepare = preparePhotoGeometry,
-  geometryConcurrency = 2, geometryDiscoveryPageSize = 2, intervalMs = 2000, onEvent = () => {}, geometryLearning = null }) {
+  runtimeIdentity = preparationRuntimeIdentity, physical = null, model = null, readCleanPhoto = null, isCleanPhotoPrepared = null, prepare = preparePhotoGeometry,
+  geometryConcurrency = 2, geometryDiscoveryPageSize = 2, intervalMs = 2000, onEvent = () => {} }) {
   geometryProcessingSettings({ geometryConcurrency, geometryDiscoveryPageSize });
   let enginePromise = null, stopped = true, closed = false, timer = null, cycling = null, discoveryCursor = null, wakePending = false;
   const controllers = new Set(), tasks = new Set();
   const engine = () => {
     if (!enginePromise) {
-      enginePromise = limited(async () => ({ policy: POLICY, outputContract: PREPARATION_CORE_V1, machineGeometryPolicy: MACHINE_GEOMETRY_POLICY,
+      enginePromise = limited(async () => ({ policy: POLICY, outputContract: PREPARATION_CORE_V1, machineGeometryPolicy: MACHINE_GEOMETRY_POLICY, visual: ASTRA_GEOMETRY_POLICY,
         runtime: await runtimeIdentity(pythonExecutable), limits }));
       enginePromise.catch(() => { enginePromise = null; });
     }
@@ -101,9 +96,10 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
   async function statusFor(staff, cardId, current) {
     return Object.fromEntries(await Promise.all(SIDES.map(async side => {
       const input = current[side], key = input ? digest(canonical(input)) : null;
-      return [side, geometryJobStatus(key ? await store.read(staff, cardId, key) : null, input?.uploadId ?? null, key)];
+      return [side, geometryJobStatus(key ? await store.read(staff, cardId, key, input) : null, input?.uploadId ?? null, key)];
     })));
   }
+  const cleanPrepared = input => !isCleanPhotoPrepared || isCleanPhotoPrepared({ cardId: input.cardId, uploadId: input.uploadId, side: input.side });
   async function compute(job, signal) {
     const input = job.input;
     requireThat(input.policy === POLICY && equal(input.engine, await engine()), 409, 'GEOMETRY_ENGINE_CHANGED');
@@ -113,13 +109,25 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     const found = await storage.readDecodedFrame({ frame: photo.workingFrame, original: photo.original, decodePlan: photo.decodePlan, signal });
     const source = { original: photo.original, decodePlan: photo.decodePlan, frame: photo.workingFrame, bytes: found.bytes };
     const options = { source, matColor: input.settings.matColor, engine: input.engine.runtime, limits: input.engine.limits, pythonExecutable, signal };
-    const proposed = await physical(options), quad = usable(proposed.proposal);
+    const cleanPhoto = readCleanPhoto ? await readCleanPhoto({ cardId: input.cardId, uploadId: input.uploadId, side: input.side, signal, waitMs: 0 }) : null;
+    const visual = physical ? null : await runAstraGeometry({ job, source, cleanPhoto, model, store, artifacts, signal });
+    const proposed = physical ? await physical(options) : { id: visual.responseHash, actor: 'ASTRA', identity: ASTRA_GEOMETRY_POLICY,
+      frameDescriptorSha256: input.frameDescriptorSha256, proposal: geometryProposal(visual, 'physical'),
+      ...(visual.physical.contour.length ? { materialContour: visual.physical.contour } : {}) };
+    const quad = usable(proposed.proposal);
     const packet = { policy: POLICY, key: job.key, binding: input, photoFrame: photo.workingFrame,
-      physical: proposed, preparation: null, preparedImages: null };
+      physical: proposed, ...(visual ? { visual } : {}), preparation: null, preparedImages: null };
     let printed = null, preparationError = null;
     if (quad) {
       try {
-      const prepared = await prepare({ ...options, quad, outputContract: PREPARATION_CORE_V1 });
+      const prepared = await limited(() => prepare({ ...options, quad, outputContract: PREPARATION_CORE_V1 }));
+      if (visual) {
+        prepared.actor = 'ASTRA';
+        prepared.proposal = geometryProposal(visual, 'printed');
+        if (visual.printed.quad) prepared.proposal.proposal = originalToCanonical(visual.printed.quad, source, prepared);
+        if (visual.physical.contour.length) prepared.frame.materialContour = originalToCanonical(visual.physical.contour, source, prepared, { pixelCenters: true })
+          .map(p => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) }));
+      }
       const names = preparationOutputNames(PREPARATION_CORE_V1);
       requireThat(prepared.outputContract === PREPARATION_CORE_V1 && prepared.outputs
         && equal(prepared.sourceQuad, quad)
@@ -153,21 +161,6 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
         preparationError = safeCode(error);
       }
     }
-    if (geometryLearning) {
-      // Learning sees only already-supported native geometry in this exact
-      // working frame. The callback's advice never mutates proposal/preparation.
-      try {
-        const advice = await geometryLearning({ input: structuredClone(input), targetFrameSha256: photo.workingFrame.raster.content.sha256,
-          candidates: quad ? [{ id: proposed.id, authority: 'PROPOSER_ONLY', nativeSupported: true,
-            engineSha256: digest(canonical(input.engine)), frameSha256: photo.workingFrame.raster.content.sha256,
-            physical: structuredClone(quad), printed: printed ? structuredClone(printed) : null }] : [] });
-        if (advice) packet.learningAdvice = advice;
-      } catch (error) {
-        if ([401, 403, 409].includes(error?.status)) throw error;
-        packet.learningAdvice = { status: 'BASELINE', reason: 'LEARNING_REFERENCE_UNAVAILABLE', requiresHumanConfirmation: true };
-        emit({ event: 'GEOMETRY_LEARNING_UNAVAILABLE', code: safeCode(error) });
-      }
-    }
     const ref = await artifacts.write(packet, { cardId: input.cardId, kind: 'EARLY_GEOMETRY', sourceHash: job.key }, { signal });
     requireThat(!signal.aborted, 503, 'GEOMETRY_INTERRUPTED');
     const result = { ref, sourceHash: job.key, physical: quad, printed, prepared: Boolean(packet.preparation),
@@ -183,14 +176,15 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     const controller = new AbortController(); controllers.add(controller);
     const deadline = setTimeout(() => controller.abort(), 600000); deadline.unref?.();
     try {
-      // Reserve the shared native slot BEFORE acquiring a durable job lease.
-      return await limited(async () => {
+      // Provider concurrency uses the durable geometry lease. Only the CPU
+      // transform takes a native slot; model latency must not block decoding.
+      {
         job = await store.claim(digest(canonical(actualEngine)), randomUUID(), geometryConcurrency);
         if (!job) return false;
         if (stopped) { await store.finish(job, 'QUEUED', null, 'GEOMETRY_INTERRUPTED'); return false; }
         const result = await compute(job, controller.signal);
         await store.finish(job, result.state, result.result, result.error); return true;
-      });
+      }
     } catch (error) {
       if (job) await store.finish(job, controller.signal.aborted ? 'QUEUED' : 'FAILED', null,
         controller.signal.aborted ? 'GEOMETRY_INTERRUPTED' : safeCode(error)).catch(() => {});
@@ -211,12 +205,14 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
       } : null;
       for (const row of pending) {
         if (stopped) break;
+        if (row.previous_engine) continue;
         try {
           const plan = JSON.parse(row.plan), verification = JSON.parse(row.verification), source = JSON.parse(row.source);
           const stored = await artifacts.read(source.ref, { cardId: row.card_id, kind: 'PHOTO_SOURCE', sourceHash: source.photoSourceHash });
           const photo = processedPhoto(stored, plan, verification);
-          await store.stage(geometryCacheInput({ uploadId: row.upload_id, side: row.side, version: plan.binding.version,
-            source, plan, verification }, photo, row.settings, actualEngine));
+          const pendingInput = geometryCacheInput({ uploadId: row.upload_id, side: row.side, version: plan.binding.version,
+            source, plan, verification }, photo, row.settings, actualEngine);
+          if (await cleanPrepared(pendingInput)) await store.stage(pendingInput);
         } catch (error) { emit({ event: 'MANUAL_GEOMETRY_SOURCE_PENDING', uploadId: row.upload_id, code: safeCode(error) }); }
       }
       if (!stopped) {
@@ -261,22 +257,24 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
       else object(request, []);
       const current = await inputs(staff, cardId, settingsOverride);
       if (retry) requireThat(current[request.side] && digest(canonical(current[request.side])) === request.expectedKey, 409, 'GEOMETRY_RETRY_STALE');
-      for (const side of SIDES) if (current[side] && (!retry || side === request.side)) await store.ensure(staff, current[side], { retry });
+      for (const side of SIDES) if (current[side] && (!retry || side === request.side) && await cleanPrepared(current[side])) await store.ensure(staff, current[side], { retry });
       api.start(); wake();
       return { earlyGeometry: await statusFor(staff, cardId, current) };
     },
-    async consume(staff, cardId, side, upload, photo, settings, { timeoutMs = 180000 } = {}) {
+    async consume(staff, cardId, side, upload, photo, settings, { timeoutMs = 0 } = {}) {
       const input = geometryCacheInput(upload, photo, settings, await engine());
-      const key = digest(canonical(input)); await store.ensure(staff, input); api.start();
+      const key = digest(canonical(input));
+      if (!await cleanPrepared(input)) return { input, packet: null };
+      await store.ensure(staff, input); api.start();
       const until = Date.now() + timeoutMs;
       let job;
       do {
-        job = await store.read(staff, cardId, key);
+        job = await store.read(staff, cardId, key, input);
         if (TERMINAL.includes(job?.state)) break;
-        requireThat(Date.now() < until, 503, 'GEOMETRY_PROCESSING_PENDING');
+        if (Date.now() >= until) return { input, packet: null };
         await new Promise(resolve => setTimeout(resolve, 100));
       } while (true);
-      if (job.state === 'FAILED') return { input, packet: null };
+      if (job.state === 'FAILED' || !job.result) return { input, packet: null };
       const packet = await artifacts.read(job.result.ref, { cardId, kind: 'EARLY_GEOMETRY', sourceHash: key });
       requireThat(packet.key === key && equal(packet.binding, input), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
       if (packet.preparation) {

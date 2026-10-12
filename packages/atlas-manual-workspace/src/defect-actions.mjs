@@ -1,3 +1,4 @@
+import { validMaterialContour } from './material-contour.mjs';
 import { speedsterReviewPostSchema } from '@atlas/grading-core/review-action-contract';
 import { parsePersistedSpeedsterReviewFindings } from '@atlas/grading-core/review-findings';
 import { completeSpeedsterReview, remeasureSpeedsterReviewAction } from '@atlas/grading-core/review';
@@ -46,7 +47,8 @@ function publish(value) {
   return result;
 }
 function frame(value) {
-  object(value, ['imageVersion', 'originalSha256', 'preparationVersion', 'frameId', 'inspectionImageSha256', 'rectifiedImageSha256']);
+  object(value, ['imageVersion', 'originalSha256', 'preparationVersion', 'frameId', 'inspectionImageSha256', 'rectifiedImageSha256'], ['materialContour']);
+  if (value.materialContour) requireThat(validMaterialContour(value.materialContour));
   integer(value.imageVersion, 1); integer(value.preparationVersion, 1); text(value.frameId);
   for (const key of ['originalSha256', 'inspectionImageSha256', 'rectifiedImageSha256']) requireThat(HASH.test(value[key]));
   requireThat(value.inspectionImageSha256 !== value.rectifiedImageSha256);

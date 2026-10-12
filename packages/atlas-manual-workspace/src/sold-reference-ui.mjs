@@ -3,7 +3,8 @@
 const word = value => typeof value === 'string' && value.trim() ? value.trim() : null;
 const designationLabel = value => ({ STANDARD: 'Standard', BLACK_LABEL: 'Black Label', PRISTINE: 'Pristine', PERFECT: 'Perfect' })[value] ?? word(value) ?? '';
 export function saleGradeLabel(sale) {
-  if (sale.raw === true) return `Ungraded${word(sale.rawCondition) ? ` · ${sale.rawCondition}` : ' · Condition unspecified'}`;
+  if (sale.raw === true) return `${sale.evidenceKind ? 'Raw' : 'Ungraded'}${word(sale.rawCondition) ? ` · ${sale.rawCondition}` : ' · Condition unspecified'}`;
+  if (sale.evidenceKind === 'UNCERTAIN' || sale.evidenceKind === 'SLABBED' && sale.grade == null) return 'Unread · Grade not verified';
   return [word(sale.grader) ?? 'Grader unspecified', word(String(sale.grade ?? '')) ?? 'Grade unspecified', sale.designation == null && ['BGS', 'CGC'].includes(sale.grader) ? 'Label unspecified' : designationLabel(sale.designation)].filter(Boolean).join(' ');
 }
 export function saleIdentityLabel(sale) {

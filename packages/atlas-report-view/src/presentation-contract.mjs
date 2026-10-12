@@ -36,13 +36,17 @@ const sale = z.strictObject({ id: text, title: z.string().trim().min(1).max(500)
   raw: z.boolean().optional(), rawCondition: text.nullable().optional(),
   designation: z.enum(['STANDARD', 'BLACK_LABEL', 'PRISTINE', 'PERFECT']).nullable().optional(),
   language: text.nullable().optional(), printing: text.nullable().optional(), variant: text.nullable().optional(),
-  identityStatus: z.enum(['MATCH', 'UNKNOWN']).optional(),
+  identityStatus: z.enum(['MATCH', 'UNKNOWN', 'DIFFERENT']).optional(),
+  evidenceKind: z.enum(['RAW', 'SLABBED', 'UNCERTAIN']).optional(),
+  matchReason: z.string().max(2000).nullable().optional(),
   imageUrl: referenceImageUrl.nullable().optional(), labelText: z.string().max(6000).nullable().optional(),
   reportedPrice: z.string().max(500).nullable().optional(),
   priceMinor: money.nullable(), currency: currency.nullable(), priceBasis: z.enum(['sold', 'accepted_offer_unknown', 'unknown'])
 }).superRefine((value, ctx) => {
   if ((value.priceBasis === 'sold') !== (value.priceMinor !== null)) ctx.addIssue({ code: 'custom', message: 'Only a disclosed sold amount can be a price' });
-  if (value.raw === true ? value.grader !== null || value.grade !== null || value.designation != null : value.grader === null || value.grade === null) {
+  if (value.evidenceKind && (value.raw === true) !== (value.evidenceKind === 'RAW')) ctx.addIssue({ code: 'custom', message: 'Raw status must agree with the photographed evidence kind' });
+  if (value.raw === true ? value.grader !== null || value.grade !== null || value.designation != null
+    : value.evidenceKind ? value.evidenceKind === 'RAW' : value.grader === null || value.grade === null) {
     ctx.addIssue({ code: 'custom', message: 'Raw cards and graded cards must retain distinct condition evidence' });
   }
 });

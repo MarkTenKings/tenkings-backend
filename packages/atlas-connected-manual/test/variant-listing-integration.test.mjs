@@ -50,7 +50,7 @@ test('one saved source supplies separate physical cards and refreshed photos; au
  let paid=0,images=0,writes=0;
  const cache={get:async k=>entries.get(k),getRetained:async k=>entries.get(k),put:async(k,v)=>{writes++;entries.set(k,structuredClone(v));}};
  const provider=createVariantListingProvider({apiKey:'synthetic-credential',cache,now,fetchImpl:async url=>{
-  if(url.startsWith('https://api.sold-comps.com/')){paid++;return new Response(responseFor(prepareVariantListingRequest(identity,printing,{graded:true})).bodyText,{headers:{'content-type':'application/json'}});}
+  if(url.startsWith('https://api.sold-comps.com/')){paid++;return new Response(responseFor({query:new URL(url).searchParams.get('keyword')}).bodyText,{headers:{'content-type':'application/json'}});}
   images++;return new Response(bytes,{headers:{'content-type':'image/png'}});
  }});
  const executeListingSource=async(request,dispatch,{retainedOnly=false}={})=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};if(retainedOnly)return {state:'MISSING'};const source=await dispatch();journal.set(request.requestKey,source);return {state:'SAVED',source};};
@@ -75,7 +75,7 @@ test('one saved source supplies separate physical cards and refreshed photos; au
  assert.equal(paid,1);assert.equal(images,1);assert.equal(writes,beforeWrites);
 });
 
-test('official sports metadata bypasses alternate acquisition and searches every known printing once across repeated cards',async()=>{
+test('official sports metadata and published catalog feed one printing roster reused across cards',async()=>{
  const {createManufacturerChecklistVariantProvider}=await import('@tenkings/card-catalog-evidence');
  const target={category:'SPORTS',name:'Drake Maye',year:'2024',setName:'Donruss Optic',cardNumber:'229',manufacturer:'Panini',language:null};
  const labels=['Rated Rookies','Rated Rookies Blue','Rated Rookies Blue Hyper','Rated Rookies Orange','Rated Rookies Green','Rated Rookies Purple','Rated Rookies Red','Rated Rookies Gold','Rated Rookies Black'];
@@ -100,12 +100,12 @@ test('unknown year prepares manufacturer-backed reference searches before confir
   const source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};
  };
  const first=await service.prepare({identity:target},{executeListingSource});
- assert.equal(target.year,null);assert.equal(first.candidates.length,1);assert.equal(first.candidates[0].identity.year,'2025-26');
- assert.equal(calls.length,2);assert.equal(journal.size,1);assert.equal(calls[0].request.identity.year,'2025-26');
- const known={...target,year:'2025-26'},ordinary=prepareVariantListingRequest(known,{name:'BALL OF DUTY',language:null},{graded:true});
- assert.equal(calls[0].request.requestKey,ordinary.requestKey);assert.deepEqual(target,original);
+ assert.equal(target.year,null);assert.equal(first.candidates.length,16);assert.equal(first.candidates[0].identity.year,'2025-26');
+ assert.equal(calls.length,32);assert.equal(journal.size,16);assert.equal(calls[0].request.identity.year,'2025-26');
+ const known={...target,year:'2025-26'},ordinary=prepareVariantListingRequest(known,{name:'BALL OF DUTY',language:null});
+ assert.equal(calls.find(c=>c.request.printing.name==='ball of duty').request.requestKey,ordinary.requestKey);assert.deepEqual(target,original);
  await service.prepare({identity:known,generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});
- assert.equal(journal.size,1);assert.equal(calls.filter(c=>!c.retainedOnly).length,1);
+ assert.equal(journal.size,16);assert.equal(calls.filter(c=>!c.retainedOnly).length,16);
  assert(calls.every(c=>!Object.hasOwn(c.request,'generation')));
 });
 
@@ -122,17 +122,18 @@ test('unknown-year photos and literal Codex readings retain source-year printing
   const bodyText=JSON.stringify(body),source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};
  };
  const service=createVariantCatalogService({listingProvider:provider,cache,now}),first=await service.prepare({identity},{executeListingSource});
- assert.equal(first.referencePhotos.length,1);const image=first.referencePhotos[0],choice=codexChoices(first)[0];assert.equal(choice.identity.year,'2025-26');
+ assert.equal(first.referencePhotos.length,1);const image=first.referencePhotos[0],choice=codexChoices(first).find(c=>c.parallel==='ball of duty');assert.equal(choice.identity.year,'2025-26');
  const reading={sha256:image.sha256,candidateKey:null,gradingCompany:'PSA',labelText:'2025-26\nTopps Chrome\nLaMelo Ball\nBD-13\nBALL OF DUTY',reason:'Retained literal slab label'};
  const matched=reassociateCodexReading(reading,first,[]);assert.equal(matched.candidateKey,choice.key);
- const projected=projectCodexReading(reading,first,[]);assert.equal(projected.candidateId,first.candidates[0].candidateId);
+ const base=first.candidates.find(c=>c.parallel==='BALL OF DUTY');
+ const projected=projectCodexReading(reading,first,[]);assert.equal(projected.candidateId,base.candidateId);
  validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',catalogHash:first.snapshotHash,readings:[projected]},first);
  entries.set(codexReadingKey({policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL},image.sha256),{schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices:[],catalogContext:[],reading});
  const card={draft:{identity:{playerName:identity.name,year:null,manufacturer:identity.manufacturer,productSet:identity.setName,cardNumber:identity.cardNumber,parallel:null,insert:null}}};
- const selected=variantSelectedIdentity(card,{decision:'SELECTED',candidateId:first.candidates[0].candidateId},{catalog:first});assert.equal(selected.year,'2025-26');assert.equal(card.draft.identity.year,null);
+ const selected=variantSelectedIdentity(card,{decision:'SELECTED',candidateId:base.candidateId},{catalog:first});assert.equal(selected.year,'2025-26');assert.equal(card.draft.identity.year,null);
  const restarted=createVariantCatalogService({listingProvider:createVariantListingProvider({cache,now,fetchImpl:noNetwork}),cache,now});
  const again=await restarted.prepare({identity:{...identity,year:selected.year},generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});
- assert.equal(codexChoices(again)[0].key,choice.key);assert.equal(again.referencePhotos.length,1);assert.equal(again.referencePhotos[0].sha256,image.sha256);
- const reprojected=projectCodexReading(reading,again,[]);assert.equal(reprojected.canonicalPrintingKey,choice.key);assert.equal(reprojected.candidateId,again.candidates[0].candidateId);
- assert.equal(listingCalls,1);assert.equal(imageCalls,1);assert.equal(journal.size,1);assert.equal(identity.year,null);
+ assert.equal(codexChoices(again).find(c=>c.parallel==='ball of duty').key,choice.key);assert.equal(again.referencePhotos.length,1);assert.equal(again.referencePhotos[0].sha256,image.sha256);
+ const reprojected=projectCodexReading(reading,again,[]);assert.equal(reprojected.canonicalPrintingKey,choice.key);assert.equal(reprojected.candidateId,again.candidates.find(c=>c.parallel==='BALL OF DUTY').candidateId);
+ assert.equal(listingCalls,16);assert.equal(imageCalls,1);assert.equal(journal.size,16);assert.equal(identity.year,null);
 });

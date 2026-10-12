@@ -38,3 +38,8 @@ test('preview fallback cannot swallow source authority or cancellation',async()=
   const f=fixture();f.dependencies.reviewDisplay.inspection=async()=>{throw error;};await assert.rejects(f.run(),e=>e===error);
  }
 });
+
+test('ready upfront cutout is used for navigation without image generation or geometry preparation',async()=>{
+ const f=fixture();f.dependencies.readCleanDescriptor=async({side})=>({url:'https://saved.invalid/'+side,sha256:'b'.repeat(64),byteCount:1200,width:40,height:56,generative:true});
+ const r=await f.run();assert.equal(r.images.FRONT.preview.generative,true);assert.equal(r.images.BACK.state,'READY');assert.equal(f.grants.length,0);assert.equal(f.reads,2);
+});

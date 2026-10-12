@@ -33,7 +33,7 @@ function fixture({ component = 'default', props, beforeEffects } = {}) {
     if(name==='react')return react;
     if(name.endsWith('routes.mjs'))return routes;
     if(name==='@atlas/manual-workspace')return{geometryImage:()=>({url:'verified'})};
-    if(name==='@atlas/manual-workspace/report-review')return{useVerifiedImage:()=>({url:f.images?'blob:verified':null})};
+    if(name==='@atlas/manual-workspace/report-review')return{useVerifiedImage:descriptor=>({url:f.images&&descriptor?(descriptor.generative?'blob:clean':'blob:verified'):null})};
     if(name.endsWith('variant-review-client.mjs'))return client;
     if(name.endsWith('variant-reference-photos.mjs'))return referencePhotos;
     if(name.endsWith('manual-client.mjs'))return{manualRequest:async(path,options)=>{if(!options.method){f.reads++;return f.read?f.read():structuredClone(f.status);}f.writes.push(options.body);if(f.save)return f.save(options.body);const input=options.body;f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:input.decision!=='UNRESOLVED'};return structuredClone(f.status);}};
@@ -168,7 +168,7 @@ test('unknown seller variant remains visibly unconfirmed and separate from an ex
  assert.match(f.text(),/Other saved reference photos/);assert.ok(f.radios().every(radio=>!radio.props.checked));assert.equal(f.writes.length,0);f.dispose();
 });
 test('actual listing adapter and Scrydex composition produce a displayable retained photo with exact listing attribution',async()=>{
- const {prepareVariantListingRequest,createVariantListingProvider,composeVariantListingCandidates}=await import('../../../packages/atlas-connected-manual/src/variant-listing-provider.mjs');
+ const {prepareVariantListingRequest,createVariantListingProvider}=await import('../../../packages/atlas-connected-manual/src/variant-listing-provider.mjs');
  const {importScrydexVariantCandidates,scrydexVariantSearchUrl}=await import('../../../packages/card-catalog-evidence/src/index.mjs');
  const digest=value=>createHash('sha256').update(value).digest('hex'),capturedAt='2026-10-10T10:00:00.000Z';
  const identity={category:'POKEMON',name:'Mewtwo',year:'2016',setName:'Evolutions',cardNumber:'051/108',manufacturer:null,language:null};
@@ -180,12 +180,12 @@ test('actual listing adapter and Scrydex composition produce a displayable retai
  const provider=createVariantListingProvider({now:()=>Date.parse(capturedAt),cache:{get:async key=>entries.get(key),getRetained:async key=>entries.get(key),put:async(key,value)=>entries.set(key,structuredClone(value))},fetchImpl:async url=>{assert.equal(url,'https://i.ebayimg.com/images/g/fixture/s-l300.jpg');imageReads++;return new Response(bytes,{headers:{'content-type':'image/png'}});}});
  const evidence=await provider.acquireImages({request,source});assert.equal(imageReads,1);
  const choices=importScrydexVariantCandidates({identity,card:{id:'xy12-51',name:'Mewtwo',number:'51',printed_number:'51/108',language_code:'en',expansion:{id:'xy12',name:'Evolutions',release_date:'2016/11/02',is_online_only:false,printed_total:108},images:[{type:'front',large:'https://images.scrydex.com/pokemon/xy12-51/large'}],variants:[{name:'normal',images:[]},{name:'reverseHolofoil',images:[]}]},source:{url:scrydexVariantSearchUrl(identity),sha256:digest('scrydex fixture'),capturedAt}});
- const composed=composeVariantListingCandidates({identity,candidates:choices,evidence,printing}),attached=composed.candidates.find(candidate=>candidate.images.some(image=>image.relationship==='listing_photo'));
- assert.ok(attached);assert.equal(attached.source.provider,'scrydex');assert.ok(choices.some(candidate=>candidate.label===attached.label));
- const f=fixture();f.props.identity={cardName:identity.name,productSet:identity.setName,cardNumber:identity.cardNumber};f.status.result.catalog.candidates=composed.candidates;f.status.result.suggestion=null;await flush();f.render();
- const reference=f.exports.variantReference(attached,f.props.cardId,{artwork:false});assert.equal(reference.relationship,'listing_photo');assert.equal(reference.provenance.provider,'ebay_sold_comps_v2');assert.equal(reference.provenance.usage,'provider_reference');assert.equal(reference.sha256,digest(bytes));
- assert.equal(reference.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${digest(bytes)}`);assert.ok(f.text().includes(attached.label));assert.match(f.text(),/eBay listing photo/);
- assert.equal(f.find(node=>node.type==='a'&&text(node)===title)[0].props.href,`https://www.ebay.com/itm/${id}`);assert.doesNotMatch(f.text(),/99\.95|USD/);assert.equal(f.writes.length,0);assert.ok(f.radios().every(node=>!node.props.checked));f.dispose();
+ const f=fixture();f.props.identity={cardName:identity.name,productSet:identity.setName,cardNumber:identity.cardNumber};
+ f.status.result.catalog.candidates=choices;f.status.result.catalog.referencePhotos=evidence.referencePhotos;f.status.result.suggestion=null;await flush();f.render();
+ assert.equal(evidence.referencePhotos.length,1);assert.equal(evidence.referencePhotos[0].sha256,digest(bytes));
+ assert(choices.every(candidate=>candidate.images.every(image=>image.relationship!=='listing_photo')),'A seller title cannot assign a printing');
+ assert.equal(f.find(node=>node.type==='a'&&text(node)===title)[0].props.href,`https://www.ebay.com/itm/${id}`);
+ assert.doesNotMatch(f.text(),/99\.95|USD/);assert.equal(f.writes.length,0);assert.ok(f.radios().every(node=>!node.props.checked));f.dispose();
 });
 
 test('an unsaved not-shown choice can be explicitly discarded for one durable reference refresh',async()=>{
@@ -340,7 +340,7 @@ test('Codex slab references join only the exact catalog printing and photo bytes
  assert.equal(reference.labelReading.text,reading.labelText);assert.equal(reference.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${image.sha256}`);
  assert.match(f.text(),/PSA slab · saved in ATLAS Codex/);assert.ok(f.text().includes(reading.labelText));
  assert(f.radios().every(v=>!v.props.checked));assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);
- for(const change of [{candidateId:'other'},{sha256:hash('f')},{imageId:'other'},{labelText:null},{gradingCompany:null}]){
+ for(const change of [{candidateId:'other'},{sha256:hash('f')},{imageId:'other'},{labelText:null}]){
   const result={...f.status.result,referenceLabels:{...f.status.result.referenceLabels,readings:[{...reading,...change}]}};
   assert.equal(f.exports.variantReference(candidate,f.props.cardId,{artwork:false,result}),null);
  }
@@ -402,4 +402,25 @@ test('unassigned retained slab photos show literal labels and compare without be
  const photo=all(gallery,node=>node.type?.name==='ReferencePhoto')[0];assert.equal(photo.props.image.url,`/admin/api/staff/manual-connected/cards/${f.props.cardId}/variants/images/${image.sha256}`);
  f.find(node=>node.props['aria-label']==='Compare CGC · unassigned reference')[0].props.onClick({currentTarget:{focus(){}}});f.render();
  assert.equal(f.find(node=>node.type?.name==='Comparison')[0].props.candidate.images[0].associationStatus,'UNASSIGNED');assert.ok(f.radios().every(node=>!node.props.checked));assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);f.dispose();
+});
+
+test('catalog choice can be confirmed during reference processing without loaded images or geometry',async()=>{
+ const f=fixture();f.images=false;f.props.geometry=null;f.status.state='SEARCHING';await flush();f.render();
+ assert(f.radios().every(r=>!r.props.disabled));f.radios()[0].props.onChange();f.render();
+ assert.equal(f.button('Confirm selected identity').props.disabled,false);f.button('Confirm selected identity').props.onClick();await flush();f.render();
+ assert.equal(f.writes.length,1);assert.equal(f.writes[0].decision,'SELECTED');f.dispose();
+});
+test('ready clean presentation defaults on, switches to original, and detailed comparison uses the original',async()=>{
+ const f=fixture();f.props.geometry=null;f.props.images={FRONT:{original:{url:'original'},clean:{url:'clean',generative:true}},BACK:{original:{url:'back'}}};await flush();f.render();
+ assert.equal(f.button('Clean').props['aria-pressed'],true);assert.match(f.text(),/AI generated/);
+ const image=()=>f.find(node=>node.type==='img'&&String(node.props.alt).includes('card photograph'))[0];assert.equal(image().props.src,'blob:clean');
+ f.button('Original').props.onClick();f.render();assert.equal(image().props.src,'blob:verified');assert.equal(f.button('Original').props['aria-pressed'],true);
+ f.button('Clean').props.onClick();f.render();f.find(node=>node.type==='button'&&node.props['aria-label']==='Enlarge your uploaded photograph')[0].props.onClick({currentTarget:{}});f.render();
+ const comparison=f.find(node=>node.type===f.exports.Comparison)[0];assert.equal(comparison.props.photo,'blob:verified');assert.doesNotMatch(f.text(),/unchanged pixels/);f.dispose();
+});
+
+test('source-supported sports season alias stays in this card printings without merging unrelated years',()=>{
+ const f=fixture(),candidate={source:{provider:'manufacturer_checklist'},identity:{name:'LaMelo Ball',year:'2025-26',setName:'Topps Chrome — Ball of Duty',cardNumber:'BD-13'},diagnostics:[{id:'manufacturer-checklist-year',description:'Official checklist year: 2025-26.'}]};
+ const identity={playerName:'LaMelo Ball',year:'2025',productSet:'Topps Chrome — Ball of Duty',cardNumber:'BD-13'};
+ assert.equal(f.exports.variantCandidateGroup(candidate,identity),'same');assert.equal(f.exports.variantCandidateGroup({...candidate,diagnostics:[]},identity),'other');assert.equal(f.exports.variantCandidateGroup(candidate,{...identity,year:'2024'}),'other');f.dispose();
 });

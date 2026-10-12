@@ -84,7 +84,7 @@ test('missing printed geometry still measures real proposals but cannot fabricat
   assert.match(report.limitations.at(-1), /overall grade remain unavailable/);
   assert.equal(report.certification, null); assert.deepEqual(f.state, before);
 });
-test('a proposal outside a rounded corner is retained for human review while real in-card defects are measured', async () => {
+test('raw corner proposals reach deterministic measurement without an earlier nominal-radius clip', async () => {
   const f = fixture();
   f.state.defects = structuredClone(f.state.defects);
   f.state.defects.sides.FRONT.cornerShape = 'ROUNDED_3_18_MM';
@@ -97,12 +97,13 @@ test('a proposal outside a rounded corner is retained for human review while rea
   ] };
   f.analysis.proposals.push(outside, inside);
   const before = structuredClone({ analysis: f.analysis, state: f.state }), report = await buildMachineReport(f);
-  assert.equal(report.findings.length, 3); assert.equal(report.measurementReceipts.length, 3);
+  assert.equal(report.findings.length, 4); assert.equal(report.measurementReceipts.length, 4);
   assert.deepEqual(report.proposals, before.analysis.proposals);
-  assert.deepEqual(report.unmeasurableProposals, [{ ...outside, reason: 'NO_IN_CARD_RASTER_PIXELS' }]);
+  assert.deepEqual(report.unmeasurableProposals, []);
   assert.equal(report.measurementReceipts.some(receipt => receipt.proposalId === inside.id), true);
-  assert.equal(report.measurementReceipts.some(receipt => receipt.proposalId === outside.id), false);
-  assert.match(report.limitations.at(-1), /excluded evidence/);
+  assert.equal(report.measurementReceipts.some(receipt => receipt.proposalId === outside.id), true);
+  // This fixture measures all raster pixels; the native measurement tests verify
+  // nominal/photo-contour intersection yields zero damage outside actual material.
   assert.equal(report.certification, null); assert.deepEqual(f.analysis, before.analysis);
   assert.deepEqual(f.state, before.state);
 });

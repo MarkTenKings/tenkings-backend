@@ -27,7 +27,7 @@ test('slab projection retains abbreviated labels, any company and missing sale m
   assert.equal(selected.sales[1].labelText, 'PIKACHU\nC. HOLO\n8.5'); assert.equal(selected.sales[1].grader, 'Other Grading Company');
   assert.equal(selected.sales[1].currency, null); assert.deepEqual(source, before);
   source.imageMatch.readings[0].numericGrade = 6;
-  assert.throws(() => projectSelectedSlabReferences(source, ['first'], 8.5));
+  assert.equal(projectSelectedSlabReferences(source, ['first'], 8.5).sales[0].grade, '6');
 });
 test('actual existing parser output projects only explicitly selected disclosed graded USD sales', () => {
   const value = candidate(); assert.ok(value);
