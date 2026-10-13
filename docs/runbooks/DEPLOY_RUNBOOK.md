@@ -1,6 +1,38 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R20 — October 13, 2026, 9:49 a.m. Pacific
+## Current ATLAS production — R21 main / R20 web and worker (October 13, 2026)
+
+The native main service now runs **`e65318fdbb91d8cc5d9e458ebe8bc142493f86cd`**. All three web deployments and the continuously running variant worker remain on **R20 `2ba5e96456106f6325c16c99b3c945e5aeb5b628`**. The R21 change makes already saved Astra label readings and photo associations visible while labeling continues. Status reads project durable evidence through two batched, read-only queries, retaining the same catalog, job and draft bindings. The photo-byte endpoint skips those queries, and completed stored results remain unchanged. This release adds no provider dispatch, worker behavior change or frontend deployment.
+
+Authenticated browser acceptance passed at **19:09Z** using the existing session without another sign-in: all **28 choices**, matched **PSA Base** and **raw Green Wave Refractor** photographs, and their literal saved label/card text were visible beside Nick's generated image. These were preview selections only; no variant confirmation, human approval or general reference refresh occurred. The R20 worker continued the one explicit **Retry Astra labeling** accepted at 18:25:56Z for Nick `80fb375b-64b3-461d-b984-4b3ca555ae48`, generation `e3ba21af-ffa2-48ba-a3dc-abd10a95229b`.
+
+The final handoff audit at **19:12:18Z is a running checkpoint, not completed-library acceptance**: **144 / 581 photos read**, **91 associated photos across 16 printings**, **53 read but unassociated**, and **437 unread**. It retains **18 new completed HTTP 200 responses using `gpt-6-astra` / `xhigh`**, with the next batch pending and no new error. The original credit-exhausted response remains immutable. The same catalog/job/generation and all **28 SoldComps request/response pairs — 713 raw rows / 446 unique listing IDs / 581 photos —** remain; no new SoldComps search was dispatched. Continuous audit polling has ended; the existing worker continues server-side. Full library completion remains unverified.
+
+The clean native image passed **540 checks (534 Node + 6 Python) across all 12 qualification groups**, with zero failures or skips. The focused variant, UI, client and reference-photo suite passed **211 checks**; these suites overlap and must not be added together. Frozen-source, read-only production qualification independently matched saved associations using exactly two SELECTs. The 581-photo/28-choice serialized test response was **834,775 bytes**, below the existing 2 MiB client limit. Only `variant-job-store.mjs` and `variant-service.mjs` changed in the serving bundle.
+
+The main-only cutover preserved all **93 explicit environment keys / 97 actual image-plus-runtime keys**, the R20 web/auth bindings, existing sessions, seven control rows and the original worker container/start time. The old main drained cleanly; the new main observed the **125-second replay fence** and is sealed with `unless-stopped`. The single stopped R20 predecessor main was removed at **19:12:43Z**; no image or server file was removed. Final health at **19:12:52Z** verified the new main and original worker with zero restarts, OOMs or unexpected errors, plus unchanged proxy/transport. **Preserve the live R20 worker, its shared image, `/opt/atlas/r20-2ba5e9645610`, `/opt/atlas/review-r20-2ba5e9645610`, and the current proxy/transport.** All executed R21 phase and old-main retirement intents are consumed; never replay them.
+
+No database migration, control change, session reset or approval accompanied R21. Independent postflight verified the dedicated ATLAS database, unchanged standalone ledger 2 / 188 functions / 162 triggers, card/action/session evidence and empty active learning membership. Generated OpenAI Front/Back images remain the sole grading frames; identification, geometry, defects and reference labeling remain Astra `xhigh`, with no model or algorithm fallback. Scoring remains **Corners 0.5× / Edges 1× / Surface 2×**. Nick Back still requires human printed-border placement where Astra returned null. Human approval/publication, physical label/NFC and sold-sales acceptance remain unverified; current cards are excluded from historical purge authorizations.
+
+Private evidence is under `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`: `release-r21/native/acceptance.json` (SHA `33eb88642c45a72829af313b3c3f8b4ca526198c720694fcda66a85719f4feeb`), `release-r21/browser/authenticated-ui-proof-01.json` (SHA `796d4d0f3681b53b2890f52a5c56006f5608ae074b516c8e1bc4145cd24c3460`), and the final checkpoint `release-r20/browser/nick-retry-handoff-01.json` (SHA `3dceec2c1383109d260fbde2db7e80dc4bb46be4a6064642228267f84b070bd3`). R21 runtime receipts bind the actual start, seal, independent DB postflight and one-container retirement; all report zero release-initiated provider calls and database writes.
+
+| Component | Current verified identity |
+|---|---|
+| R20 staff | `dpl_7oNAsyKoXmkTUDLiFu9DdQoj2Lwf` |
+| R20 customer | `dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB` |
+| R20 public | `dpl_GCPVpB34wgMrZioMHrr8pdex93Q7` |
+| R21 main image | `sha256:758ebee3406514e616b6132057a03182085c17dd92ba986d7aac8a0c6fef4b88` |
+| R21 main | `fbe90b6fff5b08419d352f4a1a583708ea67d825032438ea3c9d70ccd849f8f8` |
+| Preserved R20 worker image | `sha256:2d97ce57053fa90cc5e8526380f621688576d902faae097d14863e36a5aa5262` |
+| Preserved R20 worker | `39d1ed546315cabd7e4d9706ee875955d67da92e2daddb0b063547c95584c142` |
+
+R21 main configuration is `/opt/atlas/r21-main-e65318fdbb91`; its build context is `/opt/atlas/review-r21-main-e65318fdbb91`. The running worker retains its R20 paths above. The R21 image source differs intentionally from the preserved `ATLAS_MANUAL_WEB_RELEASE_SHA=2ba5e96456106f6325c16c99b3c945e5aeb5b628`; changing that binding would invalidate the existing web/session contract. No R21 web promotion or worker restart is part of this release.
+
+The reviewed main-only runtime plan SHA is `1e201b44788e08e67eb8d435af6254d1e928cc561f65c42126e01607119852a6`. Start receipt SHA: `567016e8c4baea145f4c96e7769cd500b5f4faa728f5d5021cdf1a8735a415df`; seal receipt: `788ba87e558b48f3c1397d51f9861b44bf32fcd603748f31c9529d832e5cd5c6`; final post-retirement health: `c13734331cd54b29b52f4f137057b84b2e6cc67b604cfd96f5314e46553e0234`; independent DB postflight: `c6167a1b9d13c09b8e0ea0bcb644569aeeb9d1ee17b3249b757d754a0f5091bc`; old-main retirement: `bfd8e9ec4380b130ca83e48937d2f7eb9c6d80430af9c4dfce5aa48d499f8c89`. The removed predecessor is `2586a0e16178cf4387b942025e53552096d1301d02c438ee1ba7942a6e2be435`; its image and R20 roots are still required by the running worker and are not obsolete.
+
+## Historical R20 deployment and credit recovery — October 13, 2026
+
+This records the R20 deployment and pre-R21 display limitation; the current main-only release and later acceptance above supersede those runtime and pending-status statements.
 
 Live application source **`2ba5e96456106f6325c16c99b3c945e5aeb5b628`** adds explicit **Retry Astra labeling** for an exact retained OpenAI HTTP 429 `credit_balance_exhausted` response. It resumes the same saved catalog/job/generation and photograph pool without another SoldComps search. The original rejection remains immutable, and the new attempt uses the exact retained Astra request and `xhigh` settings. Successful or uncertain requests are reconciled from saved evidence, not blindly dispatched again. A repeated definite credit rejection needs another explicit retry. Saved human drafts, review, confirmations and approvals are preserved; no model/algorithm fallback was added.
 
