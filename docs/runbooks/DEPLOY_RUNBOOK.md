@@ -1,6 +1,27 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R17 — October 13, 2026, 1:47 a.m. Pacific
+## Current ATLAS production R18 — October 13, 2026, 3:25 a.m. Pacific
+
+Live application source **`2eafb6536e6dc984da81e4fa901fa8ae6cf425df`** repairs generated-image preparation and opens the current sequential review directly. The reachable paired Front/Back geometry screen and invented rectangle/inset guides are deleted. Native WebP validation now ignores only invisible RGB at alpha zero; visible RGB and all alpha values remain exact. Existing reviews prepare their saved physical outlines sequentially and recover the actual retained Astra printed proposals before the editor opens. This continuation creates no human confirmation or replacement model call.
+
+Actual saved OpenAI requests and replies prove **Astra `xhigh`** performed identification and all four geometry calls for the fresh Nick Kurtz and Mewtwo submissions, using only the generated grading photograph and exact detail crops. Both Mewtwo printed quads and Nick Front survived parsing; native preparation failed afterward. Nick Back actually returned null. No competing detector/model or fabricated border is introduced. Both parked batch jobs were subsequently resumed once through the normal signed-in queue. Actual completed OpenAI responses and the stored reports now verify Nick: 1 returned/saved/measured Back finding; Mewtwo: 7 returned/saved/measured Back findings and proposed grade 8. All findings remain unreviewed; no human geometry confirmation or grade approval was created. Each request used only the verified generated pair and its exact detail crops with Astra `xhigh`. Nick still has no grade because his Back printed border is genuinely unresolved. New submissions follow the current automatic preparation/analysis flow.
+
+All three canonical surfaces and both native services use R18. Qualification passed 382 Node checks, 6 Python checks, all 11 groups and offline replay of all four generated sides, with zero skips. The initial two qualification packaging failures are preserved: the current-only image intentionally excludes two historical text files needed by a provenance test; exact serving closure verification and read-only test fixture mounts were run separately. No old preparation code was added to the serving image. A start transport timeout was reconciled against the actual durable successful start; no command was repeated. The three previous R17 web deployments, two stopped native containers, 32 exclusive old image/build layers and two obsolete server roots have been removed and verified absent.
+
+Scoring remains **Corners 0.5× / Edges 1× / Surface 2×**. The dedicated ATLAS database, generated-image-only grading and empty active learning baseline remain unchanged. Current cards are excluded from every consumed historical purge. Private evidence: `release-r18` and `r18-investigation` under `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`. Live authenticated recovery is verified for both cards, including all four prepared sides and the three exact retained printed outlines; both parked jobs have resumed through the normal queue; full human grading, printing/NFC and sold-sales acceptance are not yet established. Nick's empty Bowman Chrome catalog is a separate confirmed packaging failure: R17/R18 deployment closures omit the existing manufacturer gzip, parallel-family and product-alias files, so the runtime returns PROVIDER_UNAVAILABLE. The same saved identity returns 28 source-backed candidates locally. A focused packaging repair and one normal reference refresh remain pending; no new manufacturer import or relaxed identity match is needed.
+
+| Component | Verified R18 identity |
+|---|---|
+| Staff | `dpl_6KLSb5pGhfwhLJ33za8TVWgLL65p` — `atlas-grading-staff-4f3rpbgkc-ten-kings.vercel.app` |
+| Customer | `dpl_3SCJtnA7r7j6sko4pLXHbHJ7LbCq` — `atlas-grading-customer-jkdh5b0vn-ten-kings.vercel.app` |
+| Public | `dpl_Ae39SN4TD4xKMuXqy4mz8ZisARNQ` — `atlas-grading-public-niprg24pv-ten-kings.vercel.app` |
+| Native image | `sha256:dfd072caac93513f313ff819eb503b3a9d0f765356d14ec7edffe36f433b3d61` |
+| Main | `8f63b915889ec6a137dbfffc444c863583275368a381bf037a6971b1bca70c88` |
+| Worker | `ae218bf67c413dc2472851c62f1552242d4dac680399b7ee553b1fdaf77b95de` |
+
+Native configuration: `/opt/atlas/r18-2eafb6536e6d`; build context: `/opt/atlas/review-r18-2eafb6536e6d`. Proxy and existing current transport remain protected. Native acceptance SHA `e1c4085089fafb4fc2adea87906fd2ac08411b196a75239933153fe684f45edb`; canonical SHA `4c7542bb067c6129115b4ac9879d2f0517f81caa701a9c31e07cffbce0b3aba4`; owned DB postactivation SHA `3dca95fe5a9f4f4eb288c0bcf5e3d24e103326f048e3824e19aae7966f2d62f8`. All completed R18 release and R17 retirement intents are consumed; future work needs fresh observations, never replay.
+
+## Historical ATLAS production R17 — October 13, 2026, 1:47 a.m. Pacific
 
 Live source **`5a0d2a8d2b7f5deae10a726fa3f4cb4c00f5ca42`** applies the owner-requested damage multipliers: **Corners0.5×, Edges1×, Surface2×**, rule `ATLAS_2026_10_13_CATEGORY_DAMAGE_V1`. Automated and human-reviewed scoring, finding impact, and screen/print explanations use the same category factor. Measured damage, defect-type factors, category areas, centering,70/30side weighting, equal category averaging and final half-point rounding are unchanged. Historical saved reports are interpreted only by their explicit saved rule; old scoring is not available as a new-grade fallback. Ten Kings scoring is unchanged.
 

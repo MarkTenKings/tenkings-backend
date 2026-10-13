@@ -13,7 +13,15 @@ export const VENDOR_SOURCES=Object.freeze({
   'libde265-1.1.1.tar.gz':'5b4fac677018e6074196e8f9889f3e4a5310e46afbf22a893f620d4e24d3510e',
   'libheif-1.23.2.tar.gz':'1405ed070421459b569ff49deab109b7f1a30a447e72a9b20a4154f774634a44',
 });
+// These retained manufacturer inputs are runtime dependencies of the catalog
+// reader. Keep the list explicit; acquisition evidence and other data stay out.
+export const MANUFACTURER_CATALOG_SOURCES=Object.freeze([
+  'packages/card-catalog-evidence/data/manufacturer-checklists.json.gz',
+  'packages/card-catalog-evidence/data/manufacturer-parallel-families.json',
+  'packages/card-catalog-evidence/data/manufacturer-product-aliases.json',
+]);
 const required=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json',
+  ...MANUFACTURER_CATALOG_SOURCES,
   'frontend/atlas-shared/RapidCardCamera.jsx','frontend/atlas-shared/RapidCardCamera.module.css','frontend/atlas-shared/rapid-camera.mjs',
   'frontend/atlas-app/next.config.mjs','frontend/atlas-app/.eslintrc.json','frontend/atlas-app/prisma/schema.prisma',
   'packages/atlas-site-router/routes.mjs','packages/atlas-site-router/proof.mjs','packages/atlas-site-router/server.mjs',

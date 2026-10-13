@@ -27,6 +27,27 @@ if(mode==='source'){
   await walk(root);assert.deepEqual(all.sort(),manifest.files.map(file=>file.path).sort(),'Source closure has unmanifested or missing files');
 }
 const result={status:'CLEAN_MANUAL_SOURCE_VERIFIED',sourceFiles:manifest.files.length,sourceManifestSha256:hash(await readFile(manifestPath)),node:process.version};
+if(manifest.packages?.includes('packages/card-catalog-evidence')){
+  // Exercise the packaged reader and its supplemental data before a release
+  // can pass on source hashes alone. This is an offline catalog lookup only.
+  const fetch=globalThis.fetch;
+  globalThis.fetch=()=>assert.fail('Manufacturer catalog verification must remain offline');
+  try{
+    const {createManufacturerChecklistVariantProvider}=await import(new URL('../../../packages/card-catalog-evidence/src/manufacturer-checklist.mjs',import.meta.url));
+    const identity={category:'SPORTS',name:'Nick Kurtz',manufacturer:'Topps',setName:'Bowman Chrome',cardNumber:'93',year:null,language:null};
+    const catalog=await createManufacturerChecklistVariantProvider().prepare(identity);
+    assert.deepEqual(catalog.problems,[]);assert.equal(catalog.truncated,false);assert.equal(identity.year,null);
+    const checklistSha256='3ee770b295a63bc8482899b50fb651bcc6cdb55796d53e3bf4b1bd1efc5cc55f';
+    for(const label of ['BASE CARDS','BASE CARDS CHROME ROOKIE RED RC VARIATION','Refractor']){
+      const candidate=catalog.candidates.find(value=>value.label===label);assert(candidate,`Packaged manufacturer choice missing: ${label}`);
+      assert.equal(candidate.identity.year,'2025');assert.equal(candidate.identity.cardNumber,'93');
+      assert.equal(candidate.source.provider,'manufacturer_checklist');assert.equal(candidate.authority,'provider_candidate');
+      assert.equal(candidate.applicability,'unknown');
+      assert([candidate.source,...candidate.source.references].some(source=>source.sha256===checklistSha256),'Packaged choice is not bound to the retained official checklist');
+    }
+    result.manufacturerCatalog={identity,candidates:catalog.candidates.length,checklistSha256,providerCalls:0};
+  }finally{globalThis.fetch=fetch;}
+}
 if(mode==='native'){
   assert.equal(process.versions.node,'22.23.2');assert.equal(process.platform,'linux');
   const require=createRequire(import.meta.url),addon=require(resolve(root,'packages/atlas-photo-runtime/native/build/heif.node'));
