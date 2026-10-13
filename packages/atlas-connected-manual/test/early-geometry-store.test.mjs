@@ -59,3 +59,13 @@ test('explicit geometry retry still locks and validates the current terminal sta
   await assert.rejects(store.ensure({}, input, { retry: true }), { code: 'GEOMETRY_RETRY_STALE' });
   assert.equal(locks, 1); assert.equal(mutations, 0);
 });
+
+test('retained geometry lookup authorizes the current card and upload and only reads same-frame candidates',async()=>{
+ let reads=0;
+ const store=createEarlyGeometryStore({boundary:{transaction:(_staff,work)=>work({tx:{async $queryRawUnsafe(sql,...args){
+  reads++;assert.match(sql,/card_id=\$1::uuid AND upload_id=\$2::uuid AND side=\$3/);assert.match(sql,/frameDescriptorSha256/);
+  assert.deepEqual(args,['card','current','FRONT','a'.repeat(64)]);return[];
+ }},principal:{id:'owner'}})},intakeRepository:{authorizeInTransaction:async()=>({sides:{FRONT:{upload:{uploadId:'current'}}}})}});
+ assert.deepEqual(await store.retainedForPhoto({},'card','FRONT','current','a'.repeat(64)),[]);assert.equal(reads,1);
+ await assert.rejects(store.retainedForPhoto({},'card','FRONT','replaced','a'.repeat(64)),{code:'GEOMETRY_PHOTO_CHANGED'});assert.equal(reads,1);
+});

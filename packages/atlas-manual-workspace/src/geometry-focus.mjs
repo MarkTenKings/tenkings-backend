@@ -21,19 +21,19 @@ export function sourceQuadToPrepared(geometry, side, quad) {
   return valid(projected);
 }
 
-/** Only a local placement aid when no proposal exists; never saved until Approve. */
+/** Display only actual saved outlines. Human placement starts explicitly. */
 export function focusedGeometryOutlines(geometry, side) {
   const slot = geometry.sides[side];
-  const physical = clone(slot.physical?.quad ?? [{x:.15,y:.12},{x:.85,y:.12},{x:.85,y:.88},{x:.15,y:.88}]);
-  const center = physical.reduce((p,q) => ({x:p.x+q.x/4,y:p.y+q.y/4}),{x:0,y:0});
+  const physical = slot.physical ? clone(slot.physical.quad) : null;
   const printedOriginal = slot.printed && slot.prepared ? printedQuadOnOriginal(geometry, side)
-    : physical.map(p => ({x:center.x+(p.x-center.x)*.88,y:center.y+(p.y-center.y)*.88}));
+    : null;
   return {physical, printedOriginal, printedAbsent:Boolean(slot.printedAbsence),
     needsPhysicalPlacement:!slot.physical, needsPrintedPlacement:!slot.printed && !slot.printedAbsence};
 }
 
 /** Camera moves image and overlays together; handle size is in viewport pixels. */
 export function geometryFocusBounds(quad, image) {
+  if (!quad) return {x:0,y:0,width:image.width,height:image.height};
   valid(quad);
   const xs=quad.map(p=>p.x*image.width),ys=quad.map(p=>p.y*image.height);
   const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);

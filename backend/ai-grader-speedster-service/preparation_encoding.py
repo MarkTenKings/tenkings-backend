@@ -27,6 +27,13 @@ def encode_lossless_webp(raster):
         # RGBA samples; a nonopaque alpha plane must still survive exactly.
         if decoded is not None and decoded.ndim == 3 and decoded.shape[2] == 3 and np.all(expected[:, :, 3] == 255):
             decoded = cv2.cvtColor(decoded, cv2.COLOR_BGR2BGRA)
+        # Lossless WebP may replace RGB beneath alpha=0 with neighboring color
+        # values. Those samples are invisible, not part of the visible-lossless
+        # contract. Normalize only the comparison, never the encoded output or
+        # source. Alpha and every RGB sample with any opacity remain exact.
+        if decoded is not None and decoded.shape == expected.shape:
+            decoded = decoded.copy()
+            decoded[expected[:, :, 3] == 0, :3] = 0
     if decoded is None or decoded.dtype != expected.dtype or decoded.shape != expected.shape or not np.array_equal(decoded, expected):
         raise ValueError("PREPARATION_OUTPUT_INVALID")
     return data

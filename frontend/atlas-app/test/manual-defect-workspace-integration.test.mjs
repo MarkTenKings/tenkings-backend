@@ -12,7 +12,6 @@ import vm from 'node:vm';
 import * as reviewFeedback from '../lib/review-feedback.mjs';
 import * as variantReview from '../lib/variant-review-client.mjs';
 import * as analysisClient from '../lib/manual-defect-analysis-client.mjs';
-import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const compiled = babel.transformSync(readFileSync(new URL('../components/ManualCards.jsx', import.meta.url), 'utf8'), {
@@ -23,7 +22,7 @@ const base = Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { cardId: '
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
 const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(child => all(child, predicate, out));
   else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
-function harness({ journal, finalReview = false, rapid = false, initialGeometrySide = null, initialView = {} } = {}) {
+function harness({ journal, finalReview = false, rapid = false, initialGeometrySide = null, initialView = {}, recover, role = 'REVIEWER' } = {}) {
   const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [], timers = new Map(), cleanups = [];
   let cursor = 0, tree, viewCallback, statusCallback;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
@@ -41,7 +40,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   f.respond = async (path, options) => path.endsWith('/view') ? f.current : { astra: f.current.astra };
   f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
     sourceHash: f.current.card.contentHash, canCertify: true, report: {}, review: {} });
-  const client = { recover: async () => { viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
+  const client = { recover: async () => { if(recover)await recover(f);viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
     execute: async action => { f.actions.push(action); await f.onExecute?.(action);
       if (action.type === 'IDENTITY_EDIT') f.current = {...f.current,identity:action.identity,card:{...f.current.card,revision:f.current.card.revision+1,contentHash:`identity-${f.current.card.revision+1}`}};
       if (action.type === 'INSPECT_SIDE') f.current = {...f.current,defects:{...f.current.defects,inspected:[...(f.current.defects.inspected ?? []),action.side]}};
@@ -67,14 +66,12 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === '../lib/card-discard.mjs' || name === '../lib/batch-import.mjs') return {};
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
-      if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
       if (name === './VariantIdentityReview') return {__esModule:true,default:'VariantIdentityReview'};
       if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
       if (name === './ReportResearchPicker') return {__esModule:true,default:'ReportResearchPicker'};
       if (name === './DealerOfferPicker') return {__esModule:true,default:'DealerOfferPicker'};
       if (name === './ManualFinishing') return {__esModule:true,default:'ManualFinishing',openManualLabelPrintWindow:()=>{const popup={close(){f.closedPopups++;}};f.popups.push(popup);return popup;}};
-      if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; statusCallback = options.onStatus; return client; } };
       if (name === '@atlas/manual-workspace') return { reviewImagePreview };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace',reviewedMemoryState };
@@ -103,7 +100,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
   f.scroll = { top: 900, resets: 0, scrollTo({top}) { this.top = top; this.resets++; } };
-  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: f.cardId ?? 'card', csrf: 'csrf', initialReviewStage: !rapid&&!initialGeometrySide?'defects':null, initialGeometrySide, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;} });
+  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role }, cardId: f.cardId ?? 'card', csrf: 'csrf', initialReviewStage: !rapid&&!initialGeometrySide?'defects':null, initialGeometrySide, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;} });
     const stage = all(tree,node=>node.props?.ref && /mc-rapid-stage|mc-complete/.test(node.props.className ?? ''))[0];
     if(stage)stage.props.ref.current={closest:selector=>selector==='[data-review-scroll]'?f.scroll:null};
     effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
@@ -773,4 +770,41 @@ test('identity correction on Grade keeps Grade and refreshes only its report pre
  assert.equal(f.button('Approve final grade and queue label').props.disabled,true);f.identity().onChange('year','2023');f.render();await f.identity().onSave();f.render();
  assert.ok(f.report());assert.equal(f.report().preview.sourceRevision,2);assert.equal(f.report().current,true);assert.equal(f.identity().draft,null);assert.equal(f.geometry(),undefined);assert.equal(f.button('Approve final grade and queue label'),undefined,'new identity must pass variant verification again');
  assert.deepEqual(f.actions.map(action=>action.type),['IDENTITY_EDIT']);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
+});
+
+
+test('normal saved-review loading has no retry control before a failure',async()=>{
+ let finish;const f=harness({rapid:true,recover:()=>new Promise(resolve=>{finish=resolve;})});
+ assert.match(f.text(),/Loading saved review/);assert.equal(f.button('Retry loading review'),undefined);
+ finish();await flush();f.render();assert.ok(f.focusedGeometry());assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('failed saved-review read retries the same load and restores its current sequential stage',async()=>{
+ let count=0,finish;const f=harness({rapid:true,recover:async()=>{if(++count===1)throw {code:'READ_FAILED'};await new Promise(resolve=>{finish=resolve;});}});
+ await flush();f.render();assert.match(f.text(),/READ_FAILED/);assert.doesNotMatch(f.text(),/Loading saved review/);
+ f.button('Retry loading review').props.onClick();f.render();assert.match(f.text(),/Loading saved review/);assert.equal(f.button('Retry loading review'),undefined);
+ finish();await flush();f.render();assert.ok(f.focusedGeometry());assert.equal(f.focusedGeometry().side,'FRONT');assert.equal(f.actions.length,0);f.dispose();
+});
+
+const unfinishedGeometry=()=>({confirmed:false,sides:{FRONT:{physical:{quad:'saved-front'},prepared:null},BACK:{physical:{quad:'saved-back'},prepared:null}}});
+test('opening existing review prepares saved outlines sequentially before enabling editing, without confirmation or model calls',async()=>{
+ const f=harness({rapid:true,initialView:{geometry:unfinishedGeometry(),astra:{enabled:false}}});let complete;
+ f.onExecute=action=>new Promise(resolve=>{complete=()=>{f.current={...f.current,card:{...f.current.card,revision:f.current.card.revision+1},geometry:{...f.current.geometry,sides:{...f.current.geometry.sides,[action.side]:{...f.current.geometry.sides[action.side],prepared:{frame:'prepared'},printed:{quad:'retained-astra'}}}}};resolve();};});
+ await flush();f.render();assert.equal(f.geometry(),undefined);assert.match(f.text(),/Preparing saved outlines/);assert.equal(f.locked,true);
+ assert.deepEqual(f.actions.map(a=>[a.type,a.side]),[['PREPARE_SIDE','FRONT']]);
+ complete();await flush();f.render();assert.equal(f.geometry(),undefined);assert.equal(f.actions.length,2);
+ complete();await flush();f.render();assert.ok(f.geometry());assert.equal(f.geometry().workspace.sides.FRONT.printed.quad,'retained-astra');
+ assert.deepEqual(f.actions.map(a=>[a.type,a.side]),[['PREPARE_SIDE','FRONT'],['PREPARE_SIDE','BACK']]);assert.equal(f.current.geometry.confirmed,false);assert.equal(f.calls.length,0);f.dispose();
+});
+test('failed entry preparation stays in current editor and retries only the still-unprepared side',async()=>{
+ const geometry=unfinishedGeometry();geometry.sides.FRONT.prepared={frame:'already-ready'};
+ const f=harness({rapid:true,initialView:{geometry,astra:{enabled:false}}});let fail=true;
+ f.onExecute=async action=>{if(fail)throw {code:'MANUAL_PREPARATION_FAILED'};f.current={...f.current,geometry:{...geometry,sides:{...geometry.sides,BACK:{...geometry.sides.BACK,prepared:{frame:'ready'}}}}};};
+ await flush();f.render();assert.ok(f.geometry());assert.match(f.text(),/MANUAL_PREPARATION_FAILED/);assert.ok(f.button('Retry preparation'));
+ fail=false;f.button('Retry preparation').props.onClick();await flush();f.render();assert.ok(f.geometry());assert.equal(f.button('Retry preparation'),undefined);
+ assert.deepEqual(f.actions.map(a=>[a.type,a.side]),[['PREPARE_SIDE','BACK'],['PREPARE_SIDE','BACK']]);assert.equal(f.current.geometry.confirmed,false);f.dispose();
+});
+for(const scenario of ['read-only','approved'])test(`entry preparation leaves ${scenario} review untouched`,async()=>{
+ const f=harness({rapid:true,role:scenario==='read-only'?'VIEWER':'REVIEWER',initialView:{geometry:unfinishedGeometry(),astra:{enabled:false},...(scenario==='approved'?{approval:{sourceHash:'one'}}:{})}});
+ await flush();f.render();assert.equal(f.actions.length,0);f.dispose();
 });

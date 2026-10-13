@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { descriptorSha256 } from '@atlas/photo-core';
+import { descriptorSha256, parseDecodedFrame } from '@atlas/photo-core';
 import { describeDecodedFrame, verifyAndDecodePhoto } from '@atlas/photo-runtime';
 import { applyGeometryEdit, createGeometryWorkspace, geometryBase, updateGeometrySettings } from '@atlas/manual-workspace/geometry-actions';
 import { adoptGeometryPreparation, describePreparationDerivative, prepareGeometry,
@@ -85,6 +85,41 @@ test('identity-independent preparation retains actual proposals and all five los
   assert.deepEqual(early.proposal, prepared.proposal);
   const changed = structuredClone(engine); changed.identity.opencv = 'unmatched-runtime';
   await assert.rejects(preparePhotoGeometry({ ...options, quad: workspace.sides.FRONT.physical.quad, engine: changed }), e => e.code === 'PREPARATION_ENGINE_CHANGED');
+});
+
+test('generated transparent photographs prepare through automatic and human-save paths with the same exact visible pixels', async () => {
+  const path = join(directory, 'generated-transparent.png');
+  execFileSync(python, ['-I', '-c', `import sys,cv2,numpy as np\ny,x=np.indices((1540,1200))\na=np.stack([(3*x+y)%256,(x+2*y)%256,(2*x+3*y)%256,np.where((x>100)&(x<1100)&(y>140)&(y<1400),255,0)],axis=2).astype(np.uint8)\na[140:143,100:1100,3]=1\nassert cv2.imwrite(sys.argv[1],a)`, path]);
+  const bytes = await readFile(path), originalHash = sha(bytes);
+  const frame = parseDecodedFrame({ schemaVersion: 3, kind: 'decoded-frame', id: 'synthetic-generated-transparent',
+    originalDescriptorSha256: descriptorSha256(source.original), decodePlanSha256: descriptorSha256(source.decodePlan),
+    raster: { content: { mime: 'image/png', sha256: originalHash, byteCount: bytes.length }, dimensions: { width: 1200, height: 1540 },
+      object: { key: 'generated/transparent.png', versionId: 'one' } }, sourceToFrame: [1,0,0,0,1,0,0,0,1],
+    treatment: { decoder: 'synthetic-generator', version: 'v1', policyVersion: 'atlas-generated-grading-image-v1',
+      channels: 4, bitDepth: 8, colorSpace: 'sRGB', colorTreatment: 'converted', hdrTreatment: 'not-present' },
+    generation: { sourceFrame: source.frame, recipeHash: 'a'.repeat(64), model: 'synthetic-generator', promptVersion: 'v1' } }, source.original, source.decodePlan);
+  const generated = { ...source, frame, bytes };
+  let geometry = createGeometryWorkspace({ cardId: workspace.cardId, profile: 'SPORTS', sides: Object.fromEntries(['FRONT','BACK'].map(side => [side,
+    { matColor: 'BLACK', cornerShape: 'SQUARE', image: side === 'FRONT' ? { ...workspace.sides.FRONT.image, frameId: frame.id, frameSha256: originalHash } : workspace.sides.BACK.image }])) });
+  geometry = applyGeometryEdit(geometry, { side: 'FRONT', kind: 'PHYSICAL', base: geometryBase(geometry, 'FRONT', 'PHYSICAL'),
+    quad: fixture.FRONT.physical, actor: 'HUMAN', proposal: null }).state;
+  const before = structuredClone(geometry);
+  const manual = await prepareGeometry(input({ workspace: geometry, source: generated }));
+  const automatic = await preparePhotoGeometry({ source: generated, matColor: 'BLACK', quad: geometry.sides.FRONT.physical.quad,
+    engine: await preparationRuntimeIdentity(python), limits, pythonExecutable: python, outputContract: PREPARATION_CORE_V1 });
+  assert.deepEqual(geometry, before); assert.equal(sha(bytes), originalHash);
+  for (const name of ['rectified','inspection']) {
+    assert.deepEqual(manual.outputs[name].bytes, automatic.outputs[name].bytes);
+    assert.deepEqual(manual.outputs[name].frameToDerivative, automatic.outputs[name].frameToDerivative);
+    await writeFile(join(directory, `transparent-${name}.webp`), manual.outputs[name].bytes);
+  }
+  const service = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/', import.meta.url));
+  const check = `import sys,json,cv2,numpy as np\nfrom pathlib import Path\nsys.path.insert(0,sys.argv[1])\nfrom card_geometry import warp_to_card_map,warp_to_inspection_map\na=cv2.imread(sys.argv[2],cv2.IMREAD_UNCHANGED);q=np.float32(json.loads(sys.argv[3]))\nfor name,fn in [('rectified',warp_to_card_map),('inspection',warp_to_inspection_map)]:\n expected,_=fn(a,q);actual=cv2.imread(str(Path(sys.argv[4],'transparent-'+name+'.webp')),cv2.IMREAD_UNCHANGED)\n assert actual.shape==expected.shape\n assert np.array_equal(actual[:,:,3],expected[:,:,3]),name\n visible=expected[:,:,3]>0\n assert np.array_equal(actual[visible,:3],expected[visible,:3]),name\n assert np.any(actual[~visible,:3]!=0),name\nprint('pass')`;
+  assert.equal(execFileSync(python, ['-I','-c',check,service,path,JSON.stringify(fixture.FRONT.physical.map(p => [p.x*1200,p.y*1540])),directory], { encoding: 'utf8' }).trim(), 'pass');
+  const adopted = adoptGeometryPreparation(geometry, manual).state;
+  assert.equal(adopted.sides.FRONT.prepared.frame.id, manual.frame.id);
+  assert.deepEqual(adopted.sides.FRONT.physical, before.sides.FRONT.physical);
+  assert.equal(adopted.sides.FRONT.confirmation, null);
 });
 
 test('versioned core preparation preserves canonical core bytes and transforms; lazy reveals preserve its analysis frame', async () => {

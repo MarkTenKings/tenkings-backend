@@ -13,7 +13,7 @@ import { memoryPhotoStorage, sha } from '../../atlas-manual-intake/test/helpers.
 import { createWorkLimiter } from '../src/index.mjs';
 import { adoptEarlyGeometry, createEarlyGeometry, geometryCacheInput } from '../src/early-geometry.mjs';
 import { MACHINE_GEOMETRY_POLICY } from '../src/machine-geometry.mjs';
-import { ASTRA_GEOMETRY_POLICY } from '../src/astra-geometry.mjs';
+import { ASTRA_GEOMETRY_POLICY, prepareAstraGeometryRequest } from '../src/astra-geometry.mjs';
 import { geometrySideSettings } from '../src/details.mjs';
 
 const settings = { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', profile: null, fields: { name: '' } };
@@ -84,6 +84,7 @@ async function fixture() {
       return structuredClone(job);
     },
     async read(_staff, _card, key) { return structuredClone(jobs.get(key) ?? null); },
+    async retainedForPhoto() { return []; },
     async claim(engineHash, claimId) {
       if (active >= 2) return null;
       const job = [...jobs.values()].find(j => j.state === 'QUEUED' && j.input.engineHash === engineHash && selected[j.input.side]?.uploadId === j.input.uploadId);
@@ -166,6 +167,44 @@ test('a native preparation refusal retains its valid physical proposal and expos
     assert.deepEqual(result.physical, quad); assert.equal(result.prepared, false); assert.equal(result.printed, null);
     assert.equal(result.error, 'PREPARATION_LIMIT'); assert.equal(result.canRetry, true);
   } finally { await service.stop(); }
+});
+
+test('native-only runtime changes recover the exact generated-frame Astra reply without a new model job',async()=>{
+ const f=await fixture(),upload=await f.upload('FRONT'),uploaded=f.photos.get(upload.uploadId);
+ const bytes=await sharp({create:{width:40,height:60,channels:4,background:'#bba040'}}).png().toBuffer();
+ const frame=parseDecodedFrame({schemaVersion:3,kind:'decoded-frame',id:'retained-generated-frame',
+  originalDescriptorSha256:descriptorSha256(uploaded.original),decodePlanSha256:descriptorSha256(uploaded.decodePlan),
+  raster:{content:{mime:'image/png',sha256:digest(bytes),byteCount:bytes.length},dimensions:{width:40,height:60},object:{key:'intake/derived/retained.png',versionId:null}},
+  sourceToFrame:[1,0,0,0,1,0,0,0,1],treatment:{decoder:'synthetic-generator',version:'v1',policyVersion:'atlas-generated-grading-image-v1',channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'},
+  generation:{sourceFrame:uploaded.workingFrame,recipeHash:digest('recipe'),model:'synthetic-generator',promptVersion:'v1'}},uploaded.original,uploaded.decodePlan);
+ const photo={...uploaded,workingFrame:frame},source={frame,bytes};
+ const {evidence}=await prepareAstraGeometryRequest({source,side:'FRONT'});
+ const physicalContour=Array.from({length:16},(_,i)=>{const edge=Math.floor(i/4),t=i%4/4,a=quad[edge],b=quad[(edge+1)%4];return{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};});
+ const visual={physical:{quad,contour:physicalContour,uncertainty:'LOW',observation:'Authored physical edge.'},printed:{quad:quad.map(p=>({x:.5+(p.x-.5)*.9,y:.5+(p.y-.5)*.9})),uncertainty:'HIGH',observation:'Authored interrupted printed rails.'}};
+ const saved={evidence,status:200,bodyText:JSON.stringify({id:'resp_retained',model:'gpt-6-astra',status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(visual)}]}]})};
+ const responseRef=await f.artifacts.write(saved,{cardId:f.cardId,kind:'GEOMETRY_MODEL_RESPONSE',sourceHash:evidence.requestHash});
+ const oldEngine={policy:'atlas-early-clean-geometry-v2',outputContract:PREPARATION_CORE_V1,machineGeometryPolicy:MACHINE_GEOMETRY_POLICY,visual:ASTRA_GEOMETRY_POLICY,
+  runtime:{...identity,identity:{...identity.identity,opencv:'prior-codec'}},limits};
+ const prior=geometryCacheInput(upload,photo,settings,oldEngine),priorJob={key:digest(canonical(prior)),input:prior,state:'NEEDS_REVIEW',result:null};
+ let ensureCount=0,modelCount=0;
+ f.store.ensure=async()=>{ensureCount++;return null;};f.store.read=async()=>({state:'NEEDS_REVIEW',result:null,error:'GEOMETRY_REFRESH_AVAILABLE'});f.store.pending=async()=>[];
+ f.store.retainedForPhoto=async(_staff,cardId,side,uploadId,hash)=>{assert.equal(cardId,f.cardId);assert.equal(side,'FRONT');assert.equal(uploadId,upload.uploadId);return hash===descriptorSha256(frame)?[priorJob]:[];};
+ f.store.readModel=async()=>({requestHash:evidence.requestHash,request:{evidence},response:{ref:responseRef,httpStatus:200}});
+ const service=f.build({readGradingPhoto:async()=>({photo,bytes}),runVisual:async()=>{modelCount++;assert.fail('retained reply must not dispatch again');}});
+ try{
+  const recovered=await service.consume(f.staff,f.cardId,'FRONT',upload,uploaded,settings);
+  assert.equal(ensureCount,0);assert.equal(modelCount,0);assert.equal(f.jobs.size,0);
+  assert.deepEqual(recovered.input,prior);assert.deepEqual(recovered.packet.visual.printed,visual.printed);
+  assert.equal(recovered.packet.preparation,null);assert.equal(recovered.packet.preparedImages,null);
+  const exact=await service.retainedVisual(f.staff,f.cardId,'FRONT',upload.uploadId,frame,{responseHash:digest(saved.bodyText)});
+  assert.equal(exact.responseHash,digest(saved.bodyText));
+  assert.equal(await service.retainedVisual(f.staff,f.cardId,'FRONT',upload.uploadId,frame,{responseHash:'0'.repeat(64)}),null);
+  assert.equal(await service.retainedVisual(f.staff,f.cardId,'FRONT',upload.uploadId,{...frame,id:'another-frame'}),null);
+  const changedSettings=await service.consume(f.staff,f.cardId,'FRONT',upload,uploaded,{...settings,matColor:'WHITE'});
+  assert.equal(changedSettings.packet,null);
+  priorJob.input.engine.visual={...ASTRA_GEOMETRY_POLICY,version:'another-model-policy'};
+  assert.equal(await service.retainedVisual(f.staff,f.cardId,'FRONT',upload.uploadId,frame),null);
+ }finally{await service.stop();}
 });
 
 for (const proposalKind of ['accepted', 'ambiguous missing', 'missing printed']) test(`automatic cache retains exact core pixels and ${proposalKind} geometry provenance`, async () => {

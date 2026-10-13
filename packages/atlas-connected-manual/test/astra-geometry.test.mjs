@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { digest } from '@atlas/manual-service/contract';
-import { prepareAstraGeometryRequest, projectAstraGeometryResponse, runAstraGeometry, gradingToCanonical, geometryProposal } from '../src/astra-geometry.mjs';
+import { prepareAstraGeometryRequest, projectAstraGeometryResponse, runAstraGeometry, gradingToCanonical, geometryProposal, applyAstraGeometryToPreparation } from '../src/astra-geometry.mjs';
 const quad = [{x:.1,y:.1},{x:.9,y:.1},{x:.9,y:.9},{x:.1,y:.9}];
 const contour = Array.from({length:16},(_,i)=>{const edge=Math.floor(i/4),t=i%4/4,a=quad[edge],b=quad[(edge+1)%4];return{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};});
 const visual={physical:{quad,contour,uncertainty:'HIGH',observation:'Rounded card edge, glare at lower left.'},printed:{quad:[{x:.2,y:.2},{x:.8,y:.22},{x:.79,y:.8},{x:.19,y:.78}],uncertainty:'MEDIUM',observation:'Slanted printed frame.'}};
@@ -24,6 +24,22 @@ test('clean-frame general inner quad transforms independently, preserving its sl
  const p=gradingToCanonical(visual.printed.quad,source,{frame:{sourceToRectified:[1.27,0,0,0,.889,0,0,0,1]}});
  p.forEach((v,i)=>{assert.ok(Math.abs(v.x-visual.printed.quad[i].x)<1e-12);assert.ok(Math.abs(v.y-visual.printed.quad[i].y)<1e-12);});
  assert.notEqual(p[0].y,p[1].y);
+});
+
+test('retained Astra printed coordinates survive native re-preparation without replacing a human material contour',async()=>{
+ const source=await fixture(),{evidence}=await prepareAstraGeometryRequest({source,side:'FRONT'});
+ const saved=projectAstraGeometryResponse({status:200,bodyText:response(visual),evidence},evidence);
+ const humanContour=structuredClone(contour),result={frameDescriptorSha256:evidence.frameDescriptorSha256,frame:{sourceToRectified:[1270/40,0,0,0,1778/60,0,0,0,1],materialContour:humanContour}};
+ applyAstraGeometryToPreparation({visual:saved,source,result,includePhysicalContour:false});
+ assert.equal(result.actor,'ASTRA');assert.equal(result.proposal.provenance.responseHash,saved.responseHash);
+ result.proposal.proposal.forEach((p,i)=>{assert.ok(Math.abs(p.x-visual.printed.quad[i].x)<1e-12);assert.ok(Math.abs(p.y-visual.printed.quad[i].y)<1e-12);});
+ assert.deepEqual(result.frame.materialContour,humanContour);
+ assert.throws(()=>applyAstraGeometryToPreparation({visual:saved,source,result:{...result,frameDescriptorSha256:'e'.repeat(64)}}),{code:'GEOMETRY_PHOTO_CHANGED'});
+ const changed=structuredClone(source);changed.frame.raster.content.sha256='f'.repeat(64);
+ assert.throws(()=>applyAstraGeometryToPreparation({visual:saved,source:changed,result}),{code:'GEOMETRY_PHOTO_CHANGED'});
+ const absent=structuredClone(saved);absent.printed.quad=null;
+ applyAstraGeometryToPreparation({visual:absent,source,result,includePhysicalContour:false});
+ assert.equal(result.proposal.outcome,'ABSTAIN');assert.equal(result.proposal.proposal,null);
 });
 test('an uploaded working photograph cannot enter clean-only Astra geometry',async()=>{
  const source=await fixture();source.frame.schemaVersion=2;delete source.frame.generation;

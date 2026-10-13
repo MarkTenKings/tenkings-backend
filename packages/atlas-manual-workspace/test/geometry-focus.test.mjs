@@ -5,6 +5,13 @@ import {applyGeometryEdit,geometryBase,preparedPointToOriginal} from '../src/geo
 import {focusedFixture,printed} from './focused-geometry-fixture.mjs';
 
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-9,`${a} != ${b}`);
+test('missing Astra outlines produce no invented rectangle or inset and camera fits the whole source',()=>{
+ const {workspace}=structuredClone(focusedFixture());workspace.sides.FRONT.printed=null;
+ assert.equal(focusedGeometryOutlines(workspace,'FRONT').printedOriginal,null);
+ workspace.sides.FRONT.physical=null;workspace.sides.FRONT.prepared=null;
+ const value=focusedGeometryOutlines(workspace,'FRONT');assert.equal(value.physical,null);assert.equal(value.printedOriginal,null);
+ assert.deepEqual(geometryFocusBounds(null,workspace.sides.FRONT.image),{x:0,y:0,width:1600,height:2400});
+});
 test('source and live-preview projections preserve skew and exact width convention',()=>{
   for(const perspective of [false,true]){
     const {workspace,printedOriginal}=focusedFixture({perspective});

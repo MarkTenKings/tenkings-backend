@@ -19,8 +19,6 @@ import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/ident
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
 import {STAFF_BASE_PATH} from '../lib/routes.mjs';
 import {createDefectAnalysisClient} from '../lib/manual-defect-analysis-client.mjs';
-import {createEarlyGeometryClient,earlyGeometryIdentity} from '../lib/early-geometry-client.mjs';
-import EarlyGeometryPreview,{EarlyGeometryStatus} from './EarlyGeometryPreview';
 import CompletionNextSteps from './CompletionNextSteps';
 import VariantIdentityReview from './VariantIdentityReview';
 import ReviewIdentityPanel from './ReviewIdentityPanel';
@@ -51,16 +49,16 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   useEffect(()=>{if(saved?.details?.sourceHash===saved?.card?.sourceHash&&saved?.details?.fields?.name)onNameChange?.(saved.details.fields.name);},[saved?.details?.sourceHash,saved?.card?.sourceHash,saved?.details?.fields?.name,onNameChange]);
   const [identifying,setIdentifying]=useState(false),[changes,setChanges]=useState({}),[localReady,setLocalReady]=useState(false);
   const [commandPending,setCommandPending]=useState(null);
-  const [geometryEntrySide,setGeometryEntrySide]=useState(null);
+  const reviewEntry=useRef(null);
   const [workspaceBusy,setWorkspaceBusy]=useState(false);
   const workspaceBusyChanged=useCallback(value=>{setWorkspaceBusy(value);onBusyChange?.(value);},[onBusyChange]);
   const [nextCursor,setNextCursor]=useState(null);
   const [uploadState,setUploadState]=useState({}),[invalidDetails,setInvalidDetails]=useState({});
-  const geometryClient=useRef(null),[geometryError,setGeometryError]=useState(''),[geometryRetry,setGeometryRetry]=useState({});
   const discarder=useRef(null),leavingDeleted=useRef(false),[deletePending,setDeletePending]=useState(false);
   const commandKey=`atlas-connected-command:${staff.id}:${cardId??'new'}`;
   const dirty=Object.keys(changes).length>0;
-  useEffect(()=>{if(screen!=='workspace')onBusyChange?.(dirty||Boolean(busy)||Boolean(commandPending)||Object.values(uploadState).some(value=>value?.busy));},[screen,dirty,busy,commandPending,uploadState,onBusyChange]);
+  const inWorkspace=screen!=='photos'&&saved?.manual?.current===true;
+  useEffect(()=>{if(!inWorkspace)onBusyChange?.(dirty||Boolean(busy)||Boolean(commandPending)||Object.values(uploadState).some(value=>value?.busy));},[inWorkspace,dirty,busy,commandPending,uploadState,onBusyChange]);
   const request=(path,options={})=>{
     if(options.method==='POST'&&!/\/discard(?:-status)?$/.test(path)&&hasPendingDiscard(localStorage,staff.id))throw {code:'INTAKE_DISCARD_PENDING'};
     return manualRequest(path,{...options,csrf:session.current?.csrf});
@@ -77,7 +75,7 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   }
   async function pendingList(){const started=generation.current,sequence=++pendingRead.current,result=await client.current.pending();if(started===generation.current&&sequence===pendingRead.current)setPending(result);}
   async function leaveDeletedCard(){
-    leavingDeleted.current=true;generation.current++;geometryClient.current?.dispose();
+    leavingDeleted.current=true;generation.current++;
     savedRef.current=null;changesRef.current={};activity.current=null;uploadLocks.current={};
     setSaved(null);setChanges({});setBusy('');setUploadState({});setIdentifying(false);setCommandPending(null);setPending([]);
     await router.replace('/manual');
@@ -117,7 +115,7 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   useEffect(()=>{
     const started=++generation.current;let stopped=false,journal,batchJournal,ownedClient,cleanup;
     savedRef.current=null;changesRef.current={};uploadLocks.current={};activity.current=null;reads.current={next:0,applied:0};leavingDeleted.current=false;
-    setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setIdentifying(false);setCommandPending(null);setGeometryEntrySide(null);setPending([]);setScreen('intake');setLocalReady(false);
+    setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setIdentifying(false);setCommandPending(null);reviewEntry.current=null;setPending([]);setScreen('intake');setLocalReady(false);
     (async()=>{
       const currentSession=await request('/api/staff/session');
       if(stopped)return;
@@ -169,19 +167,6 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
     const started=generation.current;auto.current.add(saved.card.sourceHash);setIdentifying(true);
     request(`${prefix}/${cardId}/identify`,{method:'POST',body:{}}).then(()=>{if(started===generation.current)return refresh();}).catch(error=>{if(started===generation.current)setError(manualMessage(error));}).finally(()=>{if(started===generation.current)setIdentifying(false);});
   },[saved?.card.sourceHash,saved?.identification.state,saved?.manual,deletePending]);
-  useEffect(()=>{
-    if(deletePending||!localReady||!cardId||staff.role!=='REVIEWER'||!savedRef.current?.earlyGeometry)return;
-    const started=generation.current;
-    const owner=createEarlyGeometryClient({request:body=>request(`${prefix}/${cardId}/geometry`,{method:'POST',body}),
-      read:()=>started===generation.current?refresh():null,
-      isVisible:()=>typeof document==='undefined'||document.visibilityState!=='hidden',
-      onError:error=>{if(started===generation.current)setGeometryError(manualMessage(error));}});
-    geometryClient.current=owner;setGeometryError('');setGeometryRetry({});
-    void owner.ensure(savedRef.current);
-    const timer=setInterval(()=>void owner.poll(savedRef.current),2000);
-    return()=>{owner.dispose();clearInterval(timer);if(geometryClient.current===owner)geometryClient.current=null;};
-  },[localReady,cardId,staff.id,staff.role,Boolean(saved?.earlyGeometry),deletePending]);
-  useEffect(()=>{void geometryClient.current?.ensure(saved);},[earlyGeometryIdentity(saved)]);
   useEffect(()=>{
     if(!dirty)return;const warn=event=>{if(leavingDeleted.current)return;event.preventDefault();event.returnValue='';};
     const block=()=>{if(leavingDeleted.current)return;if(!window.confirm('Discard the unsaved card details?')){router.events.emit('routeChangeError');throw 'Unsaved card details';}};
@@ -242,13 +227,6 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
     await durable(`/api/staff/manual/cards/${cardId}/actions`,{actionId:crypto.randomUUID(),expectedRevision:saved.manual.revision,action:{type:'REPLACE_SOURCES',sourceHash:saved.card.sourceHash}});
     if(started!==generation.current)return;const result=await refresh();if(started===generation.current&&result?.manual?.current)setScreen('workspace');
   }
-  async function openGeometry(side){
-    if(!savedRef.current?.card.ready||Object.keys(uploadLocks.current).length||pendingPhotos||commandPending||identifying||staff.role!=='REVIEWER')return;
-    setGeometryEntrySide(side);
-    if(savedRef.current.manual?.current)setScreen('workspace');
-    else if(savedRef.current.manual)await replace();
-    else await initialize();
-  }
   const profile=Object.hasOwn(changes,'profile')?changes.profile:saved?.details.profile;
   const layoutType=Object.hasOwn(changes,'layoutType')?changes.layoutType:saved?.details.layoutType;
   const activePending=pending.filter(item=>!cardId || item.value.cardId===cardId);
@@ -261,39 +239,45 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   const reviewIssues=[...photoAttention,...Object.entries(fieldProblems).filter(([,message])=>message).map(([key,message])=>({key:`detail-${key}`,message:`${labels[key]??({profile:'Card family',layoutType:'Pokémon card kind'})[key]??key}: ${message}`}))];
   const detailIssue=key=>fieldProblems[key]?<small className="mc-field-error" role="alert">{fieldProblems[key]}</small>:null;
   const detailTarget=key=>({'data-review-target':`detail-${key}`,'data-review-attention':Boolean(fieldProblems[key]),tabIndex:-1});
-  const photoMatKey=side=>side==='FRONT'?'frontMatColor':'backMatColor';
-  const photoMat=(details,side)=>details?.[photoMatKey(side)]??details?.matColor;
-  const settingsChanged=side=>photoMat({...saved?.details,...changes},side)!==photoMat(saved?.details,side)
-    ||Object.hasOwn(changes,'cornerShape')&&changes.cornerShape!==saved?.details.cornerShape;
-  async function retryGeometry(side){
-    const owner=geometryClient.current;if(!owner||geometryRetry[side])return;
-    const started=generation.current;setGeometryRetry(old=>({...old,[side]:true}));setGeometryError('');
-    try{await owner.retry(side,savedRef.current?.earlyGeometry?.[side]);}
-    catch(error){if(started===generation.current)setGeometryError(manualMessage(error));}
-    finally{if(started===generation.current)setGeometryRetry(old=>({...old,[side]:false}));}
-  }
+  // Failed or incomplete Astra geometry belongs to the same sequential review.
+  // Only source-bound generated photos and usable identity are prerequisites;
+  // geometry status must never send a card through a second review screen.
+  const generatedPairReady=Boolean(saved?.card.ready&&['FRONT','BACK'].every(side=>
+    saved.gradingImages?.[side]?.state==='READY'&&saved.gradingImages[side].uploadId===saved.card.sides[side]?.upload?.uploadId));
+  const openReviewDirectly=Boolean(screen!=='photos'&&saved&&!saved.manual?.current&&generatedPairReady
+    &&!Object.keys(detailErrors(saved.details,changes)).length&&!['NOT_STARTED','RUNNING'].includes(saved.identification?.state)
+    &&!dirty&&staff.role==='REVIEWER');
+  useEffect(()=>{
+    if(!openReviewDirectly||!localReady||deletePending||uploading||pendingPhotos||commandPending||identifying||busy||activity.current)return;
+    const source=saved.card.sourceHash;
+    if(reviewEntry.current===source)return;
+    reviewEntry.current=source;
+    perform(saved.manual?replace:initialize,'Opening review…');
+  },[openReviewDirectly,localReady,deletePending,uploading,pendingPhotos,commandPending,identifying,busy,saved?.card.sourceHash]);
   const Container=embedded?React.Fragment:Shell;
   const WorkspaceShell=embedded?React.Fragment:DirectCardReviewShell;
-  return <Container {...(embedded?{}:{staff,title:'Card review',manual:true})}><div className={embedded?'mc-inline-card-review':'mc-page'}>
+  const notices=<>
     {deletePending&&<section className="mc-notice"><p>A saved deletion is waiting for confirmation. Uploads are paused; originals stay on this device until ATLAS confirms.</p><button disabled={Boolean(busy)||uploading} onClick={()=>void removeCards()}>Finish saved deletion</button></section>}
     {error&&<div className="mc-notice error" role="alert">{error} <button onClick={()=>perform(()=>refresh(),'Loading saved card…')}>Reload saved state</button></div>}
     {busy&&<p role="status">{busy}</p>}
-    {screen!=='workspace'&&commandPending&&!busy&&<section className="mc-notice"><p>A saved request needs confirmation. Resume it before making another change.</p><button disabled={uploading} onClick={()=>perform(resumeCommand,'Checking the saved request…')}>Resume saved request</button></section>}
-    {screen!=='workspace'&&activePending.length>0&&<section className="mc-notice"><h2>Saved uploads</h2>{activePending.map(item=><div key={item.id}><span>{item.value.kind==='create'?'New card':`${item.value.input.side==='FRONT'?'Front':'Back'} photo`} · {olderUpload(item)?'Earlier upload; this is not the selected photo.':item.value.verified?'Original saved; working image needs preparation':'Upload saved on this device'}</span><button disabled={Boolean(busy)||Boolean(uploadState[item.value.input?.side]?.busy)} onClick={()=>{if(cardId&&item.value.kind==='upload')void uploadSide(item.value.input.side,owner=>owner.resume(item.id),'Resuming saved upload…');else perform(async()=>{const result=await client.current.resume(item.id);if(!cardId&&result.card)await router.push(`/manual/${result.card.cardId}`);else await refresh();},'Resuming saved upload…');}}>{olderUpload(item)?'Check earlier upload':'Resume'}</button>
+    {!inWorkspace&&commandPending&&!busy&&<section className="mc-notice"><p>A saved request needs confirmation. Resume it before making another change.</p><button disabled={uploading} onClick={()=>perform(resumeCommand,'Checking the saved request…')}>Resume saved request</button></section>}
+    {!inWorkspace&&activePending.length>0&&<section className="mc-notice"><h2>Saved uploads</h2>{activePending.map(item=><div key={item.id}><span>{item.value.kind==='create'?'New card':`${item.value.input.side==='FRONT'?'Front':'Back'} photo`} · {olderUpload(item)?'Earlier upload; this is not the selected photo.':item.value.verified?'Original saved; working image needs preparation':'Upload saved on this device'}</span><button disabled={Boolean(busy)||Boolean(uploadState[item.value.input?.side]?.busy)} onClick={()=>{if(cardId&&item.value.kind==='upload')void uploadSide(item.value.input.side,owner=>owner.resume(item.id),'Resuming saved upload…');else perform(async()=>{const result=await client.current.resume(item.id);if(!cardId&&result.card)await router.push(`/manual/${result.card.cardId}`);else await refresh();},'Resuming saved upload…');}}>{olderUpload(item)?'Check earlier upload':'Resume'}</button>
       {item.value.verified&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.forgetVerified(item.id),'Keeping the verified original…')}>Clear device copy</button>}
       {!item.value.uploadId&&item.value.planRefusal&&item.value.planUncertain===false&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.discardUnplanned(item.id),'Clearing the refused upload…')}>Discard refused upload</button>}
     </div>)}</section>}
-    {cardId&&saved&&screen==='intake'&&<ReviewAttention issues={reviewIssues} identity={`${cardId}:intake`}/>}
+  </>;
+  return <Container {...(embedded?{}:{staff,title:'Card review',manual:true})}><div className={embedded?'mc-inline-card-review':'mc-page'}>
+    {!openReviewDirectly&&notices}
+    {cardId&&saved&&!inWorkspace&&!openReviewDirectly&&<ReviewAttention issues={reviewIssues} identity={`${cardId}:intake`}/>}
     {!cardId?<>
       <header className="mc-heading mc-dashboard-heading"><div><p className="mc-kicker">THE ATLAS GRADING STUDIO</p><h1>Every card.<br/><em>A clearer story.</em></h1><p>Your cards, from the first photograph to a fully explained final grade.</p></div>
         {staff.role==='REVIEWER'&&<div className="mc-actions"><Link className="primary" href="/batch?tab=INTAKE">+ Add cards</Link><button disabled={!localReady||Boolean(busy)||uploading} onClick={()=>void removeCards()}>Delete all cards</button></div>}</header>
       <div className="mc-section-title"><h2>Your cards</h2><span>{cards.length}{nextCursor?'+':''} in this view</span></div>
       <div className="mc-card-list">{cards.map(card=><Link href={`/manual/${card.cardId}`} key={card.cardId}><span className="mc-card-monogram" aria-hidden="true">A<span>↗</span></span><strong>{card.label||'Untitled card'}</strong><span className="mc-card-photostatus"><i data-ready={Boolean(card.sides.FRONT.upload?.source)}>Front {card.sides.FRONT.upload?.source?'ready':'needed'}</i><i data-ready={Boolean(card.sides.BACK.upload?.source)}>Back {card.sides.BACK.upload?.source?'ready':'needed'}</i></span><small>{new Date(card.createdAt).toLocaleString()}</small></Link>)}{localReady&&!cards.length&&<div className="mc-empty-collection"><span aria-hidden="true">✧</span><h3>Your next discovery starts here.</h3><p>Add Front and Back photos to the queue. ATLAS starts preparing and grading each card automatically.</p></div>}</div>
       {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
-    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:workspaceBusy,onExit:()=>router.push('/manual')})}><ManualWorkspace key={`${staff.id}:${cardId}`} onNameChange={onNameChange} staff={staff} cardId={cardId} csrf={session.current.csrf} reviewSession={reviewSession} onBusyChange={workspaceBusyChanged} onQueued={onQueued} initialGeometrySide={geometryEntrySide} onPhotos={()=>{setScreen('intake');setGeometryEntrySide(null);perform(()=>refresh(),'Loading saved photos…');}}/></WorkspaceShell>:<>
+    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:inWorkspace?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:workspaceBusy,onExit:()=>router.push('/manual')})}><ManualWorkspace key={`${staff.id}:${cardId}`} onNameChange={onNameChange} staff={staff} cardId={cardId} csrf={session.current.csrf} reviewSession={reviewSession} onBusyChange={workspaceBusyChanged} onQueued={onQueued} onPhotos={()=>{setScreen('photos');perform(()=>refresh(),'Loading saved photos…');}}/></WorkspaceShell>:openReviewDirectly?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:Boolean(busy)||Boolean(commandPending),onExit:()=>router.push('/manual')})}><section className="mc-rapid-stage" aria-label="Opening card review">{notices}{!error&&!commandPending&&!pendingPhotos&&<p role="status">Opening saved review…</p>}{error&&!commandPending&&!busy&&<button type="button" onClick={()=>perform(saved.manual?replace:initialize,'Opening review…')}>Retry opening review</button>}</section></WorkspaceShell>:<>
       <header className="mc-heading"><div><Link className="mc-back" href="/manual">← All cards</Link>{staff.role==='REVIEWER'&&<button className="mc-delete-card" disabled={Boolean(busy)||uploading} onClick={()=>void removeCards(cardId)}>Delete this card</button>}<p className="mc-kicker">01 / PHOTOGRAPHS &amp; IDENTITY</p><h1>{saved.card.label||'New card'}</h1><p>Choose Front and Back photographs. ATLAS removes the backgrounds first, then identifies and inspects the clean card images.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
       <ol className="mc-journey" aria-label="Grading journey"><li aria-current="step"><b>01</b><span>Capture<small>Original photographs</small></span></li><li><b>02</b><span>Measure<small>Edges &amp; centering</small></span></li><li><b>03</b><span>Inspect<small>Every finding</small></span></li><li><b>04</b><span>Explain<small>The final report</small></span></li></ol>
-      {geometryError&&<div className="mc-notice" role="status">Geometry status could not be refreshed. {geometryError} <button onClick={()=>perform(()=>refresh(),'Checking geometry…')}>Refresh geometry status</button></div>}
       <section className="mc-photo-pair">{['FRONT','BACK'].map(side=>{const slot=saved.card.sides[side],sideName=side==='FRONT'?'Front':'Back';
         const sidePending=activePending.filter(item=>item.value.kind==='upload'&&item.value.input.side===side);
         const recovery=slot.upload?.uploadId?sidePending.find(item=>item.value.uploadId===slot.upload.uploadId):sidePending[0];
@@ -302,14 +286,10 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
         const imageStopped=['FAILED','UNKNOWN','UNAVAILABLE'].includes(gradingImage?.state);
         const imageMessage=gradingImage?.state==='UNKNOWN'?'Background removal has no confirmed result.':gradingImage?.state==='FAILED'?'Background removal could not finish.':gradingImage?.state==='UNAVAILABLE'?'Background removal is unavailable.':gradingImage?.state==='READY'?'Loading the saved grading image.':'Preparing the background-removed grading image.';
         const imageReason=gradingImage?.state==='UNKNOWN'?'The saved request needs review before another image request.':gradingImage?.code==='REPORT_IMAGE_RATE_LIMITED'?'The image service remained busy after retries.':gradingImage?.code==='REPORT_IMAGE_ALPHA_INVALID'||gradingImage?.code==='REPORT_IMAGE_OUTPUT_INVALID'?'The returned image could not be used for grading.':imageStopped?'Your uploaded photograph is retained.':null;
-        const geometryStatus=!saved.manual?.current&&saved.earlyGeometry?.[side]?.uploadId===slot.upload?.uploadId?saved.earlyGeometry?.[side]:undefined;
         const attention=photoAttention.find(issue=>issue.side===side);
-        return <article key={side} data-review-target={`photo-${side}`} data-review-attention={Boolean(attention)} tabIndex={-1}>{attention&&<p className="mc-review-reason">{attention.message}</p>}<div className="mc-photo-title"><h2>{sideName}</h2><span>{slot.upload?.source?'Original retained':'Add photograph'}</span></div>
-        {saved.previews?.[side]?.url?<EarlyGeometryPreview key={slot.version} side={sideName} status={geometryStatus} settingsChanged={settingsChanged(side)} src={reviewImagePreview(saved.previews?.[side],saved.previews?.[side]?.width?saved.previews[side]:null)?.url??saved.previews?.[side]?.url} />:<div className="mc-photo-empty" role={imageStopped?'alert':undefined}><span aria-hidden="true" className="mc-photo-outline">{side==='FRONT'?'F':'B'}</span><strong>{slot.upload?.source?imageMessage:originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</strong><small>{imageReason??'Full resolution. Every detail.'}</small></div>}
+        return <article key={side} data-review-target={`photo-${side}`} data-review-attention={Boolean(attention)} tabIndex={-1}>{attention&&<p className="mc-review-reason">{attention.message}</p>}<div className="mc-photo-title"><h2>{sideName}</h2><span>{gradingImage?.state==='READY'?'Grading image ready':slot.upload?.source?'Preparing grading image':'Add photograph'}</span></div>
+        {saved.previews?.[side]?.url?<div className="mc-photo-preview"><img key={slot.version} alt={`${sideName} background-removed grading image`} src={reviewImagePreview(saved.previews?.[side],saved.previews?.[side]?.width?saved.previews[side]:null)?.url??saved.previews?.[side]?.url}/></div>:<div className="mc-photo-empty" role={imageStopped?'alert':undefined}><span aria-hidden="true" className="mc-photo-outline">{side==='FRONT'?'F':'B'}</span><strong>{slot.upload?.source?imageMessage:originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</strong><small>{imageReason??'Full resolution. Every detail.'}</small></div>}
         {imageStopped&&<button type="button" disabled={Boolean(busy)||Boolean(uploadState[side]?.busy)} onClick={()=>perform(()=>refresh(),'Checking saved image status…')}>Check {sideName} image status</button>}
-        <EarlyGeometryStatus status={geometryStatus} settingsChanged={settingsChanged(side)} retrying={Boolean(geometryRetry[side])} onRetry={()=>void retryGeometry(side)}/>
-        {saved.manual?.current&&<p>Open Edit {sideName} geometry below to see your saved outline and printed border.</p>}
-        {slot.upload?.source&&<div className="mc-actions"><button type="button" className="primary" disabled={!localReady||!saved.card.ready||Boolean(busy)||uploading||pendingPhotos||Boolean(commandPending)||identifying||staff.role!=='REVIEWER'} onClick={()=>perform(()=>openGeometry(side),'Opening geometry…')}>Edit {sideName} geometry</button><small>{saved.card.ready?'Place or adjust the physical outline and printed border.':'Prepare both photos to open the geometry editor.'}</small></div>}
         <label className="mc-upload">{slot.upload?'Replace original photo':'Choose original photo'}<input aria-label={`${side} original photo`} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.HEIC,.heif,.HEIF" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'||activePending.some(item=>item.value.kind==='upload'&&item.value.input.side===side)} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void uploadSide(side,owner=>owner.upload(cardId,side,slot.version,file),`Saving ${side==='FRONT'?'Front':'Back'} original…`);}}/></label>
         {uploadState[side]?.busy&&<p role="status">{uploadState[side].label}</p>}{uploadState[side]?.error&&<p className="mc-field-error" role="alert">{uploadState[side].error}</p>}
         {uploadState[side]?.refreshError&&<p className="mc-field-error" role="alert">The saved photo status could not be refreshed. {uploadState[side].refreshError} <button type="button" disabled={Boolean(busy)||Boolean(uploadState[side]?.busy)} onClick={()=>void uploadSide(side,async()=>{},'Checking saved photo status…')}>Reload {sideName} photo status</button></p>}
@@ -346,6 +326,7 @@ function finalFindingsAvailable(view){
 export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusyChange,onQueued,initialGeometrySide=null,initialInspection=null,initialReviewStage=null,onNameChange}){
   const imageScope=useRef('all');
   const [errorRecovery,setErrorRecovery]=useState(null);
+  const [loadingReview,setLoadingReview]=useState(true),reviewLoad=useRef(null);
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
   const [identityErrors,setIdentityErrors]=useState({}),[identitySaving,setIdentitySaving]=useState(false),identityBase=useRef(null),identityInFlight=useRef(false);
   const rapidInFlight=useRef(false),[rapidSaving,setRapidSaving]=useState(false);
@@ -387,14 +368,32 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
         const updated={...viewRef.current,astra};viewRef.current=updated;setView(updated);
       }});
     analysisClient.current=ownedAnalysis;
-    void ownedClient.recover().then(async value=>{if(stopped)return;
-      const resume=initialReviewStage??(initialGeometrySide?'geometry-review':rapidResumeStage(value));
-      setScreen(resume==='report'?'findings-review':resume);
-      if(!initialInspection&&['defects','findings-review'].includes(resume))focusFirstFinding(value,'FRONT');
-      if(value.variantVerification?.confirmation?.decision==='UNRESOLVED')setShowVariantReview(true);
-      if(!initialGeometrySide&&(value.approval?.sourceHash===value.card.contentHash||resume==='report')&&value.variantVerification?.confirmation?.decision!=='UNRESOLVED')await openReport();
-      else if(value.astra?.enabled)await ownedAnalysis.refresh();
-    }).catch(error=>{if(!stopped)setError(manualMessage(error));});
+    const loadReview=async()=>{
+      setLoadingReview(true);setError('');setErrorRecovery(null);
+      let preparing=false;
+      try{
+        let value=await ownedClient.recover();if(stopped)return;
+        // Finish deterministic preparation of saved outlines before mounting
+        // their editor. This adds no outline, model request or human approval.
+        if(staff.role==='REVIEWER'&&value.approval?.sourceHash!==value.card.contentHash){
+          for(const side of ['FRONT','BACK']){
+            const slot=value.geometry?.sides?.[side];
+            if(!slot?.physical||slot.prepared)continue;
+            preparing=true;setStatus('Preparing saved outlines…');
+            value=await ownedClient.execute({type:'PREPARE_SIDE',side});if(stopped)return;
+          }
+        }
+        preparing=false;
+        const resume=initialReviewStage??(initialGeometrySide?'geometry-review':rapidResumeStage(value));
+        setScreen(resume==='report'?'findings-review':resume);
+        if(!initialInspection&&['defects','findings-review'].includes(resume))focusFirstFinding(value,'FRONT');
+        if(value.variantVerification?.confirmation?.decision==='UNRESOLVED')setShowVariantReview(true);
+        if(!initialGeometrySide&&(value.approval?.sourceHash===value.card.contentHash||resume==='report')&&value.variantVerification?.confirmation?.decision!=='UNRESOLVED')await openReport();
+        else if(value.astra?.enabled)await ownedAnalysis.refresh();
+      }catch(error){if(!stopped){setError(manualMessage(error));setErrorRecovery(error?.status===401||error?.code==='SIGN_IN_REQUIRED'?'signin':error?.code==='CSRF_REQUIRED'?'reload':preparing?'preparation':null);}}
+      finally{if(!stopped)setLoadingReview(false);}
+    };
+    reviewLoad.current=loadReview;void loadReview();
     const timer=setInterval(()=>{const current=viewRef.current;if(!ownedClient.hasPending()&&current?.approval?.sourceHash!==current?.card.contentHash)void attempt(refreshImages);},240000);
     let polling=false,pollingDenied=false;
     const analysisTimer=setInterval(()=>{
@@ -407,7 +406,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
         if(!stopped&&[401,403].includes(error?.status)){pollingDenied=true;setError(manualMessage(error));}
       }).finally(()=>{polling=false;});
     },5000);
-    return()=>{stopped=true;finishingRead.current++;clearInterval(timer);clearInterval(analysisTimer);ownedAnalysis.dispose();if(analysisClient.current===ownedAnalysis)analysisClient.current=null;if(client.current===ownedClient)client.current=null;};
+    return()=>{stopped=true;finishingRead.current++;clearInterval(timer);clearInterval(analysisTimer);ownedAnalysis.dispose();if(analysisClient.current===ownedAnalysis)analysisClient.current=null;if(client.current===ownedClient){client.current=null;reviewLoad.current=null;}};
   },[cardId,staff.id,csrf]);
   function withLocalAnalysis(value){
     const owned=analysisClient.current;
@@ -543,7 +542,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
   const saveRecoveryNeeded=Boolean(client.current?.hasPending())&&(status.startsWith('Save not confirmed')||status.startsWith('Last edit not confirmed'));
   const unsaved=editing||Boolean(identity);
   const calculating=savePending;
-  const locked=unsaved||approving||savePending||loadingReport||rapidSaving;
+  const locked=unsaved||approving||savePending||loadingReport||rapidSaving||loadingReview;
   const readOnly=staff.role!=='REVIEWER';
   const learning=view?.reviewedMemory?.feedbackStatus==='SAVED'||view?.reviewedMemory?.status==='SAVED'?reviewedMemoryState(view.reviewedMemory):null;
   useEffect(()=>{onBusyChange?.(Boolean(locked||calculating||publishing||variantActivity));},[locked,calculating,publishing,variantActivity,onBusyChange]);
@@ -664,7 +663,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
       <button className="mc-rapid-approve" aria-label={approveAria} disabled={disabled} onClick={approve}>{busy?'Saving…':approveLabel}</button>
     </div></RapidActionDock>;
   }
-  if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
+  if(loadingReview||!view)return <section className="mc-rapid-stage" aria-label="Loading card review">{loadingReview?<p role="status">{status==='Preparing saved outlines…'?status:'Loading saved review…'}</p>:<><p role="alert">{error}</p>{errorRecovery==='signin'?<a href={`${STAFF_BASE_PATH}?reauthenticate=1`} target="_blank" rel="noreferrer">Sign in again ↗</a>:errorRecovery==='reload'?<button onClick={()=>window.location.reload()}>Reload review</button>:<button onClick={()=>void reviewLoad.current?.()}>Retry loading review</button>}</>}</section>;
   const identityPanel=<ReviewIdentityPanel identity={view.identity} draft={identity} errors={identityErrors} readOnly={readOnly} disabled={locked||variantActivity} saving={identitySaving||savePending} onEdit={beginIdentityEdit} onCancel={cancelIdentityEdit} onSave={saveIdentityEdit} onChange={(key,value)=>{setIdentity(current=>({...current,[key]:value}));setIdentityErrors(current=>({...current,[key]:undefined,identity:undefined}));}}/>;
   const approved=screen==='report'&&report&&view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash;
   if(approved){
@@ -703,7 +702,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
   return <div ref={reviewStage} className={(`mc-rapid-stage mc-rapid-stage-${screen}`)} onKeyDown={rapidShortcut}>
     {(<nav className="mc-rapid-progress" aria-label="Rapid review progress">{[{id:'FRONT',label:'Front'},{id:'BACK',label:'Back'},{id:'findings',label:'Findings'},{id:'report',label:'Grade'}].map((step,index)=><button type="button" key={step.id} aria-current={(rapidStage==='geometry'?rapidSide===step.id:rapidStage===step.id)?'step':undefined} aria-keyshortcuts={`Alt+${index+1}`} disabled={locked||calculating||variantActivity||(step.id==='findings'&&!findingsAvailable)} onClick={()=>navigateRapid(step.id)} title={`Open ${step.label.toLowerCase()} · Alt ${index+1}`}><span>{String(index+1).padStart(2,'0')}</span>{step.label}</button>)}<small role="status">{Number.isFinite(currentGrade)&&<strong>Grade {currentGrade} / 10 · </strong>}{unsaved?'Unsaved changes':calculating||rapidSaving?'Saving…':status||'Saved'}</small></nav>)}
     {identityPanel}
-    {error&&!saveRecoveryNeeded&&<div className="mc-notice error" role="alert">{error}</div>}
+    {error&&!saveRecoveryNeeded&&<div className="mc-notice error" role="alert">{error}{errorRecovery==='preparation'&&<button type="button" disabled={locked||variantActivity} onClick={()=>void reviewLoad.current?.()}>Retry preparation</button>}</div>}
     {saveRecoveryNeeded&&<section className="mc-notice" role="status"><p>The last edit has not been confirmed. Check that exact save before continuing.</p><button onClick={()=>attempt(()=>client.current.recover())}>Check last save</button></section>}
     {view.variantVerification?.confirmation?.decision==='UNRESOLVED'&&!showVariantReview&&screen!=='report'&&<section className="mc-notice" aria-label="Variant review hold"><p>The card variant is held for review. Your card identification and grading work are saved; final approval waits for variant confirmation.</p><button type="button" disabled={locked||variantActivity} onClick={()=>{if(!navigationBlocked())setShowVariantReview(true);}}>Review card variant</button></section>}
     {showVariantReview&&<><button type="button" disabled={locked||variantActivity} onClick={()=>{if(!navigationBlocked()){setShowVariantReview(false);setVariantPreviewOnly(false);}}}>Back to grading review</button>{variantPanel}</>}

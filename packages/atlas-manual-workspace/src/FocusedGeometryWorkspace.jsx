@@ -27,6 +27,7 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   const preview=useVerifiedImage(verified.url?null:image?.preview);
   const contentKey=verifiedImageContentKey(image);
   const [readyKey,setReadyKey]=useState(null),[draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [placement,setPlacement]=useState(null);
   const [selected,setSelected]=useState({kind:'PHYSICAL',corner:0}),[snap,setSnap]=useState(false),[snapReady,setSnapReady]=useState(false),[dragging,setDragging]=useState(false),[handleFocused,setHandleFocused]=useState(false);
   const initial=focusedGeometryOutlines(workspace,side), outlines=draft??initial;
   const [bounds,setBounds]=useState(()=>slot.image?geometryFocusBounds(initial.physical,slot.image):null);
@@ -35,9 +36,9 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   const ready=Boolean(verified.url&&contentKey&&readyKey===contentKey);
   const inactive=readOnly||hostBusy||busy||!ready;
   const camera=image&&bounds?geometryCamera(bounds,size,image,view):null;
-  const needsPlacement=outlines.needsPhysicalPlacement||(!outlines.printedAbsent&&outlines.needsPrintedPlacement);
+  const needsPlacement=Boolean(placement)||outlines.needsPhysicalPlacement||(!outlines.printedAbsent&&outlines.needsPrintedPlacement);
   const centering=!needsPlacement&&!outlines.printedAbsent?focusedCentering(outlines.physical,outlines.printedOriginal):null;
-  const editing=Boolean(draft)||busy;
+  const editing=Boolean(draft)||Boolean(placement)||busy;
   useEffect(()=>{onEditingChange?.(editing);return()=>onEditingChange?.(false);},[editing,onEditingChange]);
   useEffect(()=>{onReadyChange?.(ready);return()=>onReadyChange?.(false);},[ready,onReadyChange]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;loadGeneration.current++;};},[]);
@@ -66,6 +67,17 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   const zoomBy=factor=>setView(previous=>zoomGeometryAt(previous,previous.zoom*factor,{x:size.width/2,y:size.height/2},size));
   function startPan(event){
     if(!ready||event.button!==0||event.target.closest?.('button'))return;
+    if(placement){
+      if(inactive||!camera)return;
+      const rect=event.currentTarget.getBoundingClientRect();
+      const point={x:(event.clientX-rect.left-camera.left)/camera.width,y:(event.clientY-rect.top-camera.top)/camera.height};
+      if(point.x<0||point.x>1||point.y<0||point.y>1)return;
+      const points=[...placement.points,point];event.preventDefault();
+      if(points.length<4){setPlacement({...placement,points});return;}
+      if(!sanitizeSpeedsterUnitQuad(points)){setError('Keep the corners in clockwise order. Place the bottom left corner again.');return;}
+      const field=placement.kind==='PHYSICAL'?'physical':'printedOriginal',needsField=placement.kind==='PHYSICAL'?'needsPhysicalPlacement':'needsPrintedPlacement';
+      setDraft({...capture(),[field]:points,[needsField]:false});setPlacement(null);setError('');return;
+    }
     panDrag.current={id:event.pointerId,x:event.clientX,y:event.clientY,pan:view.pan};
     event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();
   }
@@ -93,7 +105,7 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   ].map(item=>{const [a,b]=item.points.map(index=>screenPoint(outlines.physical[index]));return {...item,
     x:Math.max(42,Math.min(size.width-42,(a.x+b.x)/2+item.dx)),
     y:Math.max(22,Math.min(size.height-22,(a.y+b.y)/2+item.dy))};}):[];
-  const activePoints=[{kind:'PHYSICAL',quad:outlines.physical},...(!outlines.printedAbsent?[{kind:'PRINTED',quad:outlines.printedOriginal}]:[])];
+  const activePoints=[{kind:'PHYSICAL',quad:outlines.physical},...(!outlines.printedAbsent?[{kind:'PRINTED',quad:outlines.printedOriginal}]:[])].filter(layer=>layer.quad);
   function pointerDown(event,kind,index){
     if(inactive||event.button!==0||!camera||!viewport.current)return;
     const rect=viewport.current.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;
@@ -143,10 +155,11 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
     setBusy(true);setError('');try{await onRetryDisplay({side,...image.displayState.retry});}
     catch{setError('Photo preparation did not restart. Reload its status and try again.');}finally{if(mounted.current)setBusy(false);}
   }
-  const selectedQuad=selected.kind==='PHYSICAL'?outlines.physical:outlines.printedOriginal,selectedPoint=selectedQuad[selected.corner];
+  const selectedQuad=selected.kind==='PHYSICAL'?outlines.physical:outlines.printedOriginal,selectedPoint=selectedQuad?.[selected.corner];
   const progress=verified.progress?.totalBytes?`${Math.min(99,Math.floor(100*verified.progress.loadedBytes/verified.progress.totalBytes))}%`:'';
   const placementKind=outlines.needsPhysicalPlacement?'physical edge':'printed border';
-  const placedCount=(outlines.needsPhysicalPlacement?outlines.physicalPlaced:outlines.printedPlaced)?.length??0;
+  const placedCount=placement?.points.length??0;
+  const retainedPrinted=outlines.needsPrintedPlacement&&slot.visualObservation?.printed.outlineLocated;
   const invalidCentering=!needsPlacement&&!outlines.printedAbsent&&!centering;
   const taskTitle=needsPlacement?`Place the ${placementKind}`:invalidCentering?'Correct the printed border':`Confirm ${label} geometry`;
   const taskStatus=busy?'Saving & checking':error?'Needs attention':!ready?'Verifying photograph':needsPlacement||invalidCentering?'Correction required':outlines.printedAbsent?'Border marked absent':draft?'Unsaved adjustments':'Human review required';
@@ -165,6 +178,7 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
         {activePoints.map(({kind,quad})=><g key={kind} className={kind==='PHYSICAL'?'fg-physical':'fg-printed'}>
           <polygon className="fg-stroke-contrast" points={quad.map(p=>{const s=screenPoint(p);return `${s.x},${s.y}`;}).join(' ')}/>
           <polygon points={quad.map(p=>{const s=screenPoint(p);return `${s.x},${s.y}`;}).join(' ')}/></g>)}
+        {placement?.points.map((point,index)=>{const p=screenPoint(point);return <circle key={`placed-${index}`} className="fg-human-point" cx={p.x} cy={p.y} r="5" fill="#cda955" stroke="white" strokeWidth="2"/>;})}
       </svg>{activePoints.flatMap(({kind,quad})=>quad.map((point,index)=>{const p=screenPoint(point);return <button type="button" key={`${kind}:${index}`}
         className={`fg-handle ${kind==='PRINTED'?'fg-inner':''} ${selected.kind===kind&&selected.corner===index?'fg-selected':''}`}
         aria-label={`${side} ${kind==='PHYSICAL'?'physical edge':'printed border'} ${corners[index]}`} disabled={inactive}
@@ -181,15 +195,15 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
       <section className="atlas-review-task" aria-label="Your review">
         <span className="atlas-review-eyebrow">Your review</span><h3>{taskTitle}</h3>
         <span className="atlas-review-status" role="status">{taskStatus}</span><p className={error?'fg-error':undefined} role={error?'alert':undefined}>{taskCopy}</p>
-        {needsPlacement&&ready&&<p className="atlas-review-hint">Drag each corner, or focus its handle and use the arrow keys. Unplaced outlines are placement guides.</p>}
+        {needsPlacement&&ready&&<div className="atlas-review-hint">{placement?<><p>Click the {corners[placedCount].toLowerCase()} corner. {placedCount} of 4 placed.</p><button type="button" disabled={inactive} onClick={()=>{setPlacement(null);setError('');}}>Cancel placement</button></>:<><p>No substitute outline is shown. You can place the corners yourself.</p><button type="button" disabled={inactive} onClick={()=>{setPlacement({kind:outlines.needsPhysicalPlacement?'PHYSICAL':'PRINTED',points:[]});setError('');}}>Place {placementKind}</button></>}</div>}
       </section>
       {slot.visualObservation&&<section className="atlas-review-task" aria-label="Astra geometry observations">
         <span className="atlas-review-eyebrow">Astra · xhigh</span>
         {['physical','printed'].map(kind=>{const observation=slot.visualObservation[kind];return <p key={kind}><strong>{kind==='physical'?'Physical edge':'Printed border'} · {observation.outlineLocated?'outline proposed':'no outline proposed'}</strong><br/>{observation.observation}<br/><small>Uncertainty: {observation.uncertainty.toLowerCase()}</small></p>;})}
-        {outlines.needsPrintedPlacement&&!outlines.printedAbsent&&<p>The dashed printed outline is a placement guide. It was not returned by Astra.</p>}
+        {outlines.needsPrintedPlacement&&!outlines.printedAbsent&&<p>{retainedPrinted?'Astra returned a printed outline, but image preparation did not finish. The saved outline can be restored when preparation completes.':'Astra returned no printed outline. You can place its corners yourself.'}</p>}
       </section>}
       <div className="fg-precision" aria-label="Corner precision view"><div className="fg-precision-title"><strong>Precision view</strong><span>3×</span></div>
-        {(dragging||handleFocused)&&ready&&camera?<div className="fg-loupe" aria-label={`${corners[selected.corner]} ${selected.kind==='PHYSICAL'?'physical edge':'printed border'} enlarged photograph`}>
+        {(dragging||handleFocused)&&selectedPoint&&ready&&camera?<div className="fg-loupe" aria-label={`${corners[selected.corner]} ${selected.kind==='PHYSICAL'?'physical edge':'printed border'} enlarged photograph`}>
           <img src={verified.url} alt="" draggable={false} style={{width:camera.width*3,height:camera.height*3,left:70-selectedPoint.x*camera.width*3,top:70-selectedPoint.y*camera.height*3}}/><span/>
         </div>:<p>Move or focus a corner to see its exact position.</p>}
       </div>

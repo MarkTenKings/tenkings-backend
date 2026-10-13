@@ -25,6 +25,7 @@ import { createImageDescriptors } from './image-descriptors.mjs';
 import { createCleanPhotoDescriptor } from './clean-photo-descriptor.mjs';
 import { createEarlyGeometryStore, recordEarlyGeometryIntent } from './early-geometry-store.mjs';
 import { createEarlyGeometry, adoptEarlyGeometry } from './early-geometry.mjs';
+import { applyAstraGeometryToPreparation } from './astra-geometry.mjs';
 import { createPublicationRepository } from './publication-repository.mjs';
 import { createManualPublication } from './publication.mjs';
 import { createBatchGrading, createBatchWorker, batchActionId } from '@atlas/batch-grading';
@@ -130,8 +131,17 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     const {photo,bytes}=await readGradingSource(staff,cardId,uploadId);
     return {original:photo.original,decodePlan:photo.decodePlan,frame:photo.workingFrame,bytes};
   }
-  async function prepared(geometry,side,source,photo){
+  async function prepared(geometry,side,source,photo,staff){
     const result=await prepareGeometry({workspace:geometry,side,source:photo,limits:limits.preparation,pythonExecutable});
+    const slot=geometry.sides[side];
+    // A failed native preparation must not discard the already saved Astra
+    // printed outline. Rebind that exact proposal to the newly prepared frame
+    // only before any printed review/edit; human geometry remains authoritative.
+    if(slot.printedRevision===0&&!slot.printed&&!slot.printedAbsence){
+      const visual=await earlyGeometry.retainedVisual(staff,geometry.cardId,side,source.uploads[side],photo.frame,
+        {responseHash:slot.visualObservation?.responseHash});
+      if(visual)applyAstraGeometryToPreparation({visual,source:photo,result,includePhysicalContour:false});
+    }
     const images={};
     for(const name of Object.keys(result.outputs)){
       const descriptor=describePreparationDerivative(result,name,photo,{id:`${result.id}:${name}`,object:{key:`${keyPrefix}/derived/${geometry.cardId}/preparation/${result.id}-${name}.webp`,versionId:null}});
@@ -192,7 +202,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       await current(staff,{cardId:geometry.cardId,draft:{source}});
       const photo=await readPhoto(staff,geometry.cardId,source.uploads[side]);
       requireThat(geometry.sides[side].physical,422,'MANUAL_PHYSICAL_OUTLINE_REQUIRED');
-      return prepared(geometry,side,source,photo);
+      return prepared(geometry,side,source,photo,staff);
     }),
     replaceSources:async({card,geometry,sourceHash,staff})=>{
       const pair=await intake.verifiedPair(staff,card.cardId);requireThat(pair.sourceHash===sourceHash,409,'MANUAL_PHOTOS_CHANGED');

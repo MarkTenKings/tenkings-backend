@@ -112,6 +112,29 @@ test('a human physical outline is prepared as saved without invoking automatic d
   assert.deepEqual((await f.state()).geometry.sides.BACK.physical, human);
 });
 
+test('preparation failure and exact retry preserve the committed human outline and opposite-side review', async () => {
+  const f = await fixture(), initial = await f.state();
+  await f.execute({ ...f.command(), action: { type: 'GEOMETRY_EDIT', edit: commandEdit(initial.geometry, 'BACK', 'PHYSICAL') } });
+  const edited = f.card(), saved = await f.state(), command = f.command();
+  f.failPrepare = true;
+  await assert.rejects(f.execute(command), { code: 'MANUAL_PREPARATION_FAILED' });
+  assert.deepEqual(f.card(), edited);
+  assert.deepEqual((await f.state()).geometry.sides.BACK.physical, saved.geometry.sides.BACK.physical);
+  assert.equal(f.detections, 0);
+  f.failPrepare = false;
+  const result = await f.execute(command), ready = await f.state();
+  assert.equal(result.card.revision, edited.revision + 1);
+  assert.deepEqual(ready.geometry.sides.FRONT, initial.geometry.sides.FRONT);
+  assert.deepEqual(ready.geometry.sides.BACK.physical, saved.geometry.sides.BACK.physical);
+  assert.deepEqual(result.card.draft.source.uploads, edited.draft.source.uploads);
+  assert.equal(ready.geometry.sides.BACK.confirmation, null);
+  assert.equal(ready.defects.confirmation, null);
+  const prepares = f.prepares;
+  assert.deepEqual(await f.execute(command), result);
+  assert.equal(f.prepares, prepares);
+  assert.equal(f.detections, 0);
+});
+
 test('a concurrent human Front edit rejects the whole Back candidate and preserves the newer Front work', async () => {
   const f = await fixture();
   f.beforePrepare = async () => {

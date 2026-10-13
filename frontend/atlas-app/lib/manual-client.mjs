@@ -60,7 +60,7 @@ export function manualMessage(error){
     ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED:'This outline needs another adjustment before preparation can finish. Review the selected side.',
     ATLAS_DEFECT_STALE:'The saved image measurement changed. Your outline is retained; reload its saved state and retry preparation.',
     ATLAS_GEOMETRY_STALE:'Your outline is retained. Reload the saved geometry before continuing.',
-    MANUAL_PREPARATION_FAILED:'Your outline is saved. Photo preparation did not finish; retry preparation to continue.',
+    MANUAL_PREPARATION_FAILED:'Your saved outline and photos are kept. Photo preparation did not finish; retry preparation to continue.',
     ATLAS_DEFECT_RETRACE_REQUIRED:'This removed finding belongs to an earlier image frame. Add a new trace on the current photograph to restore it.',
     MANUAL_GEOMETRY_REVIEW_REQUIRED:'Review and confirm both sides in Geometry before confirming findings or approving the final report.',
     MANUAL_GEOMETRY_RECOVERY_UNAVAILABLE:'The outline changed. Reload the card to see its current version.',

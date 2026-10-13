@@ -6,7 +6,7 @@ import { geometryProcessingSettings } from './geometry-processing.mjs';
 import { geometrySideSettings } from './details.mjs';
 import { geometryBase, preparationBase, parseGeometryWorkspace } from '@atlas/manual-workspace/geometry-actions';
 import { machineGeometryCandidate, MACHINE_GEOMETRY_POLICY } from './machine-geometry.mjs';
-import { ASTRA_GEOMETRY_POLICY, runAstraGeometry, geometryProposal, gradingToCanonical } from './astra-geometry.mjs';
+import { ASTRA_GEOMETRY_POLICY, runAstraGeometry, geometryProposal, projectAstraGeometryResponse, gradingToCanonical } from './astra-geometry.mjs';
 import { preparationRuntimeIdentity, preparePhotoGeometry, describePreparationDerivative,
   describePreparationPreview,
   adoptPhysicalGeometryProposal, adoptGeometryPreparation, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1,
@@ -106,6 +106,32 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     })));
   }
   const cleanPrepared = input => !isCleanPhotoPrepared || isCleanPhotoPrepared({ cardId: input.cardId, uploadId: input.uploadId, side: input.side });
+  async function retained(staff, cardId, side, uploadId, photoFrame, { responseHash = null, input = null } = {}) {
+    requireThat(photoFrame?.schemaVersion === 3 && photoFrame.generation, 409, 'GEOMETRY_GRADING_PHOTO_REQUIRED');
+    const frameHash = descriptorSha256(photoFrame);
+    const jobs = await store.retainedForPhoto(staff, cardId, side, uploadId, frameHash);
+    for (const job of jobs) {
+      requireThat(job.input.cardId === cardId && job.input.side === side && job.input.uploadId === uploadId
+        && job.input.frameDescriptorSha256 === frameHash, 503, 'GEOMETRY_STORED_CONTENT_INVALID');
+      if (job.input.policy !== POLICY || !equal(job.input.engine.visual, ASTRA_GEOMETRY_POLICY)) continue;
+      // Native codec/runtime changes may re-use the same immutable Astra
+      // observation; a changed photo/settings contract may not adopt its cache.
+      if (input) {
+        const comparable = value => { const { engine, engineHash, ...rest } = value; return rest; };
+        if (!equal(comparable(job.input), comparable(input))) continue;
+      }
+      const modelAction = await store.readModel(job);
+      if (!modelAction?.response || modelAction.response.httpStatus < 200 || modelAction.response.httpStatus >= 300) continue;
+      const evidence = modelAction.request.evidence;
+      requireThat(evidence.frameDescriptorSha256 === frameHash && evidence.gradingSha256 === photoFrame.raster.content.sha256
+        && evidence.requestHash === modelAction.requestHash && equal(evidence.policy, ASTRA_GEOMETRY_POLICY), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
+      const visual = projectAstraGeometryResponse(await artifacts.read(modelAction.response.ref,
+        { cardId, kind: 'GEOMETRY_MODEL_RESPONSE', sourceHash: modelAction.requestHash }), evidence);
+      if (responseHash && visual.responseHash !== responseHash) continue;
+      return { job, visual };
+    }
+    return null;
+  }
   async function compute(job, signal) {
     const input = job.input;
     requireThat(input.policy === POLICY && equal(input.engine, await engine()), 409, 'GEOMETRY_ENGINE_CHANGED');
@@ -257,6 +283,9 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
       catch (error) { if (error?.code === 'GEOMETRY_PHOTO_CHANGED') return; throw error; }
       api.start(); wake();
     },
+    async retainedVisual(staff, cardId, side, uploadId, photoFrame, options = {}) {
+      return (await retained(staff, cardId, side, uploadId, photoFrame, options))?.visual ?? null;
+    },
     async ensure(staff, cardId, request = {}, settingsOverride = null) {
       const retry = Object.keys(request).length > 0;
       if (retry) { object(request, ['side','expectedKey']); requireThat(SIDES.includes(request.side) && /^[a-f0-9]{64}$/.test(request.expectedKey)); }
@@ -273,16 +302,31 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
       const input = geometryCacheInput(upload, photo, settings, await engine());
       const key = digest(canonical(input));
       if (!await cleanPrepared(input)) return { input, packet: null };
+      const recover = async () => {
+        const saved = await retained(staff, cardId, side, upload.uploadId, photo.workingFrame, { input });
+        if (!saved) return { input, packet: null };
+        const { visual, job: original } = saved;
+        // Native output is deliberately absent. The current native preparer
+        // consumes these exact retained proposals after the codec repair.
+        return { input: original.input, packet: { policy: POLICY, key: original.key, binding: original.input, photoFrame: photo.workingFrame,
+          physical: { id: visual.responseHash, actor: 'ASTRA', identity: ASTRA_GEOMETRY_POLICY,
+            frameDescriptorSha256: original.input.frameDescriptorSha256, proposal: geometryProposal(visual, 'physical'),
+            ...(visual.physical.contour.length ? { materialContour: visual.physical.contour } : {}) },
+          visual, preparation: null, preparedImages: null } };
+      };
+      // Resolve an existing proposal before any scheduling side effect. A
+      // native-code change never authorizes buying a replacement Astra reply.
+      let job = await store.read(staff, cardId, key, input);
+      if (job?.error === 'GEOMETRY_REFRESH_AVAILABLE') return recover();
       await store.ensure(staff, input); api.start();
       const until = Date.now() + timeoutMs;
-      let job;
       do {
         job = await store.read(staff, cardId, key, input);
         if (TERMINAL.includes(job?.state)) break;
         if (Date.now() >= until) return { input, packet: null };
         await new Promise(resolve => setTimeout(resolve, 100));
       } while (true);
-      if (job.state === 'FAILED' || !job.result) return { input, packet: null };
+      if (job.state === 'FAILED' || !job.result) return recover();
       const packet = await artifacts.read(job.result.ref, { cardId, kind: 'EARLY_GEOMETRY', sourceHash: key });
       requireThat(packet.key === key && equal(packet.binding, input), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
       if (packet.preparation) {

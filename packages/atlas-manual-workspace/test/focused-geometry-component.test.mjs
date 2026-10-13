@@ -33,13 +33,22 @@ test('rapid geometry starts on one side with both outlines and exactly one Appro
   assert.equal(f.nodes(n=>n.type==='input'&&n.props.type==='checkbox').length,0);assert.equal(f.nodes(n=>n.type==='button'&&text(n)==='Approve').length,1);
   assert.equal(f.has('Back is next'),true);
 });
-test('missing Astra printed proposal shows its exact observation and distinguishes the local guide',async()=>{
+test('missing Astra printed proposal shows its exact observation without a fabricated guide',async()=>{
  const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;
  fixture.workspace.sides.FRONT.visualObservation={frameSha256:fixture.workspace.sides.FRONT.image.frameSha256,responseHash:'a'.repeat(64),model:'gpt-6-astra',reasoning:'xhigh',
   physical:{outlineLocated:true,uncertainty:'LOW',observation:'Visible material edge.'},printed:{outlineLocated:false,uncertainty:'HIGH',observation:'Interrupted printed rails need review.'}};
  const f=harness(fixture);await f.ready();
  assert.ok(f.has('Astra · xhigh'));assert.ok(f.has('Printed border · no outline proposed'));assert.ok(f.has('Interrupted printed rails need review.'));
- assert.ok(f.has('It was not returned by Astra.'));assert.ok(f.has('Uncertainty: high'));
+ assert.ok(f.has('Astra returned no printed outline.'));assert.ok(f.has('Uncertainty: high'));
+ assert.equal(f.nodes(n=>n.props?.className==='fg-printed').length,0);assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-handle')).length,4);
+});
+test('an Astra outline withheld by failed preparation is never described as a missing model result',async()=>{
+ const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;fixture.workspace.sides.FRONT.prepared=null;
+ fixture.workspace.sides.FRONT.visualObservation={frameSha256:fixture.workspace.sides.FRONT.image.frameSha256,responseHash:'a'.repeat(64),model:'gpt-6-astra',reasoning:'xhigh',
+  physical:{outlineLocated:true,uncertainty:'LOW',observation:'Visible material edge.'},printed:{outlineLocated:true,uncertainty:'LOW',observation:'The yellow margin surrounds the purple field.'}};
+ const f=harness(fixture);await f.ready();assert.ok(f.has('Astra returned a printed outline, but image preparation did not finish.'));
+ assert.equal(f.has('Astra returned no printed outline.'),false);assert.equal(f.has('not returned by Astra'),false);
+ assert.equal(f.nodes(n=>n.props?.className==='fg-printed').length,0);
 });
 test('the single Approve submits outer and inner adjustments in the source frame and retains them after failure',async()=>{
   const calls=[],f=harness({onApproveSide:async action=>{calls.push(structuredClone(action));throw new Error('save failed');}});await f.ready();
@@ -64,17 +73,42 @@ test('Back renders its own source and controls, not a second paired editor',asyn
   const f=harness({side:'BACK'});await f.ready();assert.equal(f.nodes(n=>n.type==='img').length,1);assert.equal(f.nodes(n=>n.props?.['aria-label']?.startsWith('BACK ')).length,8);assert.equal(f.nodes(n=>n.props?.['aria-label']?.startsWith('FRONT ')).length,0);assert.equal(f.has('Findings are next'),true);
 });
 
-test('missing printed border is a correction task and cannot approve placement guides before every corner is positioned',async()=>{
+function placePoint(f,point){
+ const stage=f.nodes(n=>n.props?.className==='fg-stage')[0],photo=f.nodes(n=>n.type==='img'&&n.props.onLoad)[0];
+ stage.props.onPointerDown({button:0,target:{closest:()=>null},currentTarget:{getBoundingClientRect:()=>({left:0,top:0})},
+  clientX:photo.props.style.left+point.x*photo.props.style.width,clientY:photo.props.style.top+point.y*photo.props.style.height,preventDefault(){}});f.render();
+}
+test('missing printed border requires explicit human placement of all four corners and retains the physical outline',async()=>{
   const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;
   const calls=[],f=harness({...fixture,onApproveSide:async value=>calls.push(value)});await f.ready();
   assert.ok(f.has('Place the printed border'));assert.ok(f.has('Correction required'));assert.ok(f.has('0 of 4 placed'));
   assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-border-value')).length,0,'placeholder geometry is not shown as a measurement');
   assert.ok(f.button('Approve').props.disabled);await f.button('Approve').props.onClick();assert.equal(calls.length,0);
-  for(const corner of ['Top left','Top right','Bottom right'])f.nudge(`FRONT printed border ${corner}`);
+  const physical=structuredClone(fixture.workspace.sides.FRONT.physical),points=focusedFixture().printedOriginal;
+  assert.equal(f.nodes(n=>n.props?.className==='fg-printed').length,0);
+  await f.click('Place printed border');
+  for(const point of points.slice(0,3))placePoint(f,point);
   assert.ok(f.has('3 of 4 placed'));assert.ok(f.button('Approve').props.disabled);
-  f.nudge('FRONT printed border Bottom left');assert.equal(f.button('Approve').props.disabled,false);
+  assert.equal(f.nodes(n=>n.props?.className==='fg-printed').length,0,'incomplete placement has no invented fourth corner');
+  placePoint(f,points[3]);assert.equal(f.button('Approve').props.disabled,false);
   assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-border-value')).length,4);
-  await f.click('Approve');assert.equal(calls.length,1);
+  await f.click('Approve');assert.equal(calls.length,1);assert.deepEqual(calls[0].physical,physical.quad);
+  calls[0].printedOriginal.forEach((p,i)=>{assert.ok(Math.abs(p.x-points[i].x)<1e-12);assert.ok(Math.abs(p.y-points[i].y)<1e-12);});
+});
+test('cancelling incomplete explicit placement retains saved outlines and shows no substitute points',async()=>{
+ const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;
+ const before=structuredClone(fixture.workspace),f=harness(fixture);await f.ready();await f.click('Place printed border');placePoint(f,{x:.2,y:.2});
+ assert.equal(f.nodes(n=>n.props?.className==='fg-human-point').length,1);await f.click('Cancel placement');
+ assert.equal(f.nodes(n=>n.props?.className==='fg-human-point').length,0);assert.equal(f.nodes(n=>n.props?.className==='fg-printed').length,0);
+ assert.deepEqual(f.props.workspace,before);assert.ok(f.button('Approve').props.disabled);
+});
+test('a missing physical outline starts with only the photograph and accepts four explicit source points',async()=>{
+ const fixture=structuredClone(focusedFixture()),points=fixture.workspace.sides.FRONT.physical.quad;
+ fixture.workspace.sides.FRONT.physical=null;fixture.workspace.sides.FRONT.printed=null;fixture.workspace.sides.FRONT.prepared=null;
+ const f=harness(fixture);await f.ready();assert.equal(f.nodes(n=>n.type==='polygon').length,0);assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-handle')).length,0);
+ await f.click('Place physical edge');for(const point of points)placePoint(f,point);
+ assert.equal(f.nodes(n=>n.props?.className==='fg-physical').length,1);assert.equal(f.nodes(n=>n.props?.className==='fg-printed').length,0);
+ assert.ok(f.button('Approve').props.disabled);assert.ok(f.has('Place the printed border'));
 });
 test('explicit absent printed border remains available but never substitutes for a missing physical edge',async()=>{
   const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;

@@ -9,7 +9,6 @@ import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import * as identity from '@atlas/grading-core/identity';
 import * as defectAnalysisClient from '../lib/manual-defect-analysis-client.mjs';
-import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 import { manualMessage } from '../lib/manual-client.mjs';
 import * as discard from '../lib/card-discard.mjs';
 import * as reviewFeedback from '../lib/review-feedback.mjs';
@@ -55,7 +54,6 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === '../lib/batch-import.mjs') return {createBrowserBatchImportJournal:()=>({close(){}})};
       if (name === 'next/router') return { useRouter: () => ({ query:fromBatch?{from:'batch'}:{}, replace:async path=>{navigations.push(path);},events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
-      if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
       if (name === './VariantIdentityReview') return {__esModule:true,default:'VariantIdentityReview'};
       if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
@@ -68,7 +66,6 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/routes.mjs') return { STAFF_BASE_PATH: '/admin' };
       if (name === '../lib/manual-defect-analysis-client.mjs') return defectAnalysisClient;
-      if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '../lib/manual-client.mjs') return { manualMessage: message, manualRequest: async (path, options = {}) => {
         if (options.method === 'POST') return post(path, options);
         return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : readCard ? readCard(path) : card;
@@ -88,8 +85,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   return { render, submit,navigations,event(name,value){listeners.get(name)?.(value);},async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
     workspaceProps:()=>find(tree,node=>node.type?.name==='ManualWorkspace')?.props,
     directShell:()=>find(tree,node=>node.type==='DirectCardReviewShell')?.props,
-    previewSettings:side=>find(tree,node=>node.props?.side===side&&typeof node.props?.src==='string')?.props.settingsChanged,
-    previewSrc:side=>find(tree,node=>node.props?.side===side&&typeof node.props?.src==='string')?.props.src,
+    previewSrc:side=>find(tree,node=>node.type==='img'&&node.props.alt===`${side} background-removed grading image`)?.props.src,
     attention:key=>find(tree,node=>node.props?.['data-review-target']===key)?.props?.['data-review-attention'],reviewIssues:()=>find(tree,node=>node.type==='ReviewAttention')?.props?.issues??[],has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
@@ -447,19 +443,13 @@ test('known unsupported photo treatments explain retained originals without dire
   }
 });
 
-test('actual intake reconciles first-side geometry before identity, then reads background progress without erasing typed details',async()=>{
-  const calls=[];let card=pokemonCard();card.card.ready=false;card.identification.state='NOT_STARTED';card.details.fields.name='';
+test('photo setup does not run an obsolete browser geometry scheduler',async()=>{
+  const calls=[];const card=pokemonCard();card.card.ready=false;card.identification.state='NOT_STARTED';
   card.card.sides.FRONT.upload={uploadId:'first-front',source:{ready:true}};
   card.earlyGeometry={FRONT:{state:'QUEUED',key:'front-work'},BACK:{state:'WAITING_PHOTO'}};
-  const f=harness(storage(null),async(path,options)=>{calls.push({path,body:JSON.parse(JSON.stringify(options.body))});return {};},{readCard:()=>structuredClone(card)});
-  try{
-    f.render();await flush();f.render();await flush();f.render();
-    assert.deepEqual(calls,[{path:'/api/staff/manual-connected/cards/card/geometry',body:{}}]);
-    assert.equal(f.workspace(),false,'early preparation does not initialize a manual workspace');
-    f.change('Name','My unsaved detail');f.render();
-    card.earlyGeometry.FRONT.state='READY';await f.tick();f.render();
-    assert.equal(f.field('Name').props.value,'My unsaved detail');assert.equal(calls.length,1);
-  }finally{f.dispose();}
+  const f=harness(storage(null),async(path)=>{calls.push(path);return {};},{readCard:()=>structuredClone(card)});
+  f.render();await flush();f.render();await f.tick();
+  assert.deepEqual(calls,[]);assert.equal(f.workspace(),false);f.dispose();
 });
 
 test('acknowledged deletion of another card leaves active upload finally handlers usable',async()=>{
@@ -528,54 +518,69 @@ for(const state of ['FAILED','UNKNOWN'])test(`intake explains terminal ${state} 
 });
 
 const failedPhotos = () => {
- const value=sportsCard();value.details.matColor='BLACK';
+ const value=sportsCard();value.details.matColor='BLACK';value.details.sourceHash=value.card.sourceHash;
  value.card.sides=Object.fromEntries(['FRONT','BACK'].map(side=>[side,{version:1,upload:{uploadId:side,source:{saved:true}}}]));
+ value.gradingImages=Object.fromEntries(['FRONT','BACK'].map(side=>[side,{uploadId:side,state:'READY'}]));
  value.earlyGeometry=Object.fromEntries(['FRONT','BACK'].map(side=>[side,{uploadId:side,key:side,state:'NEEDS_REVIEW',machineUsable:false,canRetry:true}]));
  return value;
 };
-test('failed geometry has a direct manual editor path and saves card details without detector retry',async()=>{
- let card=failedPhotos();const posts=[],f=harness(storage(null),async(path,{body})=>{
-  if(path.endsWith('/geometry')){assert.deepEqual(plain(body),{});return {};}
+for(const state of ['FAILED','NEEDS_REVIEW','READY','RUNNING'])test(`${state} automatic geometry enters the same sequential workspace without the retired paired review`,async()=>{
+ let card=failedPhotos();for(const side of ['FRONT','BACK'])card.earlyGeometry[side].state=state;
+ const posts=[],f=harness(storage(null),async(path,{body})=>{
   posts.push({path,body:plain(body)});
-  if(path.endsWith('/details'))card={...card,revision:4,details:{...card.details,...body.changes}};
+  assert.equal(path.endsWith('/initialize'),true,'review entry initializes only; no geometry retry or human approval');
+  card={...card,manual:{current:true,revision:1}};return {};
+ },{readCard:()=>card,fromBatch:true});
+ f.render();await flush();f.render();
+ assert.doesNotMatch(f.text(),/Edit (Front|Back) geometry|Original retained|PHOTOGRAPHS & IDENTITY/);
+ await flush();f.render();assert.equal(f.workspace(),true);
+ assert.deepEqual(posts.map(p=>p.path.split('/').at(-1)),['initialize']);
+ assert.equal(posts[0].body.detailsRevision,card.revision);assert.equal(f.workspaceProps().initialGeometrySide,undefined);
+ f.dispose();
+});
+test('invalid identification stays editable before entering the sequential workspace',async()=>{
+ let card=failedPhotos();card.details.fields.name='';const posts=[],f=harness(storage(null),async(path,{body})=>{
+  posts.push({path,body:plain(body)});
+  if(path.endsWith('/details'))card={...card,revision:4,details:{...card.details,fields:{...card.details.fields,...body.changes}}};
   else if(path.endsWith('/initialize'))card={...card,manual:{current:true,revision:1}};
   else assert.fail(path);return {};
  },{readCard:()=>card,fromBatch:true});
- f.render();await flush();f.render();
- assert.equal(f.has('Edit Front geometry'),true);assert.equal(f.has('Edit Back geometry'),true);
- f.change('Name','Corrected player');f.render();
- f.click('Edit Back geometry');await flush();f.render();
- assert.deepEqual(posts.map(p=>p.path.split('/').at(-1)),['details','initialize']);
- assert.deepEqual(posts[0].body.changes,{name:'Corrected player'});assert.equal(posts[1].body.detailsRevision,4);
- assert.equal(f.workspaceProps().initialGeometrySide,'BACK');assert.equal(f.workspace(),true);
+ f.render();await flush();f.render();assert.equal(posts.length,0);assert.equal(f.field('Name').props['aria-invalid'],true);
+ assert.equal(f.has('Edit Front geometry'),false);f.change('Name','Corrected player');f.render();f.submit();await flush();f.render();
+ assert.deepEqual(posts.map(p=>p.path.split('/').at(-1)),['details','initialize']);assert.equal(posts[1].body.detailsRevision,4);assert.equal(f.workspace(),true);f.dispose();
 });
-test('manual entry explains invalid details and retains changes without starting geometry',async()=>{
- let card=failedPhotos();const posts=[],f=harness(storage(null),async(path)=>{posts.push(path);return {};},{readCard:()=>card,fromBatch:true});
- f.render();await flush();f.render();f.change('Name','');f.render();
- f.click('Edit Front geometry');await flush();f.render();
- assert.equal(posts.filter(p=>!p.endsWith('/geometry')).length,0);assert.equal(f.workspace(),false);
- assert.equal(f.field('Name').props['aria-invalid'],true);
-});
-test('manual entry cannot race an incomplete pair, upload, or uncertain command',async()=>{
- for(const blocker of ['pair','upload','command']){
+test('direct review entry waits for both current generated photos, pending uploads, and exact pending commands',async()=>{
+ for(const blocker of ['pair','upload','command','generation-failed','generation-unknown','stale-generated-photo']){
   const card=failedPhotos();if(blocker==='pair')card.card.ready=false;
-  const f=harness(storage(blocker==='command'?command:null),async()=>({}),{readCard:()=>card,intake:{pending:async()=>blocker==='upload'?[{id:'pending',value:{cardId:'card',kind:'upload',input:{side:'FRONT'}}}]:[]}});
-  f.render();await flush();f.render();assert.equal(f.disabled('Edit Front geometry'),true);assert.equal(f.disabled('Edit Back geometry'),true);
+  if(blocker==='generation-failed')card.gradingImages.FRONT.state='FAILED';
+  if(blocker==='generation-unknown')card.gradingImages.FRONT.state='UNKNOWN';
+  if(blocker==='stale-generated-photo')card.gradingImages.FRONT.uploadId='old-front';
+  const posts=[],f=harness(storage(blocker==='command'?command:null),async path=>{posts.push(path);return {};},{readCard:()=>card,intake:{pending:async()=>blocker==='upload'?[{id:'pending',value:{cardId:'card',kind:'upload',input:{side:'FRONT'}}}]:[]}});
+  f.render();await flush();f.render();await flush();f.render();assert.deepEqual(posts,[],blocker);
+  assert.equal(f.has('Edit Front geometry'),false);assert.equal(f.has('Edit Back geometry'),false);f.dispose();
  }
 });
-test('manual entry reopens existing work without initializing or replacing saved geometry',async()=>{
+test('explicit photo replacement returns to existing review without initialization or geometry changes',async()=>{
  const card={...failedPhotos(),manual:{current:true,revision:9}},posts=[];
  const f=harness(storage(null),async(path)=>{posts.push(path);return {};},{readCard:()=>card});
  f.render();await flush();f.render();f.workspaceProps().onPhotos();await flush();f.render();
- f.click('Edit Back geometry');await flush();f.render();
- assert.equal(f.workspaceProps().initialGeometrySide,'BACK');assert.deepEqual(posts.filter(p=>!p.endsWith('/geometry')),[]);
+ assert.equal(f.workspace(),false);assert.equal(f.has('Edit Back geometry'),false);assert.ok(f.field('BACK original photo'));
+ f.click('Return to review');await flush();f.render();assert.equal(f.workspace(),true);assert.deepEqual(posts,[]);f.dispose();
 });
-test('manual entry for a replaced photo uses the existing replacement action and expected revision',async()=>{
+test('direct review entry for replaced photos uses the exact existing replacement action',async()=>{
  let card={...failedPhotos(),manual:{current:false,revision:9}};const posts=[];
- const f=harness(storage(null),async(path,{body})=>{if(path.endsWith('/geometry'))return {};posts.push({path,body:plain(body)});card={...card,manual:{current:true,revision:10}};return {};},{readCard:()=>card});
- f.render();await flush();f.render();f.click('Edit Front geometry');await flush();f.render();
+ const f=harness(storage(null),async(path,{body})=>{posts.push({path,body:plain(body)});card={...card,manual:{current:true,revision:10}};return {};},{readCard:()=>card});
+ f.render();await flush();f.render();await flush();f.render();
  assert.equal(posts.length,1);assert.equal(posts[0].body.expectedRevision,9);assert.deepEqual(posts[0].body.action,{type:'REPLACE_SOURCES',sourceHash:'sports-source'});
- assert.equal(f.workspaceProps().initialGeometrySide,'FRONT');
+ assert.equal(f.workspace(),true);f.dispose();
+});
+test('uncertain review initialization retains the exact request and never returns to retired geometry UI',async()=>{
+ let card=failedPhotos();const store=storage(null),posts=[];
+ const f=harness(store,async(path,{body})=>{posts.push({path,body:plain(body)});if(posts.length===1)throw {status:503,code:'UNCERTAIN'};card={...card,manual:{current:true,revision:1}};return {};},{readCard:()=>card});
+ f.render();await flush();f.render();await flush();f.render();
+ assert.equal(posts.length,1);assert.ok(store.getItem(key));assert.equal(f.has('Resume saved request'),true);
+ assert.doesNotMatch(f.text(),/Edit (Front|Back) geometry|Original retained|PHOTOGRAPHS & IDENTITY/);
+ f.click('Resume saved request');await flush();f.render();assert.equal(f.workspace(),true);assert.deepEqual(posts[1],posts[0]);f.dispose();
 });
 
 test('direct saved-card review mounts the bounded shell and carries its pending-work exit lock',async()=>{
@@ -601,4 +606,10 @@ test('direct review title uses authoritative photo-bound identification instead 
  card.details.sourceHash='older-photographs';
  const stale=harness(storage(null),async()=>assert.fail('no command'),{readCard:()=>structuredClone(card)});
  stale.render();await flush();stale.render();assert.equal(stale.directShell().title,'Card 1');stale.dispose();
+});
+
+
+test('preparation failure reports retained evidence without claiming a new outline save',()=>{
+ const message=manualMessage({code:'MANUAL_PREPARATION_FAILED'});
+ assert.match(message,/saved outline and photos are kept/);assert.doesNotMatch(message,/Your outline is saved/);
 });

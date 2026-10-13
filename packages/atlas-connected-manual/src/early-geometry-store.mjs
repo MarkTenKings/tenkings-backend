@@ -82,6 +82,15 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
         return prior.length ? { key, state: 'NEEDS_REVIEW', result: null, error: 'GEOMETRY_REFRESH_AVAILABLE' } : null;
       });
     },
+    async retainedForPhoto(staff, cardId, side, uploadId, frameDescriptorSha256) {
+      return authorized(staff, cardId, async (tx, _principal, card) => {
+        requireThat(card.sides[side]?.upload?.uploadId === uploadId, 409, 'GEOMETRY_PHOTO_CHANGED');
+        const rows = await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_connected.early_geometry
+          WHERE card_id=$1::uuid AND upload_id=$2::uuid AND side=$3 AND input::jsonb->>'frameDescriptorSha256'=$4
+          ORDER BY created_at DESC LIMIT 32`, cardId, uploadId, side, frameDescriptorSha256);
+        return rows.map(parseGeometryJob);
+      });
+    },
     async claim(engineHash, claimId, geometryConcurrency = 2) {
       geometryProcessingSettings({ geometryConcurrency });
       uuid(claimId); requireThat(receiptClient, 503, 'GEOMETRY_WORKER_UNAVAILABLE');

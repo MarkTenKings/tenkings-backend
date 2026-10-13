@@ -105,3 +105,18 @@ export function gradingToCanonical(points, source, prepared, { pixelCenters = fa
   const [a,b,c,d,e,f,g,h,i] = prepared.frame.sourceToRectified, { width, height } = source.frame.raster.dimensions;
   return points.map(p => { const x=p.x*width, y=p.y*height, w=g*x+h*y+i; return { x:(a*x+b*y+c)/w/(pixelCenters?1269:1270), y:(d*x+e*y+f)/w/(pixelCenters?1777:1778) }; });
 }
+
+/** Reproject a retained Astra observation through an actual native transform.
+ * No visual inference happens here, and a missing outline stays missing. */
+export function applyAstraGeometryToPreparation({ visual, source, result, includePhysicalContour = true }) {
+  requireThat(visual.evidence?.frameDescriptorSha256 === descriptorSha256(source.frame)
+    && result.frameDescriptorSha256 === descriptorSha256(source.frame)
+    && visual.evidence?.gradingSha256 === source.frame.raster.content.sha256
+    && canonical(visual.evidence?.policy) === canonical(ASTRA_GEOMETRY_POLICY), 409, 'GEOMETRY_PHOTO_CHANGED');
+  result.actor = 'ASTRA';
+  result.proposal = geometryProposal(visual, 'printed');
+  if (visual.printed.quad) result.proposal.proposal = gradingToCanonical(visual.printed.quad, source, result);
+  if (includePhysicalContour && visual.physical.contour.length) result.frame.materialContour = gradingToCanonical(visual.physical.contour, source, result, { pixelCenters: true })
+    .map(p => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) }));
+  return result;
+}
