@@ -1,0 +1,10 @@
+{
+  "version": "atlas-standalone-migrations-v1",
+  "migrations": [
+    {
+      "version": "atlas-standalone-002-variant-label-retry",
+      "file": "sql/002-variant-label-retry.sql",
+      "sqlSha256": "dae816990ab42d99204bf07f2a009af4e4ca92ccaab154da213137492be84396"
+    }
+  ]
+}

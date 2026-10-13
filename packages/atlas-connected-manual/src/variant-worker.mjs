@@ -1,5 +1,6 @@
 import {requireThat} from '@atlas/manual-service/contract';
 import {CODEX_ASSOCIATION_REVISION} from './variant-codex.mjs';
+import {VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
 /** Separate-process only: no grading limiter, grading reservation, browser or approval capability. */
 export function createVariantWorker({store,catalog,provider,concurrency=1,intervalMs=5000,heartbeatMs=30000,timers=globalThis,onError=()=>{},admitDispatch=null}){
  requireThat(store&&catalog&&typeof provider==='function'&&Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,500,'VARIANT_CONFIG_INVALID');
@@ -48,23 +49,36 @@ export function createVariantWorker({store,catalog,provider,concurrency=1,interv
       if(reserved.state==='RESERVED'){
        dispatched=true;saved=false;requireThat(!lost&&!controller.signal.aborted,409,'VARIANT_LEASE_LOST');
        const response=await provider({prepared,signal:controller.signal});
-       requireThat(await store.saveLabelSource(reserved.reservation,response),503,'VARIANT_RESPONSE_NOT_SAVED');saved=true;
+       try{requireThat(await store.saveLabelSource(reserved.reservation,response),503,'VARIANT_RESPONSE_NOT_SAVED');}
+       catch(error){
+        // A lost database acknowledgement can follow a committed response.
+        // Read the exact journal before classifying the paid outcome as unknown.
+        // This never reserves or sends a second provider request.
+        const retained=await store.labelSource(job,request);
+        requireThat(retained.state!=='CREDIT_REJECTED',429,VARIANT_LABEL_CREDIT_ERROR);
+        if(retained.state!=='REUSED')throw error;
+        requireThat(retained.attemptKey===reserved.attemptKey,409,'VARIANT_LABEL_REQUEST_CHANGED');
+       }
+       saved=true;
+       requireThat(!variantLabelCreditRejected(response),429,VARIANT_LABEL_CREDIT_ERROR);
       }
      }
-     if(reserved.state==='RECOVER'){await store.publishLabelSource(job,reserved.request);requireThat(await store.defer(job,'VARIANT_LABEL_PENDING'),409,'VARIANT_LEASE_LOST');return;}
+     requireThat(reserved.state!=='CREDIT_REJECTED',429,VARIANT_LABEL_CREDIT_ERROR);
+     if(reserved.state==='RECOVER'){saved=true;await store.publishLabelSource(job,reserved.request,{attemptKey:reserved.attemptKey});requireThat(await store.defer(job,'VARIANT_LABEL_PENDING'),409,'VARIANT_LEASE_LOST');return;}
      if(reserved.state==='PENDING'){requireThat(await store.defer(job,'VARIANT_LABEL_PENDING'),409,'VARIANT_LEASE_LOST');return;}
      if(reserved.state==='UNKNOWN'){await finishReview('VARIANT_PROVIDER_OUTCOME_UNKNOWN');return;}
      // The raw response and each image reading remain globally reusable even
      // when a job loses its lease between this projection and final READY.
      requireThat(!lost,409,'VARIANT_LEASE_LOST');
-     await store.publishLabelSource(job,request);dispatched=false;saved=false;
+     saved=true;
+     await store.publishLabelSource(job,request,{attemptKey:reserved.attemptKey});dispatched=false;saved=false;
     }
     referenceLabels=await store.codexReadings(job);
     requireThat(!lost,409,'VARIANT_LEASE_LOST');
     await store.finish(job,{result:{catalog:snapshot,referenceLabels:{...referenceLabels,associationRevision:CODEX_ASSOCIATION_REVISION},suggestion:{candidateId:null,confidence:null,
       reason:'Compare the saved reference labels and choose the variant you can verify on your card.',evidence:[]}}});return;
    }
-  }catch(e){emit(e);try{if(e.code==='VARIANT_GRADING_PRIORITY_DEFERRED'&&!dispatched&&!saved){requireThat(await store.defer(job),409,'VARIANT_LEASE_LOST');return;}if(snapshot&&dispatched&&!saved&&!lost){await finishReview('VARIANT_PROVIDER_OUTCOME_UNKNOWN');return;}await store.finish(job,{state:saved?'RETRY':dispatched?'UNKNOWN':'RETRY',code:saved?'VARIANT_PROJECTION_INTERRUPTED':dispatched?'VARIANT_PROVIDER_OUTCOME_UNKNOWN':'VARIANT_PREPARATION_INTERRUPTED'});}catch(error){emit(error);}}
+  }catch(e){emit(e);try{if(e.code===VARIANT_LABEL_CREDIT_ERROR){await store.finish(job,{state:'FAILED',code:VARIANT_LABEL_CREDIT_ERROR});return;}if(e.code==='VARIANT_GRADING_PRIORITY_DEFERRED'&&!dispatched&&!saved){requireThat(await store.defer(job),409,'VARIANT_LEASE_LOST');return;}if(snapshot&&dispatched&&!saved&&!lost){await finishReview('VARIANT_PROVIDER_OUTCOME_UNKNOWN');return;}await store.finish(job,{state:saved?'RETRY':dispatched?'UNKNOWN':'RETRY',code:saved?'VARIANT_PROJECTION_INTERRUPTED':dispatched?'VARIANT_PROVIDER_OUTCOME_UNKNOWN':'VARIANT_PREPARATION_INTERRUPTED'});}catch(error){emit(error);}}
   finally{timers.clearInterval(heartbeat);await renewing;}
  }
  async function cycle(){if(stopped||cycling||tasks.size>0)return cycling;cycling=(async()=>{await store.discover();while(!stopped&&tasks.size<concurrency){if(admitDispatch&&!await admitDispatch())break;const job=await store.claim(concurrency);if(!job)break;const task=execute(job).finally(()=>tasks.delete(task));tasks.add(task);}})().catch(emit).finally(()=>{cycling=null;});return cycling;}

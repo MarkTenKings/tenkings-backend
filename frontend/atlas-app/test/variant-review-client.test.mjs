@@ -121,3 +121,71 @@ test('a saved old request is acknowledged before any replay, while an unknown 40
  await createVariantReviewClient(f.options).resume();assert.equal(f.client.retained(),null);assert.equal(f.requests.filter(r=>r.method).length,1);
  const g=fixture();await g.client.read();g.save=()=>{throw {status:400,code:'UNKNOWN'};};await assert.rejects(g.client.confirm({candidateId:'exact'}));assert.ok(g.client.retained()?.pending);
 });
+
+function creditFailure(f){Object.assign(f.status,{state:'FAILED',jobId:hash('e'),catalogManifestHash:hash('d'),refreshable:false,labelRetryRequestId:null,
+ labelFailure:{code:'VARIANT_OPENAI_CREDITS_EXHAUSTED',retryable:true,labelRequestKey:`variant-label-source:v1:${hash('f')}`,labelResponseHash:hash('a')}});return f;}
+const acceptLabelRetry=(f,input)=>({...f.status,state:'QUEUED',labelRetryRequestId:input.requestId,labelFailure:{...f.status.labelFailure,retryable:false}});
+test('label retry uses the exact retained failure and catalog, preserves a physical draft and never confirms or refreshes',async()=>{
+ const f=creditFailure(fixture());await f.client.read();f.client.choose(null,null,{parallel:'Base'});const draft=f.client.retained().draft;
+ assert.equal(f.requests.filter(r=>r.method).length,0);f.save=input=>acceptLabelRetry(f,input);
+ const result=await f.client.retryLabels(),post=f.requests.at(-1);
+ assert.equal(post.path,`/api/staff/manual-connected/cards/${f.options.cardId}/variants/retry-labels`);
+ assert.deepEqual(Object.keys(post.body).sort(),['requestId','sourceHash','identityRevision','identityHash','jobId','catalogManifestHash','labelRequestKey','labelResponseHash'].sort());
+ assert.equal(post.body.jobId,f.status.jobId);assert.equal(post.body.catalogManifestHash,f.status.catalogManifestHash);
+ assert.equal(post.body.labelRequestKey,f.status.labelFailure.labelRequestKey);assert.equal(post.body.labelResponseHash,f.status.labelFailure.labelResponseHash);
+ assert.equal(result.confirmation,null);assert.equal(variantApprovalReady(result),false);assert.deepEqual(result.result,f.status.result);
+ assert.deepEqual(f.client.retained().draft,draft);assert.equal(f.client.retained().pending,undefined);
+});
+test('lost label retry acknowledgement reconciles by read across reload without another POST or loss of local choice',async()=>{
+ const f=creditFailure(fixture());await f.client.read();f.client.choose('exact');const draft=f.client.retained().draft;
+ f.save=input=>{f.status=acceptLabelRetry(f,input);throw Error('lost reply');};await assert.rejects(f.client.retryLabels());
+ assert.equal(f.client.retained().operation,'RETRY_LABELS');const id=f.client.retained().pending.requestId;
+ const reopened=createVariantReviewClient(f.options);await reopened.resume();assert.equal(f.status.labelRetryRequestId,id);
+ assert.equal(f.requests.filter(r=>r.method).length,1);assert.deepEqual(reopened.retained().draft,draft);assert.equal(reopened.retained().pending,undefined);
+});
+test('uncertain label retry replays the exact journal while definite refusal releases only that request',async()=>{
+ for(const rejection of [null,'VARIANT_LABEL_RETRY_INVALID','VARIANT_LABEL_RETRY_UNAVAILABLE','VARIANT_LABEL_RETRY_CONFLICT']){
+  const f=creditFailure(fixture());await f.client.read();f.client.choose(null,null,{parallel:'Base'});const draft=f.client.retained().draft;
+  f.save=()=>{throw {status:503};};await assert.rejects(f.client.retryLabels());const original=f.requests.at(-1).body;
+  f.save=input=>{if(rejection)throw {status:rejection.endsWith('INVALID')?400:409,code:rejection};return acceptLabelRetry(f,input);};
+  const reopened=createVariantReviewClient(f.options);
+  if(rejection)await assert.rejects(reopened.resume(),{code:'VARIANT_LABEL_RETRY_UNAVAILABLE'});else await reopened.resume();
+  assert.deepEqual(f.requests.filter(r=>r.method).map(r=>r.body),[original,original]);assert.deepEqual(reopened.retained().draft,draft);assert.equal(reopened.retained().pending,undefined);
+ }
+});
+test('changed label failure or catalog binding refuses retry before dispatch',async()=>{
+ for(const change of [s=>s.sourceHash=hash('c'),s=>s.identityRevision++,s=>s.identityHash=hash('c'),s=>s.jobId=hash('c'),s=>s.catalogManifestHash=hash('c'),s=>s.labelFailure.labelRequestKey='another-source',s=>s.labelFailure.labelResponseHash=hash('c')]){
+  const f=creditFailure(fixture());await f.client.read();change(f.status);await assert.rejects(f.client.retryLabels(),{code:'VARIANT_REVIEW_CHANGED'});assert.equal(f.requests.filter(r=>r.method).length,0);
+ }
+});
+test('only a definite retryable failed label state allows explicit retry and general refresh cannot bypass it',async()=>{
+ for(const state of ['QUEUED','SEARCHING','READY','UNKNOWN','STALE','NOT_REQUESTED']){
+  const f=creditFailure(fixture());f.status.state=state;await f.client.read();await assert.rejects(f.client.retryLabels(),{code:'VARIANT_LABEL_RETRY_UNAVAILABLE'});assert.equal(f.requests.filter(r=>r.method).length,0);
+ }
+ const f=creditFailure(fixture());f.status.labelFailure.retryable=false;f.status.refreshable=true;await f.client.read();
+ await assert.rejects(f.client.retryLabels(),{code:'VARIANT_LABEL_RETRY_UNAVAILABLE'});await assert.rejects(f.client.refresh(),{code:'VARIANT_REFRESH_UNAVAILABLE'});assert.equal(f.requests.filter(r=>r.method).length,0);
+});
+test('label failure status refuses malformed retry proof without displaying an actionable retry',()=>{
+ for(const change of [s=>s.labelFailure.code='UNKNOWN',s=>s.labelFailure.retryable='true',s=>s.labelFailure.labelRequestKey='',s=>s.labelFailure.labelResponseHash='bad',s=>s.catalogManifestHash=null,s=>s.jobId=null,s=>s.labelRetryRequestId='bad']){
+  const f=creditFailure(fixture());change(f.status);assert.throws(()=>variantStatus(f.status),{code:'VARIANT_RESPONSE_INVALID'});
+ }
+});
+test('historical label retry receipt must match the original intent before releasing it after identity changes',async()=>{
+ const f=creditFailure(fixture());await f.client.read();f.save=()=>{throw Error('lost reply');};await assert.rejects(f.client.retryLabels());const original=f.requests.at(-1).body;
+ f.status={...f.status,identityRevision:2,identityHash:hash('f'),jobId:hash('b'),catalogManifestHash:hash('c')};
+ f.save=input=>({...f.status,acknowledgedRequest:{operation:'RETRY_LABELS',requestId:input.requestId,sourceHash:input.sourceHash,identityRevision:input.identityRevision,identityHash:input.identityHash}});
+ const reopened=createVariantReviewClient(f.options);await reopened.resume();assert.equal(reopened.retained(),null);assert.deepEqual(f.requests.filter(r=>r.method).map(r=>r.body),[original,original]);
+});
+test('definitive stale label retry refusal releases the exact request and preserves the physical draft',async()=>{
+ for(const code of ['VARIANT_SOURCE_STALE','VARIANT_IDENTITY_STALE','VARIANT_RESULT_STALE','MANUAL_DRAFT_STALE']){
+  const f=creditFailure(fixture());await f.client.read();f.client.choose(null,null,{parallel:'Base'});const draft=f.client.retained().draft;
+  f.save=()=>{throw {status:409,code};};await assert.rejects(f.client.retryLabels(),{code:'VARIANT_REVIEW_CHANGED'});
+  assert.equal(f.client.retained().pending,undefined);assert.deepEqual(f.client.retained().draft,draft);assert.equal(f.requests.filter(r=>r.method).length,1);
+ }
+});
+test('a retained general refresh refused for exhausted credits clears without starting another acquisition',async()=>{
+ const f=fixture();f.status.jobId=hash('e');f.status.refreshable=true;await f.client.read();f.save=()=>{throw Error('lost reply');};await assert.rejects(f.client.refresh());
+ const original=f.requests.at(-1).body;creditFailure(f);f.save=()=>{throw {status:409,code:'VARIANT_LABEL_RETRY_REQUIRED'};};
+ const reopened=createVariantReviewClient(f.options);await assert.rejects(reopened.resume(),{code:'VARIANT_LABEL_RETRY_REQUIRED'});assert.equal(reopened.retained(),null);
+ assert.deepEqual(f.requests.filter(r=>r.method).map(r=>r.body),[original,original]);
+});

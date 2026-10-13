@@ -400,3 +400,42 @@ test('source-supported sports season alias stays in this card printings without 
  const identity={playerName:'LaMelo Ball',year:'2025',productSet:'Topps Chrome — Ball of Duty',cardNumber:'BD-13'};
  assert.equal(f.exports.variantCandidateGroup(candidate,identity),'same');assert.equal(f.exports.variantCandidateGroup({...candidate,diagnostics:[]},identity),'other');assert.equal(f.exports.variantCandidateGroup(candidate,{...identity,year:'2024'}),'other');f.dispose();
 });
+
+function creditFailure(f){Object.assign(f.status,{state:'FAILED',jobId:hash('e'),catalogManifestHash:hash('d'),refreshable:false,labelRetryRequestId:null,
+ labelFailure:{code:'VARIANT_OPENAI_CREDITS_EXHAUSTED',retryable:true,labelRequestKey:`variant-label-source:v1:${hash('f')}`,labelResponseHash:hash('a')}});return f;}
+const acceptLabelRetry=(f,input)=>({...f.status,state:'QUEUED',labelRetryRequestId:input.requestId,labelFailure:{...f.status.labelFailure,retryable:false}});
+test('exhausted credits offers explicit Astra retry while keeping saved photos and physical review available',async()=>{
+ const f=creditFailure(fixture());f.status.refreshable=true;f.status.result.catalog.referencePhotos=[listingImage()];await flush();f.render();
+ assert.match(f.text(),/OpenAI API credits are exhausted/);assert.match(f.text(),/Add credits, then retry Astra labeling/);
+ assert.equal(f.button('Retry Astra labeling').props.disabled,false);assert.equal(f.button('Refresh reference library'),undefined);
+ assert.match(f.text(),/Other saved reference photos · 1/);assert.ok(f.radios().every(r=>!r.props.disabled&&!r.props.checked));assert.equal(f.writes.length,0);assert.equal(f.saved,0);
+ assert.ok(!f.button('Base').props.disabled);f.button('Base').props.onClick();f.render();assert.equal(f.button('Confirm selected identity').props.disabled,false);assert.equal(f.gates.at(-1),false);assert.equal(f.writes.length,0);f.dispose();
+});
+test('preview retry is one explicit same-job request and leaves photos, draft and grading unchanged',async()=>{
+ const f=creditFailure(fixture());f.status.result.catalog.referencePhotos=[listingImage()];await flush();f.render();f.button('Base').props.onClick();f.render();
+ const originalDraft=JSON.parse(f.retained()[0][1]).draft;f.props.previewOnly=true;f.remount();await flush();f.render();
+ f.save=input=>{f.status=acceptLabelRetry(f,input);return structuredClone(f.status);};const retry=f.button('Retry Astra labeling').props.onClick;retry();retry();await flush();f.render();
+ assert.equal(f.writes.length,1);assert.equal(f.writes[0].jobId,hash('e'));assert.equal(f.writes[0].catalogManifestHash,hash('d'));assert.equal(f.writes[0].decision,undefined);assert.equal(f.writes[0].reviewed,undefined);
+ assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);assert.equal(f.activity.at(-1),false);assert.equal(f.status.confirmation,null);assert.match(f.text(),/Astra labeling retry is queued for your saved photos/);
+ assert.doesNotMatch(f.text(),/credits are exhausted/);assert.equal(f.button('Retry Astra labeling'),undefined);assert.equal(f.button('Refresh reference library'),undefined);assert.match(f.text(),/Other saved reference photos · 1/);
+ assert.deepEqual(JSON.parse(f.retained()[0][1]).draft,originalDraft);f.props.previewOnly=false;f.remount();await flush();f.render();assert.equal(f.button('Base').props['aria-pressed'],true);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.dispose();
+});
+test('a lost label retry reply retains its navigation lock until read acknowledgement without another write',async()=>{
+ const f=creditFailure(fixture());f.props.previewOnly=true;await flush();f.render();let pending;
+ f.save=input=>{pending=input;throw Error('reply lost');};f.button('Retry Astra labeling').props.onClick();await flush();f.render();assert.equal(f.activity.at(-1),true);
+ const retained=f.retained();f.remount();await flush();f.render();assert.equal(f.activity.at(-1),true);assert.deepEqual(f.retained(),retained);assert.equal(f.writes.length,1);
+ f.status=acceptLabelRetry(f,pending);f.button('Check saved matches').props.onClick();await flush();f.render();
+ assert.equal(f.writes.length,1);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);assert.equal(f.activity.at(-1),false);assert.equal(f.retained().length,0);assert.match(f.text(),/Astra labeling retry is queued/);f.dispose();
+});
+test('a nonretryable credit failure never offers a retry or another listing acquisition',async()=>{
+ const f=creditFailure(fixture());f.status.labelFailure.retryable=false;await flush();f.render();assert.equal(f.button('Retry Astra labeling'),undefined);assert.equal(f.button('Refresh reference library'),undefined);assert.equal(f.writes.length,0);assert.ok(f.radios().every(r=>!r.props.disabled));f.dispose();
+});
+test('comparison distinguishes saved seller source from actual visible-label text and labels the grading image accurately',()=>{
+ for(const labelText of ['', '2025 NICK KURTZ BOWMAN CHROME']){
+  const reference=listingImage({labelReading:{text:labelText},associationStatus:'UNASSIGNED'}),f=fixture({component:'Comparison',props:{photo:'blob:generated-grading',reference,side:'FRONT',onClose(){}}});
+  assert.equal(f.text().includes('Visible card / label text'),Boolean(labelText));assert.ok(f.text().includes(reference.listing.title));
+  assert.equal(f.find(node=>node.type==='a'&&text(node)===reference.listing.title)[0].props.href,reference.listing.url);
+  const photo=f.find(node=>node.type==='img')[0];assert.equal(photo.props.alt,'front background-removed grading image');assert.equal(photo.props.src,'blob:generated-grading');
+  assert.doesNotMatch(f.text(),/unchanged uploaded photograph|Your saved photograph/);f.dispose();
+ }
+});

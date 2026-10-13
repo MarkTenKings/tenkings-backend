@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { hash } from '../lib/server/policy.mjs';
 import { staffGrantSQL } from '../lib/server/access/privileges.mjs';
 import { initializeStandaloneCoordination } from '../../../packages/atlas-standalone-database/initialize.mjs';
-import { applyStandaloneBaseline } from '../../../packages/atlas-standalone-database/migrate.mjs';
+import { applyStandaloneBaseline, applyStandaloneMigrations } from '../../../packages/atlas-standalone-database/migrate.mjs';
 import { customerGrantSQL } from '../../atlas-customer/lib/server/database.mjs';
 import { createRemotePostgresTransport, REMOTE_POSTGRES_IMAGE } from './remote-disposable-postgres.mjs';
 
@@ -219,8 +219,11 @@ export async function disposablePostgres(args, options = {}) {
             const unchanged = await applyStandaloneBaseline(baselineClient);
             assert.equal(unchanged.status,'NO_OP');
             assert.equal(unchanged.checksum, installed.checksum);
+            const migrations = await applyStandaloneMigrations(baselineClient);
+            assert.equal(migrations.status,'APPLIED');
+            assert.equal((await applyStandaloneMigrations(baselineClient)).status,'NO_OP');
             const coordination = await initializeStandaloneCoordination(baselineClient, { geometryConcurrency: 2 });
-            writeFileSync(join(directory, 'standalone-baseline.json'), JSON.stringify({ installed, unchanged, coordination }, null, 2));
+            writeFileSync(join(directory, 'standalone-baseline.json'), JSON.stringify({ installed, unchanged, migrations, coordination }, null, 2));
         } finally { await baselineClient.end(); }
         await sql(`CREATE ROLE ${role} LOGIN PASSWORD '${staffPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
         await sql(staffGrantSQL(role), [], 'atlas_fixture_template');

@@ -6,6 +6,18 @@ import { CODEX_LABEL_POLICY, CODEX_LABEL_MODEL, CODEX_ASSOCIATION_REVISION, code
 
 export const VARIANT_PHOTO_MODEL = CODEX_LABEL_MODEL;
 export const VARIANT_LABEL_POLICY = CODEX_LABEL_POLICY;
+export const VARIANT_LABEL_CREDIT_ERROR = 'VARIANT_OPENAI_CREDITS_EXHAUSTED';
+// Only this retained, definitive refusal authorizes a later explicit attempt.
+// Transport uncertainty, other 429s and successful replies are never retry proof.
+export function variantLabelCreditRejected(saved) {
+  if (saved?.httpStatus !== 429 || typeof saved.bodyText !== 'string') return false;
+  try {
+    const body=JSON.parse(saved.bodyText);
+    return body!==null&&typeof body==='object'&&!Array.isArray(body)&&Object.keys(body).length===1
+      &&body.error!==null&&typeof body.error==='object'&&!Array.isArray(body.error)&&body.error.code==='credit_balance_exhausted';
+  }
+  catch { return false; }
+}
 export const VARIANT_PHOTO_LIMITS = Object.freeze({ imageBytes: 4 * 1024 * 1024, totalBytes: 20 * 1024 * 1024,
   referenceImages: 8, responseBytes: 1024 * 1024, timeoutMs: 300000 });
 const ENDPOINT = 'https://api.openai.com/v1/responses';

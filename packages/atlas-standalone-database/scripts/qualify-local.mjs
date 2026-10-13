@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { applyStandaloneBaseline } from '../migrate.mjs';
+import { applyStandaloneBaseline, applyStandaloneMigrations } from '../migrate.mjs';
 import { initializeStandaloneCoordination } from '../initialize.mjs';
 import { standaloneRoleSQL } from '../grants.mjs';
 import { staffGrantSQL, assertStaffPrivileges } from '../../../frontend/atlas-app/lib/server/access/privileges.mjs';
@@ -51,6 +51,7 @@ try {
   assert.equal((await applyStandaloneBaseline(client)).status,'NO_OP');assert.deepEqual(await catalog(),before);checks.push('second application exact catalog/ledger no-op');
   const forbidden=await client.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' OR c.relname IN ('StaffSpecimen','StaffWorkspaceCard','CustomerSubmission','CustomerCard','variant_contribution','_prisma_migrations')");assert.equal(forbidden.rows[0].n,0);checks.push('no public or obsolete specimen/submission/Prisma objects');
   const roles={staff:'atlas_fixture_staff',manual:'atlas_fixture_manual',variant:'atlas_fixture_variant',customer:'atlas_fixture_customer',customerPrivate:'atlas_fixture_customer_private'};
+  assert.equal((await applyStandaloneMigrations(client)).status,'APPLIED');
   await client.query(standaloneRoleSQL(roles));
   checks.push('all five current runtime role contracts installed without legacy dependencies');
   for(const role of Object.values(roles)) {
@@ -94,7 +95,7 @@ try {
   const prior=(await client.query('SELECT * FROM atlas_staff._standalone_migrations')).rows;
   await client.query("UPDATE atlas_staff._standalone_migrations SET checksum=repeat('0',64)");
   await assert.rejects(()=>applyStandaloneBaseline(client),/STANDALONE_MIGRATION_LEDGER_INVALID/);
-  await client.query('UPDATE atlas_staff._standalone_migrations SET checksum=$1',[prior[0].checksum]);checks.push('changed migration receipt refuses replay');
+  for (const row of prior) await client.query('UPDATE atlas_staff._standalone_migrations SET checksum=$1 WHERE version=$2',[row.checksum,row.version]);checks.push('changed migration receipt refuses replay');
 
   receipt={status:'STANDALONE_LOCAL_PG17_PASS',sourceBaselineSha256:createHash('sha256').update(await readFile(new URL('../sql/baseline.sql',import.meta.url))).digest('hex'),checks,catalog:before,productionCalls:0,providerCalls:0};
 

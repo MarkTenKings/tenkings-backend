@@ -16,6 +16,11 @@ export function variantStatus(value) {
     for (const candidate of catalog.candidates) check(typeof candidate.candidateId === 'string' && candidate.candidateId.length > 0
       && typeof candidate.label === 'string' && candidate.identity && Array.isArray(candidate.images) && Array.isArray(candidate.diagnostics));
   }
+  if (value.labelFailure != null) check(value.labelFailure.code === 'VARIANT_OPENAI_CREDITS_EXHAUSTED'
+    && typeof value.labelFailure.retryable === 'boolean' && typeof value.labelFailure.labelRequestKey === 'string'
+    && value.labelFailure.labelRequestKey.length > 0 && value.labelFailure.labelRequestKey.length <= 300
+    && sha(value.labelFailure.labelResponseHash) && sha(value.catalogManifestHash) && sha(value.jobId));
+  if (value.labelRetryRequestId != null) check(uuid(value.labelRetryRequestId));
   return value;
 }
 export function variantConfirmationCurrent(value) {
@@ -32,13 +37,15 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
   function retained() {
     let value; try { value = JSON.parse(storage.getItem(key) ?? 'null'); } catch { throw fail('VARIANT_LOCAL_INVALID'); }
     if (value) check(value.version === 1 && value.staffId === staffId && value.cardId === cardId
-      && (!value.operation || ['CONFIRM','REFRESH'].includes(value.operation))
-      && (!value.pending || (value.operation === 'REFRESH' ? uuid(value.pending.requestId) : uuid(value.pending.actionId) && value.pending.reviewed === true)), 'VARIANT_LOCAL_INVALID');
+      && (!value.operation || ['CONFIRM','REFRESH','RETRY_LABELS'].includes(value.operation))
+      && (!value.pending || (['REFRESH','RETRY_LABELS'].includes(value.operation) ? uuid(value.pending.requestId) : uuid(value.pending.actionId) && value.pending.reviewed === true)), 'VARIANT_LOCAL_INVALID');
     return value;
   }
   function store(value) { try { storage.setItem(key, JSON.stringify({ version: 1, staffId, cardId, ...value })); } catch { throw fail('VARIANT_LOCAL_UNAVAILABLE'); } }
   const intentId = pending => pending?.requestId ?? pending?.actionId;
-  function clearPending(id) { const value = retained(); if (intentId(value?.pending) === id) storage.removeItem(key); }
+  function clearPending(id) { const value = retained(); if (intentId(value?.pending) === id) {
+    if (value.operation === 'RETRY_LABELS' && value.draft) store({draft:value.draft}); else storage.removeItem(key);
+  } }
   function acknowledged(status, pending, operation = 'CONFIRM', allowReceipt = false) {
     const receipt = status.acknowledgedRequest;
     if (allowReceipt && receipt?.operation === operation && receipt.requestId === intentId(pending)
@@ -46,6 +53,8 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
       && receipt.identityHash === pending.identityHash) return true;
     if (operation === 'REFRESH') return status.refreshRequestId === pending.requestId && status.sourceHash === pending.sourceHash
       && status.identityRevision === pending.identityRevision && status.identityHash === pending.identityHash;
+    if (operation === 'RETRY_LABELS') return status.labelRetryRequestId === pending.requestId && status.jobId === pending.jobId
+      && status.catalogManifestHash === pending.catalogManifestHash && variantBindingKey(status) === variantBindingKey(pending);
     return status.confirmation?.actionId === pending.actionId && status.confirmation.decision === pending.decision
       && status.confirmation.selectedCandidateId === pending.candidateId && status.confirmation.sourceHash === pending.sourceHash;
   }
@@ -56,11 +65,18 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
   }
   async function send(input, operation = 'CONFIRM') {
     try {
-      const result = variantStatus(await request(`${path}/${operation === 'REFRESH' ? 'refresh' : 'confirm'}`, { method: 'POST', body: input }));
+      const result = variantStatus(await request(`${path}/${({REFRESH:'refresh',RETRY_LABELS:'retry-labels',CONFIRM:'confirm'})[operation]}`, { method: 'POST', body: input }));
       check(acknowledged(result, input, operation, true), 'VARIANT_SAVE_UNCONFIRMED'); clearPending(intentId(input)); latest = result; return result;
     } catch (error) {
+      if (operation === 'REFRESH' && error?.status === 409 && error.code === 'VARIANT_LABEL_RETRY_REQUIRED') {
+        clearPending(intentId(input)); throw fail('VARIANT_LABEL_RETRY_REQUIRED');
+      }
       if (operation === 'REFRESH' && [400,409].includes(error?.status) && ['VARIANT_REFRESH_UNAVAILABLE','VARIANT_REFRESH_CONFLICT','VARIANT_REFRESH_INVALID'].includes(error.code)) {
         clearPending(intentId(input)); throw fail('VARIANT_REFRESH_UNAVAILABLE');
+      }
+      if (operation === 'RETRY_LABELS' && [400,409].includes(error?.status)
+        && ['VARIANT_LABEL_RETRY_UNAVAILABLE','VARIANT_LABEL_RETRY_CONFLICT','VARIANT_LABEL_RETRY_INVALID'].includes(error.code)) {
+        clearPending(intentId(input)); throw fail('VARIANT_LABEL_RETRY_UNAVAILABLE');
       }
       if (error?.status === 409 && error.code === 'VARIANT_FINISH_UNRESOLVED') { clearPending(input.actionId); throw error; }
       if (operation === 'CONFIRM' && error?.status === 400 && ['MANUAL_REQUEST_INVALID','VARIANT_CONFIRMATION_INVALID'].includes(error.code)) {
@@ -101,10 +117,26 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
       check(latest && !retained()?.pending, 'VARIANT_SAVE_PENDING');
       const basis = latest, current = await read();
       check(variantBindingKey(basis) === variantBindingKey(current), 'VARIANT_REVIEW_CHANGED');
-      check(current.refreshable === true && (sha(current.jobId) || current.jobId === null && current.state === 'NOT_REQUESTED'), 'VARIANT_REFRESH_UNAVAILABLE');
+      check(!current.labelFailure && current.refreshable === true && (sha(current.jobId) || current.jobId === null && current.state === 'NOT_REQUESTED'), 'VARIANT_REFRESH_UNAVAILABLE');
       const input = { requestId: cryptoImpl.randomUUID(), sourceHash: current.sourceHash, identityRevision: current.identityRevision,
         identityHash: current.identityHash, jobId: current.jobId };
       store({ operation: 'REFRESH', pending: input }); return send(input, 'REFRESH');
+    }),
+    retryLabels: () => exclusive(async () => {
+      check(latest && !retained()?.pending, 'VARIANT_SAVE_PENDING');
+      const basis = latest, current = await read();
+      check(variantBindingKey(basis) === variantBindingKey(current) && basis.jobId === current.jobId
+        && basis.catalogManifestHash === current.catalogManifestHash, 'VARIANT_REVIEW_CHANGED');
+      const failure = current.labelFailure;
+      check(current.state === 'FAILED' && failure?.retryable === true, 'VARIANT_LABEL_RETRY_UNAVAILABLE');
+      check(basis.labelFailure?.labelRequestKey === failure.labelRequestKey && basis.labelFailure?.labelResponseHash === failure.labelResponseHash,
+        'VARIANT_REVIEW_CHANGED');
+      const input = { requestId: cryptoImpl.randomUUID(), sourceHash: current.sourceHash, identityRevision: current.identityRevision,
+        identityHash: current.identityHash, jobId: current.jobId, catalogManifestHash: current.catalogManifestHash,
+        labelRequestKey: failure.labelRequestKey, labelResponseHash: failure.labelResponseHash };
+      const draft = retained()?.draft;
+      store({ ...(draft ? {draft} : {}), operation: 'RETRY_LABELS', pending: input });
+      return send(input, 'RETRY_LABELS');
     }),
     resume: () => exclusive(async () => {
       const saved = retained(), pending = saved?.pending; check(pending, 'VARIANT_NO_PENDING');
@@ -121,6 +153,8 @@ export function variantError(error) {
     VARIANT_FINISH_UNRESOLVED: 'This reference does not identify a printing. Choose another match, or record the details you can verify on the physical card.',
     VARIANT_MANUAL_INVALID: 'Choose Base or enter the printing visible on the physical card.',
     VARIANT_REFRESH_UNAVAILABLE: 'Reference preparation cannot be refreshed in its current state. Check the saved status first.',
+    VARIANT_LABEL_RETRY_REQUIRED: 'Your saved photos need Astra labeling. Check saved matches, then use Retry Astra labeling after restoring OpenAI API credits.',
+    VARIANT_LABEL_RETRY_UNAVAILABLE: 'Astra labeling cannot be retried from this saved state. Check the saved status before trying again.',
     VARIANT_SAVE_PENDING: 'Check the retained decision before making another change.',
   })[error?.code] ?? 'The save is not confirmed. Your decision is retained. Check its saved status before trying another choice.';
 }

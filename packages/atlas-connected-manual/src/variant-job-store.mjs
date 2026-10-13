@@ -5,15 +5,18 @@ import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
 import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION} from './variant-listing-provider.mjs';
 import {CODEX_ASSOCIATION_REVISION,variantCodexAliases,codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
-import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from './variant-photo-provider.mjs';
+import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL,VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
 
 export const VARIANT_POLICY='atlas-independent-variant-v2';
 const table='atlas_manual_connected.variant_job';
 const listingDispatchKey=key=>`variant-listing-dispatch:v1:${key}`;
 const listingResponseKey=key=>`variant-listing-response:v1:${key}`;
-const listingJournalKey=key=>/^(?:variant-(?:listing|label)-(?:dispatch|response):v1:|atlas-codex-)/.test(key);
+const listingJournalKey=key=>/^(?:variant-(?:listing|label)-(?:dispatch|response|retry|retry-next):v1:|atlas-codex-)/.test(key);
 const labelDispatchKey=key=>`variant-label-dispatch:v1:${key}`;
 const labelResponseKey=key=>`variant-label-response:v1:${key}`;
+const labelRetryKey=id=>`variant-label-retry:v1:${id}`;
+const labelRetryNextKey=key=>`variant-label-retry-next:v1:${key}`;
+const labelAttemptKey=id=>`variant-label-attempt:v1:${id}`;
 // Provider-owned bodies are evidence, not manual form fields. Keep the manual
 // envelope serializer unchanged and permit one explicitly bounded string only.
 // Its exact characters are retained; all metadata retains ordinary restrictions.
@@ -83,10 +86,51 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
   // one-record read make these names a permanent request journal, not a TTL
   // acquisition cache. All source writers take the same public-identity lock.
   async function listingLock(tx,key){await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1,721930))',`atlas-listing-source:${key}`);}
-  async function listingRead(tx,key){const rows=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 ORDER BY created_at LIMIT 2',key);
+  async function listingRecord(tx,key){const rows=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 ORDER BY created_at LIMIT 2',key);
     requireThat(rows.length<=1,503,'VARIANT_LISTING_JOURNAL_CONFLICT');if(!rows.length)return null;
-    requireThat(digest(rows[0].snapshot)===rows[0].snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(rows[0].snapshot);}
+    requireThat(digest(rows[0].snapshot)===rows[0].snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return {value:JSON.parse(rows[0].snapshot),hash:rows[0].snapshot_hash};}
+  async function listingRead(tx,key){return (await listingRecord(tx,key))?.value??null;}
   async function listingWrite(tx,key,value){await tx.$executeRawUnsafe('INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz)',key,value,digest(value),'2000-01-01T00:00:00.000Z');}
+  async function labelAttempt(tx,request){
+    let attemptKey=request.requestKey,retry=null,failure=null,previous=null;const seen=new Set();
+    for(;;){
+      requireThat(!seen.has(attemptKey),503,'VARIANT_LABEL_JOURNAL_CONFLICT');seen.add(attemptKey);
+      const reservation=await listingRead(tx,labelDispatchKey(attemptKey)),record=await listingRecord(tx,labelResponseKey(attemptKey));
+      requireThat(!record||reservation,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+      if(!reservation)return {attemptKey,retry,failure,previous};
+      requireThat(reservation.schemaVersion==='variant-label-dispatch/v1'&&canonical(reservation.request)===canonical(request)
+        &&(reservation.attemptKey??request.requestKey)===attemptKey,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+      if(!record)return {attemptKey,reservation,retry,failure,previous};
+      const {schemaVersion,reservationHash,...response}=record.value;
+      requireThat(schemaVersion==='variant-label-response/v1'&&reservationHash===digest(canonical(reservation))
+        &&canonical(response.requestEvidence)===canonical(reservation.evidence),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+      if(!variantLabelCreditRejected(response))return {attemptKey,reservation,response,responseHash:record.hash,retry,failure:null};
+      failure={code:VARIANT_LABEL_CREDIT_ERROR,labelRequestKey:attemptKey,labelResponseHash:record.hash};
+      const next=await listingRead(tx,labelRetryNextKey(attemptKey));
+      if(!next)return {attemptKey,reservation,response,responseHash:record.hash,retry,failure};
+      requireThat(next.schemaVersion==='variant-label-retry/v1'&&next.failedRequestKey===attemptKey&&next.failedResponseHash===record.hash
+        &&next.requestKey===request.requestKey&&next.attemptKey===labelAttemptKey(next.requestId),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+      requireThat(canonical(await listingRead(tx,labelRetryKey(next.requestId)))===canonical(next),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+      previous={reservation,response,responseHash:record.hash};retry=next;attemptKey=next.attemptKey;
+    }
+  }
+  async function labelProblem(tx,job){
+    if(!job?.catalog||job.result||job.catalog.problems.includes('REFERENCE_ACQUISITION_PENDING'))return null;
+    const all=prepareVariantLabelRequest(job.catalog);if(!all.photos.length||!all.choices.length)return null;
+    const keys=all.photos.map(p=>codexReadingKey(all,p.sha256));
+    const rows=await tx.$queryRawUnsafe('SELECT key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[])',keys);
+    const read=new Set();for(const row of rows){requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');read.add(row.key);}
+    const missing=all.photos.filter(p=>!read.has(codexReadingKey(all,p.sha256)));if(!missing.length)return null;
+    const request=prepareVariantLabelRequest(job.catalog,missing.slice(0,8).map(p=>p.sha256));let attempt=await labelAttempt(tx,request);
+    if(!attempt.reservation&&!attempt.retry)for(const photo of request.photos){
+      const existing=await listingRead(tx,codexImageReservationKey(request,photo.sha256));if(!existing)continue;
+      const owner=await listingRead(tx,labelDispatchKey(existing.requestKey));requireThat(owner,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+      attempt=await labelAttempt(tx,owner.request);break;
+    }
+    if(!attempt.failure)return null;
+    return {...attempt.failure,retryable:job.state==='FAILED'&&attempt.reservation?.jobKey===job.key
+      &&Boolean(attempt.response&&variantLabelCreditRejected(attempt.response)),attempt};
+  }
   async function retainPhotoPool(tx,catalog){
     if(!catalog.referencePhotos?.length)return;
     const cards=[...new Map(codexChoices(catalog).map(choice=>[choice.cardKey,choice])).values()].sort((a,b)=>a.cardKey.localeCompare(b.cardKey));
@@ -129,11 +173,39 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
        if(existing)continue;
        count+=await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,source_hash,identity_revision,identity_hash,input,input_hash,generation) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid) ON CONFLICT DO NOTHING`,variantJobKey(input),row.id,row.owner_id,row.access_version,VARIANT_POLICY,input.sourceHash,input.identityRevision,input.identityHash,value,digest(value),input.generation??'00000000-0000-0000-0000-000000000000');}return count;});},
     async priorCatalog(job){if(!job.input.reuseJobKey)return null;return machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,job.input.reuseJobKey,job.card_id,job.source_hash);return unpack(row)?.catalog??null;});},
-    async read(staff,cardId){uuid(cardId);const savedRead=await boundary.transaction(staff,async({tx,principal})=>{const card=await authorized(tx,principal,cardId);const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);const saved=await confirmation(tx,card);let latest=row;if(!latest&&saved?.job_key){[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
+    async read(staff,cardId,{includeLabelStatus=true}={}){uuid(cardId);requireThat(typeof includeLabelStatus==='boolean',400,'VARIANT_READ_INVALID');const savedRead=await boundary.transaction(staff,async({tx,principal})=>{const card=await authorized(tx,principal,cardId);const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);const saved=await confirmation(tx,card);let latest=row;if(!latest&&saved?.job_key){[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
       const [approved]=await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual.approval WHERE card_id=$1::uuid AND source_hash=$2 LIMIT 1',cardId,card.contentHash);
       let approvalReady=Boolean(approved),reason=null;try{if(!approved)await approvalCheck(tx,card);approvalReady=true;}catch(e){if(e.code!=='VARIANT_CONFIRMATION_REQUIRED')throw e;reason=e.code;}
-      return {card,job:unpack(latest),confirmation:saved,approvalReady,reason,legacyApproved:Boolean(approved)};});
+      const job=unpack(latest),problem=includeLabelStatus?await labelProblem(tx,job):null,{attempt,...labelFailure}=problem??{};
+      const labelRetryRequestId=job?.audit?.findLast(e=>e.event==='LABEL_RETRY_REQUESTED')?.requestId??null;
+      return {card,job,confirmation:saved,approvalReady,reason,legacyApproved:Boolean(approved),labelFailure:problem?labelFailure:null,labelRetryRequestId};});
       return savedRead;},
+    async retryLabels(staff,cardId,input){
+      object(input,['requestId','sourceHash','identityRevision','identityHash','jobId','catalogManifestHash','labelRequestKey','labelResponseHash']);uuid(input.requestId);uuid(cardId);
+      requireThat(['sourceHash','identityHash','jobId','catalogManifestHash','labelResponseHash'].every(k=>/^[a-f0-9]{64}$/.test(input[k]))
+        &&Number.isSafeInteger(input.identityRevision)&&input.identityRevision>0
+        &&/^variant-label-(?:source:v1:[a-f0-9]{64}|attempt:v1:[a-f0-9-]{36})$/.test(input.labelRequestKey),400,'VARIANT_LABEL_RETRY_INVALID');
+      return boundary.transaction(staff,async({tx,principal})=>{
+        await preparationLock(tx,cardId);await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid FOR UPDATE',cardId);
+        const card=await authorized(tx,principal,cardId,true),b=variantBinding(card),historic=await listingRead(tx,labelRetryKey(input.requestId));
+        if(historic){
+          requireThat(historic.schemaVersion==='variant-label-retry/v1'&&historic.actorId===principal.id&&historic.cardId===cardId
+            &&historic.jobKey===input.jobId&&historic.sourceHash===input.sourceHash&&historic.identityRevision===input.identityRevision
+            &&historic.identityHash===input.identityHash&&historic.catalogHash===input.catalogManifestHash
+            &&historic.failedRequestKey===input.labelRequestKey&&historic.failedResponseHash===input.labelResponseHash,409,'VARIANT_LABEL_RETRY_CONFLICT');
+          return historic;
+        }
+        requireThat(b.sourceHash===input.sourceHash,409,'VARIANT_SOURCE_STALE');
+        requireThat(b.identityRevision===input.identityRevision&&b.identityHash===input.identityHash,409,'VARIANT_IDENTITY_STALE');
+        const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);
+        const job=unpack(row);requireThat(job?.key===input.jobId&&job.catalog_hash===input.catalogManifestHash,409,'VARIANT_RESULT_STALE');
+        const failure=await labelProblem(tx,job);
+        requireThat(failure?.retryable&&failure.labelRequestKey===input.labelRequestKey&&failure.labelResponseHash===input.labelResponseHash,409,'VARIANT_LABEL_RETRY_UNAVAILABLE');
+        const [result]=await tx.$queryRawUnsafe('SELECT atlas_manual_connected.retry_variant_labels($1::uuid,$2::uuid,$3::uuid,$4,$5,$6::integer,$7,$8,$9,$10) AS receipt',
+          principal.id,input.requestId,cardId,input.jobId,input.sourceHash,input.identityRevision,input.identityHash,input.catalogManifestHash,input.labelRequestKey,input.labelResponseHash);
+        requireThat(result?.receipt?.requestId===input.requestId,503,'VARIANT_LABEL_RETRY_NOT_SAVED');return result.receipt;
+      });
+    },
     async refresh(staff,cardId,input){object(input,['requestId','sourceHash','identityRevision','identityHash','jobId']);uuid(input.requestId);requireThat(input.jobId===null||/^[a-f0-9]{64}$/.test(input.jobId),400,'VARIANT_REFRESH_INVALID');return boundary.transaction(staff,async({tx,principal})=>{
       await preparationLock(tx,cardId);
       await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid FOR UPDATE',cardId);
@@ -149,6 +221,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       let [latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);
       if(!latest){const saved=await confirmation(tx,card);if(saved?.job_key)[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
       requireThat(input.jobId===null?!latest:latest?.key===input.jobId&&variantRefreshable(latest),409,'VARIANT_REFRESH_UNAVAILABLE');
+      requireThat(!await labelProblem(tx,unpack(latest)),409,'VARIANT_LABEL_RETRY_REQUIRED');
       const [owner]=await tx.$queryRawUnsafe('SELECT owner_id,atlas_manual_connected.display_owner_version(owner_id) access_version FROM atlas_manual.card WHERE id=$1::uuid',cardId);requireThat(owner?.access_version,409,'VARIANT_SOURCE_STALE');
       const value=canonical(nextInput);await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,generation,source_hash,identity_revision,identity_hash,input,input_hash) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7,$8,$9,$10,$11)`,key,cardId,owner.owner_id,owner.access_version,VARIANT_POLICY,input.requestId,b.sourceHash,b.identityRevision,b.identityHash,value,digest(value));return key;
     });},
@@ -177,13 +250,11 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       }
       return validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',associationRevision:CODEX_ASSOCIATION_REVISION,catalogHash:catalog.snapshotHash,readings:[...readings.values()]},catalog);
     });},
-    async publishLabelSource(job,request){return machine(async({tx})=>{
+    async publishLabelSource(job,request,{attemptKey=null}={}){return machine(async({tx})=>{
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`,job.key,job.claim_id);requireThat(live,409,'VARIANT_LEASE_LOST');
-      const retained=await listingRead(tx,labelResponseKey(request.requestKey));requireThat(retained,503,'VARIANT_RESPONSE_NOT_SAVED');
-      const {schemaVersion,reservationHash,...response}=retained;
-      const reservation=await listingRead(tx,labelDispatchKey(request.requestKey));
-      requireThat(schemaVersion==='variant-label-response/v1'&&reservationHash===digest(canonical(reservation))&&canonical(response.requestEvidence)===canonical(reservation.evidence)
-        &&canonical(request)===canonical(reservation.request),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+      const selected=await labelAttempt(tx,request),{response,reservation}=selected;requireThat(response,503,'VARIANT_RESPONSE_NOT_SAVED');
+      requireThat(attemptKey===null||attemptKey===selected.attemptKey,409,'VARIANT_LABEL_REQUEST_CHANGED');
+      requireThat(!variantLabelCreditRejected(response),429,VARIANT_LABEL_CREDIT_ERROR);
       const catalog=validateVariantReviewSnapshot(reservation.catalog);
       const labels=projectVariantLabelResponse(response,catalog),literal=readVariantLabelResponse(response,catalog),choices=codexChoices(catalog);
       // Hold the complete ordered lock set until this transaction commits.
@@ -194,7 +265,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const libraries=new Map();
       for(const r of labels.readings){
         const reading={sha256:r.sha256,candidateKey:r.canonicalPrintingKey,gradingCompany:r.gradingCompany,labelText:r.labelText,reason:r.reason,evidenceKind:r.evidenceKind};
-        const record={schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices:literal.request.choices,reading:literal.readings.find(v=>v.sha256===r.sha256),responseHash:digest(response.bodyText),requestKey:request.requestKey,
+        const record={schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices:literal.request.choices,reading:literal.readings.find(v=>v.sha256===r.sha256),responseHash:digest(response.bodyText),requestKey:selected.attemptKey,
           ...(request.catalogContext ? {catalogContext:request.catalogContext} : {})};
         const key=codexReadingKey(request,r.sha256);
         const existing=await listingRead(tx,key);if(existing)requireThat(canonical(existing)===canonical(record),409,'VARIANT_CODEX_READING_CONFLICT');else await listingWrite(tx,key,canonical(record));
@@ -208,7 +279,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
         }
         const library=libraries.get(libraryKey);
         if(library.references.some(v=>v.image.sha256===r.sha256))continue;
-        library.references.push({image:catalog.referencePhotos.find(i=>i.sha256===r.sha256),reading,responseHash:record.responseHash,requestKey:request.requestKey});library.changed=true;
+        library.references.push({image:catalog.referencePhotos.find(i=>i.sha256===r.sha256),reading,responseHash:record.responseHash,requestKey:record.requestKey});library.changed=true;
       }
       for(const [key,{choice,references,changed}] of libraries)if(changed)
         await listingWrite(tx,key,canonical({schemaVersion:'atlas-codex-library/v1',policy:VARIANT_LABEL_POLICY,choice,references},{maxBytes:8388608}));
@@ -219,50 +290,52 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} FOR UPDATE`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');const catalog=unpack(live).catalog;
       requireThat(catalog&&canonical(prepareVariantLabelRequest(catalog,request.photos.map(p=>p.sha256)))===canonical(request)&&request.photos.length>0&&request.photos.length<=8,409,'VARIANT_LABEL_REQUEST_CHANGED');
-      // Image-level locks serialize overlapping batches, not just identical batches.
       for(const photo of request.photos)await listingLock(tx,codexReadingKey(request,photo.sha256));
-      const reservation=await listingRead(tx,labelDispatchKey(request.requestKey)),saved=await listingRead(tx,labelResponseKey(request.requestKey));
-      requireThat(!saved||reservation,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
-      if(reservation){
-        requireThat(reservation.schemaVersion==='variant-label-dispatch/v1'&&canonical(reservation.request)===canonical(request),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
-        if(saved){
-          const {schemaVersion,reservationHash,...response}=saved;
-          requireThat(schemaVersion==='variant-label-response/v1'&&reservationHash===digest(canonical(reservation))
-            &&canonical(response.requestEvidence)===canonical(reservation.evidence),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
-          return {state:'REUSED',response};
-        }
-        const [owner]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE key=$1 AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`,reservation.jobKey,reservation.claimId);
+      const attempt=await labelAttempt(tx,request);
+      if(attempt.response)return variantLabelCreditRejected(attempt.response)
+        ?{state:'CREDIT_REJECTED',failure:attempt.failure,attemptKey:attempt.attemptKey}
+        :{state:'REUSED',response:attempt.response,attemptKey:attempt.attemptKey};
+      if(attempt.reservation){
+        const [owner]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE key=$1 AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`,attempt.reservation.jobKey,attempt.reservation.claimId);
         return {state:owner?'PENDING':'UNKNOWN'};
       }
-      for(const photo of request.photos){
+      if(attempt.retry){
+        // Only the exact explicitly resumed job may spend its one new attempt.
+        if(attempt.retry.jobKey!==job.key)return {state:'PENDING'};
+        requireThat(attempt.retry.catalogHash===catalog.snapshotHash&&live.audit?.some(e=>e.event==='LABEL_RETRY_REQUESTED'
+          &&e.requestId===attempt.retry.requestId&&e.attemptKey===attempt.attemptKey),409,'VARIANT_LABEL_RETRY_UNAVAILABLE');
+      }else for(const photo of request.photos){
         if(await listingRead(tx,codexReadingKey(request,photo.sha256)))return {state:'PENDING'};
         const previous=await listingRead(tx,codexImageReservationKey(request,photo.sha256));
         if(previous){
-          const owner=await listingRead(tx,labelDispatchKey(previous.requestKey));
-          requireThat(owner,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
-          if(await listingRead(tx,labelResponseKey(previous.requestKey)))return {state:'RECOVER',request:owner.request};
-          const [running]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE key=$1 AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`,owner.jobKey,owner.claimId);
+          const owner=await listingRead(tx,labelDispatchKey(previous.requestKey));requireThat(owner,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
+          const retained=await labelAttempt(tx,owner.request);
+          if(retained.response)return variantLabelCreditRejected(retained.response)
+            ?{state:'CREDIT_REJECTED',failure:retained.failure,attemptKey:retained.attemptKey}
+            :{state:'RECOVER',request:owner.request,attemptKey:retained.attemptKey};
+          if(retained.retry&&!retained.reservation)return {state:'PENDING'};
+          const [running]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE key=$1 AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`,retained.reservation.jobKey,retained.reservation.claimId);
           return {state:running?'PENDING':'UNKNOWN'};
         }
       }
-      if(!evidence)return {state:'MISSING'};
+      if(!evidence)return {state:'MISSING',attemptKey:attempt.attemptKey};
       requireThat(evidence.policy===VARIANT_LABEL_POLICY&&evidence.model===VARIANT_PHOTO_MODEL
         &&/^[a-f0-9]{64}$/.test(evidence.requestSha256)&&canonical(evidence.request)===canonical(request),400,'VARIANT_LABEL_REQUEST_CHANGED');
+      if(attempt.retry)requireThat(canonical(evidence)===canonical(attempt.previous.reservation.evidence),409,'VARIANT_LABEL_RETRY_REQUEST_CHANGED');
       requireThat(live.state==='RUNNING'&&!live.dispatch_id&&!live.response,409,'VARIANT_PROVIDER_OUTCOME_UNKNOWN');
       const batchCatalog={...catalog,referencePhotos:catalog.referencePhotos.filter(p=>request.photos.some(i=>i.sha256===p.sha256))};
       batchCatalog.snapshotHash=variantSnapshotHash(batchCatalog);validateVariantReviewSnapshot(batchCatalog);
-      const created={schemaVersion:'variant-label-dispatch/v1',request,evidence,catalog:batchCatalog,jobKey:job.key,claimId:job.claim_id,reservedAt:new Date().toISOString()};
-      await listingWrite(tx,labelDispatchKey(request.requestKey),canonical(created));
-      for(const photo of request.photos)await listingWrite(tx,codexImageReservationKey(request,photo.sha256),canonical({schemaVersion:'atlas-codex-reservation/v1',requestKey:request.requestKey}));
-      // This journal owns each paid label batch, just as the listing journal
-      // owns multiple searches. Preserve the legacy one-photo-call columns.
-      return {state:'RESERVED',reservation:created};
+      const created={schemaVersion:'variant-label-dispatch/v1',request,evidence,catalog:batchCatalog,jobKey:job.key,claimId:job.claim_id,reservedAt:new Date().toISOString(),
+        ...(attempt.retry?{attemptKey:attempt.attemptKey,retryRequestId:attempt.retry.requestId}:{})};
+      await listingWrite(tx,labelDispatchKey(attempt.attemptKey),canonical(created));
+      if(!attempt.retry)for(const photo of request.photos)await listingWrite(tx,codexImageReservationKey(request,photo.sha256),canonical({schemaVersion:'atlas-codex-reservation/v1',requestKey:request.requestKey}));
+      return {state:'RESERVED',reservation:created,attemptKey:attempt.attemptKey};
     });},
     async saveLabelSource(reservation,response){
       requireThat(response?.version===VARIANT_LABEL_POLICY&&canonical(response.requestEvidence)===canonical(reservation.evidence),400,'VARIANT_LABEL_RESPONSE_CHANGED');
       const value=evidenceText({...response,schemaVersion:'variant-label-response/v1',reservationHash:digest(canonical(reservation))},'bodyText',1048576);
       return machine(async({tx})=>{
-        const key=reservation.request.requestKey;await listingLock(tx,key);
+        const key=reservation.attemptKey??reservation.request.requestKey;await listingLock(tx,key);
         requireThat(canonical(await listingRead(tx,labelDispatchKey(key)))===canonical(reservation),409,'VARIANT_LABEL_RESERVATION_CHANGED');
         const existing=await listingRead(tx,labelResponseKey(key));
         if(existing){requireThat(evidenceText(existing,'bodyText',1048576)===value,409,'VARIANT_LABEL_RESPONSE_CONFLICT');return true;}
@@ -310,14 +383,23 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(721930,77)');
       await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='STALE',claim_id=NULL,lease_until=NULL,code='VARIANT_SOURCE_STALE',updated_at=clock_timestamp() WHERE state IN('QUEUED','RUNNING','REQUESTED') AND (lease_until IS NULL OR lease_until<=clock_timestamp()) AND NOT(${current})`);
       await tx.$executeRawUnsafe(`UPDATE ${table} SET state='UNKNOWN',claim_id=NULL,lease_until=NULL,code='VARIANT_PROVIDER_OUTCOME_UNKNOWN',updated_at=clock_timestamp() WHERE state='REQUESTED' AND lease_until<=clock_timestamp() AND response IS NULL`);
-      await tx.$executeRawUnsafe(`UPDATE ${table} SET state='FAILED',claim_id=NULL,lease_until=NULL,code=CASE WHEN response IS NULL THEN 'VARIANT_PREPARATION_EXHAUSTED' ELSE 'VARIANT_PROJECTION_EXHAUSTED' END,updated_at=clock_timestamp() WHERE attempts>=6 AND coalesce(code,'') NOT IN('VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING') AND state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN') AND (lease_until IS NULL OR lease_until<=clock_timestamp()) AND (dispatch_id IS NULL OR response IS NOT NULL)`);
+      await tx.$executeRawUnsafe(`UPDATE ${table} SET state='FAILED',claim_id=NULL,lease_until=NULL,code=CASE WHEN response IS NULL THEN 'VARIANT_PREPARATION_EXHAUSTED' ELSE 'VARIANT_PROJECTION_EXHAUSTED' END,updated_at=clock_timestamp() WHERE attempts>=6 AND coalesce(code,'') NOT IN('VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING','VARIANT_LABEL_RETRY_REQUESTED') AND state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN') AND (lease_until IS NULL OR lease_until<=clock_timestamp()) AND (dispatch_id IS NULL OR response IS NOT NULL)`);
       const [n]=await tx.$queryRawUnsafe(`SELECT count(*)::int n FROM ${table} WHERE state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`);if(n.n>=concurrency)return null;
-      const [row]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${current} AND (attempts<6 OR code IN('VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING')) AND ((state='QUEUED' AND available_at<=clock_timestamp()) OR (state IN('RUNNING','REQUESTED') AND lease_until<=clock_timestamp()) OR (state='UNKNOWN' AND response IS NOT NULL)) ORDER BY available_at,created_at,key LIMIT 1 FOR UPDATE SKIP LOCKED`);if(!row)return null;
-      const claim=randomUUID();const [next]=await tx.$queryRawUnsafe(`UPDATE ${table} SET state='RUNNING',claim_id=$2::uuid,lease_until=clock_timestamp()+($3*interval '1 millisecond'),attempts=attempts+CASE WHEN code IN('VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING') THEN 0 ELSE 1 END,code=NULL,updated_at=clock_timestamp() WHERE key=$1 RETURNING *`,row.key,claim,leaseMs);return unpack(next);});},
-    defer:(job,code='VARIANT_GRADING_PRIORITY_DEFERRED')=>{requireThat(['VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING'].includes(code),500,'VARIANT_CONFIG_INVALID');return machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='QUEUED',claim_id=NULL,lease_until=NULL,code=$3,available_at=clock_timestamp()+interval '5 seconds',updated_at=clock_timestamp() WHERE ${active} AND state='RUNNING' AND dispatch_id IS NULL AND response IS NULL`,job.key,job.claim_id,code))===1);},
+      const [row]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${current} AND (attempts<6 OR code IN('VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING','VARIANT_LABEL_RETRY_REQUESTED')) AND ((state='QUEUED' AND available_at<=clock_timestamp()) OR (state IN('RUNNING','REQUESTED') AND lease_until<=clock_timestamp()) OR (state='UNKNOWN' AND response IS NOT NULL)) ORDER BY available_at,created_at,key LIMIT 1 FOR UPDATE SKIP LOCKED`);if(!row)return null;
+      const claim=randomUUID();const [next]=await tx.$queryRawUnsafe(`UPDATE ${table} SET state='RUNNING',claim_id=$2::uuid,lease_until=clock_timestamp()+($3*interval '1 millisecond'),attempts=attempts+CASE WHEN code IN('VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING','VARIANT_LABEL_RETRY_REQUESTED') THEN 0 ELSE 1 END,code=CASE WHEN code='VARIANT_LABEL_RETRY_REQUESTED' THEN code ELSE NULL END,updated_at=clock_timestamp() WHERE key=$1 RETURNING *`,row.key,claim,leaseMs);return unpack(next);});},
+    defer:(job,code='VARIANT_GRADING_PRIORITY_DEFERRED')=>{requireThat(['VARIANT_GRADING_PRIORITY_DEFERRED','VARIANT_LABEL_PENDING'].includes(code),500,'VARIANT_CONFIG_INVALID');return machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='QUEUED',claim_id=NULL,lease_until=NULL,code=CASE WHEN code='VARIANT_LABEL_RETRY_REQUESTED' THEN code ELSE $3 END,available_at=clock_timestamp()+interval '5 seconds',updated_at=clock_timestamp() WHERE ${active} AND state='RUNNING' AND dispatch_id IS NULL AND response IS NULL`,job.key,job.claim_id,code))===1);},
     renew:job=>machine(async({tx})=>(await tx.$executeRawUnsafe(`UPDATE ${table} j SET lease_until=clock_timestamp()+($3*interval '1 millisecond'),updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,leaseMs))===1),
     saveCatalog:(job,catalog)=>machine(async({tx})=>{validateVariantReviewSnapshot(catalog);const value=canonical(catalog,{maxBytes:4194304});const saved=(await tx.$executeRawUnsafe(`UPDATE ${table} j SET catalog=$3,catalog_hash=$4,updated_at=clock_timestamp() WHERE ${active} AND response IS NULL AND dispatch_id IS NULL AND result IS NULL AND (catalog IS NULL OR catalog::jsonb->'problems' ? 'REFERENCE_ACQUISITION_PENDING')`,job.key,job.claim_id,value,catalog.snapshotHash))===1;if(saved)await retainPhotoPool(tx,catalog);return saved;}),
-    finish:(job,outcome)=>machine(async({tx})=>{const result=outcome.result?canonical(outcome.result,{maxBytes:8388608}):null;const state=result?'READY':outcome.state==='RETRY'?(job.attempts<6?'QUEUED':'FAILED'):outcome.state;requireThat(['READY','QUEUED','FAILED','UNKNOWN','STALE'].includes(state),500,'VARIANT_OUTCOME_INVALID');return(await tx.$executeRawUnsafe(`UPDATE ${table} j SET state=$3,claim_id=NULL,lease_until=NULL,result=$4,result_hash=$5,code=$6,available_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,state,result,result?digest(result):null,outcome.code??null))===1;}),
+    finish:(job,outcome)=>machine(async({tx})=>{
+      const result=outcome.result?canonical(outcome.result,{maxBytes:8388608}):null,audit=job.audit??[],retryIndex=audit.findLastIndex(e=>e.event==='LABEL_RETRY_REQUESTED');
+      const continueProjection=!result&&outcome.state==='RETRY'&&outcome.code==='VARIANT_PROJECTION_INTERRUPTED'
+        &&job.code==='VARIANT_LABEL_RETRY_REQUESTED'&&retryIndex>=0
+        &&audit.slice(retryIndex+1).filter(e=>e.event==='LABEL_RETRY_PROJECTION_CONTINUATION').length<6;
+      const state=result?'READY':outcome.state==='RETRY'?(job.attempts<6||continueProjection?'QUEUED':'FAILED'):outcome.state;
+      requireThat(['READY','QUEUED','FAILED','UNKNOWN','STALE'].includes(state),500,'VARIANT_OUTCOME_INVALID');
+      const appended=continueProjection?[{event:'LABEL_RETRY_PROJECTION_CONTINUATION',requestId:audit[retryIndex].requestId,code:outcome.code}]:[];
+      return(await tx.$executeRawUnsafe(`UPDATE ${table} j SET state=$3,claim_id=NULL,lease_until=NULL,result=$4,result_hash=$5,code=$6,audit=audit||$7::jsonb,available_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() WHERE ${active}`,job.key,job.claim_id,state,result,result?digest(result):null,continueProjection?'VARIANT_LABEL_RETRY_REQUESTED':outcome.code??null,canonical(appended)))===1;
+    }),
     cache:{
       get:key=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1',key);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
       getRetained:(key,sha256=null)=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe("SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND ($2::text IS NULL OR snapshot::jsonb->>'sha256'=$2) ORDER BY created_at DESC LIMIT 1",key,sha256);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
@@ -330,5 +412,5 @@ GRANT SELECT ON atlas_manual_connected.variant_job,atlas_manual_connected.varian
 GRANT INSERT ON atlas_manual_connected.variant_catalog_cache TO "${role}";
 GRANT INSERT ON atlas_manual_connected.variant_job TO "${role}";
 GRANT EXECUTE ON FUNCTION atlas_manual_connected.display_owner_version(uuid) TO "${role}";
-GRANT ${worker?'SELECT':'SELECT,INSERT'} ON atlas_manual_connected.variant_confirmation TO "${role}";${worker?`\nGRANT UPDATE(state,attempts,claim_id,lease_until,dispatch_id,catalog,catalog_hash,response,response_hash,result,result_hash,code,available_at,updated_at,audit) ON atlas_manual_connected.variant_job TO "${role}";
+GRANT ${worker?'SELECT':'SELECT,INSERT'} ON atlas_manual_connected.variant_confirmation TO "${role}";${!worker?`\nGRANT EXECUTE ON FUNCTION atlas_manual_connected.retry_variant_labels(uuid,uuid,uuid,text,text,integer,text,text,text,text) TO "${role}";`:''}${worker?`\nGRANT UPDATE(state,attempts,claim_id,lease_until,dispatch_id,catalog,catalog_hash,response,response_hash,result,result_hash,code,available_at,updated_at,audit) ON atlas_manual_connected.variant_job TO "${role}";
 GRANT EXECUTE ON FUNCTION atlas_manual_connected.display_owner_current(uuid,integer),atlas_manual_connected.display_owner_version(uuid),atlas_manual_connected.read_grading_photo(uuid,uuid,text,text) TO "${role}";`:''}`;}

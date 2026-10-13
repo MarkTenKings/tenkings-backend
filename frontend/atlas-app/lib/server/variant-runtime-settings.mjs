@@ -51,7 +51,8 @@ export async function validateVariantRuntimeConfiguration({ enabled, client, wor
   const [installed] = await client.$queryRawUnsafe(`SELECT
     to_regclass('atlas_manual_connected.variant_job') IS NOT NULL AND
     to_regclass('atlas_manual_connected.variant_confirmation') IS NOT NULL AND
-    to_regclass('atlas_manual_connected.variant_catalog_cache') IS NOT NULL AS installed`);
+    to_regclass('atlas_manual_connected.variant_catalog_cache') IS NOT NULL AND
+    to_regprocedure('atlas_manual_connected.retry_variant_labels(uuid,uuid,uuid,text,text,integer,text,text,text,text)') IS NOT NULL AS installed`);
   requireThat(installed?.installed === true, 503, 'VARIANT_QUEUE_SCHEMA_REQUIRED');
   const [grants] = await client.$queryRawUnsafe(`SELECT
     has_table_privilege(current_user,'atlas_manual_connected.variant_job','SELECT') AND
@@ -63,6 +64,7 @@ export async function validateVariantRuntimeConfiguration({ enabled, client, wor
     has_table_privilege(current_user,'atlas_manual_connected.variant_confirmation','SELECT')
     ${worker ? '' : `AND has_table_privilege(current_user,'atlas_manual_connected.variant_confirmation','INSERT')`} AND
     has_function_privilege(current_user,'atlas_manual_connected.display_owner_version(uuid)','EXECUTE')
+    AND ${worker ? 'NOT ' : ''}has_function_privilege(current_user,'atlas_manual_connected.retry_variant_labels(uuid,uuid,uuid,text,text,integer,text,text,text,text)','EXECUTE')
     ${worker ? `AND has_function_privilege(current_user,'atlas_manual_connected.display_owner_current(uuid,integer)','EXECUTE')
       AND has_function_privilege(current_user,'atlas_manual_connected.read_grading_photo(uuid,uuid,text,text)','EXECUTE')
       AND (SELECT bool_and(has_column_privilege(current_user,'atlas_manual_connected.variant_job',c,'UPDATE')) FROM unnest(ARRAY['state','attempts','claim_id','lease_until','dispatch_id','catalog','catalog_hash','response','response_hash','result','result_hash','code','available_at','updated_at','audit']) c)
