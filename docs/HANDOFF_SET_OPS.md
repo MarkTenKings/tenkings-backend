@@ -1,6 +1,14 @@
 # Set Ops Handoff (Living)
 
-## Current ATLAS production R16 — October 13, 2026, 12:08 a.m. Pacific
+## Current ATLAS production R17 — October 13, 2026, 1:47 a.m. Pacific
+
+Live source **`5a0d2a8d2b7f5deae10a726fa3f4cb4c00f5ca42`** applies the owner-requested damage multipliers: **Corners0.5×, Edges1×, Surface2×**, rule `ATLAS_2026_10_13_CATEGORY_DAMAGE_V1`. Automated and human-reviewed scoring, finding impact, and screen/print explanations use the same category factor. Measured damage, defect-type factors, category areas, centering,70/30side weighting, equal category averaging and final half-point rounding are unchanged. Historical saved reports are interpreted only by their explicit saved rule; old scoring is not available as a new-grade fallback. Ten Kings scoring is unchanged.
+
+The three canonical website surfaces and both native services are verified on this source. The packaged service passed310Node and5Python tests with zero skips. Independent execution inside the live service verified the factors and the0.020% weighted-damage vector: corners10, edges9.5, surface8. Both services have `unless-stopped` restart policies and zero restarts/OOM/errors at final read-only verification. Seven release controls changed only their current bindings; no schema migration, card deletion, human approval or learning activation occurred. The independent database, generated-image-only grading and inactive future learning remain in effect. Mark's fresh real-card testing is the next product acceptance step.
+
+Private evidence: `release-r17` under `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`. Exact identities and receipt hashes are in DEPLOY_RUNBOOK and SESSION_LOG. The three superseded424web deployments have been deleted and individually verified404. The two old native containers,32exclusively old image/build layers and two obsolete server contexts (683files/101directories) are also removed; final health verifies only the three current containers with no restarts/OOM/errors and the preserved transport. Current cards are excluded from every historical purge authorization.
+
+## Historical ATLAS production R16 — October 13, 2026, 12:08 a.m. Pacific
 
 Application **`424fc79c4d1caff5fe097a72480461f9684bcbb9`** is live across public/staff/customer, with both processing services on a clean current-only image and the dedicated PostgreSQL17 ATLAS cluster/database. All actual runtime database URLs point there. The exact29-row transfer retained account/financial/capacity/fresh-control facts only; no old physical cards, sessions, lessons or reference-cache rows were imported. The new active learning baseline is empty; activation tools are removed and future candidates stay inactive. All seven old ATLAS schemas and eight old database accounts are deleted.
 

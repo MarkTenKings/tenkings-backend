@@ -1,6 +1,35 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R16 — October 13, 2026, 12:08 a.m. Pacific
+## Current ATLAS production R17 — October 13, 2026, 1:47 a.m. Pacific
+
+Live source **`5a0d2a8d2b7f5deae10a726fa3f4cb4c00f5ca42`** applies the owner-requested damage multipliers: **Corners0.5×, Edges1×, Surface2×**, rule `ATLAS_2026_10_13_CATEGORY_DAMAGE_V1`. Automated and human-reviewed scoring, finding impact, and screen/print explanations use the same category factor. Measured damage, defect-type factors, category areas, centering,70/30side weighting, equal category averaging and final half-point rounding are unchanged. Historical saved reports are interpreted only by their explicit saved rule; old scoring is not available as a new-grade fallback. Ten Kings scoring is unchanged.
+
+The three canonical website surfaces and both native services are verified on this source. The packaged service passed310Node and5Python tests with zero skips. Independent execution inside the live service verified the factors and the0.020% weighted-damage vector: corners10, edges9.5, surface8. Both services have `unless-stopped` restart policies and zero restarts/OOM/errors at final read-only verification. Seven release controls changed only their current bindings; no schema migration, card deletion, human approval or learning activation occurred. The independent database, generated-image-only grading and inactive future learning remain in effect. Mark's fresh real-card testing is the next product acceptance step.
+
+Private evidence: `release-r17` under `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`. Exact identities and receipt hashes are in DEPLOY_RUNBOOK and SESSION_LOG. The three superseded424web deployments have been deleted and individually verified404. The two old native containers,32exclusively old image/build layers and two obsolete server contexts (683files/101directories) are also removed; final health verifies only the three current containers with no restarts/OOM/errors and the preserved transport. Current cards are excluded from every historical purge authorization.
+
+| Component | Verified R17 production identity |
+| --- | --- |
+| Staff | `dpl_BPLruRuUeyc2eZg5RUMMLyqpkrWz` |
+| Customer | `dpl_FArGt1JVd8aFUtLefZjiGLJ8mcmt` |
+| Public | `dpl_F37o8B7MQDz5W8eq1VqiaUZ3gDnk` |
+| Native image | `sha256:a64138c7e64b805822569cadefa9aa741816a8cf4a5ee5de0bccef2a55fd6d37` |
+| Main | `5b773778768c111b8c0ed657b424954935a3f6c96f49681319c1c64292f5c895` |
+| Variant worker | `40a7366930a5991c39ec8f5568145f48f706b24d87aba245eea71e2066553860` |
+
+Database remains cluster `319da142-ed77-400b-815c-445ae9e43e6f`, database `atlas_grading`; schema/baseline unchanged. Native files are `/opt/atlas/r17-5a0d2a8d2b7f`. Shared HTTPS transport/proxy remains separately preserved. Every completed R17 release intent is consumed; do not replay it or use old release scripts as recovery.
+
+| R17 receipt | SHA-256 |
+| --- | --- |
+| `native/acceptance.json` | `48ac151a9462f8e5884a394c9509bf48a5b045def248bc30936efbbc26e06ede` |
+| `web/canonical-result.json` | `5b9772a1428f4e52738b65e2445b0446614df53b25898d1c10db69450e9c777e` |
+| `runtime/database-postactivation-01.json` | `d91cfdce6da5e5ad0ff908798c8409c887f4b3d002e3a8c720ddcecb8be8fed3` |
+| `runtime/seal-result.json` | `675bf0d5424c14a0d41fe6e1f3d229986c94e0642113e78f43f70583e083b62c` |
+| `runtime/sealed-health-01.json` | `dfdc267e2eb25f3b9573ee1edaa1f0e1907c3fb30981605f9e10036452c7f810` |
+| `review/live-policy-proof-01.json` | `0fd427a0723b448ff6707471feb0ebeecb3007fbac4061b3f96e2abba2b7572d` |
+| `retirement/final-health-01.json` | `445bc6084626ca9178033d442b4812d13a266aadf6d3ffd2982a5ae9807379d5` |
+
+## Historical ATLAS production R16 — October 13, 2026, 12:08 a.m. Pacific
 
 Live application source **`424fc79c4d1caff5fe097a72480461f9684bcbb9`**. Dedicated database: DigitalOcean cluster `319da142-ed77-400b-815c-445ae9e43e6f` / `atlas-grading-pg17-20261013`, database `atlas_grading`, PostgreSQL17.11. Its current-only baseline replaces the old migration chain. Do not run historical shared-database migration/recovery scripts against this database.
 
