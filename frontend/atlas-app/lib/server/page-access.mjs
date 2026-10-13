@@ -35,7 +35,7 @@ export function createPageAccess({ resolveRuntime, environment = () => process.e
       // Build-time headers cannot know a later private upload binding.
       stage = 'CONTENT_SECURITY_POLICY';
       if (state.connectedManual) ctx.res.setHeader('Content-Security-Policy', staffContentSecurityPolicy({ development: env.NODE_ENV === 'development',
-        uploadOrigins: [env.ATLAS_WORKSPACE_UPLOAD_ORIGIN, state.connectedManual.uploadOrigin] }));
+        uploadOrigins: [state.connectedManual.uploadOrigin] }));
       stage = 'DATABASE_ACCESS';
       if (state.auth.database) await state.auth.database.transaction(() => undefined);
       if (!authenticated) return { props: { mode: state.mode ?? 'SYNTHETIC_LOCAL' } };

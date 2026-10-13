@@ -93,6 +93,13 @@ test('customer operations display capability requires explicit enablement and an
     }
   }
 });
+test('retired workspace upload origin cannot extend current manual CSP', async () => {
+  const f = fixture({ env: { ...production, ATLAS_WORKSPACE_UPLOAD_ORIGIN: 'https://retired.example' }, manual: { uploadOrigin: 'https://current.example' } });
+  const result = await f.access(f.ctx);
+  assert.equal(result.props.manualEnabled, true);
+  assert.match(f.headers['Content-Security-Policy'], /https:\/\/current.example/);
+  assert.doesNotMatch(f.headers['Content-Security-Policy'], /retired\.example/);
+});
 test('non-read methods never invoke runtime, database, session, or a replay', async () => {
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
     const f = fixture(); f.ctx.req.method = method;
