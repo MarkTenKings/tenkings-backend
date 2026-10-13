@@ -7,7 +7,7 @@ import {readManualResponse} from '@atlas/manual-service/response';
 
 export async function validateVariantPackets({fixture,store,review,staff,seed}){
  const cardId=await seed();await store.discover();const job=await store.claim(1);assert.equal(job.card_id,cardId);
- const full=labelCatalog({count:58,photos:1800,source:'large-checkpoint-packet'});
+ const full=labelCatalog({count:58,photos:1800,source:'large-checkpoint-packet',candidateTransform:c=>{c.canonical.cardId='large-packet-fixture-card';c.source.recordId='large-packet-fixture-card';}});
  const identity={category:'POKEMON',name:'Magikarp',year:'2020',setName:'Rebel Clash',cardNumber:'039/192',manufacturer:null,language:null};
  const checkpoint=photos=>createVariantReviewSnapshot({identity,candidates:full.candidates,referencePhotos:full.referencePhotos.slice(0,photos),
   capturedAt:full.capturedAt,problems:['REFERENCE_ACQUISITION_PENDING']});
@@ -16,7 +16,7 @@ export async function validateVariantPackets({fixture,store,review,staff,seed}){
  assert(await store.saveCatalog(job,checkpoint(1)));
  const overwrite=async value=>fixture.admin.$executeRawUnsafe('UPDATE atlas_manual_connected.variant_job SET catalog=$2,catalog_hash=$3 WHERE key=$1',job.key,canonical(value,{maxBytes:4194304}),value.snapshotHash);
  await assert.rejects(overwrite(checkpoint(0)),error=>error.meta?.code==='P0001');
- const other=labelCatalog({count:57,photos:1,source:'large-checkpoint-packet'});await assert.rejects(overwrite(other),error=>error.meta?.code==='P0001');
+ const other=labelCatalog({count:57,photos:1,source:'large-checkpoint-packet',candidateTransform:c=>{c.canonical.cardId='large-packet-fixture-card';c.source.recordId='large-packet-fixture-card';}});await assert.rejects(overwrite(other),error=>error.meta?.code==='P0001');
  const large=checkpoint(1800);assert(Buffer.byteLength(JSON.stringify(large))>1048576);
  assert(await store.saveCatalog(job,large));
  const resumed=await review.status(staff,cardId);assert.equal(resumed.result.catalog.referencePhotos.length,1800);

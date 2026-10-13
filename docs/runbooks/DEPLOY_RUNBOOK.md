@@ -1,6 +1,44 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R14 — October 12, 2026, 4:43 p.m. Pacific
+## Current ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+
+Live application source is **`8dc73ae21c64c2f12a80e4b804a186fe41b1cfc8`**; staff schema **86**, public **121**. Canonical web routing passed at `2026-10-13T03:35:11.772Z`; independent postflight sealed at `2026-10-13T03:43:58.639781Z`. Both runtimes are ready, with zero restarts/OOM and `unless-stopped` policies. Fresh authenticated card processing remains separate product acceptance.
+
+| Component | Verified production identity |
+| --- | --- |
+| Staff | `dpl_7vKQ8zAd6EZ9pyv5piuT1ojNM82K` / `atlas-grading-staff-3dcfx4bws-ten-kings.vercel.app` |
+| Public | `dpl_DXSprbEbUvshCakSTYVaythx9fiU` / `atlas-grading-public-9bf77u0qi-ten-kings.vercel.app` |
+| Retained customer | `dpl_HDCWyH27p4gMpNqHMoAYuBNmryXp` / `atlas-grading-customer-kqkvu4gtd-ten-kings.vercel.app` |
+| Native image | `sha256:c542bc309d4762064d9b27e88bdcfaec66d1c8dc6de4768dc3072734a8020749` |
+| Main container | `1ab52c3ce6ec60b7634d4cb8129f94ca2e790acf5abd953a6b3d3103006f6ac4`, started `2026-10-13T03:31:28.843634959Z` |
+| Variant worker | `5ba53e376a5407f8a4587bf9603beadbf7a0e6f9efe29eb3c0ba3fd906de1dd2`, started `2026-10-13T03:34:17.483423532Z` |
+
+The completed release sequence was qualified native/web candidates → fenced/stopped prior producers → authorized physical-card purge and verification → registered migrations84–86 and narrow generated-photo reader grant → second-deploy no-op → main/worker activation and control bindings → canonical web promotion → independent postflight. All mutation intents are consumed. Do not replay them after a restart; use the actual receipts and fresh read-only evidence for any new work.
+
+Registered migrations: `20261013010000_generated_grading_image`, `20261013011000_variant_reference_packets`, `20261013012000_grading_image_reader`. The private worker has EXECUTE on its current-photo reader; all seven underlying image-table privileges remain denied. Full prior83 staff ledger and public121 ledger were preserved. No old cards were backfilled or restored.
+
+Production uses the generated Front/Back pair as the only physical-card image/coordinate source for OCR, Astra/xhigh identity/geometry/defects, human review, variant comparison and reports. Original uploads are provenance only. R15 repairs identity-year proposal rules, complete geometry-frame save/recovery, larger incremental variant delivery and null-year report/label publication. Broad raw/unread/other-grade sold choices and the corner-drawing repair remain. Scoring multipliers are unchanged. See [MASTER_PRODUCT_CONTEXT](../context/MASTER_PRODUCT_CONTEXT.md) for the current behavior and remaining acceptance scope.
+
+The all-card purge removed **8,586 related rows and 23,522 objects (95,943,470,445 bytes)** before activation. All 137 target predicates and five storage prefixes remain empty. Shared/reference/account/financial/unrelated-business data is preserved, including five relocated business image copies. Only the new empty `atlas-empty-baseline-r15` learning configuration remains, with zero old examples/history. Old public report/media checks are 404/no-store; five old object-origin requests are non-image 403 XML, with exact absence established by authenticated inventory. Managed shared backups and historical private diagnostic archives were not erased; other devices/downloads/caches are unverified. Any restore must reapply the purge before serving. Historical card recovery instructions below are consumed and must not restore purged cards.
+
+Qualification is **1,881 Node checks with zero failures/cancellations/skips**, the Python preparation codec module, **34 PostgreSQL groups**, and registered83→86 preservation/no-op. The PG run used two isolated synthetic large-packet IDs plus disclosed import/logging instrumentation; it was not an unmodified-whole-fixture run. The equivalent repository fixture correction was applied after release; application, assertions and timeouts were unchanged. No new paid card or human approval was created for release acceptance.
+
+Private evidence root: `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`. Key receipts:
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `r15-purge-inventory/purge-result.json` | `81e75e3ef973229f57e62589c2085c013791c3fb5e55f2e489c62c00b325a84b` |
+| `r15-purge-inventory/independent-aggregate06-result.json` | `fb72951848bcf65acf302b10f2d056bca342c2023b23f4f39ddbf8cd7814dac3` |
+| `release-r15/runtime/purge-proof.json` | `a27f49fc3b2d91e01fbb1a08b6ad308417e1d97515e71892ee2c525987615efc` |
+| `release-r15/schema/schema-proof.json` | `370de3fde5e5a2044b2bce6f2e5036453de49f24f97b7382baf424d4f9c807ae` |
+| `release-r15/schema/qualification-binding.json` | `b6e111e8199b91646de5dc0c05122440a84407c2582988bbdf4ab6a2e85135ac` |
+| `release-r15/postflight/result.json` | `edc6f1d62b36dee1741c9a19fc35e6aceeadbc686449a220cfe5ab2c63798df1` |
+
+Runtime plan file SHA-256 `987abe65710a54b2c7bccc1df267492defd99dbbcd32c490e5af9da8987248ba`; canonical plan hash `77cdef23ff67cd31cfd3b32ac1d70c6979c2596e57d597572ee2e30802a8c3cb`; schema plan `93231405d0c8f08d16fea361fe713e60f96293550c5ca3bd65c74a10985f2d4d`. `web/canonical-result.json` records routing. Postflight retains a Vercel connect-timeout diagnostic and the corrected private origin-403 assertion; completed database/runtime/storage stages were not repeated or relabeled as a single uninterrupted run. Application freeze was lifted after this final PASS for documentation and the already-qualified test-only correction. Later commits are not new deployed application source.
+
+## Historical ATLAS production R14 — October 12, 2026, 4:43 p.m. Pacific
+
+> All release sections below are historical. R15 supersedes their image authority, preservation/recovery tasks and deployment status; all existing ATLAS physical cards were purged before R15 activation.
 
 Application `331415b09a21b2cfc2be495f11853a7c35cabcce` is deployed; staff schema **83** / public **121**. Canonical staff/public/customer routing and both runtime services passed verification. Independent postflight at23:43:29UTC verified zero restarts/OOM and preservation of64manual cards,401actions,14approvals/publications, existing image and analysis records, and customer settings. The only historical-table change was three new ordinary local-only reference generations; old jobs and human choices remain byte-identical.
 

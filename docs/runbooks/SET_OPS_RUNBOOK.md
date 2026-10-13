@@ -1,6 +1,22 @@
 # Set Ops Runbook
 
-## Current ATLAS production R14 — October 12, 2026, 4:43 p.m. Pacific
+## Current ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+
+R15 is live from **`8dc73ae21c64c2f12a80e4b804a186fe41b1cfc8`**, staff schema **86** / public **121**. Canonical routing and both ready runtime services passed; independent postflight completed at `2026-10-13T03:43:58Z`. [DEPLOY_RUNBOOK](DEPLOY_RUNBOOK.md) records exact deployments and receipts; [MASTER_PRODUCT_CONTEXT](../context/MASTER_PRODUCT_CONTEXT.md) records the implemented repairs.
+
+The owner-authorized reset removed **all existing ATLAS physical cards, including graded cards**, before activation: 8,586 related rows across 137 predicates and 23,522 stored objects / 95,943,470,445 bytes. Original/generated images, jobs/model artifacts, review/history, reports, labels/NFC and physical learning are empty. Shared manufacturer/Scrydex/SoldComps references and unrelated Ten Kings inventory/accounts/configuration/financial amounts/payment references are preserved. Five images used by unrelated inventory were retained byte-for-byte in its own storage. The sole learning baseline is new empty `atlas-empty-baseline-r15`; no old physical examples remain.
+
+This fixed deletion scope is consumed. Do not repeat historical deletion/recovery scripts, restore old ATLAS cards, or apply this authorization to new submissions. No destructive Set Ops operation was performed. Managed shared backups and historical private diagnostic archives were not erased; other devices, downloads and third-party caches remain unverified. Any restore must reapply the purge before serving.
+
+For new ATLAS cards, generative background removal finishes first. Its generated Front/Back pair supplies all physical-card inputs/coordinates for Google Vision, Astra/xhigh identity/geometry/defects, human review, variant comparison and reports. Originals are provenance only. Reference choices are saved before listing acquisition; partial saved photos remain visible. Raw/unread/unassigned and other-grade sold results remain available to the human. Missing optional year now agrees across review, public report and label contracts. Geometry recovery preserves the local draft and uses the complete material contour. Scoring thresholds/multipliers remain unchanged.
+
+Qualification passed 1,881 native Node checks plus the Python codec module, 34 owned PostgreSQL groups with a disclosed synthetic-card-ID fixture transform, and registered83→86 preservation/no-op. This is not complete product acceptance. Chrome is at normal staff sign-in. The next real test is new upload → generated pair → OCR/Astra → geometry/findings → variants → explicit human approval → report/label/sold comps, with actual returned/read/displayed counts and second-submission reference reuse. Physical printing/NFC, grading calibration and expanded manufacturer coverage remain separate unfinished acceptance/work.
+
+Independent receipt: private `release-r15/postflight/result.json`, SHA-256 `edc6f1d62b36dee1741c9a19fc35e6aceeadbc686449a220cfe5ab2c63798df1`, under `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`. It verifies empty targets/storage, shared preservation, exact controls/ledgers, runtimes and routing. Tested old report/direct-media routes return 404/no-store; old origin URLs return non-image 403, with exact absence separately established by authenticated storage inventory.
+
+## Historical ATLAS production R14 — October 12, 2026, 4:43 p.m. Pacific
+
+> All release sections below are historical. R15 supersedes their image authority, preservation/recovery tasks and deployment status. The old physical cards no longer exist in the live system.
 
 Application `331415b09a21b2cfc2be495f11853a7c35cabcce` is deployed; staff schema **83** / public **121**. Canonical staff/public/customer routing and both runtime services passed verification. Independent postflight at23:43:29UTC verified zero restarts/OOM and preservation of64manual cards,401actions,14approvals/publications, existing image and analysis records, and customer settings. The only historical-table change was three new ordinary local-only reference generations; old jobs and human choices remain byte-identical.
 
