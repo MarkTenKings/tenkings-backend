@@ -19,8 +19,8 @@ type SectionStats = {
 
 type CardAssetSource = {
   id: string;
-  storageKey: string;
-  imageUrl: string;
+  storageKey: string | null;
+  imageUrl: string | null;
   cdnHdUrl: string | null;
   cdnThumbUrl: string | null;
 };
@@ -172,6 +172,8 @@ async function ensureCardAssetVariants(
     };
   }
 
+  if (!asset.imageUrl) return null;
+
   if (dryRun) {
     return {
       hdUrl: `[DRY RUN] cards/${asset.id}/hd.webp`,
@@ -224,6 +226,10 @@ async function migrateCardAssets(options: CliOptions): Promise<SectionStats> {
 
     for (const asset of batch) {
       try {
+        if (!asset.imageUrl) {
+          stats.skipped += 1;
+          continue;
+        }
         if (options.dryRun) {
           stats.processed += 1;
           console.log(`[DRY RUN] Would migrate CardAsset ${asset.id}`);

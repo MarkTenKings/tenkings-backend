@@ -30,7 +30,7 @@ type CardDetail = {
   status: string;
   fileName: string;
   fileSize: number;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
   mimeType: string;
   ocrText: string | null;
@@ -1947,11 +1947,15 @@ export default function AdminCardDetail() {
                 <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Card Preview</p>
                 <div className="mt-3 aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={card.thumbnailUrl ?? card.imageUrl}
-                    alt={card.fileName}
-                    className="h-full w-full object-cover"
-                  />
+                  {card.thumbnailUrl ?? card.imageUrl ? (
+                    <img
+                      src={card.thumbnailUrl ?? card.imageUrl ?? undefined}
+                      alt={card.fileName}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-slate-400">No image</div>
+                  )}
                 </div>
                 {humanReviewSummary ? (
                   <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] uppercase tracking-[0.25em] text-emerald-200">

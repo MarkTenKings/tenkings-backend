@@ -1,0 +1,3 @@
+ALTER TABLE public."CardAsset"
+  ALTER COLUMN "storageKey" DROP NOT NULL,
+  ALTER COLUMN "imageUrl" DROP NOT NULL;

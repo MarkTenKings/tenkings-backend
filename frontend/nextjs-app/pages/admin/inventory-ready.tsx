@@ -24,7 +24,7 @@ type InventoryCard = {
 type InventoryCardDetail = {
   id: string;
   fileName: string;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
   cdnHdUrl: string | null;
   cdnThumbUrl: string | null;

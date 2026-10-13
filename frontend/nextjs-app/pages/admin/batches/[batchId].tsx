@@ -20,7 +20,7 @@ type BatchAsset = {
   status: string;
   fileName: string;
   fileSize: number;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
   mimeType: string;
   uploadedAt: string;
@@ -392,7 +392,7 @@ type CardApiResponse = {
   status: string;
   fileName: string;
   fileSize: number;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
   mimeType: string;
   ocrText: string | null;
@@ -1755,7 +1755,11 @@ const handleSendToKingsReview = async (cardId: string) => {
                         </label>
                         <div className="mt-6 aspect-[4/5] w-full overflow-hidden rounded-2xl border border-white/10 bg-night-800">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={previewSrc} alt={asset.fileName} className="h-full w-full object-cover" />
+                          {previewSrc ? (
+                            <img src={previewSrc} alt={asset.fileName} className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-sm text-slate-400">No image</div>
+                          )}
                         </div>
                         <div className="flex flex-col gap-3 text-xs text-slate-300">
                           <div className="flex items-center justify-between">
@@ -2524,14 +2528,16 @@ const handleSendToKingsReview = async (cardId: string) => {
                           )}
 
                           <div className="flex gap-2 pt-1">
-                            <a
-                              href={previewSrc}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center justify-center rounded-full border border-white/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-                            >
-                              View Full
-                            </a>
+                            {previewSrc && (
+                              <a
+                                href={previewSrc}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center rounded-full border border-white/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                              >
+                                View Full
+                              </a>
+                            )}
                             <Link
                               href={`/admin/cards/${asset.id}`}
                               className="inline-flex items-center justify-center rounded-full border border-emerald-400/30 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200"
@@ -2557,7 +2563,11 @@ const handleSendToKingsReview = async (cardId: string) => {
                       </label>
                       <div className="mt-6 aspect-[4/5] w-full overflow-hidden rounded-2xl border border-white/10 bg-night-800">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={previewSrc} alt={asset.fileName} className="h-full w-full object-cover" />
+                        {previewSrc ? (
+                          <img src={previewSrc} alt={asset.fileName} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-sm text-slate-400">No image</div>
+                        )}
                       </div>
                       <div className="flex flex-col gap-2 text-xs text-slate-300">
                         <div className="flex items-center justify-between">
@@ -2718,14 +2728,16 @@ const handleSendToKingsReview = async (cardId: string) => {
                         )}
 
                         <div className="flex gap-2 pt-1">
-                          <Link
-                            href={previewSrc}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center justify-center rounded-full border border-white/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-                          >
-                            View Full
-                          </Link>
+                          {previewSrc && (
+                            <Link
+                              href={previewSrc}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center justify-center rounded-full border border-white/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                            >
+                              View Full
+                            </Link>
+                          )}
                           <Link
                             href={`/admin/cards/${asset.id}`}
                             className="inline-flex items-center justify-center rounded-full border border-emerald-400/30 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200"

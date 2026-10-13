@@ -114,6 +114,7 @@ async function resolveCardPatternSignature(cardAssetId: string | null) {
     return null;
   }
   await prisma.cardAsset.update({
+    select: { id: true },
     where: { id: asset.id },
     data: {
       patternSignatureJson: signature as any,
@@ -324,6 +325,7 @@ async function processJob(
     }
     if (job.cardAssetId) {
       await prisma.cardAsset.update({
+        select: { id: true },
         where: { id: job.cardAssetId },
         data: {
           reviewStage: "READY_FOR_HUMAN_REVIEW",

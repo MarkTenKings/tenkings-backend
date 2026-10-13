@@ -1661,11 +1661,11 @@ model LocationRestock {
 model CardAsset {
   id                        String               @id @default(uuid())
   batchId                   String
-  storageKey                String
+  storageKey                String?
   fileName                  String
   fileSize                  Int
   mimeType                  String
-  imageUrl                  String
+  imageUrl                  String?
   thumbnailUrl              String?
   cdnHdUrl                  String?
   cdnThumbUrl               String?

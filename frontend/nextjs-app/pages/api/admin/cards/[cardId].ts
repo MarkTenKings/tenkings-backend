@@ -545,7 +545,7 @@ interface CardResponse {
   status: string;
   fileName: string;
   fileSize: number;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
   cdnHdUrl: string | null;
   cdnThumbUrl: string | null;

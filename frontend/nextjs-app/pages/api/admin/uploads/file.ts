@@ -46,6 +46,10 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       return res.status(403).json({ message: "You do not own this batch" });
     }
 
+    if (!asset.storageKey) {
+      return res.status(409).json({ message: "Source photograph is unavailable." });
+    }
+
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
       chunks.push(Buffer.from(chunk));

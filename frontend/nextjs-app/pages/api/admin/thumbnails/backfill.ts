@@ -22,7 +22,7 @@ const DEFAULT_LIMIT = 20;
 
 async function backfillAssets(limit: number) {
   const assets = await prisma.cardAsset.findMany({
-    where: { thumbnailUrl: null },
+    where: { thumbnailUrl: null, storageKey: { not: null } },
     select: { id: true, storageKey: true },
     take: limit,
   });
@@ -30,6 +30,7 @@ async function backfillAssets(limit: number) {
   let updated = 0;
   let errors = 0;
   for (const asset of assets) {
+    if (!asset.storageKey) continue;
     try {
       const buffer = await readStorageBuffer(asset.storageKey);
       const thumb = await createThumbnailPng(buffer);

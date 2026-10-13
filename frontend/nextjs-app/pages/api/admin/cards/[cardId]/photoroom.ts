@@ -117,7 +117,7 @@ async function processAsset(cardId: string, apiKey: string) {
     return { processed: 0, skipped: 0 };
   }
 
-  if (asset.backgroundRemovedAt) {
+  if (!asset.storageKey || asset.backgroundRemovedAt) {
     return { processed: 0, skipped: 1 };
   }
 

@@ -9,7 +9,7 @@ interface BatchAssetSummary {
   status: string;
   fileName: string;
   fileSize: number;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
   mimeType: string;
   uploadedAt: string;

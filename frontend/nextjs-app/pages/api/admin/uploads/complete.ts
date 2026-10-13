@@ -72,6 +72,10 @@ const handler: NextApiHandler<CompleteResponse> = async function handler(
       return res.status(403).json({ message: "You do not own this batch" });
     }
 
+    if (!asset.storageKey) {
+      return res.status(409).json({ message: "Source photograph is unavailable." });
+    }
+
     const reviewStageRaw = typeof payload.reviewStage === "string" ? payload.reviewStage.trim() : "";
     if (typeof payload.reviewStage === "string" && !reviewStageRaw) {
       return res.status(400).json({ message: "reviewStage cannot be empty when provided" });
