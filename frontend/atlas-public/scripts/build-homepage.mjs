@@ -22,12 +22,7 @@ const replacePaths=text=>{
  }
  return value.replaceAll('https://atlasgrading.com/account/submit','/account/submit');
 };
-const manifest=JSON.parse(files.get('hero-assets/manifest.json'));
-if(manifest.report?.status!=='ARCHIVED_APPROVED_SAMPLE'||manifest.report?.liveUrl!==null||manifest.provenance?.liveRecordRestored!==false)throw Error('Marketing sample must retain archival status');
-for(const side of ['FRONT','BACK'])for(const type of ['presentation','original','mask','fingerprint']){
- const asset=manifest.sides[side][type],bytes=files.get(asset.src.slice(1));
- if(!bytes||createHash('sha256').update(bytes).digest('hex')!==asset.sha256||bytes.length!==asset.bytes)throw Error('Evidence asset drift: '+side+' '+type);
-}
+if(names.some(name=>name.startsWith('hero-assets/')||/report-screen|reports\/approved\.json/.test(name)))throw Error('Retired report evidence in homepage closure');
 await mkdir(output,{recursive:true});
 for(const [name,bytes] of files){
  const target=path.join(output,name);await mkdir(path.dirname(target),{recursive:true});
@@ -35,5 +30,5 @@ for(const [name,bytes] of files){
  else await copyFile(path.join(source,'site',name),target);
 }
 await copyFile(path.join(output,'index.html'),path.join(app,'public/homepage/index.html'));
-await writeFile(path.join(app,'public/homepage/release.json'),JSON.stringify({version,presentation:'atlas-experience-v1',approvedReportCount:0,archivedSampleCount:1,sourceFileCount:files.size,liveRecordRestored:false})+'\n');
-console.log(JSON.stringify({status:'HOMEPAGE_PACKAGED',version,prefix,files:files.size,archivedSampleCount:1}));
+await writeFile(path.join(app,'public/homepage/release.json'),JSON.stringify({version,presentation:'atlas-experience-v1',approvedReportCount:0,archivedSampleCount:0,sourceFileCount:files.size,liveRecordRestored:false})+'\n');
+console.log(JSON.stringify({status:'HOMEPAGE_PACKAGED',version,prefix,files:files.size,archivedSampleCount:0}));

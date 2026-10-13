@@ -1,112 +1,66 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createPublishedCatalogReader, variantSelectionParallel } from '@tenkings/card-catalog-evidence';
 import { createVariantCatalogService } from '../src/variant-catalog.mjs';
-import { prepareVariantCatalogObservation } from '../src/variant-catalog-proposal.mjs';
-import { fixture, hostFixture } from '../../card-catalog-evidence/tests/fixtures.mjs';
-
 const now = () => Date.parse('2026-10-09T08:00:00.000Z');
-function clientFixture(category = 'SPORTS') {
-  const manifest = fixture(category), bytes = Buffer.from('actual synthetic image byte fixture');
-  manifest.images[0].sha256 = createHash('sha256').update(bytes).digest('hex');
-  const host = hostFixture(manifest); let current = true; const calls = [];
-  const reader = createPublishedCatalogReader({ loadAuthorizedPublication: async () => current ? host.loaded : null });
-  const client = {
-    findCurrentSetCatalogPublications: async request => { calls.push(['discover', request]); return [host.pin]; },
-    lookupPublishedSetCatalogEvidence: async request => { calls.push(['lookup', request]); return reader.lookup(request); },
-    currentFor: async () => current,
-    readPublishedSetCatalogImage: async () => ({ bytes, sha256: manifest.images[0].sha256, mimeType: 'image/jpeg', width: 1600, height: 2200 }),
-  };
-  const identity = { category, name: manifest.cards[0].name, year: manifest.set.year, setName: manifest.set.label,
-    cardNumber: manifest.cards[0].number, manufacturer: manifest.set.manufacturer ?? manifest.set.publisher, language: null };
-  return { manifest, client, identity, calls, revoke: () => { current = false; } };
+const hash = value => createHash('sha256').update(value).digest('hex');
+const identity = { category: 'POKEMON', name: 'Charizard', year: '1999', setName: 'Base', cardNumber: '004/102', language: 'en' };
+const gallery = 'https://images.scrydex.com/pokemon/base1-4/large';
+const exact = 'https://images.scrydex.com/pokemon/base1-4/first-edition/large';
+const card = { id: 'base1-4', name: 'Charizard', number: '4', printed_number: '4/102', language_code: 'EN',
+ expansion: { id: 'base1', name: 'Base', series: 'Base', printed_total: 102, release_date: '1999/01/09', is_online_only: false },
+ images: [{ type: 'front', large: gallery }], variants: [
+ { name: 'unlimitedHolofoil' }, { name: 'firstEditionShadowlessHolofoil', images: [{ type: 'front', large: exact }] }] };
+function fixture() {
+ const data = new Map(), calls = [], bytes = Buffer.from('synthetic-decoded-reference');
+ const cache = { get: async key => structuredClone(data.get(key)), getRetained: async key => structuredClone(data.get(key)),
+  put: async (key, value) => data.set(key, structuredClone(value)) };
+ const body = JSON.stringify({ status: 'success', data: [card], page: 1, page_size: 7, total_count: 1 });
+ const fetchImpl = async (url, options) => {
+  calls.push(url); assert.equal(options.method, 'GET'); assert.equal(options.redirect, 'error');
+  assert.ok(!url.includes('private-card') && !url.includes('physical-source'));
+  if (url.startsWith('https://api.scrydex.com/')) return new Response(body, { headers: { 'content-type': 'application/json' } });
+  assert.equal(url, exact); return new Response(bytes, { headers: { 'content-type': 'image/png' } });
+ };
+ const options = { cache, now, scrydex: { apiKey: 'test-only-key', teamId: 'test-only-team' }, fetchImpl,
+  inspectProviderImage: async value => { assert.deepEqual(value, bytes); return { mimeType: 'image/png', width: 600, height: 825 }; } };
+ return { data, calls, bytes, body, options };
 }
-
-for (const category of ['SPORTS']) test(`${category}: final-review catalog scopes enumerate photos without assuming physical scope`, async () => {
-  const f = clientFixture(category), service = createVariantCatalogService({ catalogClient: f.client, providers: [], now });
-  const result = await service.prepare({ identity: f.identity, cardId: 'private-card', sourceHash: 'physical-source' });
-  assert.equal(result.candidates.length, category === 'SPORTS' ? 2 : 4, 'source program/number collisions remain separate choices');
-  const candidate = result.candidates.find(c => c.canonical.cardId === f.manifest.cards[0].cardId && c.canonical.printingId === f.manifest.printings[0].printingId);
-  assert.equal(candidate.images[0].relationship, 'representative');
-  assert.equal(candidate.applicability, 'supported'); assert.ok(result.problems.includes('LANGUAGE_UNCONFIRMED'));
-  assert.ok(f.calls.some(([kind, v]) => kind === 'lookup' && v.query.edition === 'standard'));
-  assert.ok(f.calls.every(([, value]) => !JSON.stringify(value).includes('private-card') && !JSON.stringify(value).includes('physical-source')));
-  const image = candidate.images[0];
-  const restarted = createVariantCatalogService({ catalogClient: f.client, providers: [], now });
-  const media = await restarted.readImage({ snapshot: result, candidateId: candidate.candidateId, imageId: image.imageId });
-  assert.equal(media.sha256, image.sha256);
-  f.revoke(); await assert.rejects(restarted.readImage({ snapshot: result, candidateId: candidate.candidateId, imageId: image.imageId }), /SUPERSEDED/);
+test('direct Scrydex keeps all literal choices and exact source/photo bytes without catalog authority', async () => {
+ const f = fixture(), service = createVariantCatalogService(f.options);
+ const snapshot = await service.prepare({ identity, cardId: 'private-card', sourceHash: 'physical-source' });
+ assert.equal(snapshot.candidates.length, 2); assert.equal(f.calls.length, 2);
+ assert.ok(snapshot.candidates.every(c => c.authority === 'provider_candidate' && c.canonical === null));
+ assert.deepEqual(snapshot.candidates.map(c => c.source.sha256), [hash(f.body), hash(f.body)]);
+ assert.ok([...f.data.values()].some(value => value.body === f.body));
+ const choice = snapshot.candidates.find(c => c.images.some(i => i.relationship === 'exact')), image = choice.images[0];
+ assert.equal(image.sha256, hash(f.bytes));
+ const restarted = createVariantCatalogService({ ...f.options, fetchImpl: () => assert.fail('retained references must not fetch') });
+ assert.deepEqual((await restarted.readImage({ snapshot, candidateId: choice.candidateId, imageId: image.imageId })).bytes, f.bytes);
+ const retained = await restarted.prepare({ identity, localOnly: true });
+ assert.deepEqual(retained.candidates.map(c => [c.candidateId, c.label, c.source]), snapshot.candidates.map(c => [c.candidateId, c.label, c.source])); assert.equal(f.calls.length, 2);
+ assert.deepEqual((await restarted.readImage({ snapshot, candidateId: choice.candidateId, imageId: image.imageId })).bytes, f.bytes);
+ assert.equal(service.submitReference, undefined); assert.equal(service.submitObservation, undefined);
 });
-
-test('revoked catalog never survives a cache; partial provider outage is explicit and no invented base appears', async () => {
-  const f = clientFixture(); f.revoke();
-  const service = createVariantCatalogService({ catalogClient: f.client, providers: [{ prepare: async () => { throw new Error('secret provider detail'); } }], now });
-  const result = await service.prepare({ identity: f.identity });
-  assert.deepEqual(result.candidates, []); assert.ok(result.problems.includes('CATALOG_UNAVAILABLE'));
-  assert.ok(result.problems.includes('PROVIDER_UNAVAILABLE')); assert.ok(!JSON.stringify(result).includes('secret'));
+test('provider failures remain explicit without inventing a base printing or leaking details', async () => {
+ const service = createVariantCatalogService({ providers: [{ prepare: async () => { throw Error('secret provider detail'); } }], now });
+ const result = await service.prepare({ identity });
+ assert.deepEqual(result.candidates, []); assert.ok(result.problems.includes('PROVIDER_UNAVAILABLE'));
+ assert.ok(!result.problems.includes('CATALOG_UNAVAILABLE')); assert.ok(!JSON.stringify(result).includes('secret'));
 });
-
-test('incomplete identity does no catalog or provider requests, and aborted work cannot persist a ready snapshot', async () => {
-  let calls = 0;
-  const service = createVariantCatalogService({ catalogClient: { findCurrentSetCatalogPublications: async () => { calls++; return []; } },
-    providers: [{ prepare: async () => { calls++; return { candidates: [], problems: [], truncated: false }; } }], now });
-  const identity = { category: 'SPORTS', name: 'A Player', year: '2024', setName: null, cardNumber: '3' };
-  const result = await service.prepare({ identity }); assert.equal(calls, 0); assert.ok(result.problems.includes('IDENTITY_INCOMPLETE'));
-  const controller = new AbortController(); controller.abort();
-  await assert.rejects(service.prepare({ identity }, { signal: controller.signal })); assert.equal(calls, 0);
+test('incomplete identity and aborted work do not request provider evidence', async () => {
+ let calls = 0; const service = createVariantCatalogService({ providers: [{ prepare: async () => { calls++; } }], now });
+ const result = await service.prepare({ identity: { ...identity, year: null } });
+ assert.equal(calls, 0); assert.ok(result.problems.includes('IDENTITY_INCOMPLETE'));
+ const controller = new AbortController(); controller.abort();
+ await assert.rejects(service.prepare({ identity }, { signal: controller.signal })); assert.equal(calls, 0);
 });
-
-test('a hung catalog is bounded and a byte substitution never becomes a reference response', async () => {
-  const f = clientFixture();
-  const timeout = createVariantCatalogService({ providers: [{ prepare: async () => new Promise(() => {}) }], timeoutMs: 5, now });
-  await assert.rejects(timeout.prepare({ identity: f.identity }), /TIMEOUT/);
-  const service = createVariantCatalogService({ catalogClient: f.client, providers: [], now });
-  const snapshot = await service.prepare({ identity: f.identity }), candidate = snapshot.candidates.find(c => c.images.length), image = candidate.images[0];
-  f.client.readPublishedSetCatalogImage = async () => ({ bytes: Buffer.from('substitution'), sha256: image.sha256, mimeType: image.mimeType, width: image.width, height: image.height });
-  await assert.rejects(service.readImage({ snapshot, candidateId: candidate.candidateId, imageId: image.imageId }), /CHANGED/);
-});
-
-test('confirmed choices create idempotent unreviewed metadata proposals; replay never exports photographs or publishes', async () => {
-  const f = clientFixture('SPORTS'), service = createVariantCatalogService({ catalogClient: f.client, providers: [], now });
-  const snapshot = await service.prepare({ identity: f.identity }), candidate = snapshot.candidates.find(c => c.images.length);
-  const payload = { decision: 'SELECTED', cardId: '11111111-1111-4111-8111-111111111111', actionId: '22222222-2222-4222-8222-222222222222',
-    sourceHash: 'a'.repeat(64), identityRevision: 2, identityHash: 'b'.repeat(64), identity: candidate.identity,
-    parallel: variantSelectionParallel(candidate), observedFeatures: null, catalog: snapshot, candidateId: candidate.candidateId, observedAt: new Date(now()).toISOString() };
-  const first = prepareVariantCatalogObservation(payload), retry = prepareVariantCatalogObservation(structuredClone(payload));
-  assert.deepEqual(retry, first); assert.deepEqual(first.proposal.images, []);
-  assert.ok(first.proposal.sources.every(s => ['PHYSICAL_OBSERVATION', 'DERIVED'].includes(s.kind)));
-  assert.equal(first.proposal.identity.cardId, candidate.canonical.cardId); assert.equal(first.proposal.identity.printingId, candidate.canonical.printingId);
-  assert.ok(!JSON.stringify(first).includes('actual synthetic image byte fixture'));
-  let submitted; f.client.submit = async proposal => { submitted = proposal; return { status: 'accepted', proposalSha256: first.proposalSha256 }; };
-  await service.submitObservation(payload); assert.deepEqual(submitted, first.proposal);
-  assert.throws(() => prepareVariantCatalogObservation({ ...payload, parallel: 'Base' }), /INVALID/);
-  assert.throws(() => prepareVariantCatalogObservation({ ...payload, decision: 'UNRESOLVED' }), /INVALID/);
-  const manual = prepareVariantCatalogObservation({ ...payload, decision: 'MANUAL', candidateId: null, catalog: null, parallel: 'English Cosmos Holo', observedFeatures: 'Visible galaxy pattern in the picture window.' });
-  assert.equal(manual.proposal.identity.cardId, null); assert.equal(manual.proposal.basedOnPublication, null); assert.deepEqual(manual.proposal.images, []);
-  assert.ok(prepareVariantCatalogObservation({ ...payload, decision: 'MANUAL', candidateId: null, observedFeatures: '' }).proposal);
-  const {observedFeatures,...withoutNote}=payload;assert.ok(prepareVariantCatalogObservation({...withoutNote,decision:'MANUAL',candidateId:null}).proposal);
-});
-
-test('Pokémon queries the published catalog alongside provider metadata',async()=>{
- let calls=0;const fail=async()=>{calls++;throw Error('unexpected lookup')};
- const service=createVariantCatalogService({catalogClient:{findCurrentSetCatalogPublications:fail,prepareSetDemand:fail},fetchImpl:fail,now});
- const result=await service.prepare({identity:clientFixture('POKEMON').identity});assert.equal(calls,1);assert.equal(result.candidates.length,0);
-});
-
-
-test('unknown sports year searches published evidence without adopting its year or dispatching an unsupported listing',async()=>{
- const f=clientFixture(),identity={...f.identity,year:null},original=structuredClone(identity);
- const service=createVariantCatalogService({catalogClient:f.client,providers:[],now,
-  listingProvider:{fetchSource:()=>assert.fail('published candidates alone do not authorize another listing identity')}});
- const result=await service.prepare({identity},{executeListingSource:()=>assert.fail('no manufacturer row authorizes a listing year')});
- assert.ok(result.candidates.length>0);assert.equal(identity.year,null);assert.deepEqual(identity,original);
- assert.ok(f.calls.filter(([kind])=>['discover','lookup'].includes(kind)).every(([,value])=>!Object.hasOwn(value.query,'year')));
- assert.ok(result.candidates.every(c=>c.identity.year===f.manifest.set.year));assert(!result.problems.includes('IDENTITY_INCOMPLETE'));
-});
-test('unknown Pokémon year never falls through to secondary shared metadata',async()=>{
- const noCall=()=>assert.fail('incomplete Pokémon identity must stay within its existing provider contract');
- const result=await createVariantCatalogService({catalogClient:{findCurrentSetCatalogPublications:noCall},providers:[{prepare:noCall}],now})
-  .prepare({identity:{...clientFixture('POKEMON').identity,year:null}});
- assert(result.problems.includes('IDENTITY_INCOMPLETE'));
+test('provider preparation is bounded and changed retained bytes cannot be served', async () => {
+ const timed = createVariantCatalogService({ providers: [{ prepare: async () => new Promise(() => {}) }], now, timeoutMs: 5 });
+ await assert.rejects(timed.prepare({ identity }), /TIMEOUT/);
+ const f = fixture(), snapshot = await createVariantCatalogService(f.options).prepare({ identity });
+ const choice = snapshot.candidates.find(c => c.images.some(i => i.relationship === 'exact')), image = choice.images[0];
+ const corrupted = createVariantCatalogService({ providers: [{ id: choice.source.provider, prepare: async () => ({ candidates: [], problems: [] }),
+  readImage: async () => ({ bytes: Buffer.from('substitution'), sha256: image.sha256, mimeType: image.mimeType, width: image.width, height: image.height }) }], now });
+ await assert.rejects(corrupted.readImage({ snapshot, candidateId: choice.candidateId, imageId: image.imageId }), /CHANGED/);
 });

@@ -10,8 +10,7 @@ function fixture(){
   f.options={staffId,cardId,approvalActionId,storage,cryptoImpl:{randomUUID},request:async(path,options)=>{
     calls.push({path,options});if(!options)return {approvalActionId:f.approvalActionId,revision:0};
     assert.ok(values.size);
-    if(path.endsWith('/search')){if(f.search)return f.search(options.body);return {state:'READY',previewId:options.body.requestId,preview:{binding:{approvalVersion:1}},research:{version:'atlas-research-preview-v1'}};}
-    if(path.endsWith('/contribute')){if(f.contribute)return f.contribute(options.body);return {state:'RECORDED',disposition:'requires_authorized_review',receipt:{proposalId:'fixture',outcome:'recorded'}};}
+    if(path.endsWith('/search')){if(f.search)return f.search(options.body);return {state:'READY',previewId:options.body.requestId,preview:{binding:{approvalVersion:1}},research:{version:'atlas-research-preview-v2'}};}
     assert.ok(path.endsWith('/market/select'));return {approvalActionId:f.approvalActionId,revision:1,presentation:{market:{sales:options.body.selectedIds.map(id=>({id}))}}};
   }};
   f.client=createReportResearchClient(f.options);return f;
@@ -29,23 +28,8 @@ test('unknown research survives reload with the exact request and no provider ro
   f.client=createReportResearchClient(f.options);f.search=body=>({state:'UNKNOWN',previewId:body.requestId});await assert.rejects(f.client.preview(),{code:'MARKET_SEARCH_UNKNOWN'});
   assert.deepEqual(f.calls.at(-1).options.body,first);assert.ok(f.calls.filter(c=>c.options).every(c=>c.path.endsWith('/research/search')));
 });
-test('observation is persisted before dispatch and unknown replay survives reload without a second id',async()=>{
-  const f=fixture(),preview=await f.client.preview();f.contribute=()=>{throw Error('lost receipt');};
-  await assert.rejects(f.client.contribute(preview.previewId));const first=f.calls.at(-1).options.body;
-  await assert.rejects(f.client.preview(),{code:'RESEARCH_OBSERVATION_PENDING'});
-  f.client=createReportResearchClient(f.options);f.contribute=undefined;await f.client.reconcileObservation();
-  assert.deepEqual(f.calls.at(-1).options.body,first);assert.equal(f.client.pendingObservation(),null);
-  assert.deepEqual(Object.keys(first).sort(),['observationId','previewId']);
-});
-test('unconfirmed receipt and storage failure never discard an unknown contribution',async()=>{
-  const f=fixture();f.contribute=()=>({state:'RECORDED',disposition:'already_published',receipt:{proposalId:'fixture',outcome:'recorded'}});
-  await assert.rejects(f.client.contribute(randomUUID()),{code:'RESEARCH_OBSERVATION_UNCONFIRMED'});assert.ok(f.client.pendingObservation());
-  const count=f.calls.length,bad=createReportResearchClient({...f.options,staffId:randomUUID(),storage:{getItem:()=>null,setItem:()=>{throw Error('disk');},removeItem:()=>{}}});
-  await assert.rejects(bad.contribute(randomUUID()),/disk/);assert.equal(f.calls.length,count);
-});
-test('changed approval requires authenticated current status and never submits the old observation',async()=>{
-  const f=fixture();f.contribute=()=>{throw Error('lost');};await assert.rejects(f.client.contribute(randomUUID()));
-  f.approvalActionId=randomUUID();const next=createReportResearchClient({...f.options,approvalActionId:f.approvalActionId}),count=f.calls.filter(c=>c.options).length;
-  await assert.rejects(next.contribute(),{code:'RESEARCH_OBSERVATION_APPROVAL_STALE'});
-  assert.deepEqual(await next.reconcileObservation(),{state:'SUPERSEDED'});assert.equal(f.calls.filter(c=>c.options).length,count);assert.equal(next.pendingObservation(),null);
+test('retired observation intents cannot block or dispatch independent card research',async()=>{
+ const f=fixture();f.values.set(`atlas-research-observation:${f.options.staffId}:${f.options.cardId}`,JSON.stringify({observationId:randomUUID()}));
+ const result=await f.client.preview();assert.equal(result.state,'READY');assert.equal(f.client.contribute,undefined);assert.equal(f.client.reconcileObservation,undefined);
+ assert(f.calls.every(c=>!c.path.includes('/contribute')));
 });

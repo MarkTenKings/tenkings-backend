@@ -25,13 +25,8 @@ test('large model requests retain their exact bytes without weakening small publ
  const receipt=f.events.get(input.requestId).find(e=>e.event==='RESPONSE'),saved=await f.artifacts.read(receipt.evidence.ref,{cardId:f.cardId,kind:'RESEARCH_RESPONSE',sourceHash:f.source.publicHash});assert.equal(saved.usage.total_tokens,4);
 });
 
-test('concurrent original and explicit proposal reconciliation preserve the first durable receipt despite recorded/replay response differences',async()=>{
- const {f,input}=await harness();let release,entered,calls=0;const ready=new Promise(r=>{entered=r;});
- const fetchImpl=async()=>{calls++;if(calls===1){entered();await new Promise(r=>{release=r;});return Response.json({receipt:{outcome:'recorded'}});}return Response.json({receipt:{outcome:'replay'}});};
- const opts={journal:f.journal,artifacts:f.artifacts,staff:f.staff,cardId:f.cardId,requestId:input.requestId,sourceHash:f.source.publicHash,fetchImpl};
- const endpoint='https://collect.tenkings.co/api/internal/card-catalog/v1/proposals',request={method:'POST',body:'{"proposal":"same exact synthetic intent"}'};
- const first=createResearchEffects(opts)(endpoint,request);await ready;
- const retried=await createResearchEffects({...opts,reconcileCatalogProposal:true})(endpoint,request);release();const original=await first;
- assert.deepEqual(await retried.json(),{receipt:{outcome:'replay'}});assert.deepEqual(await original.json(),{receipt:{outcome:'replay'}});
- assert.equal(f.events.get(input.requestId).filter(e=>e.event==='RESPONSE').length,1);assert.equal(f.events.get(input.requestId).filter(e=>e.event==='DISPATCH').length,1);
+test('retired catalog endpoints are refused before any journal reservation or network call',async()=>{
+ const {f,input,create}=await harness();let calls=0;const fetch=create(async()=>{calls++;throw Error('must not dispatch');});
+ for(const action of ['discover','lookup','media','proposals','reference-proposals'])await assert.rejects(fetch(`https://collect.tenkings.co/api/internal/card-catalog/v1/${action}`,{method:'POST',body:'{}'}),{code:'RESEARCH_EFFECT_INVALID'});
+ assert.equal(calls,0);assert.equal(f.events.get(input.requestId).filter(e=>e.event==='DISPATCH').length,0);
 });

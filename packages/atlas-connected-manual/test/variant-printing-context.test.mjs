@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import { createVariantReviewSnapshot, importScrydexVariantCandidates, variantSelectionParallel } from '@tenkings/card-catalog-evidence';
 import { codexCatalogContext, codexChoices, codexReadingKey, projectCodexReading } from '../src/variant-codex.mjs';
 import { prepareVariantLabelRequest, projectVariantLabelResponse, createVariantPhotoProvider, VARIANT_LABEL_POLICY, VARIANT_PHOTO_MODEL } from '../src/variant-photo-provider.mjs';
-import { prepareVariantCatalogObservation } from '../src/variant-catalog-proposal.mjs';
 import { labelPhoto, labelHash, labelResponse } from './variant-label-fixture.mjs';
 
 const saved = JSON.parse(readFileSync(new URL('../../card-catalog-evidence/tests/fixtures/scrydex-20261010-pikachu.json', import.meta.url)));
@@ -55,17 +54,4 @@ test('newly supplied exact sourced origin can resolve the same printing key with
   }
   const actualCostco = { ...reading, labelText: 'CGC\nPikachu\nPokémon (2024)\nScarlet & Violet 151 - 025/165\nCostco Exclusive - 5-Pack Tin\nPRISTINE 10' };
   assert.equal(projectCodexReading(actualCostco, catalog, priorChoices).candidateId, null, 'No sourced Cosmos/Costco association is invented');
-});
-
-test('Scrydex query URLs remain in retained provenance and cannot break human observation contribution', () => {
-  const candidate = candidates.find(value => value.label === 'Cosmos Holofoil');
-  const payload = { decision: 'SELECTED', cardId: '11111111-1111-4111-8111-111111111111', actionId: '22222222-2222-4222-8222-222222222222',
-    sourceHash: 'a'.repeat(64), identityRevision: 2, identityHash: 'b'.repeat(64), identity: candidate.identity,
-    parallel: variantSelectionParallel(candidate), catalog, candidateId: candidate.candidateId, observedAt: '2026-10-12T00:00:00.000Z' };
-  const before = JSON.stringify(payload), prepared = prepareVariantCatalogObservation(payload);
-  assert.equal(prepared.proposal.sources.find(value => value.sourceId === 'comparison-observation').sourceUrl, null);
-  assert.equal(prepared.proposal.sources.find(value => value.sourceId === 'comparison-observation').sourceRef, `atlas:variant-snapshot:${catalog.snapshotHash}`);
-  assert.equal(prepared.proposal.images.length, 0);
-  assert.equal(JSON.stringify(payload), before);
-  assert.deepEqual(prepareVariantCatalogObservation(payload), prepared);
 });

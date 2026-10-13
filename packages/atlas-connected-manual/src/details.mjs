@@ -114,7 +114,12 @@ export function createDetailsStore({ boundary, intakeRepository }) {
 export function connectedGrantSQL(role) {
   requireThat(/^[a-z][a-z0-9_]{0,62}$/.test(role));
   return `GRANT USAGE ON SCHEMA atlas_manual_connected TO "${role}";
-GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA atlas_manual_connected TO "${role}";
+DO $atlas_connected_grants$ DECLARE relation record; BEGIN
+  FOR relation IN SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='atlas_manual_connected' AND c.relkind='r' AND c.relname IN (
+      'batch_grading','batch_request','batch_review','card_image_binding','card_image_intent','details','details_action','early_geometry','early_geometry_intent','effect','geometry_claim_capacity','geometry_model_action','identification','market_job','published_review_display','report_image_binding','report_image_job','review_display','station_active','station_arm','station_challenge','station_enrollment','station_pairing','station_receipt','variant_catalog_cache','variant_confirmation','variant_job')
+  LOOP EXECUTE format('GRANT SELECT,INSERT ON TABLE %I.%I TO %I',relation.nspname,relation.relname,'${role}'); END LOOP;
+END $atlas_connected_grants$;
 GRANT UPDATE(revision,content,content_hash) ON atlas_manual_connected.details TO "${role}";
 GRANT UPDATE(state,result,error,finished_at) ON atlas_manual_connected.identification TO "${role}";
 GRANT EXECUTE ON FUNCTION atlas_manual_connected.append_receipt(uuid,text,text,text,text) TO "${role}";

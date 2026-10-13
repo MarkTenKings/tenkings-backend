@@ -18,14 +18,9 @@ function fixture(){
  f.text=()=>text(tree);f.buttons=()=>all(tree,n=>n.type==='button');f.render();return f;
 }
 const preview=()=>({state:'READY',previewId:'preview',research:{identity:{reason:'Saved card identity'},photoIdentity:{reason:'Visible surface details'},catalog:{status:'no_publication'},queries:[{}],warnings:[],knowledge:{canContribute:true},candidates:[{id:'sale',title:'Source sale',listingUrl:'https://www.ebay.com/itm/123456789012',identityMatch:true,variantMatch:false,visualMatch:null,conditionDecision:{reason:'Different external grader'}}]}});
-test('research evidence displays true, false and unknown comparisons and no automatic contribution',()=>{
- const f=fixture();assert.equal(f.render(),null);f.preview=preview();f.render();assert.match(f.text(),/Identity: matches\. Variant: does not match\. Photo: not established\./);assert.match(f.text(),/Shared catalog: no publication/);assert.equal(f.calls,0);
-});
-test('explicit contribution retains unknown recovery and successful receipt never claims reviewed knowledge',async()=>{
- const f=fixture();f.preview=preview();f.render();f.submit=()=>{f.pending={previewId:'preview'};throw Error('lost');};f.buttons()[0].props.onClick();await flush();f.render();assert.match(f.text(),/Check saved observation/);assert.match(f.text(),/not confirmed/);assert.equal(f.calls,1);
- f.submit=undefined;f.buttons()[0].props.onClick();await flush();f.render();assert.equal(f.calls,2);assert.match(f.text(),/not yet published shared knowledge/);assert.equal(f.buttons().length,0);
-});
-test('disabled action and double click cannot dispatch another observation',async()=>{
- const f=fixture();f.preview=preview();f.disabled=true;f.render();f.buttons()[0].props.onClick();assert.equal(f.calls,0);
- f.disabled=false;f.render();let finish;f.submit=()=>new Promise(resolve=>{finish=resolve;});f.buttons()[0].props.onClick();f.buttons()[0].props.onClick();assert.equal(f.calls,1);finish({state:'RECORDED'});await flush();f.render();assert.equal(f.buttons().length,0);
+test('research evidence preserves sale comparisons without retired contribution controls',()=>{
+ const f=fixture();assert.equal(f.render(),null);f.preview=preview();f.render();
+ assert.match(f.text(),/Identity: matches\. Variant: does not match\. Photo: not established\./);assert.match(f.text(),/1 research queries recorded/);
+ assert.doesNotMatch(f.text(),/Shared catalog|Submit observation|shared knowledge/);assert.equal(f.buttons().length,0);assert.equal(f.calls,0);
+ f.pending={previewId:'preview'};f.render();assert.equal(f.buttons().length,0);assert.equal(f.calls,0);
 });

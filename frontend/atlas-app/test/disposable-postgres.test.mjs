@@ -51,7 +51,7 @@ test('fixture rejects missing acknowledgement, ambiguous modes and external data
 
 test('upgrade checkpoint rejects non-callable configuration before creating a fixture', async () => {
     for (const beforeUpgradeFrom48 of [null, true, 48, 'postgresql://existing', {}])
-        await assert.rejects(disposablePostgres([], { beforeUpgradeFrom48 }), /explicit fixture callback/);
+        await assert.rejects(disposablePostgres([], { beforeUpgradeFrom48 }), /Historical upgrade replay is retired/);
 });
 
 

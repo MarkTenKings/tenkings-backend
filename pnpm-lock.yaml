@@ -484,9 +484,6 @@ importers:
       '@atlas/site-router':
         specifier: workspace:*
         version: link:../../packages/atlas-site-router
-      '@prisma/client':
-        specifier: 5.22.0
-        version: 5.22.0(prisma@5.22.0)
       next:
         specifier: 15.5.25
         version: 15.5.25(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -503,9 +500,6 @@ importers:
       eslint-config-next:
         specifier: 15.5.25
         version: 15.5.25(eslint@8.57.0)(typescript@5.9.3)
-      prisma:
-        specifier: 5.22.0
-        version: 5.22.0
 
   frontend/nextjs-app:
     dependencies:
@@ -1006,6 +1000,8 @@ importers:
         version: link:../atlas-grading-core
 
   packages/atlas-site-router: {}
+
+  packages/atlas-standalone-database: {}
 
   packages/browser-rip-client:
     devDependencies:

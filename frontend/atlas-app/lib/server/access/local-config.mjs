@@ -1,7 +1,16 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { deny } from '../policy.mjs';
-import { localAccessConfig } from './fixture.mjs';
+import { makeAccessConfig } from './config.mjs';
+import { BROWSER_COOKIE, SESSION_COOKIE, LOCAL_ORIGIN } from '../policy.mjs';
+import { STAFF_BASE_PATH } from '../../routes.mjs';
+
+function localAccessConfig({ databaseUrl, sessionKey, phoneKey }) {
+    return makeAccessConfig({ mode: 'LOCAL_FIXTURE', origin: LOCAL_ORIGIN, basePath: STAFF_BASE_PATH, deploymentId: 'local-postgres-fixture',
+        releaseSha: '0'.repeat(40), accountSid: `AC${'1'.repeat(32)}`, serviceSid: `VA${'2'.repeat(32)}`,
+        databaseUrl, cookies: { browser: BROWSER_COOKIE, session: SESSION_COOKIE }, sessionKey, phoneKey,
+        approvedPhones: new Set(['+12025550141', '+12025550142']), providerLifetimeMs: 600_000 });
+}
 
 export function readLocalPostgresConfig(env) {
     if (env.NODE_ENV !== 'development' || env.ATLAS_LOCAL_POSTGRES !== '1' || env.ATLAS_LOCAL_SYNTHETIC
@@ -18,12 +27,6 @@ export function readLocalPostgresConfig(env) {
         || database.username !== 'atlas_fixture_staff' || !/^\/atlas_fixture_case_\d+$/.test(database.pathname)
         || database.searchParams.get('schema') !== 'atlas_staff'
         || !/^[a-f0-9]{64}$/.test(record.sessionKey ?? '') || !/^[a-f0-9]{64}$/.test(record.phoneKey ?? '')) deny(503, 'STAFF_ACCESS_NOT_ENABLED');
-    if (record.operationsDatabaseUrl) {
-        const operations = new URL(record.operationsDatabaseUrl);
-        if (operations.hostname !== database.hostname || operations.port !== database.port || operations.pathname !== database.pathname
-            || operations.username !== 'atlas_fixture_operations' || operations.searchParams.get('schema') !== 'atlas_staff')
-            deny(503, 'STAFF_ACCESS_NOT_ENABLED');
-    }
     return Object.freeze({ ...localAccessConfig({ databaseUrl: record.databaseUrl, sessionKey: Buffer.from(record.sessionKey, 'hex'),
-        phoneKey: Buffer.from(record.phoneKey, 'hex') }), operationsDatabaseUrl: record.operationsDatabaseUrl });
+        phoneKey: Buffer.from(record.phoneKey, 'hex') }) });
 }

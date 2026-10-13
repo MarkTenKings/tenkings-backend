@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync,existsSync,readdirSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {resolve,extname} from 'node:path';
 import {createRequire} from 'node:module';
@@ -28,18 +28,21 @@ test('homepage rewrite leaves service and report routes untouched',async()=>{
  assert.deepEqual(await config.rewrites(),{beforeFiles:[{source:'/',destination:'/homepage/index.html'}]});
  assert.match(readFileSync(resolve(import.meta.dirname,'../middleware.js'),'utf8'),/matcher: \['\/admin\/:path\*', '\/account\/:path\*'\]/);
 });
-test('homepage retains ATLAS identity, real evidence, and honest archived status',()=>{
- assert(html.includes('<span>SEE WHY</span><span>IT’S A <em>9.</em></span>'));
+test('homepage retains ATLAS identity and submission routes without historic card evidence',()=>{
+ assert(html.includes('<span>KNOW WHAT</span><span>YOU <em>HAVE.</em></span>'));
  for(const id of ['hero-title','fingerprint','slab','connected-proof','submit','capacity-title'])assert(html.includes(`id="${id}"`),id);
  assert(html.includes('WE SHOW YOU EVERYTHING.'));assert(html.includes('href="/account/submit"'));assert(!html.includes('127.0.0.1'));assert(!html.includes('DESIGN STUDY 10'));assert(!html.includes('noindex,nofollow'));assert(!html.includes('Interactive design preview'));
- const manifest=JSON.parse(readFileSync(resolve(root,'homepage',release.version,'hero-assets/manifest.json')));
- assert.equal(manifest.report.status,'ARCHIVED_APPROVED_SAMPLE');assert.equal(manifest.report.liveUrl,null);assert.equal(manifest.provenance.liveRecordRestored,false);
- assert.equal(manifest.report.finalGrade,9.5);assert.equal(manifest.report.findingCount,7);
- assert.equal(release.approvedReportCount,0);assert.equal(release.archivedSampleCount,1);
+ assert.equal(release.approvedReportCount,0);assert.equal(release.archivedSampleCount,0);
+ for(const marker of ['Drake Maye','Abomasnow','Jaxson Dart','hero-assets/','report-screen','ARCHIVED_APPROVED_SAMPLE'])assert(!html.includes(marker),marker);
+ assert(html.includes('Fictional artwork. Display slabs are illustrative.'));
  const service=html.match(/<article class="service-card service-card-mail[\s\S]*?<\/article>/)?.[0];assert(service);
  assert(service.includes('Plus shipping'));assert(service.includes('Pay for grading now.'));assert(service.includes('Choose and pay for shipping separately when rates are available.'));assert(service.includes('Review the actual quote before your shipping payment.'));
  assert(service.includes('<strong>$40</strong>'));assert(service.includes('<strong>2 weeks</strong>'));assert(service.includes('href="/account/submit?route=mail-in"'));
  assert.doesNotMatch(service,/>FedEx in<|Plus FedEx shipping|Mail-in with FedEx|actual FedEx quote/);
+});
+test('public package retains only the current release and excludes retired evidence assets',()=>{
+ assert.deepEqual(readdirSync(resolve(root,'homepage'),{withFileTypes:true}).filter(entry=>entry.isDirectory()).map(entry=>entry.name),[release.version]);
+ assert(names.every(name=>!name.startsWith('hero-assets/')&&!/report-screen|reports\/approved\.json/.test(name)));
 });
 test('complete content digest includes every dependency and all local references resolve',()=>{
  const hash=createHash('sha256').update('atlas-experience-v1\n').update(readFileSync(resolve(import.meta.dirname,'../scripts/build-homepage.mjs')));
@@ -65,8 +68,7 @@ test('packaged static and dynamic module imports resolve from their actual modul
   }
  }
  assert(checked>=7,'module graph must actually be checked');
- const hero=readFileSync(resolve(root,'homepage',release.version,'hero-controller.mjs'),'utf8');
- assert(hero.includes("from './hero-evidence.mjs'"));
+
 });
 const current={version:'atlas-weekly-capacity-v1',unit:'CARDS',timeZone:'America/Los_Angeles',resetLocalTime:'00:01',weekStartsAt:'2026-09-28T07:01:00Z',resetsAt:'2026-10-05T07:01:00Z',asOf:'2026-10-01T19:00:00Z',pools:[{channel:'MAIL_IN',state:'AVAILABLE',quotaCards:1000,heldCards:20,acceptedCards:800,remainingCards:180},{channel:'DEALER_DROP_OFF',state:'NOT_CONFIGURED',quotaCards:null,heldCards:0,acceptedCards:0,remainingCards:null}]};
 test('capacity display never invents counts and clears stale or inconsistent data',()=>{

@@ -9,11 +9,7 @@ export function manualResearchSettings(env) {
     503, 'RESEARCH_PRESENTATION_REQUIRED');
   const key = value => typeof value === 'string' && value.length >= 16 && value.length <= 4096 && !/[\s\x00-\x1f\x7f]/.test(value);
   requireThat(key(env.ATLAS_MANUAL_OPENAI_KEY) && key(env.ATLAS_MANUAL_SOLD_COMPS_API_KEY), 503, 'RESEARCH_CONFIGURATION_INVALID');
-  const catalogEnabled = env.ATLAS_MANUAL_CATALOG_ENABLED === 'true';
-  requireThat(!catalogEnabled || /^[A-Za-z0-9_-]{43,128}$/.test(env.ATLAS_MANUAL_CATALOG_TOKEN ?? ''),
-    503, 'RESEARCH_CATALOG_CONFIGURATION_INVALID');
-  return Object.freeze({ openaiApiKey: env.ATLAS_MANUAL_OPENAI_KEY, soldCompsApiKey: env.ATLAS_MANUAL_SOLD_COMPS_API_KEY,
-    catalogToken: catalogEnabled ? env.ATLAS_MANUAL_CATALOG_TOKEN : null });
+  return Object.freeze({ openaiApiKey: env.ATLAS_MANUAL_OPENAI_KEY, soldCompsApiKey: env.ATLAS_MANUAL_SOLD_COMPS_API_KEY });
 }
 
 // Only an explicitly mounted, root-owned configuration file is admitted. Read

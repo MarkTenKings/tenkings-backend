@@ -1,50 +1,27 @@
 import { createHash } from 'node:crypto';
-import { bridgeOrigin, keyBytes } from '@atlas/service-bridge/protocol';
+import { keyBytes } from '@atlas/service-bridge/protocol';
 import { MANUAL_PUBLIC_ORIGIN } from '@atlas/service-bridge/manual-public';
 export const PUBLIC_ORIGIN = 'https://atlasgrading.com';
-export const LOCAL_ORIGIN = 'http://127.0.0.1:4319';
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export function unavailable() { throw new Error('PUBLIC_REPORTS_UNAVAILABLE'); }
 export function makePublicConfig(input) {
-    const binding = input.databaseUrl ? { version: 'atlas-public-reader-v1',
-        mode: input.mode, origin: input.origin, databaseBindingHash: digest(input.databaseUrl),
-        mediaOrigin: input.mediaOrigin ?? null, mediaKeyHash: input.mediaKey ? digest(input.mediaKey) : null,
-        ...(input.manualOrigin ? { manualOrigin: input.manualOrigin, manualKeyHash: digest(input.manualKey) } : {}) }
-        : { version: 'atlas-public-manual-reader-v1', mode: input.mode, origin: input.origin,
-            manualOrigin: input.manualOrigin, manualKeyHash: digest(input.manualKey) };
+    const binding = { version: 'atlas-public-manual-reader-v1', mode: input.mode, origin: input.origin,
+        manualOrigin: input.manualOrigin, manualKeyHash: digest(input.manualKey) };
     return Object.freeze({ ...input, configHash: digest(JSON.stringify(binding)) });
 }
 export function productionConfig(env) {
     if (env.NODE_ENV !== 'production' || env.VERCEL_ENV !== 'production'
         || env.ATLAS_PUBLIC_ORIGIN !== PUBLIC_ORIGIN || Object.keys(env).some(k => k.startsWith('ATLAS_LOCAL_'))
         || !/^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL ?? '') || !/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? '')) unavailable();
-    const legacyKeys = ['ATLAS_PUBLIC_DATABASE_URL','ATLAS_PUBLIC_MEDIA_ORIGIN','ATLAS_PUBLIC_MEDIA_KEY'];
-    const legacyConfigured = legacyKeys.some(key => env[key] !== undefined);
-    if (legacyConfigured && !legacyKeys.every(key => typeof env[key] === 'string' && env[key])) unavailable();
-    const manualConfigured = env.ATLAS_PUBLIC_MANUAL_ORIGIN !== undefined || env.ATLAS_PUBLIC_MANUAL_KEY !== undefined;
-    if (!legacyConfigured && !manualConfigured || env.ATLAS_PUBLIC_RUNTIME !== (legacyConfigured ? 'postgres' : 'manual')) unavailable();
-    if (manualConfigured && env.ATLAS_PUBLIC_MANUAL_ORIGIN !== MANUAL_PUBLIC_ORIGIN) unavailable();
-    const manual = manualConfigured ? { manualOrigin: MANUAL_PUBLIC_ORIGIN, manualKey: keyBytes(env.ATLAS_PUBLIC_MANUAL_KEY) } : {};
-    const legacy = {};
-    if (legacyConfigured) {
-        let url; try { url = new URL(env.ATLAS_PUBLIC_DATABASE_URL); } catch { unavailable(); }
-        if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.searchParams.get('schema') !== 'atlas_staff'
-            || url.searchParams.get('sslmode') !== 'require' || !url.username || !url.password || url.pathname.length < 2) unavailable();
-        Object.assign(legacy, { databaseUrl: url.href, mediaOrigin: bridgeOrigin(env.ATLAS_PUBLIC_MEDIA_ORIGIN), mediaKey: keyBytes(env.ATLAS_PUBLIC_MEDIA_KEY) });
-        if (manual.manualKey?.equals(legacy.mediaKey)) unavailable();
-    }
+    if (env.ATLAS_PUBLIC_RUNTIME !== 'manual' || env.ATLAS_PUBLIC_MANUAL_ORIGIN !== MANUAL_PUBLIC_ORIGIN
+        || ['ATLAS_PUBLIC_DATABASE_URL', 'ATLAS_PUBLIC_MEDIA_ORIGIN', 'ATLAS_PUBLIC_MEDIA_KEY'].some(key => env[key] !== undefined)) unavailable();
     return makePublicConfig({ mode: 'PRODUCTION', origin: PUBLIC_ORIGIN, deploymentId: env.VERCEL_URL,
-        releaseSha: env.VERCEL_GIT_COMMIT_SHA, ...legacy, ...manual });
+        releaseSha: env.VERCEL_GIT_COMMIT_SHA, manualOrigin: MANUAL_PUBLIC_ORIGIN, manualKey: keyBytes(env.ATLAS_PUBLIC_MANUAL_KEY) });
 }
 export function assertPublicRequest(req, config) {
     if (!['GET', 'HEAD'].includes(req.method) || req.headers.authorization) unavailable();
-    if (config.mode === 'PRODUCTION') {
-        if (req.headers.host !== 'atlasgrading.com' || req.headers['x-forwarded-host'] !== 'atlasgrading.com'
-            || req.headers['x-forwarded-proto'] !== 'https' || config.origin !== PUBLIC_ORIGIN) unavailable();
-    } else if (config.mode !== 'LOCAL_FIXTURE' || config.origin !== LOCAL_ORIGIN || req.headers.host !== '127.0.0.1:4319'
-        || !['127.0.0.1', '::ffff:127.0.0.1', '::1'].includes(req.socket.remoteAddress)
-        || (req.headers['x-forwarded-host'] && req.headers['x-forwarded-host'] !== '127.0.0.1:4319')
-        || (req.headers['x-forwarded-proto'] && req.headers['x-forwarded-proto'] !== 'http')) unavailable();
+    if (config.mode !== 'PRODUCTION' || req.headers.host !== 'atlasgrading.com' || req.headers['x-forwarded-host'] !== 'atlasgrading.com'
+        || req.headers['x-forwarded-proto'] !== 'https' || config.origin !== PUBLIC_ORIGIN) unavailable();
 }
 export function reportSelector(token, version) {
     if (typeof token !== 'string' || !/^ar_[A-Za-z0-9_-]{24}$/.test(token)) throw new Error('REPORT_NOT_FOUND');

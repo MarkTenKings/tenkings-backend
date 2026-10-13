@@ -15,7 +15,7 @@ for(const name of ['alakazam-reference.jpg','alakazam-label-sample.svg','vendor/
 files.set('/submission-source.css',path.join(here,'submission-source.css'));
 files.set('/assets/oxanium.ttf',path.join(here,'assets/oxanium.ttf'));
 for(const name of ['chapter-stops.js','report-embed.js','report-embed.js.LEGAL.txt','inspect-source/report-review.css','hero-reports.js','hero-report-model.mjs','report-guidance.js','report-guidance.css'])files.set('/'+name,path.join(here,name));
-for(const name of ['alakazam-demo.json','approved.json','maye-front.webp','maye-back.webp','abomasnow-front.webp','abomasnow-back.webp','dart-front.webp','dart-back.webp'])files.set('/reports-data/'+name,path.join(here,'reports',name));
+for(const name of ['alakazam-demo.json'])files.set('/reports-data/'+name,path.join(here,'reports',name));
 const port=Number(process.env.ATLAS_PREVIEW_PORT||8789);
 const types={'.txt':'text/plain; charset=utf-8','.json':'application/json','.webp':'image/webp','.mjs':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.jpg':'image/jpeg','.png':'image/png','.mp4':'video/mp4','.woff2':'font/woff2','.ttf':'font/ttf'};
 http.createServer(async(req,res)=>{

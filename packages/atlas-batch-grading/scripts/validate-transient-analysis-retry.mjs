@@ -12,12 +12,6 @@ import { BATCH_POLICY, batchAnalysisActionId } from '../src/index.mjs';
 import { createBatchRepository, batchGrantSQL } from '../src/repository.mjs';
 
 const qualificationScriptSha256 = digest(readFileSync(new URL(import.meta.url)));
-const migration = '20261012173000_batch_transient_analysis_retry';
-const migrations = new URL('../../../frontend/atlas-app/prisma/migrations/', import.meta.url);
-const nextSQL = readFileSync(new URL(`${migration}/migration.sql`, migrations), 'utf8');
-const oldSQL = readFileSync(new URL('20260925122000_manual_batch_capacity/migration.sql', migrations), 'utf8');
-const priorFunction = oldSQL.slice(oldSQL.indexOf('CREATE FUNCTION'), oldSQL.indexOf('\nCREATE TRIGGER'))
-  .replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION');
 const functionSnapshot = async sql => (await sql(`SELECT
   encode(sha256(convert_to(pg_get_functiondef(p.oid),'UTF8')),'hex') AS definition_sha256,
   encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') AS body_sha256,
@@ -25,34 +19,7 @@ const functionSnapshot = async sql => (await sql(`SELECT
   (SELECT jsonb_agg(jsonb_build_object('name',t.tgname,'enabled',t.tgenabled,
     'definition',pg_get_triggerdef(t.oid)) ORDER BY t.tgname) FROM pg_trigger t WHERE t.tgfoid=p.oid) AS triggers
   FROM pg_proc p WHERE p.oid='atlas_manual_connected.guard_batch_analysis_successor()'::regprocedure`)).rows[0];
-const upgradeRows = async sql => (await sql(`SELECT jsonb_build_object(
-  'staff',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM atlas_staff."StaffIdentity" s),
-  'cards',(SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM atlas_manual.card m),
-  'jobs',(SELECT jsonb_agg(to_jsonb(j) ORDER BY key) FROM atlas_manual_connected.batch_grading j),
-  'runs',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM atlas_defect_analysis.run r),
-  'receipts',(SELECT jsonb_agg(to_jsonb(p) ORDER BY analysis_id,kind) FROM atlas_defect_analysis.receipt p),
-  'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY analysis_id,kind) FROM atlas_defect_analysis.provider_event e)) AS value`)).rows[0].value;
-let beforeUpgrade, registeredUpgrade;
-const fixture = await createOwnedManualFixture(process.argv.slice(2), {
-  async beforeUpgradeFrom80({ sql, directory }) {
-    const cardId = randomUUID(), ownerId = randomUUID(), text = canonical({fixture:'registered migration row preservation'});
-    await sql('INSERT INTO atlas_staff."StaffIdentity"(id,"phoneHash",name) VALUES($1,$2,$3)', [ownerId,digest(ownerId),'Synthetic migration owner']);
-    await sql('INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id) VALUES($1,1,$2,$3,$4)', [cardId,text,digest(text),ownerId]);
-    beforeUpgrade={function:await functionSnapshot(sql),rows:await upgradeRows(sql)};
-    writeFileSync(join(directory,'function-before-upgrade.json'),JSON.stringify(beforeUpgrade.function,null,2));
-    console.error('Owned PostgreSQL: schema80 predecessor captured.');
-  },
-  async afterUpgradeTo81({ sql, directory }) {
-    const after={function:await functionSnapshot(sql),rows:await upgradeRows(sql)};
-    assert.deepEqual(after.rows,beforeUpgrade.rows);
-    for(const key of ['proowner','owner','proacl','prosecdef','proconfig','triggers'])assert.deepEqual(after.function[key],beforeUpgrade.function[key]);
-    assert.notEqual(after.function.definition_sha256,beforeUpgrade.function.definition_sha256);
-    registeredUpgrade={before:beforeUpgrade.function,after:after.function,protectedRowsPreserved:true,
-      previousLedgerRowsPreserved:80,registeredMigrations:81,secondDeployNoOp:true,migration,migrationSha256:digest(nextSQL)};
-    writeFileSync(join(directory,'function-upgrade.json'),JSON.stringify(registeredUpgrade,null,2));
-    console.error('Owned PostgreSQL: registered80-to81 migration and no-op proof passed.');
-  }
-}), checks = ['registered80-to81 upgrade and second deploy preserve prior80 ledger rows, protected rows, function ownership/ACLs and trigger bindings'];
+const fixture = await createOwnedManualFixture(process.argv.slice(2)), checks = [];
 let fixtureSQL;
 try {
   // Use one owned synthetic admin connection for the many receipt assertions.
@@ -60,7 +27,6 @@ try {
   const { Client } = createRequire(import.meta.url)(process.argv[process.argv.indexOf('--pg-module')+1]);
   fixtureSQL = new Client({ connectionString: fixture.database.adminUrl, connectionTimeoutMillis: 5000 });
   await fixtureSQL.connect();
-  assert.equal(fixture.cluster.source.staffMigrations.at(-1).name, migration);
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
   await fixture.cluster.sql('GRANT USAGE ON SCHEMA atlas_manual_connected TO atlas_fixture_manual', [], fixture.database.name);
   await fixture.cluster.sql(batchGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
@@ -83,8 +49,6 @@ try {
     'runs',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM atlas_defect_analysis.run r),
     'receipts',(SELECT jsonb_agg(to_jsonb(p) ORDER BY analysis_id,kind) FROM atlas_defect_analysis.receipt p),
     'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY analysis_id,kind) FROM atlas_defect_analysis.provider_event e)) AS value`)).rows[0].value;
-  const permissions = async () => (await sql(`SELECT proowner,proacl,prosecdef,proconfig FROM pg_proc
-    WHERE oid='atlas_manual_connected.guard_batch_analysis_successor()'::regprocedure`)).rows[0];
   async function seed() {
     const cardId = randomUUID(), sourceHash = digest(cardId), uploads = { FRONT: randomUUID(), BACK: randomUUID() };
     const text = canonical({ fixture: 'synthetic retry evidence', source: { sourceHash } });
@@ -128,14 +92,7 @@ try {
       [job.key,attempt<=3?batchAnalysisActionId(job.key,attempt):randomUUID(),attempt,evidence,delay]);
   }
   const first=await seed();await receipt(first);
-  await sql(priorFunction);
-  const preserved=await protectedRows(), grants=await permissions();
-  await assert.rejects(forceSuccessor(first), /BATCH_RATE_LIMIT_RETRY_UNPROVEN/);
-  await sql(nextSQL);
-  assert.deepEqual(await protectedRows(),preserved);assert.deepEqual(await permissions(),grants);
-  await sql(nextSQL);assert.deepEqual(await protectedRows(),preserved);assert.deepEqual(await permissions(),grants);
-  console.error('Owned PostgreSQL: behavioral group complete.');
-  checks.push('original 429-only guard rejects saved 500; forward function upgrade and repeat preserve all rows, ownership and ACLs');
+  const guardBefore=await functionSnapshot(sql);
   for(const httpStatus of [429,500,502,503,504]) {
     const job=httpStatus===500?first:await seed();if(job!==first)await receipt(job,{httpStatus});
     const before=await protectedRows();
@@ -200,6 +157,7 @@ try {
   }
   console.error('Owned PostgreSQL: behavioral group complete.');
   checks.push('concurrency1 clears terminal reservations and reclaims only unchanged unreviewed refused work; human edits and begun reviews remain untouched');
-  console.log(JSON.stringify({status:'BATCH_TRANSIENT_RETRY_POSTGRES_PASS',checks,migration,staffMigrations:fixture.cluster.source.staffMigrations.length,
-    qualificationScriptSha256,registeredUpgrade,directory:fixture.cluster.directory,providerRequests:0,realPhotographs:false}));
+  assert.deepEqual(await functionSnapshot(sql),guardBefore);
+  console.log(JSON.stringify({status:'BATCH_TRANSIENT_RETRY_POSTGRES_PASS',checks,schemaMode:'standalone',schemaSource:fixture.cluster.source,
+    qualificationScriptSha256,directory:fixture.cluster.directory,providerRequests:0,realPhotographs:false}));
 } finally { try { await fixtureSQL?.end(); } finally { await fixture.stop(); } }

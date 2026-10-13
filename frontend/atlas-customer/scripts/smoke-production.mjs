@@ -65,11 +65,11 @@ try {
         await delay(50);
     }
     const pageHtml = await check('/account', 503);
-    for (const path of ['/account/submit', '/account/profile', `/account/submissions/${id}`]) await check(path, 503);
+    for (const path of ['/account/submit', '/account/profile']) await check(path, 503);
     await check('/account', 503, { method: 'HEAD' });
-    for (const page of ['index', 'submit', 'profile', `submissions/${id}`])
+    for (const page of ['index', 'submit', 'profile'])
         await check(`/account/_next/data/${buildId}/${page}.json`, 503, {}, 'data');
-    for (const path of ['session', 'submissions', `submissions/${id}`, `cards/${id}`, `submission-requests/${id}`])
+    for (const path of ['session', 'submissions', `cards/${id}`, `submission-requests/${id}`])
         await check(`/account/api/customer/${path}`, 503, {}, 'api');
     const body = path => JSON.stringify(path === 'auth/request' ? { phone: '+12025550141', requestId: id }
         : path === 'auth/verify' ? { challengeId: id, code: '424242' } : {});

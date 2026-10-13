@@ -230,34 +230,11 @@ test('an unresolved hold never claims human-confirmed identity or offers to retr
  assert.equal(f.writes.length,0);f.dispose();
 });
 
-const contributionToggle=f=>f.find(node=>node.type==='input'&&node.props.type==='checkbox')[0];
-const rightsBasis=f=>f.find(node=>node.type==='select'&&node.props['aria-label']==='Photo rights basis')[0];
-function permitPhotos(f){contributionToggle(f).props.onChange({target:{checked:true}});f.render();rightsBasis(f).props.onChange({target:{value:'permission'}});f.render();assert.equal(f.find(node=>node.type==='textarea').length,0);}
-test('photo contribution defaults off and requires an explicit rights basis without burdening ordinary confirmation',async()=>{
- const f=fixture();await flush();f.render();assert.equal(contributionToggle(f).props.checked,false);assert.equal(rightsBasis(f),undefined);
- assert.match(f.text(),/For internal ATLAS and Ten Kings reference review/);assert.match(f.text(),/does not publish them automatically/);
+test('ordinary variant confirmation remains available without outbound photo controls',async()=>{
+ const f=fixture();await flush();f.render();assert.equal(f.find(node=>node.props?.['aria-label']==='Optional reference photo contribution').length,0);
+ assert.doesNotMatch(f.text(),/Ten Kings|Photo rights basis|shared reference library/);
  f.radios()[0].props.onChange();f.render();assert.equal(f.button('Confirm selected identity').props.disabled,false);
- contributionToggle(f).props.onChange({target:{checked:true}});f.render();assert.equal(rightsBasis(f).props.value,'');assert.equal(f.button('Confirm selected identity').props.disabled,true);
- rightsBasis(f).props.onChange({target:{value:'owned_original'}});f.render();assert.equal(f.button('Confirm selected identity').props.disabled,false);
- assert.equal(f.find(node=>node.type==='textarea').length,0);assert.equal(f.button('Confirm selected identity').props.disabled,false);
- assert.equal(f.writes.length,0);f.button('Confirm selected identity').props.onClick();await flush();f.render();
- assert.deepEqual(f.writes[0].referencePermission,{basis:'owned_original',consumers:['inventory','atlas']});assert.equal(contributionToggle(f).props.checked,false);f.dispose();
-});
-test('photo rights survive draft reload but clear when the source or identity changes and cannot attach to unresolved holds',async()=>{
- for(const field of ['sourceHash','identityRevision']){
-  const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();permitPhotos(f);f.remount();await flush();f.render();
-  assert.equal(contributionToggle(f).props.checked,true);assert.equal(rightsBasis(f).props.value,'permission');assert.equal(f.find(node=>node.type==='textarea').length,0);
-  const value=field==='sourceHash'?hash('f'):2;f.props[field]=value;f.status[field]=value;f.render();await flush();f.render();assert.equal(contributionToggle(f).props.checked,false);assert.equal(rightsBasis(f),undefined);assert.equal(f.writes.length,0);f.dispose();
- }
- const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();permitPhotos(f);f.button('I cannot tell').props.onClick();f.render();assert.equal(contributionToggle(f),undefined);
- f.button('Save for identity review').props.onClick();await flush();f.render();assert.equal(Object.hasOwn(f.writes[0],'referencePermission'),false);assert.equal(f.gates.at(-1),false);f.dispose();
-});
-test('denied opted-in save keeps exact permission pending and locks all contribution controls until explicit recovery',async()=>{
- const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();permitPhotos(f);f.save=()=>{throw {status:403,code:'SESSION_EXPIRED'};};
- f.button('Confirm selected identity').props.onClick();await flush();f.render();const original=f.writes[0];assert.ok(f.button('Check retained decision'));assert.equal(f.gates.at(-1),false);
- contributionToggle(f).props.onChange({target:{checked:false}});f.render();assert.equal(contributionToggle(f).props.checked,true);
- assert.ok(f.find(node=>node.type==='fieldset'&&node.props['aria-label']==='Optional reference photo contribution')[0].props.disabled);f.remount();await flush();f.render();assert.equal(contributionToggle(f).props.checked,true);assert.equal(f.find(node=>node.type==='textarea').length,0);
- f.save=null;f.button('Check retained decision').props.onClick();await flush();f.render();assert.deepEqual(f.writes,[original,original]);f.dispose();
+ f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.writes.length,1);assert.equal(Object.hasOwn(f.writes[0],'referencePermission'),false);f.dispose();
 });
 
 test('Scrydex series aliases show named variants in primary group, while wrong card/year and flagged set aliases remain separate',()=>{
@@ -276,7 +253,7 @@ test('reference preview changes only the viewed reference and never drafts or co
  const f=fixture();f.props.previewOnly=true;await flush();f.render();
  assert.match(f.text(),/Compare variant references/);
  for(const label of ['Confirm selected identity','My card is not shown','I cannot tell'])assert.equal(f.button(label),undefined);
- assert.equal(contributionToggle(f),undefined);f.radios()[1].props.onChange();f.render();assert.equal(f.radios()[1].props.checked,true);
+ assert.equal(f.find(node=>node.type==='input'&&node.props.type==='checkbox').length,0);f.radios()[1].props.onChange();f.render();assert.equal(f.radios()[1].props.checked,true);
  assert.equal(f.writes.length,0);assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);
  f.props.previewOnly=false;f.remount();await flush();f.render();assert.ok(f.radios().every(r=>!r.props.checked));
  assert.equal(f.button('Confirm selected identity').props.disabled,true);f.dispose();

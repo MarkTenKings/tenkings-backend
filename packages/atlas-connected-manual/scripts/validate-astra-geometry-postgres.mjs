@@ -19,13 +19,8 @@ import {memoryPhotoStorage,sha} from '../../atlas-manual-intake/test/helpers.mjs
 import {rgb16Png} from '../../atlas-photo-runtime/test/helpers.mjs';
 const output=process.env.ATLAS_GEOMETRY_JOURNAL_EVIDENCE;
 assert(output&&resolve(output)===output,'Absolute owned evidence directory required');await mkdir(output,{recursive:true,mode:0o700});
-let upgradeBefore;
-const ledgerSQL=`SELECT migration_name,checksum,finished_at,rolled_back_at,logs,applied_steps_count FROM atlas_staff._prisma_migrations ORDER BY migration_name`;
-const fixture=await createOwnedManualFixture(process.argv.slice(2),{
- beforeUpgradeFrom81:async({sql})=>{upgradeBefore=await sql(ledgerSQL);assert.equal(upgradeBefore.rows.length,81);},
- afterUpgradeTo83:async({sql,source})=>{const after=await sql(ledgerSQL);assert.equal(after.rows.length,83);assert.deepEqual(after.rows.slice(0,81),upgradeBefore.rows);await writeFile(join(output,'registered81-to83.json'),JSON.stringify({status:'REGISTERED81_TO83_PREFIX_PRESERVED',before:upgradeBefore.rows,after:after.rows,inventory:source.staffMigrations},null,2)+'\n',{mode:0o600});}
-}),connection=fixture.connect();
-const checks=[],record=text=>checks.push(text),migrationPaths=['20261012230000_astra_geometry_evidence','20261012231000_card_image_intake'];
+const fixture=await createOwnedManualFixture(process.argv.slice(2)),connection=fixture.connect();
+const checks=[],record=text=>checks.push(text);
 try{
  for(const grants of[intakeGrantSQL,connectedGrantSQL,earlyGeometryGrantSQL])await fixture.cluster.sql(grants('atlas_fixture_manual'),[],fixture.database.name);
  const {auth,boundary,manualClient}=connection,boot=await auth.bootstrap(''),browser=`${fixture.config.cookies.browser}=${boot.browserToken}`;
@@ -116,7 +111,6 @@ try{
  await assert.rejects(store.ensure(staff,revoked.input,{retry:true}),e=>e.code==='SIGN_IN_REQUIRED');
  record('revoked reviewer/accessVersion blocks paid dispatch even with existing lease; expired authenticated retry is refused');
  const [counts]=await fixture.admin.$queryRawUnsafe('SELECT (SELECT count(*)::int FROM atlas_manual.card) cards,(SELECT count(*)::int FROM atlas_manual.approval) approvals');assert.deepEqual(counts,{cards:0,approvals:0});
- const migrations=await Promise.all(migrationPaths.map(async name=>({name,sha256:digest(await readFile(new URL('../../../frontend/atlas-app/prisma/migrations/'+name+'/migration.sql',import.meta.url)))})));
- const evidence={status:'ASTRA_GEOMETRY_POSTGRES_PASS',fixtureDirectory:fixture.cluster.directory,database:fixture.database.name,externalProviderCalls:0,syntheticModelCalls:submitted.length,productionDataEffects:false,migrations,checks};
+ const evidence={status:'ASTRA_GEOMETRY_POSTGRES_PASS',fixtureDirectory:fixture.cluster.directory,database:fixture.database.name,externalProviderCalls:0,syntheticModelCalls:submitted.length,productionDataEffects:false,schemaMode:'standalone',schemaSource:fixture.cluster.source,checks};
  await writeFile(join(output,'astra-geometry-postgres.json'),JSON.stringify(evidence,null,2)+'\n',{mode:0o600});console.log(JSON.stringify(evidence));
 }finally{await connection.close();await fixture.stop();await writeFile(join(output,'cleanup.json'),await readFile(join(fixture.cluster.directory,'cleanup.json')),{mode:0o600});}

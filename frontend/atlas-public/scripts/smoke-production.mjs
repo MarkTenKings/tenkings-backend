@@ -17,7 +17,7 @@ const port = await new Promise((done, reject) => {
 const origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, [require.resolve('next/dist/bin/next'), 'start', root, '-H', '127.0.0.1', '-p', String(port)], {
   cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
-  env: { PATH: process.env.PATH, NODE_ENV: 'production', NEXT_TELEMETRY_DISABLED: '1', ATLAS_LOCAL_PUBLIC: '1', ATLAS_LOCAL_PUBLIC_FILE: '/private/tmp/not-an-owned-fixture/public-config.json' }
+  env: { PATH: process.env.PATH, NODE_ENV: 'production', NEXT_TELEMETRY_DISABLED: '1', ATLAS_LOCAL_PUBLIC: '1' }
 });
 let serverOutput = '';
 server.stdout.on('data', data => { serverOutput += data; });

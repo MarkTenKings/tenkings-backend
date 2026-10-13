@@ -1,0 +1,1320 @@
+{
+  "changes": [
+    {
+      "afterSha256": "f3baaf56ef55d3485399751b2fcd716bd382cc8bc0f6cadf3f23d77ab63d0905",
+      "beforeSha256": "b7d33447e107fcc4d1889da46f54bfc6aa788864294808658c614f0587cf24d5",
+      "object": "atlas_customer.customer_call_v1",
+      "reason": "Remove only obsolete submission/specimen/assignment/invoice branches; preserve current auth/profile/identity audit logic"
+    },
+    {
+      "afterSha256": "f0f6c7ca06d5c6c7fb27c9fa0d35b7750e3cf92cadc6384f6eb70192d40964ad",
+      "beforeSha256": "2d9755db5561e3c19c91b93debd095f71387e34771cf5fff8a24f5da79a5e1f7",
+      "object": "atlas_staff.operations_change_guard",
+      "reason": "Remove only obsolete submission/specimen/assignment/invoice branches; preserve current auth/profile/identity audit logic"
+    }
+  ],
+  "functions": [
+    {
+      "name": "atlas_customer.account_projection(a atlas_customer.\"CustomerAccount\")",
+      "sha256": "3d06619e6d5e67a6cf921e147de9a9f6a2542f3e854faf7b55b00e9b5919f63b"
+    },
+    {
+      "name": "atlas_customer.canonical_email(value text)",
+      "sha256": "988339ab8d9cf452dde87b9a1ad86775c1f553b681f0cdd17fa0456ed147c725"
+    },
+    {
+      "name": "atlas_customer.commerce_call(action text, account_id uuid, d jsonb)",
+      "sha256": "9044bf82b8ccc48a715661900481d2bcb3c64394f5387941af19109b07c32f49"
+    },
+    {
+      "name": "atlas_customer.commerce_canonical(v jsonb)",
+      "sha256": "0aef04d9ef3b19abaa5f0a36c13e7a90b19c9edfc97cc76c31aec4b7eca86e3d"
+    },
+    {
+      "name": "atlas_customer.commerce_effect_guard()",
+      "sha256": "7c1593a796f32713aa798671a35b8a16a66fd6ef0d1358f8bb945117c52f2051"
+    },
+    {
+      "name": "atlas_customer.commerce_fedex_shipping_plan_valid(plan jsonb, n integer, charged_legs text)",
+      "sha256": "d313d84eb2cb2b4fec55631299dcb86c9d58433b2339b66e25d6fb0cde019a9c"
+    },
+    {
+      "name": "atlas_customer.commerce_hash(v jsonb)",
+      "sha256": "bd6761f8b0a9c650fc8fde1c55dc12c7e5453f3b9d0bee8248de60f53c9f09aa"
+    },
+    {
+      "name": "atlas_customer.commerce_immutable()",
+      "sha256": "078667056aef20adcb8ba142cf0b23ff2ef07d5c78f8697d59d02160d2e5801b"
+    },
+    {
+      "name": "atlas_customer.commerce_label_ready_email()",
+      "sha256": "c09ce288ff953b2ad25e1f239d15c744622ab87e2c794a4b5d1b264061589a0a"
+    },
+    {
+      "name": "atlas_customer.commerce_payment_guard()",
+      "sha256": "b3a4d6231b6c1fb9c7735c39297f2c90d367f31d3e83509ba7bb7c3b5ea32134"
+    },
+    {
+      "name": "atlas_customer.commerce_payment_projection(pid uuid)",
+      "sha256": "11a66b83b158a6cf2bc5e81c431690fdae664d141962023350b96cec98462e2b"
+    },
+    {
+      "name": "atlas_customer.commerce_provider_call(action text, b jsonb, d jsonb)",
+      "sha256": "0ad7554ff4a3f8c7c015bbdb48f53e9c62b9d7e32d3deb4c60d89fef8a387a5f"
+    },
+    {
+      "name": "atlas_customer.commerce_public_cards(v jsonb)",
+      "sha256": "c1197662de38ccd7ca5bafc68b29fefc7b8c0cf5baca884588bcdabcc7111cc0"
+    },
+    {
+      "name": "atlas_customer.commerce_public_checkout(v jsonb)",
+      "sha256": "452832439200762d43fd55764aacb4f2e29f9b54501b7ab23e0e448b1027ecbc"
+    },
+    {
+      "name": "atlas_customer.commerce_public_fields(v jsonb, keys text[])",
+      "sha256": "efbba5caf7951cb557b09846659581c623adee44b90729d5d76821491bd87132"
+    },
+    {
+      "name": "atlas_customer.commerce_public_location(v jsonb)",
+      "sha256": "51cb667323ea72d81e1ff4c813687a0837bfbf1f5dfc8312c5f536e05453625e"
+    },
+    {
+      "name": "atlas_customer.commerce_public_order(v jsonb)",
+      "sha256": "bed6670c1ae60bb2293dd19f7ca31b388b5e4d98289c18765feaf223c5bc1ca1"
+    },
+    {
+      "name": "atlas_customer.commerce_public_payment(v jsonb)",
+      "sha256": "1178d09912ba15d06d86b95a5d034bca54dfe2a84343af18c1a592533d6316db"
+    },
+    {
+      "name": "atlas_customer.commerce_public_quote(v jsonb)",
+      "sha256": "7447e1eb555c29cf5d8352d845ed5379ce30a6df72087fd3aee324781e9ad58b"
+    },
+    {
+      "name": "atlas_customer.commerce_public_rows(v jsonb, keys text[])",
+      "sha256": "de7f94ab54b75ae2ccc92b2f69c82093184834659bfb72b368fe17f9a8fcfcd6"
+    },
+    {
+      "name": "atlas_customer.commerce_receipt_email_valid(value text)",
+      "sha256": "f98387962797aed46839219373fdd7670582709fa919ab77fba4d26d47926a6b"
+    },
+    {
+      "name": "atlas_customer.commerce_return_ready(oid uuid)",
+      "sha256": "f96aeb93f83f041d66fe966f72d5cf2d20ba7339b25a60356ad3d9f1e16fe211"
+    },
+    {
+      "name": "atlas_customer.commerce_shipping_call(action text, b jsonb, d jsonb)",
+      "sha256": "ec29256e6e841f98b60e4ea49641556ca7c8044d825211486f834b3218df2cca"
+    },
+    {
+      "name": "atlas_customer.commerce_shipping_payment_guard()",
+      "sha256": "6fb03025a01ae74c126a1e7d993ba3ce8e35ded3bb446ba58f49d44c6ad38e80"
+    },
+    {
+      "name": "atlas_customer.commerce_shipping_payment_projection(pid uuid)",
+      "sha256": "3d1d99862967ee2a1f407d0c40629da2de127f068d517f5b89d26335b9de1ef9"
+    },
+    {
+      "name": "atlas_customer.commerce_shipping_plan_valid(plan jsonb, n integer, charged_legs text)",
+      "sha256": "2dcfd7eaee5779e7a43282b3487aeecce9f9bf05599c9e0549e64c5d616ab29a"
+    },
+    {
+      "name": "atlas_customer.commerce_shipping_public_state(oid uuid)",
+      "sha256": "b134a3095597bf220c32147c26f60b57be0a3dfeeed4605c71bb92f5051c9ad4"
+    },
+    {
+      "name": "atlas_customer.commerce_shipping_request(plan jsonb, leg text, quoted_at timestamp with time zone)",
+      "sha256": "110dc0618d4226c78d89aba11ce3b6f950e0b37728516489053bb00e615e38cd"
+    },
+    {
+      "name": "atlas_customer.commerce_shipping_source(oid uuid)",
+      "sha256": "acbd5209c9dd622af91ca4f8108a5e710938f6f189b0f88c3da15ba3d720a648"
+    },
+    {
+      "name": "atlas_customer.commerce_shipstation_customer(profile jsonb, phone text)",
+      "sha256": "f67a4e02cf8ec3805db3aaf0242870a43346e076cd77e88eff71376e2a546c02"
+    },
+    {
+      "name": "atlas_customer.commerce_shipstation_package_valid(p jsonb)",
+      "sha256": "d632a42262540df9f1a2900a0b2d892c5b7517a2b5f3fa63eddb96021477b61c"
+    },
+    {
+      "name": "atlas_customer.commerce_shipstation_party_valid(p jsonb)",
+      "sha256": "e562b3500520ba6a40f31d47ed4ff6484c1bea08f10e7258eb28818340044bd0"
+    },
+    {
+      "name": "atlas_customer.commerce_shipstation_rate_valid(rate jsonb, shipment jsonb)",
+      "sha256": "c951611fd5cea70225e0bf0bcc43bd05d655e5bb3be879db8174a31543bd18bc"
+    },
+    {
+      "name": "atlas_customer.commerce_source(did uuid)",
+      "sha256": "4e70322000599c508c5cd0d1a1baba2602a97ce37126b19dc5b339c447197839"
+    },
+    {
+      "name": "atlas_customer.commerce_verified_email_guard()",
+      "sha256": "dc9688aef9c8a5725b9f2b0d02bde8ae33e6f7dddebb932b821d5a54942a5fd5"
+    },
+    {
+      "name": "atlas_customer.control_revision_guard()",
+      "sha256": "aae36935b3e9846e00b0194ba6829f31562333ff14bb419b1db5e93e7039f89e"
+    },
+    {
+      "name": "atlas_customer.current_account(sh text, bh text, rev integer)",
+      "sha256": "e8430d7b37aaaca95e36224152388d92b7c1fa09e9d28a77640a2d1d0fb4440c"
+    },
+    {
+      "name": "atlas_customer.customer_call(action text, b jsonb, d jsonb)",
+      "sha256": "7c572eadef5b910eae5d46128e8a20a8cf5e790e6b49492dd2a75f29c15fa333"
+    },
+    {
+      "name": "atlas_customer.customer_call_before_email_verification(action text, b jsonb, d jsonb)",
+      "sha256": "4fb93a149361c6b17445f5b7e15ef6b55fe1585c2cd4ded274628f12bbbcb2f5"
+    },
+    {
+      "name": "atlas_customer.customer_call_before_progress(action text, binding jsonb, d jsonb)",
+      "sha256": "963f7e3e433e3a336235dc879121eca33364cf1da1ee8d0f561eb69c7fcdd437"
+    },
+    {
+      "name": "atlas_customer.customer_call_before_shop_profile(action text, b jsonb, d jsonb)",
+      "sha256": "2288b92d4f5be8211cc8dd658f80fe3ca64dde778798c2309a573a037f6cc311"
+    },
+    {
+      "name": "atlas_customer.customer_call_v1(action text, binding jsonb, d jsonb)",
+      "sha256": "f3baaf56ef55d3485399751b2fcd716bd382cc8bc0f6cadf3f23d77ab63d0905"
+    },
+    {
+      "name": "atlas_customer.customer_private_call(action text, b jsonb, d jsonb)",
+      "sha256": "ae13c08d29830bc040a044698f7aa5dfc109d2a892478f1d02093ebd04ab42f9"
+    },
+    {
+      "name": "atlas_customer.customer_private_call_before_email_verification(action text, b jsonb, d jsonb)",
+      "sha256": "5430d433594f5158174e70cf55484248cfb5425f34260f8d80c381e7d9cc87fb"
+    },
+    {
+      "name": "atlas_customer.customer_private_call_before_progress(action text, b jsonb, d jsonb)",
+      "sha256": "93bf46e5ad6d476a26ab1096d00d5d210cfdc048bbe65a72d4bedd2e981b579e"
+    },
+    {
+      "name": "atlas_customer.email_verification_private(action text, b jsonb, d jsonb)",
+      "sha256": "0069dc6c6eab922d04207e8831c3017d1b8f37f059971e49ad1b6454dfc000c2"
+    },
+    {
+      "name": "atlas_customer.email_verification_status(aid uuid, did uuid)",
+      "sha256": "22a4f5f4ed54dc7aba261419fd46f7351432814238feed90cb88ea4ee7c30f04"
+    },
+    {
+      "name": "atlas_customer.email_verified(aid uuid, email text)",
+      "sha256": "e91986165b5234151825400ac311f9479e35a47a6df253db16792070ecc78b98"
+    },
+    {
+      "name": "atlas_customer.enqueue_progress(cid uuid, kind text, event_key text, occurred timestamp with time zone, src jsonb)",
+      "sha256": "547bcbef0df51c5827b3e10c84e1d26b428d0c01c9252248a8d37bfb0bb32453"
+    },
+    {
+      "name": "atlas_customer.immutable_record()",
+      "sha256": "7b5bead055033da8c2a02d1a6418663ad91739f7c117050198715fc6b75b3b39"
+    },
+    {
+      "name": "atlas_customer.intake_call(action text, account_id uuid, d jsonb)",
+      "sha256": "b3d30c6b292660a1521a283d6eea64e453e2ece07ef9198559b4780f477ae944"
+    },
+    {
+      "name": "atlas_customer.intake_draft_projection(did uuid)",
+      "sha256": "42edfd112a04a11c49c80d896153c3a3d16a11406e760c5ae07c79ca50857788"
+    },
+    {
+      "name": "atlas_customer.intake_editable(did uuid)",
+      "sha256": "1a6ab135845e341b04c2b740d59689d8861a3a05d545668e4ad5909018aee0d8"
+    },
+    {
+      "name": "atlas_customer.intake_identity_valid(v jsonb)",
+      "sha256": "7280b925a9c2c1364e8e3d835ef09ae089ab78545d8d6f463f42e5f5b6ba2bb4"
+    },
+    {
+      "name": "atlas_customer.intake_location(kid uuid)",
+      "sha256": "af97406ab632968a7be170115e7e51aab4e1deb95f40a0a6b916cb2112444dcb"
+    },
+    {
+      "name": "atlas_customer.intake_public_fields(v jsonb, keys text[])",
+      "sha256": "2d55e3cfc2f08ec9986fad0b6ca95594a7b63c2a4e476bda266f802cec1e3732"
+    },
+    {
+      "name": "atlas_customer.intake_public_location(v jsonb)",
+      "sha256": "f3ea80a23688c12f91f4352ccc09bf41de2e3e5e68cdbc21fe7fa95e6b4c4af5"
+    },
+    {
+      "name": "atlas_customer.intake_public_rows(v jsonb, keys text[])",
+      "sha256": "052861524b963bb4e12c4241d5ecf0c1e96c5949a05fccaff8d52c1c1d749b5b"
+    },
+    {
+      "name": "atlas_customer.intake_upload_projection(uid uuid)",
+      "sha256": "c80d085b4bb35a2feb23591615c645e5c4f130681147c8fc5cf0a992fd2716ed"
+    },
+    {
+      "name": "atlas_customer.intake_worker_call(action text, d jsonb)",
+      "sha256": "61bacc97a5e9fb278d5d5b750e825c4cc0a370752e029c27754d2b4ae30642ae"
+    },
+    {
+      "name": "atlas_customer.problem(s integer, c text)",
+      "sha256": "ee19752d5ba6132967b61fce038ced0b34203c606c82356326e7647a206502af"
+    },
+    {
+      "name": "atlas_customer.progress_custody_event()",
+      "sha256": "21c8aa2aeb8bfc475672b2c2b9a4b2750c83745e221956c39c2552f42b84fee4"
+    },
+    {
+      "name": "atlas_customer.progress_grading_event()",
+      "sha256": "689887ce02e72ae4e908830644b48aa1924a68098cf1d5211087f3a38f21f033"
+    },
+    {
+      "name": "atlas_customer.progress_handoff_event()",
+      "sha256": "4fc74ae0982babe984446dd382d7f66215500f3bbfc4e1b76f36729335498602"
+    },
+    {
+      "name": "atlas_customer.progress_notification_guard()",
+      "sha256": "bc66d2c0ff2d570497504398d828ab473a6f9c724ca48088cc8be85bf0483cbf"
+    },
+    {
+      "name": "atlas_customer.progress_preference_call(action text, aid uuid, d jsonb)",
+      "sha256": "84db5b1d884d3477482b66a6ce4177ec2a86f93113bc392d835581b13dbcef86"
+    },
+    {
+      "name": "atlas_customer.progress_preferences(aid uuid)",
+      "sha256": "4c9554a74775faf33ce38072ed97f3ea519855151992f01c69c84adb755fb450"
+    },
+    {
+      "name": "atlas_customer.progress_provider_call(action text, d jsonb)",
+      "sha256": "0e92fc1cde9ce4a32e8027ef29d40282b3059d3b9722c34a0713dcca6f746c5a"
+    },
+    {
+      "name": "atlas_customer.progress_publication_event()",
+      "sha256": "6340aa3fcfd8af94e52de33b795a5a7510fafe45d2f64a00b87a5b77db85e43f"
+    },
+    {
+      "name": "atlas_customer.progress_source_current(e atlas_customer.\"ProgressNotification\")",
+      "sha256": "de98e225fbf144cc794ac1dee22ca47542af9a45a0f9ab488c3784830acc868a"
+    },
+    {
+      "name": "atlas_customer.take_rate(k text, lim integer)",
+      "sha256": "cb24c0470f6690b5dad41a7ad5419accb1a1b0b7924ba83b93127fc5004affcb"
+    },
+    {
+      "name": "atlas_customer.valid_contact_profile(p jsonb)",
+      "sha256": "947e6826065bf580c8e0642cda0e7c7bdb505d174b51ca88296b5b3830701d1f"
+    },
+    {
+      "name": "atlas_customer.valid_intake_profile(p jsonb, method text)",
+      "sha256": "09797562babe4e83362b88c73e76a63ba2c720eb070c21caed93b8b1a5d53e58"
+    },
+    {
+      "name": "atlas_customer.valid_profile(p jsonb)",
+      "sha256": "f2308d003d53bb0e211a79c8d1294c9638787e5738ea3ed0a934373a35c172c7"
+    },
+    {
+      "name": "atlas_customer.valid_profile_legacy(p jsonb)",
+      "sha256": "bb3541b5183e23b578896de2cb1eb57909bc8c518fa6e15931c914f9c266b81b"
+    },
+    {
+      "name": "atlas_customer.valid_shop_profile(p jsonb)",
+      "sha256": "e5ac171d50858c19a2d74ddc6e2f7aea8a71e0afe23f7d2df675f1eb5f54e98c"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_materialize_shared_week(instant timestamp with time zone)",
+      "sha256": "25f918694941fd72d48dadb6be03bba42d166f026dbfad22dff6f08e2f949d96"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_payment()",
+      "sha256": "5210398094e01664e67c7bfe0396d26593ba4647c48dfdaffeb44e3e2fb4d22f"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_reservation_guard()",
+      "sha256": "599c7126829d99bf2a044d10af925be7b4074cd15ce41c5603c1c9bb8ca2e336"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_shared_policy_guard()",
+      "sha256": "47267d4eaefda7788b1a89db0feec424c842e19bfbe212b1639da27d3c5ca4a4"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_shared_quota(starts timestamp with time zone)",
+      "sha256": "3af3f7dc2531d05bee79a270edb903701a272c6514591fc73b0d38e79a94fda2"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_shared_week_guard()",
+      "sha256": "c0bbd65a5373ab8b81c7c9a90826e8f53c7e43a6117668ec8a915000db8a3c6a"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_snapshot()",
+      "sha256": "fd226807f801e3ce9ae63f2f22c143677c10302a6591191bd9466b888033ee02"
+    },
+    {
+      "name": "atlas_customer.weekly_capacity_week(instant timestamp with time zone)",
+      "sha256": "99016d739436edc2f4ab4100d73ddba322dca45b7a70f235dcde7301bef83af1"
+    },
+    {
+      "name": "atlas_dealer.card_tracking(cid uuid)",
+      "sha256": "1b3cb07e097c47d86b4befc975a4ad6d945f0f3fa4ed40d1e600a50fd6e921a3"
+    },
+    {
+      "name": "atlas_dealer.card_tracking_with_handoff(cid uuid)",
+      "sha256": "be72d5fedae4b003bfb2bf10e3211a6bcc353cfe08f6c235de1d5997001fc828"
+    },
+    {
+      "name": "atlas_dealer.customer_call(action text, account_id uuid, control_revision integer, d jsonb)",
+      "sha256": "8a1d1696b512b726674fd6143e32e09f5c44640408eeb731b1a3bd75236f98b6"
+    },
+    {
+      "name": "atlas_dealer.customer_tracking(account_id uuid, oid uuid)",
+      "sha256": "c4d95e80d94161e3731b5ce4b2ab790acef35483b7f82a4d5b55ec2e161de24a"
+    },
+    {
+      "name": "atlas_dealer.declare_deposit(account_id uuid, d jsonb)",
+      "sha256": "ffa3932943cbb75301164f809214592057a63ca7224b702735175c6f11fda9c9"
+    },
+    {
+      "name": "atlas_dealer.directory(at_time timestamp with time zone, entry text)",
+      "sha256": "fe9cd49a79466062137a1cf673acb708dc243e011196c5aa54b110d5d0b802e6"
+    },
+    {
+      "name": "atlas_dealer.handoff_dealer_call(action text, control_revision integer, d jsonb)",
+      "sha256": "6ac850ac6b97dcc7ccb9cc1e2c26317b63e18fa0bc71fc021ef5a8f3b83f2218"
+    },
+    {
+      "name": "atlas_dealer.handoff_projection(hid uuid, include_cards boolean)",
+      "sha256": "3f7be7c5a23722897ca89566430a15241e06dd9c3c310c6a78520da8d63dfc72"
+    },
+    {
+      "name": "atlas_dealer.immutable()",
+      "sha256": "b75d6dd12f3dfee931da1990de094360cd64a7fa6cae6436d8ec3bfcf87f2fcc"
+    },
+    {
+      "name": "atlas_dealer.issue_handoff(aid uuid, d jsonb)",
+      "sha256": "06f9c3b30c4913cc69a8caf1a9812041a35949155735b974ec33334cb242a2ac"
+    },
+    {
+      "name": "atlas_dealer.location_guard()",
+      "sha256": "d0acba5687d4d1298ecf22b61a0ec7cc01ff9007715d328181945be9646c30e0"
+    },
+    {
+      "name": "atlas_dealer.manual_link_discard_guard()",
+      "sha256": "391f02122bf72039e0ce3db146d89b25adbad5fc450fac616b37651997e9c7cd"
+    },
+    {
+      "name": "atlas_dealer.next_cutoff(s jsonb, at_time timestamp with time zone)",
+      "sha256": "da90db3cbf0198750bb3f5b07df55f2cf5f4ddaaa2d535444859d28b4569c643"
+    },
+    {
+      "name": "atlas_dealer.next_slot(s jsonb, kind text, after_time timestamp with time zone, use_cutoff boolean)",
+      "sha256": "64c85cae82b8e3268244c15c43624083a2d46d4f90978c18fdc5f1d5f36e101a"
+    },
+    {
+      "name": "atlas_dealer.order_desk_call(action text, session_hash text, browser_hash text, binding jsonb, phones text[], d jsonb)",
+      "sha256": "2d25cda5746ce01ca4aa5534dfef503cd4bd647ebe898281029fc117c7048ced"
+    },
+    {
+      "name": "atlas_dealer.order_desk_card_state(cid uuid)",
+      "sha256": "1909f5bf992b7c05ab36801faec7776cfdddf01dc25547aa972cce273cc01223"
+    },
+    {
+      "name": "atlas_dealer.order_desk_detail(oid uuid, actor uuid)",
+      "sha256": "c9083a915ecc4027141e287082912ce58b51d9f390e72b548a4e11553f501179"
+    },
+    {
+      "name": "atlas_dealer.order_desk_group(stages jsonb)",
+      "sha256": "cc856f09ac2f282851e88282187e44135e9dc2637cbae672d69cbab8d58f6a45"
+    },
+    {
+      "name": "atlas_dealer.order_desk_label_valid(e atlas_customer.\"CommerceEffect\")",
+      "sha256": "a87dd76276f4e9786272c6a0ffd85c063886e970e872afa687ab92c99c110650"
+    },
+    {
+      "name": "atlas_dealer.order_desk_paid(oid uuid)",
+      "sha256": "7e826ed0ba6edfc6905df9a48a204fde13ab172e0fb90241312f350952701a2e"
+    },
+    {
+      "name": "atlas_dealer.order_desk_pair_hash(cid uuid)",
+      "sha256": "546c39fa95f94c9b0b9dced1732d461eec87d8848ef3ff48b94f0c33c718abe7"
+    },
+    {
+      "name": "atlas_dealer.order_desk_photos(cid uuid)",
+      "sha256": "b0554b4b4e13c82bfe62fd91f65981ad86c4256d11af623312fe52f0cbadebf9"
+    },
+    {
+      "name": "atlas_dealer.order_desk_shipping(oid uuid, leg text)",
+      "sha256": "cf89e29cf6147e0a48722f9b0578ee22c831291eacefbe5f1ede0d8b80396877"
+    },
+    {
+      "name": "atlas_dealer.order_desk_summary(oid uuid)",
+      "sha256": "03275e63aed63255f4f9c57e768ae2d47ba552af25894658cebf5d518e8d2eeb"
+    },
+    {
+      "name": "atlas_dealer.order_inbox_acknowledgment_projection(oid uuid)",
+      "sha256": "ac5beff6f459543f858817acc098885a2ebe0309e01ceb9b47d4e7f754f674d3"
+    },
+    {
+      "name": "atlas_dealer.order_paid()",
+      "sha256": "be0ec2015c5bb7ee40438bc974ce71dddb92c1599602570e9d608450b4abd88f"
+    },
+    {
+      "name": "atlas_dealer.projection(s jsonb, at_time timestamp with time zone)",
+      "sha256": "16eb30ab3ba0874ab6854f94f2c527ed46d7ebaf1b2fc4ce79aba91d858b9ead"
+    },
+    {
+      "name": "atlas_dealer.reverse_commission(card uuid, refund jsonb)",
+      "sha256": "c1324575ae180a0fe47d71af44f71c4a6fb4ec12d276c3751b4f0a418d385f3a"
+    },
+    {
+      "name": "atlas_dealer.save_location_revision()",
+      "sha256": "1bfb1cf3f12f342231b1a4e03c61cb3a47ae7c0f90101a1665454830ee51a352"
+    },
+    {
+      "name": "atlas_dealer.staff_call(action text, session_hash text, browser_hash text, binding jsonb, phones text[], d jsonb)",
+      "sha256": "3ad311bdf96019e44aaac1d7dfab5249b34237308b2cf4d6a5c8e93b13303603"
+    },
+    {
+      "name": "atlas_dealer.staff_order_acknowledge(session_hash text, browser_hash text, binding jsonb, phones text[], d jsonb)",
+      "sha256": "86999677c6e2e1e1a246256e572996988871dbb285784c752e939f44a2772beb"
+    },
+    {
+      "name": "atlas_dealer.valid_schedule(s jsonb)",
+      "sha256": "46898545394ffda2bbec9522f26d9d9f957b956d6e2d185fa0a3aeedba40ca9b"
+    },
+    {
+      "name": "atlas_dealer.with_shop_receipts(p jsonb)",
+      "sha256": "046a492778ef7a7449bc41974e338edf29f930f3164b6c27696de9bb8f61951a"
+    },
+    {
+      "name": "atlas_defect_analysis.append_provider_event(analysis uuid, request_sha text, provider_binding text, event_kind text, event_text text)",
+      "sha256": "53fd8765a04a6301d99431d5be49285ca4c3f0c68b271e6b37cbb7cd753ce437"
+    },
+    {
+      "name": "atlas_defect_analysis.append_receipt(analysis uuid, request_sha text, receipt_kind text, receipt_text text)",
+      "sha256": "8e083dce10496ce0b2abd933daba22283563021f2f95fb44f54360bd3a3f69f7"
+    },
+    {
+      "name": "atlas_defect_analysis.background_receipt_guard()",
+      "sha256": "99531320b63867aa136540a01ac30acbc36cbc980ef62a01aeaa6a3c8f7bf5fc"
+    },
+    {
+      "name": "atlas_defect_analysis.read_background(provider_binding text, analysis uuid, after_time timestamp with time zone, after_id uuid, batch_size integer, read_at timestamp with time zone)",
+      "sha256": "dfd14e1a4669d4a7e0d7c3232384fb4be38c026563829eea998a960e33698cda"
+    },
+    {
+      "name": "atlas_defect_analysis.refusal_guard()",
+      "sha256": "227c82dca9fa414e272d8dd85eca0f876ed06dd3fc887e47438850635265ed0c"
+    },
+    {
+      "name": "atlas_defect_analysis.run_guard()",
+      "sha256": "90ff645262e7b05a5c14fa83f2283f03e8c8c6b4a0ab66dbaceb14a1ce0b737b"
+    },
+    {
+      "name": "atlas_manual.append_research_receipt(c uuid, r uuid, s integer, e text, h text, v text)",
+      "sha256": "b4b776106158bc41ea9876654ec977489ed28ba3275aea7b6b4385b3657045ca"
+    },
+    {
+      "name": "atlas_manual.authenticate(session_hash text, browser_hash text, expected jsonb, phones text[])",
+      "sha256": "1dcfee7ccca2822f2121efc20a6c9bbe0f351eddad36ab3e528e06c1cdbc8e54"
+    },
+    {
+      "name": "atlas_manual.authenticate_machine(owner_id uuid, admitted_version integer, expected jsonb, phones text[])",
+      "sha256": "f78fd005eadfcb6ad8c6a1affc7411585eadcfbc95019c72b4c8dea85a8c8aa4"
+    },
+    {
+      "name": "atlas_manual.card_revision()",
+      "sha256": "250579708980263a119573d951b68f261af3a31cbc6b496538296fd0a2dacd99"
+    },
+    {
+      "name": "atlas_manual.defect_memory_design(identity jsonb, profile text)",
+      "sha256": "e7243db21d45db37a3ac41a299716264d6425bf226a1384bdf41188eb1cfa394"
+    },
+    {
+      "name": "atlas_manual.defect_memory_guard()",
+      "sha256": "8537e1e2501af3cd74c92f5beeff5f2a90f3843240beb6a30a22e72879b5b08b"
+    },
+    {
+      "name": "atlas_manual.immutable()",
+      "sha256": "d1c83f848f9bda03255ad36de233060f3a97820ef013b4184c1447a6438b3795"
+    },
+    {
+      "name": "atlas_manual.learning_activation_guard()",
+      "sha256": "8b0df25543de5cdba6be5df89885e51df93297ece9cb9742c83b21da34693b40"
+    },
+    {
+      "name": "atlas_manual.learning_append_only()",
+      "sha256": "5313b0fe23a3e374031572f091d4274fdafbc6ba05c64f3fa439211fd15de965"
+    },
+    {
+      "name": "atlas_manual.learning_job_guard()",
+      "sha256": "304a52112e72e4fc29c72aac41bf4cb857a2fc2be0dcdc3110ab6f34d979c28e"
+    },
+    {
+      "name": "atlas_manual.learning_member_guard()",
+      "sha256": "82853a8f2af9f449e4dbd9df45426837340b1209abd416dd72d31c6ac7363bdf"
+    },
+    {
+      "name": "atlas_manual.learning_publication_guard()",
+      "sha256": "8964ff35a4c30cf2c63d4d815bf0385db196c196930d2c8e22c0ae94d9be7516"
+    },
+    {
+      "name": "atlas_manual.presentation_market_guard()",
+      "sha256": "1114dd8afd70cf339e767422d57cdbf426a8f6088c8f1d0883a0d01a31fd433d"
+    },
+    {
+      "name": "atlas_manual.publication_guard()",
+      "sha256": "8ca172cb12fc85d1b3e3f7ad3dd12c2f7177c3bd8da6f92683fbc7ed6acd13b2"
+    },
+    {
+      "name": "atlas_manual.read_publication(token text, requested_version integer, deployment text, release text, configuration text)",
+      "sha256": "712fda2665185289ea7361d73428101e1e95fc04a3ddb164f35dad89c1783f08"
+    },
+    {
+      "name": "atlas_manual.research_effect_guard()",
+      "sha256": "73f502ae231b48d40343b46cde084e9a7a5bd2a60f90b5abbc6b4e440ab99502"
+    },
+    {
+      "name": "atlas_manual.schedule_learning_publication()",
+      "sha256": "f8082b8550a13cb70b52b77ab68bbdc5363c1e514696099535c31a4663146384"
+    },
+    {
+      "name": "atlas_manual_connected.append_receipt(attempt uuid, phase text, outcome text, request_sha text, receipt text)",
+      "sha256": "d4ea009baa3b5c59830cf25ff0058c92049dcd05ee434f8d19d2b8459c950a02"
+    },
+    {
+      "name": "atlas_manual_connected.claim_early_geometry(engine text, claim uuid)",
+      "sha256": "351d5a5141d0102646947509232a48d97b38e0a458d1bb084677d59589986cde"
+    },
+    {
+      "name": "atlas_manual_connected.claim_early_geometry(engine text, claim uuid, capacity integer)",
+      "sha256": "0f2a5b5ad6321001bcd7c5cbbfeda1d059cb0d1ff023da38b3194e0737d823b5"
+    },
+    {
+      "name": "atlas_manual_connected.dispatch_geometry_model(job text, claim uuid, request_sha text, evidence text)",
+      "sha256": "7f2f0ad0248077d5823f02b55952db06b65e20f39d66aef4c16fe6c3eb2bcdab"
+    },
+    {
+      "name": "atlas_manual_connected.display_owner_current(owner uuid, version integer)",
+      "sha256": "253c772ee8f5eeb536aa0f5c60f65ef1565617e02b44b98bdcbb616e44fe3f77"
+    },
+    {
+      "name": "atlas_manual_connected.display_owner_version(owner uuid)",
+      "sha256": "5227adbdc15bbfaaaff675e71f693aba5e5712f3f820e94fb24a3520fa6ba8b9"
+    },
+    {
+      "name": "atlas_manual_connected.finish_early_geometry(job_key text, claim uuid, outcome text, evidence text, failure text)",
+      "sha256": "46113665c3e6c1e0400349e831e605a21e3bd5f406da28e0dea2cf9dcd546843"
+    },
+    {
+      "name": "atlas_manual_connected.geometry_side_settings(details jsonb, selected_side text)",
+      "sha256": "3d9271c0ce21430b868ada2410c20db1c5feb8f5e747710267dea1151c59037e"
+    },
+    {
+      "name": "atlas_manual_connected.guard_batch_analysis_successor()",
+      "sha256": "349716720b95316f07c58ff686b382db6b13ec8ce988eadc60d1338fb58ff73b"
+    },
+    {
+      "name": "atlas_manual_connected.identification_guard()",
+      "sha256": "24a056efcdbb241171f1ba0be5a1c748087aec212a1ffd4998548af00161f38a"
+    },
+    {
+      "name": "atlas_manual_connected.identification_retry_guard()",
+      "sha256": "81c1846af031d043ff92455d71d0630764e0626d5fe857ec100a06e9cf52f62b"
+    },
+    {
+      "name": "atlas_manual_connected.market_job_guard()",
+      "sha256": "2829abbb51037af284af07d94e35b651bc88e2a36d227b0bd02ac1e4016fb014"
+    },
+    {
+      "name": "atlas_manual_connected.pending_early_geometry(engine text, after_created timestamp with time zone, after_upload uuid)",
+      "sha256": "875b58664a508eb57ac5a5bf0f0e919d17138e0916c2624a23ce8ef57761dd31"
+    },
+    {
+      "name": "atlas_manual_connected.pending_early_geometry(engine text, after_created timestamp with time zone, after_upload uuid, page_size integer)",
+      "sha256": "76206ecb583f893da9b6e4b341f5c8f6a2db130fea4ee45cc3bc83726ea67582"
+    },
+    {
+      "name": "atlas_manual_connected.published_display_guard()",
+      "sha256": "22482e269a2fdb310fed25bdba9dea501a3ff162aa9d3e657bcec70bd29c82bb"
+    },
+    {
+      "name": "atlas_manual_connected.queue_early_geometry(payload text)",
+      "sha256": "2bce2fd7ae254082a803925c94d3affd2c74a15e2584c9e61b3bbdb0e132b71c"
+    },
+    {
+      "name": "atlas_manual_connected.read_geometry_model(job text)",
+      "sha256": "c406620eeb696fac5fdeff5251decc31bfa0653cf1f6f97e502d73c53b430198"
+    },
+    {
+      "name": "atlas_manual_connected.read_grading_photo(p_card uuid, p_upload uuid, p_side text, p_mode text)",
+      "sha256": "60b2636f64a0e69f511205b0c97e519177326c98d9a109626c0a358bd173a22b"
+    },
+    {
+      "name": "atlas_manual_connected.receive_geometry_model(job text, request_sha text, evidence text)",
+      "sha256": "df08c87d6529a88de2f94aea0fbbaab66f12115d125099c147631374940f5af8"
+    },
+    {
+      "name": "atlas_manual_connected.report_image_guard()",
+      "sha256": "2e47b07923c597c98b332fd7ebfe0fb68668b3f8999679dd28fda62eb608ce60"
+    },
+    {
+      "name": "atlas_manual_connected.retry_geometry_model(job text, actor uuid, access_ver integer)",
+      "sha256": "01d65d34ec13582e39978d7f043405481b1f9a88a92b3d4296d481c866ba5917"
+    },
+    {
+      "name": "atlas_manual_connected.review_display_guard()",
+      "sha256": "6019db455f8359c9bbd74f1d5291a2d6600771fd10776ff47995578e1f6eb328"
+    },
+    {
+      "name": "atlas_manual_connected.revision_guard()",
+      "sha256": "38935c36651a44846b746d7e75d477e2f99b5e709e8158ab2b03add18e717337"
+    },
+    {
+      "name": "atlas_manual_connected.variant_confirmation_guard()",
+      "sha256": "a2a12e78a271adda6026807166b8a419a8344abbfa269f40dd4da88e6f66c3a9"
+    },
+    {
+      "name": "atlas_manual_connected.variant_job_guard()",
+      "sha256": "e5e68e90de047c7d3afea3bf1af3dfd6b1eb390a6597237ea3c39813c34bd5a9"
+    },
+    {
+      "name": "atlas_manual_intake.card_guard()",
+      "sha256": "0f38133e5004602c121a359a8e92b1b08ed044d807a91de11b40362ca65916be"
+    },
+    {
+      "name": "atlas_manual_intake.create_discard_guard()",
+      "sha256": "81f7e7f40f37a91b6ae08ff7a4c306c74fee5c82aa9f5f07bb9ac78284a154cc"
+    },
+    {
+      "name": "atlas_manual_intake.discard_immutable()",
+      "sha256": "9116fcf4c1a750d9b3c6d793e5f8191e6203e8e340c77e2bac82a1fb7a6de886"
+    },
+    {
+      "name": "atlas_manual_intake.discard_insert_guard()",
+      "sha256": "26a14370cb1c9fc8576a6aaf011eebcaa57786c2fb50be1b5c8af5c1aaf91c49"
+    },
+    {
+      "name": "atlas_manual_intake.ingestion_guard()",
+      "sha256": "011abf3b7c68f527c18dd017d3fbf591795391d8b5be824db9e71822cd4aa44d"
+    },
+    {
+      "name": "atlas_manual_intake.schedule_ingestion()",
+      "sha256": "ea3575f92ba14dd600b27170ba3c154821e01e32932c780f75e9ab236bc8b904"
+    },
+    {
+      "name": "atlas_manual_intake.upload_guard()",
+      "sha256": "4e2372688f7834335400420bf0085315641e2277c01e98ed93eb3bc36177dbfd"
+    },
+    {
+      "name": "atlas_staff.lock_control()",
+      "sha256": "e3a55a4ce3b1dbcce97079ddfab8cadfdb42ad204c1ac0a3bbea052fab08e409"
+    },
+    {
+      "name": "atlas_staff.operations_audit_guard()",
+      "sha256": "36ea459b0733186f24b3e310039bb9e0b19ddff860f462abb1f0dbe98f88d17b"
+    },
+    {
+      "name": "atlas_staff.operations_change_guard()",
+      "sha256": "f0f6c7ca06d5c6c7fb27c9fa0d35b7750e3cf92cadc6384f6eb70192d40964ad"
+    },
+    {
+      "name": "atlas_staff.operations_grant_guard()",
+      "sha256": "7210455243058426bde628e37fc017a415f110a0c56df36d08013e94bb591e54"
+    },
+    {
+      "name": "atlas_staff.public_reader_control_guard()",
+      "sha256": "ccb1faf72585a31f6b3df06e2141d8c4098af5480efb6997ead895d0d1db8df2"
+    },
+    {
+      "name": "atlas_staff.sms_pilot_claim_guard()",
+      "sha256": "041276d974429ea3df37c5548daa9e0a83fdb4c424c4f9db8a422e048052d14a"
+    },
+    {
+      "name": "atlas_staff.sms_pilot_control_guard()",
+      "sha256": "e03813edb45904b9a5c1993f2cfddde62fba6c5f0b69d61311b8c6f98524bec6"
+    },
+    {
+      "name": "atlas_staff.sms_pilot_immutable()",
+      "sha256": "8d51be0560972e9a578e75c912b91258311738ab569a44e5fe954c024d66f4b7"
+    },
+    {
+      "name": "atlas_staff.staff_challenge_guard()",
+      "sha256": "74fea91b69b356ccff2a6d222549c5f81eced1dee0d52f0b88c426f5d4b3a849"
+    },
+    {
+      "name": "atlas_staff.staff_consumption_guard()",
+      "sha256": "d652e468349993051ada5bd43f0ad9de267af58810d5c7a9c8fad3968d5a1b8c"
+    },
+    {
+      "name": "atlas_staff.staff_control_guard()",
+      "sha256": "8d8737c99149b307ad7fc02d9c189ce96557ed11147ab7544e05e3dbd7d516c2"
+    },
+    {
+      "name": "atlas_staff.staff_identity_guard()",
+      "sha256": "6707696c08d8491c9f1656d0b5fa5af82cbdb0934399abefecd303c31f4b1c3e"
+    },
+    {
+      "name": "atlas_staff.staff_immutable()",
+      "sha256": "7893920eb1345e13ba39f2347f83a96b0ac1f03a0fb02a9f2c172722936306a7"
+    },
+    {
+      "name": "atlas_staff.staff_session_guard()",
+      "sha256": "102a0034cecf04b434989acf323603c1cae06f27d994ad20e81937867edd2e20"
+    }
+  ],
+  "nonConstraintIndexCount": 58,
+  "retiredFunctions": [
+    "atlas_customer.card_binding_guard()",
+    "atlas_customer.card_projection(cid uuid, staff_view boolean)",
+    "atlas_customer.submission_projection(sid uuid, staff_view boolean)",
+    "atlas_manual.public_identity_guard()",
+    "atlas_manual_connected.variant_contribution_guard()",
+    "atlas_staff.abandon_workspace_operator_attempt(workspace_id uuid, claim_fence integer, actor_id uuid, session_hash text, expected_revision integer, command_id uuid, review_hash text, reason text)",
+    "atlas_staff.admit_workspace_source(request_id uuid, session_hash text, packet_canonical text)",
+    "atlas_staff.adopt_workspace_operator_release(run_id uuid, maintenance_id uuid, expected_run_hash text, expected_card_hash text, expected_controls_hash text, reason text)",
+    "atlas_staff.apply_operational_resolution(resolution_id uuid)",
+    "atlas_staff.assert_attempt_abandonment_authority(actor_id uuid, session_hash text, grant_id uuid)",
+    "atlas_staff.assert_capture_operator_commit(run_id uuid, event_table text, event_id uuid, is_admission boolean)",
+    "atlas_staff.assert_identity_correction_commit(correction_id uuid)",
+    "atlas_staff.assert_machine_initialization(job_id uuid)",
+    "atlas_staff.assert_operator_release_adoption_owner()",
+    "atlas_staff.assert_resolution_proof(resolution_id uuid)",
+    "atlas_staff.assert_workspace_machine_admission(job_id uuid)",
+    "atlas_staff.claim_workspace_source_permit(request_id uuid)",
+    "atlas_staff.control_workspace_operator(workspace_id uuid, claim_fence integer, action text, actor_id uuid, session_hash text, expected_revision integer)",
+    "atlas_staff.correction_raw_projection(s \"AiGraderV2Session\")",
+    "atlas_staff.correction_same_except(a text, b text, allowed text[])",
+    "atlas_staff.correction_scope_current(r atlas_staff.\"StaffIdentityCorrection\")",
+    "atlas_staff.correction_work_clear(r atlas_staff.\"StaffIdentityCorrection\")",
+    "atlas_staff.customer_operations(action text, session_hash text, browser_hash text, binding jsonb, d jsonb)",
+    "atlas_staff.enqueue_workspace_capture(workspace_id uuid, actor_id uuid, session_hash text, claim_canonical text)",
+    "atlas_staff.enroll_workspace_first_pair()",
+    "atlas_staff.finish_workspace_source_permit(request_id uuid, outcome text)",
+    "atlas_staff.finishing_audit_guard()",
+    "atlas_staff.finishing_exact_keys(p jsonb, keys text[])",
+    "atlas_staff.finishing_insert_guard()",
+    "atlas_staff.finishing_scalar_object(p jsonb)",
+    "atlas_staff.grading_resolution_guard()",
+    "atlas_staff.identity_correction_commit_guard()",
+    "atlas_staff.identity_correction_control_guard()",
+    "atlas_staff.identity_correction_insert_guard()",
+    "atlas_staff.identity_correction_source_guard()",
+    "atlas_staff.learning_audit_guard()",
+    "atlas_staff.learning_candidates_guard()",
+    "atlas_staff.learning_control_guard()",
+    "atlas_staff.learning_decision_guard()",
+    "atlas_staff.learning_exact_keys(p json, wanted text[])",
+    "atlas_staff.learning_fixed_object(p jsonb)",
+    "atlas_staff.learning_scope_current(r atlas_staff.\"StaffLearningCandidates\")",
+    "atlas_staff.lock_assignment(specimen uuid, identity uuid)",
+    "atlas_staff.lock_learning_candidates(actor_id uuid, session_hash text, specimen_id uuid, approval_id uuid, candidates_id uuid)",
+    "atlas_staff.lock_nfc_control()",
+    "atlas_staff.lock_operations_grants(identity_id uuid)",
+    "atlas_staff.lock_operator_bridge_control()",
+    "atlas_staff.lock_operator_control()",
+    "atlas_staff.lock_operator_specimen(specimen uuid)",
+    "atlas_staff.lock_operator_workspace(workspace_id uuid, run_id uuid)",
+    "atlas_staff.lock_source_admissions(actor_id uuid, session_hash text, grant_id uuid, source_type text, source_id text, owner_id text)",
+    "atlas_staff.lock_workspace_control()",
+    "atlas_staff.lock_workspace_identification_control()",
+    "atlas_staff.lock_workspace_private_actor(actor_id uuid, session_hash text)",
+    "atlas_staff.lock_workspace_private_card(workspace_id uuid)",
+    "atlas_staff.lock_workspace_private_controls()",
+    "atlas_staff.lock_workspace_private_permit(request_id uuid)",
+    "atlas_staff.lock_workspace_private_run(run_id uuid)",
+    "atlas_staff.machine_initialization_commit_guard()",
+    "atlas_staff.machine_initialization_guard()",
+    "atlas_staff.machine_resolution_allowed(job_id uuid)",
+    "atlas_staff.operator_abandonable_attempt(run_id uuid)",
+    "atlas_staff.operator_abandoned_receipt_commit_guard()",
+    "atlas_staff.operator_attempt_abandonment_binding(run_id uuid)",
+    "atlas_staff.operator_attempt_abandonment_commit_guard()",
+    "atlas_staff.operator_attempt_abandonment_insert_guard()",
+    "atlas_staff.operator_attempt_fence_matches(run_id uuid, attempt_id uuid, lease_fence integer)",
+    "atlas_staff.operator_attempt_guard()",
+    "atlas_staff.operator_budget_guard()",
+    "atlas_staff.operator_capture_current(run_id uuid)",
+    "atlas_staff.operator_capture_successor_guard()",
+    "atlas_staff.operator_commit_guard()",
+    "atlas_staff.operator_delivery_guard()",
+    "atlas_staff.operator_human_interlock()",
+    "atlas_staff.operator_image_guard()",
+    "atlas_staff.operator_initialization_guard()",
+    "atlas_staff.operator_outbox_guard()",
+    "atlas_staff.operator_outside_crop_matches(run_id uuid, step_id uuid)",
+    "atlas_staff.operator_proposals_pending(specimen uuid)",
+    "atlas_staff.operator_recoverable_attempt(run_id uuid)",
+    "atlas_staff.operator_recovery_commit_guard()",
+    "atlas_staff.operator_release_adoption_audit_guard()",
+    "atlas_staff.operator_release_adoption_binding(run_id uuid)",
+    "atlas_staff.operator_release_adoption_commit_guard()",
+    "atlas_staff.operator_release_adoption_plan(run_id uuid, maintenance_id uuid, reason text, at_time timestamp without time zone)",
+    "atlas_staff.operator_release_adoption_run_matches(old_run atlas_staff.\"StaffOperatorRun\", new_run atlas_staff.\"StaffOperatorRun\")",
+    "atlas_staff.operator_run_guard()",
+    "atlas_staff.operator_source_current(run_id uuid)",
+    "atlas_staff.operator_source_guard()",
+    "atlas_staff.operator_source_matches(source_id text, owner_id text, source_revision text)",
+    "atlas_staff.operator_work_pending(specimen uuid)",
+    "atlas_staff.operator_workspace_count(pilot_id uuid)",
+    "atlas_staff.pickup_workspace_queue(operator_runtime_hash text)",
+    "atlas_staff.pilot_budget_usage(pilot uuid, specimen uuid)",
+    "atlas_staff.pilot_dollar_limits_allow(policy jsonb, total numeric, card numeric, reserve numeric, overrun boolean, hard_total numeric)",
+    "atlas_staff.proposal_approval_guard()",
+    "atlas_staff.proposal_decision_guard()",
+    "atlas_staff.read_approved_image(token text, requested_version integer, requested_side text, deployment text, release text, configuration text)",
+    "atlas_staff.read_approved_report(token text, requested_version integer, deployment text, release text, configuration text)",
+    "atlas_staff.read_approved_trace(token text, requested_version integer, finding_id text, deployment text, release text, configuration text)",
+    "atlas_staff.read_identity_correction_receipt(specimen uuid, actor uuid, operation uuid, input_hash text, session_hash text, browser_hash text, access_version integer, assignment_fence integer, control_revision integer)",
+    "atlas_staff.read_operator_proposals(specimen uuid)",
+    "atlas_staff.read_workspace_operator_activity(workspace_id uuid, limit_count integer)",
+    "atlas_staff.read_workspace_operator_control(workspace_id uuid)",
+    "atlas_staff.recover_workspace_operator(workspace_id uuid, claim_fence integer, actor_id uuid, session_hash text, expected_revision integer, command_id uuid)",
+    "atlas_staff.resolution_binding(kind text, record_id uuid, pilot uuid)",
+    "atlas_staff.resolution_canonical(j jsonb)",
+    "atlas_staff.resolution_commit_guard()",
+    "atlas_staff.resolution_for_target(kind text, record_id uuid)",
+    "atlas_staff.resolution_pick(j jsonb, keys text[])",
+    "atlas_staff.resolved_evidence_guard()",
+    "atlas_staff.staff_analysis_head_guard()",
+    "atlas_staff.staff_analysis_revision_guard()",
+    "atlas_staff.staff_approved_image_guard()",
+    "atlas_staff.staff_assignment_guard()",
+    "atlas_staff.staff_execution_commit_guard()",
+    "atlas_staff.staff_execution_guard()",
+    "atlas_staff.staff_grading_operation_guard()",
+    "atlas_staff.staff_grading_result_guard()",
+    "atlas_staff.staff_public_report_binding()",
+    "atlas_staff.staff_report_approval_guard()",
+    "atlas_staff.staff_review_commit_guard()",
+    "atlas_staff.staff_specimen_guard()",
+    "atlas_staff.workspace_capture_identity_guard()",
+    "atlas_staff.workspace_capture_readiness(workspace_id uuid)",
+    "atlas_staff.workspace_card_guard()",
+    "atlas_staff.workspace_command_audit_matches(operation jsonb, details jsonb)",
+    "atlas_staff.workspace_dispatch_command_commit_guard()",
+    "atlas_staff.workspace_identification_operation_guard()",
+    "atlas_staff.workspace_identification_pair(workspace_id uuid)",
+    "atlas_staff.workspace_identity_ready(workspace_id uuid)",
+    "atlas_staff.workspace_infrastructure_guard()",
+    "atlas_staff.workspace_manifest_canonical(value jsonb)",
+    "atlas_staff.workspace_operator_control_commit_guard()",
+    "atlas_staff.workspace_operator_control_transition_guard()",
+    "atlas_staff.workspace_operator_execution_guard()",
+    "atlas_staff.workspace_photos_verified(workspace_id uuid)",
+    "atlas_staff.workspace_pilot_budget_usage(pilot uuid, workspace uuid)",
+    "atlas_staff.workspace_pilot_costs(pilot uuid)",
+    "atlas_staff.workspace_pilot_ids_valid(ids jsonb)",
+    "atlas_staff.workspace_pilot_subject(pilot uuid, specimen uuid)",
+    "atlas_staff.workspace_source_admitted(request_id uuid, workspace_id uuid)",
+    "atlas_staff.workspace_source_operation_guard()",
+    "atlas_staff.workspace_source_permit_commit_guard()",
+    "atlas_staff.workspace_source_permit_guard()",
+    "atlas_staff.workspace_timing_history(workspace_id uuid)"
+  ],
+  "retiredTables": [
+    "atlas_customer.CustomerCard",
+    "atlas_customer.CustomerCardEvent",
+    "atlas_customer.CustomerSubmission",
+    "atlas_manual_connected.variant_contribution",
+    "atlas_staff.PublicMediaControl",
+    "atlas_staff.StaffAnalysisRevision",
+    "atlas_staff.StaffApprovedImage",
+    "atlas_staff.StaffAssignment",
+    "atlas_staff.StaffGradingBridgeControl",
+    "atlas_staff.StaffGradingExecution",
+    "atlas_staff.StaffGradingOperation",
+    "atlas_staff.StaffIdentityCorrection",
+    "atlas_staff.StaffIdentityCorrectionControl",
+    "atlas_staff.StaffIntakeControl",
+    "atlas_staff.StaffLabelIssue",
+    "atlas_staff.StaffLearningCandidates",
+    "atlas_staff.StaffLearningControl",
+    "atlas_staff.StaffMachineInitialization",
+    "atlas_staff.StaffNfcControl",
+    "atlas_staff.StaffNfcJob",
+    "atlas_staff.StaffNfcVerification",
+    "atlas_staff.StaffOperation",
+    "atlas_staff.StaffOperationalResolution",
+    "atlas_staff.StaffOperatorAttempt",
+    "atlas_staff.StaffOperatorAttemptAbandonment",
+    "atlas_staff.StaffOperatorControl",
+    "atlas_staff.StaffOperatorImage",
+    "atlas_staff.StaffOperatorImageControl",
+    "atlas_staff.StaffOperatorImageDelivery",
+    "atlas_staff.StaffOperatorOutbox",
+    "atlas_staff.StaffOperatorReceipt",
+    "atlas_staff.StaffOperatorRecovery",
+    "atlas_staff.StaffOperatorRun",
+    "atlas_staff.StaffOperatorStep",
+    "atlas_staff.StaffPhysicalFinish",
+    "atlas_staff.StaffProposalDecision",
+    "atlas_staff.StaffPublicReport",
+    "atlas_staff.StaffReportApproval",
+    "atlas_staff.StaffReviewRevision",
+    "atlas_staff.StaffSourceAdmission",
+    "atlas_staff.StaffSpecimen",
+    "atlas_staff.StaffTrustedLearningDecision",
+    "atlas_staff.StaffWorkspaceCard",
+    "atlas_staff.StaffWorkspaceControl",
+    "atlas_staff.StaffWorkspaceIdentificationControl",
+    "atlas_staff.StaffWorkspaceInfrastructureReservation",
+    "atlas_staff.StaffWorkspaceOperation",
+    "atlas_staff.StaffWorkspaceSourceActionPermit",
+    "atlas_staff.StaffWorkspaceSourceAdmission",
+    "atlas_staff.StaffWorkspaceSourceControl",
+    "atlas_staff.StaffWorkspaceSourceOperation",
+    "atlas_staff._prisma_migrations"
+  ],
+  "retiredTriggers": [
+    "atlas_customer.CustomerCard.CustomerCard_binding_only",
+    "atlas_customer.CustomerCard.CustomerCard_no_truncate",
+    "atlas_customer.CustomerCardEvent.CustomerCardEvent_immutable",
+    "atlas_customer.CustomerCardEvent.CustomerCardEvent_no_truncate",
+    "atlas_customer.CustomerSubmission.CustomerSubmission_immutable",
+    "atlas_customer.CustomerSubmission.CustomerSubmission_no_truncate",
+    "atlas_manual.public_report_identity.public_identity_guard",
+    "atlas_manual_connected.variant_contribution.variant_contribution_guard",
+    "atlas_manual_connected.variant_contribution.variant_contribution_truncate",
+    "atlas_staff.PublicMediaControl.PublicMediaControl_guard",
+    "atlas_staff.PublicMediaControl.PublicMediaControl_immutable",
+    "atlas_staff.PublicMediaControl.PublicMediaControl_no_truncate",
+    "atlas_staff.StaffAnalysisRevision.StaffAnalysisRevision_head_commit",
+    "atlas_staff.StaffAnalysisRevision.StaffAnalysisRevision_immutable",
+    "atlas_staff.StaffAnalysisRevision.StaffAnalysisRevision_no_truncate",
+    "atlas_staff.StaffAnalysisRevision.StaffAnalysisRevision_operation_commit",
+    "atlas_staff.StaffApprovedImage.StaffApprovedImage_binding",
+    "atlas_staff.StaffApprovedImage.StaffApprovedImage_immutable",
+    "atlas_staff.StaffApprovedImage.StaffApprovedImage_no_truncate",
+    "atlas_staff.StaffAssignment.StaffAssignment_fence",
+    "atlas_staff.StaffAssignment.StaffAssignment_no_truncate",
+    "atlas_staff.StaffAssignment.StaffAssignment_operations_audit",
+    "atlas_staff.StaffAudit.StaffAudit_finishing_commit",
+    "atlas_staff.StaffAudit.StaffAudit_identity_correction",
+    "atlas_staff.StaffAudit.StaffAudit_learning_commit",
+    "atlas_staff.StaffAudit.StaffAudit_operator_release_adoption",
+    "atlas_staff.StaffAudit.StaffAudit_operator_release_adoption_commit",
+    "atlas_staff.StaffAudit.StaffAudit_workspace_operator_control_commit",
+    "atlas_staff.StaffGradingBridgeControl.StaffGradingBridgeControl_change",
+    "atlas_staff.StaffGradingBridgeControl.StaffGradingBridgeControl_no_delete",
+    "atlas_staff.StaffGradingBridgeControl.StaffGradingBridgeControl_no_truncate",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_commit",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_guard",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_machine_insert",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_machine_state",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_no_delete",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_no_truncate",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_operations_audit",
+    "atlas_staff.StaffGradingExecution.StaffGradingExecution_shared_budget",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_machine",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_no_delete",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_no_truncate",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_operator_interlock",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_resolution",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_resolved_evidence",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_resolved_evidence_commit",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_result_commit",
+    "atlas_staff.StaffGradingOperation.StaffGradingOperation_transition",
+    "atlas_staff.StaffIdentityCorrection.StaffIdentityCorrection_atomic",
+    "atlas_staff.StaffIdentityCorrection.StaffIdentityCorrection_immutable",
+    "atlas_staff.StaffIdentityCorrection.StaffIdentityCorrection_no_delete",
+    "atlas_staff.StaffIdentityCorrection.StaffIdentityCorrection_no_truncate",
+    "atlas_staff.StaffIdentityCorrection.StaffIdentityCorrection_preimage",
+    "atlas_staff.StaffIdentityCorrectionControl.StaffIdentityCorrectionControl_binding",
+    "atlas_staff.StaffIdentityCorrectionControl.StaffIdentityCorrectionControl_no_delete",
+    "atlas_staff.StaffIdentityCorrectionControl.StaffIdentityCorrectionControl_no_truncate",
+    "atlas_staff.StaffIdentityCorrectionControl.StaffIdentityCorrectionControl_revision",
+    "atlas_staff.StaffIntakeControl.StaffIntakeControl_change",
+    "atlas_staff.StaffIntakeControl.StaffIntakeControl_no_delete",
+    "atlas_staff.StaffIntakeControl.StaffIntakeControl_no_truncate",
+    "atlas_staff.StaffLabelIssue.StaffLabelIssue_audit_commit",
+    "atlas_staff.StaffLabelIssue.StaffLabelIssue_authority",
+    "atlas_staff.StaffLabelIssue.StaffLabelIssue_authority_commit",
+    "atlas_staff.StaffLabelIssue.StaffLabelIssue_immutable",
+    "atlas_staff.StaffLabelIssue.StaffLabelIssue_no_truncate",
+    "atlas_staff.StaffLearningCandidates.StaffLearningCandidates_authority",
+    "atlas_staff.StaffLearningCandidates.StaffLearningCandidates_authority_commit",
+    "atlas_staff.StaffLearningCandidates.StaffLearningCandidates_immutable",
+    "atlas_staff.StaffLearningCandidates.StaffLearningCandidates_no_delete",
+    "atlas_staff.StaffLearningCandidates.StaffLearningCandidates_no_truncate",
+    "atlas_staff.StaffLearningControl.StaffLearningControl_binding",
+    "atlas_staff.StaffLearningControl.StaffLearningControl_no_delete",
+    "atlas_staff.StaffLearningControl.StaffLearningControl_no_truncate",
+    "atlas_staff.StaffLearningControl.StaffLearningControl_revision",
+    "atlas_staff.StaffMachineInitialization.StaffMachineInitialization_atomic",
+    "atlas_staff.StaffMachineInitialization.StaffMachineInitialization_no_delete",
+    "atlas_staff.StaffMachineInitialization.StaffMachineInitialization_no_truncate",
+    "atlas_staff.StaffMachineInitialization.StaffMachineInitialization_resolved_evidence",
+    "atlas_staff.StaffMachineInitialization.StaffMachineInitialization_resolved_evidence_commit",
+    "atlas_staff.StaffMachineInitialization.StaffMachineInitialization_transition",
+    "atlas_staff.StaffNfcControl.StaffNfcControl_no_delete",
+    "atlas_staff.StaffNfcControl.StaffNfcControl_no_truncate",
+    "atlas_staff.StaffNfcControl.StaffNfcControl_revision",
+    "atlas_staff.StaffNfcJob.StaffNfcJob_audit_commit",
+    "atlas_staff.StaffNfcJob.StaffNfcJob_authority",
+    "atlas_staff.StaffNfcJob.StaffNfcJob_authority_commit",
+    "atlas_staff.StaffNfcJob.StaffNfcJob_immutable",
+    "atlas_staff.StaffNfcJob.StaffNfcJob_no_truncate",
+    "atlas_staff.StaffNfcVerification.StaffNfcVerification_audit_commit",
+    "atlas_staff.StaffNfcVerification.StaffNfcVerification_authority",
+    "atlas_staff.StaffNfcVerification.StaffNfcVerification_authority_commit",
+    "atlas_staff.StaffNfcVerification.StaffNfcVerification_immutable",
+    "atlas_staff.StaffNfcVerification.StaffNfcVerification_no_truncate",
+    "atlas_staff.StaffOperation.StaffOperation_immutable",
+    "atlas_staff.StaffOperation.StaffOperation_no_truncate",
+    "atlas_staff.StaffOperationalResolution.StaffOperationalResolution_atomic",
+    "atlas_staff.StaffOperationalResolution.StaffOperationalResolution_immutable",
+    "atlas_staff.StaffOperationalResolution.StaffOperationalResolution_no_truncate",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAbandonedAttempt_run_commit",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAbandonedAttempt_run_write",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_applied",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_dispatch_source",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_guard",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_images",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_no_delete",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_no_truncate",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_operations_audit",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_shared_budget",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_source",
+    "atlas_staff.StaffOperatorAttempt.StaffOperatorAttempt_workspace_control",
+    "atlas_staff.StaffOperatorAttemptAbandonment.StaffOperatorAttemptAbandonment_command_commit",
+    "atlas_staff.StaffOperatorAttemptAbandonment.StaffOperatorAttemptAbandonment_guard",
+    "atlas_staff.StaffOperatorAttemptAbandonment.StaffOperatorAttemptAbandonment_immutable",
+    "atlas_staff.StaffOperatorAttemptAbandonment.StaffOperatorAttemptAbandonment_no_truncate",
+    "atlas_staff.StaffOperatorControl.StaffOperatorControl_change",
+    "atlas_staff.StaffOperatorControl.StaffOperatorControl_no_delete",
+    "atlas_staff.StaffOperatorControl.StaffOperatorControl_no_truncate",
+    "atlas_staff.StaffOperatorImage.StaffOperatorImage_binding",
+    "atlas_staff.StaffOperatorImage.StaffOperatorImage_immutable",
+    "atlas_staff.StaffOperatorImage.StaffOperatorImage_no_delete",
+    "atlas_staff.StaffOperatorImage.StaffOperatorImage_no_truncate",
+    "atlas_staff.StaffOperatorImageControl.StaffOperatorImageControl_change",
+    "atlas_staff.StaffOperatorImageControl.StaffOperatorImageControl_no_delete",
+    "atlas_staff.StaffOperatorImageControl.StaffOperatorImageControl_no_truncate",
+    "atlas_staff.StaffOperatorImageDelivery.StaffOperatorImageDelivery_binding",
+    "atlas_staff.StaffOperatorImageDelivery.StaffOperatorImageDelivery_immutable",
+    "atlas_staff.StaffOperatorImageDelivery.StaffOperatorImageDelivery_no_delete",
+    "atlas_staff.StaffOperatorImageDelivery.StaffOperatorImageDelivery_no_truncate",
+    "atlas_staff.StaffOperatorOutbox.StaffOperatorOutbox_atomic",
+    "atlas_staff.StaffOperatorOutbox.StaffOperatorOutbox_guard",
+    "atlas_staff.StaffOperatorOutbox.StaffOperatorOutbox_no_delete",
+    "atlas_staff.StaffOperatorOutbox.StaffOperatorOutbox_no_truncate",
+    "atlas_staff.StaffOperatorReceipt.StaffOperatorAbandonedReceipt_run_commit",
+    "atlas_staff.StaffOperatorReceipt.StaffOperatorAbandonedReceipt_run_write",
+    "atlas_staff.StaffOperatorReceipt.StaffOperatorReceipt_immutable",
+    "atlas_staff.StaffOperatorReceipt.StaffOperatorReceipt_no_delete",
+    "atlas_staff.StaffOperatorReceipt.StaffOperatorReceipt_no_truncate",
+    "atlas_staff.StaffOperatorRecovery.StaffOperatorRecovery_command_commit",
+    "atlas_staff.StaffOperatorRecovery.StaffOperatorRecovery_no_delete",
+    "atlas_staff.StaffOperatorRecovery.StaffOperatorRecovery_no_truncate",
+    "atlas_staff.StaffOperatorRecovery.StaffOperatorRecovery_no_update",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_admission",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_capture_successor",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_guard",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_machine_initialization",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_no_delete",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_no_truncate",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_resolved_evidence",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_resolved_evidence_commit",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_transition",
+    "atlas_staff.StaffOperatorRun.StaffOperatorRun_workspace_control_transition",
+    "atlas_staff.StaffOperatorStep.StaffOperatorStep_atomic",
+    "atlas_staff.StaffOperatorStep.StaffOperatorStep_immutable",
+    "atlas_staff.StaffOperatorStep.StaffOperatorStep_no_delete",
+    "atlas_staff.StaffOperatorStep.StaffOperatorStep_no_truncate",
+    "atlas_staff.StaffOperatorStep.StaffOperatorStep_source",
+    "atlas_staff.StaffOperatorStep.StaffOperatorStep_workspace_control",
+    "atlas_staff.StaffOperatorStep.StaffWorkspaceCaptureIdentity_guard",
+    "atlas_staff.StaffPhysicalFinish.StaffPhysicalFinish_audit_commit",
+    "atlas_staff.StaffPhysicalFinish.StaffPhysicalFinish_authority",
+    "atlas_staff.StaffPhysicalFinish.StaffPhysicalFinish_authority_commit",
+    "atlas_staff.StaffPhysicalFinish.StaffPhysicalFinish_immutable",
+    "atlas_staff.StaffPhysicalFinish.StaffPhysicalFinish_no_truncate",
+    "atlas_staff.StaffProposalDecision.StaffProposalDecision_authority",
+    "atlas_staff.StaffProposalDecision.StaffProposalDecision_immutable",
+    "atlas_staff.StaffProposalDecision.StaffProposalDecision_no_delete",
+    "atlas_staff.StaffProposalDecision.StaffProposalDecision_no_truncate",
+    "atlas_staff.StaffPublicReport.StaffPublicReport_atomic_approval",
+    "atlas_staff.StaffPublicReport.StaffPublicReport_no_delete",
+    "atlas_staff.StaffPublicReport.StaffPublicReport_no_truncate",
+    "atlas_staff.StaffReportApproval.StaffReportApproval_atomic_publication",
+    "atlas_staff.StaffReportApproval.StaffReportApproval_authority",
+    "atlas_staff.StaffReportApproval.StaffReportApproval_images",
+    "atlas_staff.StaffReportApproval.StaffReportApproval_immutable",
+    "atlas_staff.StaffReportApproval.StaffReportApproval_no_truncate",
+    "atlas_staff.StaffReportApproval.StaffReportApproval_operator_interlock",
+    "atlas_staff.StaffReportApproval.StaffReportApproval_proposals",
+    "atlas_staff.StaffReviewRevision.StaffReviewRevision_atomic_revision",
+    "atlas_staff.StaffReviewRevision.StaffReviewRevision_immutable",
+    "atlas_staff.StaffReviewRevision.StaffReviewRevision_no_truncate",
+    "atlas_staff.StaffSourceAdmission.StaffSourceAdmission_immutable",
+    "atlas_staff.StaffSourceAdmission.StaffSourceAdmission_no_delete",
+    "atlas_staff.StaffSourceAdmission.StaffSourceAdmission_no_truncate",
+    "atlas_staff.StaffSpecimen.StaffSpecimen_analysis_commit",
+    "atlas_staff.StaffSpecimen.StaffSpecimen_analysis_revision_guard",
+    "atlas_staff.StaffSpecimen.StaffSpecimen_atomic_revision",
+    "atlas_staff.StaffSpecimen.StaffSpecimen_no_truncate",
+    "atlas_staff.StaffSpecimen.StaffSpecimen_operations_audit",
+    "atlas_staff.StaffSpecimen.StaffSpecimen_operator_interlock",
+    "atlas_staff.StaffSpecimen.StaffSpecimen_revision",
+    "atlas_staff.StaffTrustedLearningDecision.StaffTrustedLearningDecision_audit_commit",
+    "atlas_staff.StaffTrustedLearningDecision.StaffTrustedLearningDecision_authority",
+    "atlas_staff.StaffTrustedLearningDecision.StaffTrustedLearningDecision_authority_commit",
+    "atlas_staff.StaffTrustedLearningDecision.StaffTrustedLearningDecision_immutable",
+    "atlas_staff.StaffTrustedLearningDecision.StaffTrustedLearningDecision_no_delete",
+    "atlas_staff.StaffTrustedLearningDecision.StaffTrustedLearningDecision_no_truncate",
+    "atlas_staff.StaffWorkspaceCard.StaffWorkspaceCard_guard",
+    "atlas_staff.StaffWorkspaceCard.StaffWorkspaceCard_no_delete",
+    "atlas_staff.StaffWorkspaceCard.StaffWorkspaceCard_no_truncate",
+    "atlas_staff.StaffWorkspaceControl.StaffWorkspaceControl_change",
+    "atlas_staff.StaffWorkspaceControl.StaffWorkspaceControl_no_delete",
+    "atlas_staff.StaffWorkspaceControl.StaffWorkspaceControl_no_truncate",
+    "atlas_staff.StaffWorkspaceIdentificationControl.StaffWorkspaceIdentificationControl_change",
+    "atlas_staff.StaffWorkspaceIdentificationControl.StaffWorkspaceIdentificationControl_no_delete",
+    "atlas_staff.StaffWorkspaceIdentificationControl.StaffWorkspaceIdentificationControl_no_truncate",
+    "atlas_staff.StaffWorkspaceInfrastructureReservation.StaffWorkspaceInfrastructureReservation_guard",
+    "atlas_staff.StaffWorkspaceInfrastructureReservation.StaffWorkspaceInfrastructureReservation_no_delete",
+    "atlas_staff.StaffWorkspaceInfrastructureReservation.StaffWorkspaceInfrastructureReservation_no_truncate",
+    "atlas_staff.StaffWorkspaceOperation.StaffWorkspaceIdentification_guard",
+    "atlas_staff.StaffWorkspaceOperation.StaffWorkspaceOperation_dispatch_command_commit",
+    "atlas_staff.StaffWorkspaceOperation.StaffWorkspaceOperation_first_pair_enrollment",
+    "atlas_staff.StaffWorkspaceOperation.StaffWorkspaceOperation_immutable",
+    "atlas_staff.StaffWorkspaceOperation.StaffWorkspaceOperation_no_delete",
+    "atlas_staff.StaffWorkspaceOperation.StaffWorkspaceOperation_no_truncate",
+    "atlas_staff.StaffWorkspaceSourceActionPermit.StaffWorkspaceSourceActionPermit_atomic",
+    "atlas_staff.StaffWorkspaceSourceActionPermit.StaffWorkspaceSourceActionPermit_guard",
+    "atlas_staff.StaffWorkspaceSourceActionPermit.StaffWorkspaceSourceActionPermit_no_delete",
+    "atlas_staff.StaffWorkspaceSourceActionPermit.StaffWorkspaceSourceActionPermit_no_truncate",
+    "atlas_staff.StaffWorkspaceSourceAdmission.StaffWorkspaceSourceAdmission_no_delete",
+    "atlas_staff.StaffWorkspaceSourceAdmission.StaffWorkspaceSourceAdmission_no_truncate",
+    "atlas_staff.StaffWorkspaceSourceAdmission.StaffWorkspaceSourceAdmission_no_update",
+    "atlas_staff.StaffWorkspaceSourceControl.StaffWorkspaceSourceControl_change",
+    "atlas_staff.StaffWorkspaceSourceControl.StaffWorkspaceSourceControl_no_delete",
+    "atlas_staff.StaffWorkspaceSourceControl.StaffWorkspaceSourceControl_no_truncate",
+    "atlas_staff.StaffWorkspaceSourceOperation.StaffWorkspaceSourceOperation_guard",
+    "atlas_staff.StaffWorkspaceSourceOperation.StaffWorkspaceSourceOperation_no_delete",
+    "atlas_staff.StaffWorkspaceSourceOperation.StaffWorkspaceSourceOperation_no_truncate"
+  ],
+  "schemas": [
+    "atlas_customer",
+    "atlas_dealer",
+    "atlas_defect_analysis",
+    "atlas_manual",
+    "atlas_manual_connected",
+    "atlas_manual_intake",
+    "atlas_staff"
+  ],
+  "sourceObservedAt": "2026-10-13T04:48:44.900911+00:00",
+  "sourceScope": "Schema definitions only; zero data exported",
+  "sourceServerVersion": "17.11",
+  "sourceSnapshotSha256": "b51f938fffafb0a5ca5bf82ff126f35b547f8f09b11791e2762040b370088c52",
+  "sqlSha256": "68afb04dff6bb81a4b42a9de1412fc8322c6b0696d94e833df03e3183dadde8f",
+  "tables": [
+    "atlas_customer.CommerceControl",
+    "atlas_customer.CommerceEffect",
+    "atlas_customer.CommerceOrder",
+    "atlas_customer.CommercePayment",
+    "atlas_customer.CommerceProviderEvent",
+    "atlas_customer.CommerceQuote",
+    "atlas_customer.CommerceShippingPayment",
+    "atlas_customer.CommerceShippingProviderEvent",
+    "atlas_customer.CommerceShippingQuote",
+    "atlas_customer.CommerceShippingReceipt",
+    "atlas_customer.CustomerAccount",
+    "atlas_customer.CustomerBrowser",
+    "atlas_customer.CustomerChallenge",
+    "atlas_customer.CustomerControl",
+    "atlas_customer.CustomerEmailVerification",
+    "atlas_customer.CustomerIntakeCard",
+    "atlas_customer.CustomerIntakeDraft",
+    "atlas_customer.CustomerIntakeEffect",
+    "atlas_customer.CustomerIntakeIdentification",
+    "atlas_customer.CustomerIntakeUpload",
+    "atlas_customer.CustomerRateBucket",
+    "atlas_customer.CustomerServiceControl",
+    "atlas_customer.CustomerSession",
+    "atlas_customer.CustomerVerifiedEmail",
+    "atlas_customer.ProgressNotification",
+    "atlas_customer.ProgressNotificationControl",
+    "atlas_customer.ProgressPreference",
+    "atlas_customer.ProgressPreferenceEvent",
+    "atlas_customer.WeeklyCapacityConfig",
+    "atlas_customer.WeeklyCapacityReservation",
+    "atlas_customer.WeeklyCapacitySharedPolicy",
+    "atlas_customer.WeeklyCapacitySharedWeek",
+    "atlas_customer.WeeklyCapacityWeek",
+    "atlas_dealer.commission_event",
+    "atlas_dealer.custody_event",
+    "atlas_dealer.handoff",
+    "atlas_dealer.handoff_receipt",
+    "atlas_dealer.location",
+    "atlas_dealer.location_revision",
+    "atlas_dealer.manual_card_link",
+    "atlas_dealer.membership",
+    "atlas_dealer.order_card",
+    "atlas_dealer.order_inbox_acknowledgment",
+    "atlas_dealer.session",
+    "atlas_defect_analysis.provider_event",
+    "atlas_defect_analysis.receipt",
+    "atlas_defect_analysis.request_refusal",
+    "atlas_defect_analysis.run",
+    "atlas_manual.action",
+    "atlas_manual.approval",
+    "atlas_manual.card",
+    "atlas_manual.defect_memory_publication",
+    "atlas_manual.learning_activation_history",
+    "atlas_manual.learning_control",
+    "atlas_manual.learning_publication",
+    "atlas_manual.learning_publication_job",
+    "atlas_manual.learning_release",
+    "atlas_manual.learning_release_member",
+    "atlas_manual.learning_withdrawal",
+    "atlas_manual.presentation",
+    "atlas_manual.presentation_market",
+    "atlas_manual.presentation_upload",
+    "atlas_manual.public_report_identity",
+    "atlas_manual.publication",
+    "atlas_manual.research_effect",
+    "atlas_manual_connected.batch_grading",
+    "atlas_manual_connected.batch_request",
+    "atlas_manual_connected.batch_review",
+    "atlas_manual_connected.card_image_binding",
+    "atlas_manual_connected.card_image_intent",
+    "atlas_manual_connected.details",
+    "atlas_manual_connected.details_action",
+    "atlas_manual_connected.early_geometry",
+    "atlas_manual_connected.early_geometry_intent",
+    "atlas_manual_connected.effect",
+    "atlas_manual_connected.geometry_claim_capacity",
+    "atlas_manual_connected.geometry_model_action",
+    "atlas_manual_connected.identification",
+    "atlas_manual_connected.market_job",
+    "atlas_manual_connected.published_review_display",
+    "atlas_manual_connected.report_image_binding",
+    "atlas_manual_connected.report_image_job",
+    "atlas_manual_connected.review_display",
+    "atlas_manual_connected.station_active",
+    "atlas_manual_connected.station_arm",
+    "atlas_manual_connected.station_challenge",
+    "atlas_manual_connected.station_enrollment",
+    "atlas_manual_connected.station_pairing",
+    "atlas_manual_connected.station_receipt",
+    "atlas_manual_connected.variant_catalog_cache",
+    "atlas_manual_connected.variant_confirmation",
+    "atlas_manual_connected.variant_job",
+    "atlas_manual_intake.card",
+    "atlas_manual_intake.discard_request",
+    "atlas_manual_intake.discarded_card",
+    "atlas_manual_intake.ingestion",
+    "atlas_manual_intake.upload",
+    "atlas_staff.PublicReaderControl",
+    "atlas_staff.SmsPilotControl",
+    "atlas_staff.SmsPilotReservation",
+    "atlas_staff.StaffAudit",
+    "atlas_staff.StaffBrowser",
+    "atlas_staff.StaffChallenge",
+    "atlas_staff.StaffControl",
+    "atlas_staff.StaffIdentity",
+    "atlas_staff.StaffOperationsGrant",
+    "atlas_staff.StaffRateBucket",
+    "atlas_staff.StaffSession"
+  ],
+  "triggerCount": 161,
+  "version": "atlas-standalone-baseline-v1"
+}

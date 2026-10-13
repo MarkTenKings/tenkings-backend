@@ -39,7 +39,7 @@ test('missing catalog metadata never buys unnamed listing photos, and external c
  const executeListingSource=async request=>{dispatches++;const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});
   return {state:'REUSED',source:{...responseFor(request),bodyText,sha256:sha(bodyText)}};};
  const result=await service.prepare({identity},{executeListingSource});assert.equal(dispatches,0);
- assert(result.problems.includes('CATALOG_UNAVAILABLE'));assert(!result.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
+ assert(result.problems.includes('PROVIDER_UNAVAILABLE'));assert(!result.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
  const controller=new AbortController(),reason=Error('external cancellation');
  const pending=service.prepare({identity},{signal:controller.signal,executeListingSource});controller.abort(reason);
  await assert.rejects(pending,error=>error===reason);assert.equal(dispatches,0);
@@ -54,8 +54,7 @@ test('one saved source supplies separate physical cards and refreshed photos; au
   images++;return new Response(bytes,{headers:{'content-type':'image/png'}});
  }});
  const executeListingSource=async(request,dispatch,{retainedOnly=false}={})=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};if(retainedOnly)return {state:'MISSING'};const source=await dispatch();journal.set(request.requestKey,source);return {state:'SAVED',source};};
- const catalogClient={findCurrentSetCatalogPublications:async()=>[],prepareSetDemand:async()=>({state:'QUEUED',coverage:'unknown',candidates:[]})};
- const service=createVariantCatalogService({providers:[metadata],catalogClient,listingProvider:provider,cache,now});
+ const service=createVariantCatalogService({providers:[metadata],listingProvider:provider,cache,now});
  const snapshot=await service.prepare({identity,cardId:'physical-a'},{executeListingSource});
  const settledImage=snapshot.referencePhotos[0];
  entries.set(codexReadingKey({policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL},settledImage.sha256),{
@@ -81,7 +80,7 @@ test('official sports metadata and published catalog feed one printing roster re
  const labels=['Rated Rookies','Rated Rookies Blue','Rated Rookies Blue Hyper','Rated Rookies Orange','Rated Rookies Green','Rated Rookies Purple','Rated Rookies Red','Rated Rookies Gold','Rated Rookies Black'];
  const metadata=createManufacturerChecklistVariantProvider({catalog:{schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[{manufacturer:'Panini',year:'2024',setName:'Donruss Optic',sport:'football',aliases:[],url:'https://www.paniniamerica.net/checklist.html',sha256:sha('synthetic source')}],rows:labels.map(label=>[0,label,'229','Drake Maye','New England Patriots'])}});
  const provider=createVariantListingProvider({fetchImpl:noNetwork,now,cache:{get:noNetwork,getRetained:noNetwork,put:noNetwork}}),journal=new Map();
- const service=createVariantCatalogService({providers:[metadata],listingProvider:provider,now,catalogClient:{findCurrentSetCatalogPublications:noNetwork,prepareSetDemand:noNetwork}});
+ const service=createVariantCatalogService({providers:[metadata],listingProvider:provider,now});
  const executeListingSource=async(request,_dispatch,{retainedOnly=false}={})=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};if(retainedOnly)return {state:'MISSING'};const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});const source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};};
  const first=await service.prepare({identity:target},{executeListingSource}),second=await service.prepare({identity:target},{executeListingSource});
  assert.equal(journal.size,9);assert.equal(first.candidates.length,9);assert.deepEqual(first,second);assert(first.candidates.every(c=>c.images.length===0&&c.source.provider==='manufacturer_checklist'));
@@ -92,7 +91,7 @@ test('unknown year prepares manufacturer-backed reference searches before confir
  const target={category:'SPORTS',name:'LaMelo Ball',year:null,setName:'Topps Chrome — Ball of Duty',cardNumber:'BD-13',manufacturer:'Topps',language:null};
  const original=structuredClone(target),journal=new Map(),calls=[];
  const provider=createVariantListingProvider({fetchImpl:noNetwork,now});
- const service=createVariantCatalogService({listingProvider:provider,now,catalogClient:{findCurrentSetCatalogPublications:noNetwork}});
+ const service=createVariantCatalogService({listingProvider:provider,now});
  const executeListingSource=async(request,_dispatch,{retainedOnly=false}={})=>{
   calls.push({request,retainedOnly});if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};
   if(retainedOnly)return {state:'MISSING'};

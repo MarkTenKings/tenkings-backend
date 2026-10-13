@@ -4,14 +4,13 @@ import { constants } from 'node:fs';
 import { manualResearchSettings, manualDealerConfigurationLoader, readDealerOfferFile } from '../lib/server/market-runtime-settings.mjs';
 const directory = {version:'atlas-dealer-directory-v1',updatedAt:null,dealers:[]};
 const enabled = {ATLAS_MANUAL_PRESENTATION_ENABLED:'true',ATLAS_MANUAL_MARKET_ENABLED:'true',ATLAS_MANUAL_RESEARCH_ENABLED:'true',ATLAS_MANUAL_OPENAI_KEY:'fixture-openai-key',ATLAS_MANUAL_SOLD_COMPS_API_KEY:'fixture-sold-key-long'};
-test('research stays cold and requires its presentation, provider and optional catalog settings', () => {
+test('research stays cold and requires its presentation, provider settings without retired catalog credentials', () => {
   assert.equal(manualResearchSettings({}),null);
-  assert.equal(manualResearchSettings(enabled).catalogToken,null);
+  assert.equal(Object.hasOwn(manualResearchSettings(enabled),'catalogToken'),false);
   for(const field of ['ATLAS_MANUAL_PRESENTATION_ENABLED','ATLAS_MANUAL_MARKET_ENABLED','ATLAS_MANUAL_OPENAI_KEY','ATLAS_MANUAL_SOLD_COMPS_API_KEY']) {
     assert.throws(()=>manualResearchSettings({...enabled,[field]:''}));
   }
-  assert.throws(()=>manualResearchSettings({...enabled,ATLAS_MANUAL_CATALOG_ENABLED:'true'}),{code:'RESEARCH_CATALOG_CONFIGURATION_INVALID'});
-  assert.equal(manualResearchSettings({...enabled,ATLAS_MANUAL_CATALOG_ENABLED:'true',ATLAS_MANUAL_CATALOG_TOKEN:'a'.repeat(43)}).catalogToken,'a'.repeat(43));
+  assert.deepEqual(manualResearchSettings({...enabled,ATLAS_MANUAL_CATALOG_ENABLED:'true',ATLAS_MANUAL_CATALOG_TOKEN:'a'.repeat(43)}),manualResearchSettings(enabled));
 });
 test('dealer configuration is cold, independently cloned and reloaded for each decision',async()=>{
   let reads=0;

@@ -2,7 +2,6 @@ import { INSPECTION_STORAGE_ORIGIN } from '@atlas/service-bridge/inspection-acce
 const config = {
     poweredByHeader: false, reactStrictMode: true, transpilePackages: ['@atlas/report-view','@atlas/manual-workspace'], experimental: { cpus: 2, proxyTimeout: 240_000 },
     skipMiddlewareUrlNormalize: true,
-    outputFileTracingIncludes: { '/*': ['./.generated/public-database/**/*'] },
     async rewrites() { return { beforeFiles: [{ source: '/', destination: '/homepage/index.html' }] }; },
     async headers() { return [{ source: '/homepage/:version([a-f0-9]{16})/:path*', headers: [{key:'Cache-Control',value:'public, max-age=31536000, immutable'}] }, { source: '/:path*', headers: [
         { key: 'Referrer-Policy', value: 'no-referrer' }, { key: 'X-Content-Type-Options', value: 'nosniff' },

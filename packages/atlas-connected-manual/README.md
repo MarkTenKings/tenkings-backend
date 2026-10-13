@@ -98,9 +98,11 @@ and reviewed-memory path below do not change identification behavior.
 
 The catalog card owns its base and variant references; a physical submission
 only points to those references and records its own human decision. Pokémon
-choices use Scrydex card/printing IDs. Published sports choices use SetOps IDs;
+choices use direct Scrydex card/printing IDs. Sports
 manufacturer checklist choices use a normalized card identity and literal
-printing, independently of the downloaded file hash or row position.
+printing, independently of the downloaded file hash or row position. ATLAS no
+longer contacts Ten Kings catalog discovery, media, demand, or contribution
+services; human confirmations stay in ATLAS and do not enqueue catalog proposals.
 
 On background preparation, `variant-catalog.mjs` loads the saved printing
 library first. Missing printings receive a graded SoldComps search and up to two

@@ -25,7 +25,7 @@ async function fixture() {
     if (request.kind === 'REPORT_IMAGE') return state.bytes;
     return { packet, publicHash: binding.publicHash, reportImages: state.envelope };
   } };
-  return { state, packet, image, manual, reader: new PublicReportReader(null, { mode: 'LOCAL_FIXTURE' }, null, manual),
+  return { state, packet, image, manual, reader: new PublicReportReader({ mode: 'LOCAL_FIXTURE' }, manual),
     selector: { token: binding.publicToken, version: 1, side: 'FRONT', outputSha256: image.sha256 } };
 }
 

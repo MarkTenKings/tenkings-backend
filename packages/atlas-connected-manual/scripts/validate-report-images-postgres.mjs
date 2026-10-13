@@ -84,32 +84,38 @@ try {
   assert.equal(await countJobs(), 0);
   const front = await store.enqueuePhoto(f1.candidate, f1.media, REPORT_IMAGE_RECIPE);
   assert.equal(await store.enqueuePhoto(f1.candidate, f1.media, REPORT_IMAGE_RECIPE), front);
-  assert.equal(await store.enqueuePhoto(f2.candidate, f2.media, REPORT_IMAGE_RECIPE), front);
+  const alternateFront = await store.enqueuePhoto(f2.candidate, f2.media, REPORT_IMAGE_RECIPE);
+  assert.notEqual(alternateFront, front, 'Different upload IDs require separately bound generated-image jobs');
   const b1 = await prepare(first, 'BACK', '#123456'), b2 = await prepare(second, 'BACK', '#123456');
   const back = await store.enqueuePhoto(b1.candidate, b1.media, REPORT_IMAGE_RECIPE);
-  assert.equal(await store.enqueuePhoto(b2.candidate, b2.media, REPORT_IMAGE_RECIPE), back);
+  const alternateBack = await store.enqueuePhoto(b2.candidate, b2.media, REPORT_IMAGE_RECIPE);
+  assert.equal(b1.media.original.content.sha256,b2.media.original.content.sha256);
+  assert.notEqual(alternateBack,back,'Identical bytes on different uploads cannot share generated-image authority');
   assert.equal((await store.photoCandidates()).length, 0);
-  assert.equal(await countJobs(), 2);
+  assert.equal(await countJobs(), 4);
   assert.equal((await store.photo(second.row.card_id, f2.candidate.upload_id, 'FRONT')).bound_original_sha256, f2.media.original.content.sha256);
   assert.equal(await store.photo(second.row.card_id, f2.candidate.upload_id, 'BACK'), null);
   for (const [entry, frontPhoto, backPhoto] of [[first, f1, b1], [second, f2, b2]]) {
     assert(await bind(entry, 'FRONT', frontPhoto)); assert(await bind(entry, 'BACK', backPhoto)); assert(await bind(entry, 'FRONT', frontPhoto));
   }
-  assert.equal((await store.candidates()).length, 0); assert.equal(await countJobs(), 2);
+  assert.equal((await store.candidates()).length, 0); assert.equal(await countJobs(), 4);
   assert.equal('enqueue' in store, false, 'Retired publication enqueue/import cannot execute');
-  checks.push('verified current uploads admit jobs before grading; two encodings with identical working pixels reuse one job and retain their distinct original bindings');
+  checks.push('verified current uploads admit jobs before grading; different upload IDs use separate jobs even with identical original bytes or decoded pixels; same-upload retry is idempotent');
   checks.push('wrong upload, changed working transform and unverified original are refused before enqueue; binding reports and repeated discovery create no new jobs');
   assert.equal(await store.claim(2, 'f'.repeat(64)), null);
   assert.equal(Number((await fixture.admin.$queryRawUnsafe('SELECT sum(attempts) n FROM atlas_manual_connected.report_image_job'))[0].n), 0);
-  let claims = (await Promise.all([store.claim(2), store.claim(2), store.claim(2)])).filter(Boolean);
-  while (claims.length < 2) { const next = await store.claim(2); assert(next); claims.push(next); }
-  assert.equal(await store.claim(2), null);
-  const a = claims.find(x => x.key === front), b = claims.find(x => x.key === back);
+  let claims = (await Promise.all([store.claim(4), store.claim(4), store.claim(4), store.claim(4)])).filter(Boolean);
+  while (claims.length < 4) { const next = await store.claim(4); assert(next); claims.push(next); }
+  assert.equal(claims.length,4);assert.equal(await store.claim(4), null);
+  const a = claims.find(x => x.key === front), b = claims.find(x => x.key === back), alternate = claims.find(x => x.key === alternateFront), alternateBackClaim = claims.find(x => x.key === alternateBack);
   assert(await store.renew(a)); assert.equal(await store.dispatch({ ...a, claim_id: randomUUID() }), false);
   assert(await store.dispatch(a)); assert(await store.recordReceipt(a, { providerRequestId: 'req_a', usage: { output_tokens: 10 } }));
   assert.equal(await store.recordReceipt(a, { providerRequestId: 'req_a' }), false);
   assert(await store.finish(a, { result: { fixture: true }, receipt: { providerRequestId: 'req_a' } }));
-  assert((await store.ready(first.row, 'FRONT')).result.fixture); assert((await store.ready(second.row, 'FRONT')).result.fixture);
+  assert((await store.ready(first.row, 'FRONT')).result.fixture); assert.equal(await store.ready(second.row, 'FRONT'),null);
+  assert(await store.dispatch(alternate));assert(await store.finish(alternate,{result:{fixture:true},receipt:{providerRequestId:'req_alternate'}}));
+  assert((await store.ready(second.row,'FRONT')).result.fixture);
+  assert(await store.dispatch(alternateBackClaim));assert(await store.finish(alternateBackClaim,{result:{fixture:true},receipt:{providerRequestId:'req_alternate_back'}}));
   assert.deepEqual((await store.readyMany(first.row)).map(job => job.side), ['FRONT']);
   assert.deepEqual(await store.readyMany({ ...first.row, manifest_hash: 'd'.repeat(64) }), []);
   assert.equal(await store.ready({ ...first.row, manifest_hash: 'd'.repeat(64) }, 'FRONT'), null);

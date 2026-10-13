@@ -1,14 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LocalStaffAuth, syntheticVerifyProvider } from '../lib/server/auth.mjs';
-import { LocalReviewStore } from '../lib/server/review.mjs';
 import { createHandler } from '../lib/server/http.mjs';
 import { BROWSER_COOKIE, SESSION_COOKIE, FIXTURE_PHONE, FIXTURE_CODE, LOCAL_HOST, LOCAL_ORIGIN, parseApprovedPhones, hash } from '../lib/server/policy.mjs';
 // All transports/stores are synthetic and dependency-free; no network/provider SDK.
 const LOCAL = { NODE_ENV: 'development', ATLAS_LOCAL_SYNTHETIC: '1' };
 function fixture(options = {}, env = LOCAL) {
-    const auth = new LocalStaffAuth(options), review = new LocalReviewStore(options);
-    const handler = createHandler({ auth, review }, env);
+    const auth = new LocalStaffAuth(options);
+    const handler = createHandler({ auth }, env);
     function client() {
         const jar = {};
         let serial = 0;
@@ -46,12 +45,7 @@ function fixture(options = {}, env = LOCAL) {
             }
         };
     }
-    return { auth, review, client, handler };
-}
-function draft(card, change = {}) {
-    return { operationId: 'operation_001', expectedRevision: card.draft.revision, evidenceRevision: card.evidenceRevision,
-        evidenceHash: card.evidenceHash, observations: { FRONT: 'Inspect the upper left edge.', BACK: 'No observation yet.' },
-        reviewedSides: [], identityReviewed: false, disposition: 'IN_REVIEW', ...change };
+    return { auth, client, handler };
 }
 test('U.S. formatted staff input sends once and its canonical alias reuses the same sign-in request', async () => {
     const base = syntheticVerifyProvider(); let sends = 0;
@@ -72,7 +66,7 @@ test('explicit reauthentication returns browser CSRF without replacing or refres
     assert.equal(normal.body.csrf, login.csrf); assert.equal(boot.body.staff.id, login.staff.id);
     assert.notEqual(boot.body.csrf, login.csrf); assert.equal(c.jar[BROWSER_COOKIE], browser); assert.equal(c.jar[SESSION_COOKIE], session);
     assert.deepEqual(f.auth.sessions.get(hash(session)), previous); assert.equal(f.auth.sessions.size, 1);
-    assert.equal((await c.call('cards')).status, 200);
+    assert.equal((await c.call('session')).body.staff.id, login.staff.id);
     // Neither CSRF purpose acquires the other purpose's mutation authority.
     assert.equal((await c.call('auth/request', { phone: FIXTURE_PHONE, requestId: 'reauth_request_001' }, { 'x-atlas-csrf': login.csrf })).status, 403);
     assert.equal((await c.call('auth/logout', {}, { 'x-atlas-csrf': boot.body.csrf })).status, 403);
@@ -93,8 +87,6 @@ test('reauthentication mints one fresh session only after code verification; los
     let now = 1000;
     const f = fixture({ now: () => now }), c = f.client(), first = await c.login(), oldToken = c.jar[SESSION_COOKIE], browser = c.jar[BROWSER_COOKIE];
     const oldSession = structuredClone(f.auth.sessions.get(hash(oldToken)));
-    const card = (await c.call('cards/sample-001')).body.card;
-    const unsaved = draft(card, { operationId: 'operation_reauthentication' }), before = structuredClone(unsaved);
     now += 6 * 60000;
     const boot = await c.call('session?reauthenticate=1'), headers = { 'x-atlas-csrf': boot.body.csrf };
     const input = { phone: FIXTURE_PHONE, requestId: 'reauth_request_002' }, sent = await c.call('auth/request', input, headers);
@@ -109,10 +101,10 @@ test('reauthentication mints one fresh session only after code verification; los
     assert.equal(retry.status, 200); assert.equal(retry.headers['Set-Cookie'], verified.headers['Set-Cookie']); assert.equal(f.auth.sessions.size, 2);
     // Browsers share cookies across tabs; another tab retains its old in-memory
     // session CSRF and unsaved request until it explicitly refreshes access.
-    const rejected = await c.call('cards/sample-001/draft', unsaved, { 'x-atlas-csrf': first.csrf });
-    assert.equal(rejected.status, 403); assert.equal(rejected.body.error, 'CSRF_REQUIRED'); assert.deepEqual(unsaved, before);
+    const rejected = await c.call('auth/logout', {}, { 'x-atlas-csrf': first.csrf });
+    assert.equal(rejected.status, 403); assert.equal(rejected.body.error, 'CSRF_REQUIRED');
     const refreshed = await c.call('session'); assert.equal(refreshed.body.csrf, verified.body.csrf);
-    assert.equal((await c.call('cards/sample-001/draft', unsaved, { 'x-atlas-csrf': refreshed.body.csrf })).status, 200);
+    assert.equal((await c.call('auth/logout', {}, { 'x-atlas-csrf': refreshed.body.csrf })).status, 200);
 });
 test('reauthentication challenge remains browser-bound and expiry does not destroy or extend the previous session', async () => {
     let now = 1000;
@@ -125,7 +117,7 @@ test('reauthentication challenge remains browser-bound and expiry does not destr
     now += 5 * 60000;
     assert.equal((await a.call('auth/verify', input, { 'x-atlas-csrf': boot.body.csrf })).status, 400);
     assert.equal(a.jar[SESSION_COOKIE], oldToken); assert.deepEqual(f.auth.sessions.get(hash(oldToken)), old);
-    assert.equal((await a.call('cards')).status, 200); assert.equal(f.auth.sessions.size, 1);
+    assert((await a.call('session')).body.staff); assert.equal(f.auth.sessions.size, 1);
 });
 for (const env of [{}, { NODE_ENV: 'production', ATLAS_LOCAL_SYNTHETIC: '1' }, { ...LOCAL, VERCEL: '1' }, { ...LOCAL, VERCEL_ENV: 'preview' }, { ...LOCAL, AWS_LAMBDA_FUNCTION_NAME: 'staff' }]) {
     test(`production/deployment denial: ${JSON.stringify(env)}`, async () => {
@@ -157,12 +149,12 @@ test('non-loopback socket cannot use fixture even with allowed host', async () =
     await f.handler({ url: '/api/staff/session', method: 'GET', headers: { host: LOCAL_HOST }, socket: { remoteAddress: '192.168.1.20' } }, { setHeader() { }, status(s) { status = s; return this; }, json() { } });
     assert.equal(status, 403);
 });
-test('every private card/evidence endpoint denies unauthenticated requests without private details', async () => {
+test('retired card/evidence endpoints are absent without private details', async () => {
     const c = fixture().client();
     for (const path of ['cards', 'cards/sample-001', 'evidence/sample-001/FRONT', 'cards/sample-001/draft']) {
         const r = await c.call(path, path.endsWith('/draft') ? {} : undefined);
-        assert.equal(r.status, 401);
-        assert.deepEqual(r.body, { error: 'SIGN_IN_REQUIRED' });
+        assert.equal(r.status, 404);
+        assert.deepEqual(r.body, { error: 'NOT_FOUND' });
         assert.match(r.headers['Cache-Control'], /no-store/);
     }
 });
@@ -171,8 +163,7 @@ test('unlisted paths, methods, certificate, learning, legacy and machine routes 
     for (const path of ['certify', 'tools/submit_for_human_review', 'cards/sample-001/certify', 'cards/sample-001/learning', 'cards/../sample-001', 'cards/sample-001/extra', 'evidence/sample-001/%46RONT'])
         assert.equal((await c.call(path, {})).status, 404);
     const r = await c.call('cards', {});
-    assert.equal(r.status, 405);
-    assert.equal(r.headers.Allow, 'GET');
+    assert.equal(r.status, 404);
 });
 test('request requires exact Origin, JSON and browser-bound CSRF', async () => {
     const c = fixture().client();
@@ -241,7 +232,7 @@ test('concurrent/lost verification responses replay one exact active session; lo
     assert.equal(a.headers['Set-Cookie'], b.headers['Set-Cookie']);
     assert.equal(f.auth.sessions.size, 1);
     assert.equal((await c.call('auth/logout', {}, { 'x-atlas-csrf': a.body.csrf })).status, 200);
-    assert.equal((await c.call('cards')).status, 401);
+    assert.equal((await c.call('session')).body.staff, null);
     assert.equal((await c.call('auth/verify', body, headers)).status, 400);
 });
 test('lost send response is idempotent and changed request conflicts', async () => {
@@ -278,8 +269,8 @@ test('allowlist removal revokes active reads and writes and late provider approv
     const c = f.client();
     const login = await c.login();
     phones.clear();
-    assert.equal((await c.call('cards')).status, 401);
-    assert.equal((await c.call('cards/sample-001/draft', {}, { 'x-atlas-csrf': login.csrf })).status, 401);
+    assert.equal((await c.call('session')).body.staff, null);
+    assert.equal((await c.call('auth/logout', {}, { 'x-atlas-csrf': login.csrf })).status, 401);
     const transport = syntheticVerifyProvider();
     const late = fixture({ approvedPhones: () => phones, provider: { start: transport.start, async check(...args) { const r = await transport.check(...args); phones.clear(); return r; } } });
     phones.add(FIXTURE_PHONE);
@@ -297,101 +288,5 @@ test('expiry during provider check and session expiry are enforced using server 
     const g = fixture({ now: () => now }), d = g.client();
     await d.login();
     now += 31 * 60000;
-    assert.equal((await d.call('cards')).status, 401);
-});
-test('queue and evidence are assignment-scoped; observer cannot edit', async () => {
-    const f = fixture(), c = f.client();
-    const login = await c.login('+12025550142');
-    assert.deepEqual((await c.call('cards')).body.cards.map(c => c.id), ['sample-002']);
-    for (const path of ['cards/sample-001', 'evidence/sample-001/FRONT'])
-        assert.equal((await c.call(path)).status, 404);
-    const card = (await c.call('cards/sample-002')).body.card;
-    assert.equal(card.canEdit, false);
-    assert.equal((await c.call('cards/sample-002/draft', draft(card), { 'x-atlas-csrf': login.csrf })).status, 403);
-    f.review.assignments.get('fixture-observer').clear();
-    assert.equal((await c.call('cards/sample-002')).status, 404);
-});
-test('protected fixture assets have fixed source bytes, safe MIME and explicit missing back', async () => {
-    const c = fixture().client();
-    await c.login();
-    const a = await c.call('evidence/sample-001/FRONT'), b = await c.call('evidence/sample-001/FRONT');
-    assert.equal(a.status, 200);
-    assert.deepEqual(a.body, b.body);
-    assert.match(a.body.toString(), /SYNTHETIC · FRONT/);
-    assert.equal(a.headers['Content-Type'], 'image/svg+xml');
-    assert.match(a.headers['Content-Security-Policy'], /sandbox/);
-    assert.equal((await c.call('evidence/sample-003/BACK')).status, 404);
-});
-test('draft save is revision-bound, immutable and idempotent; concurrent edit is preserved as a conflict', async () => {
-    const f = fixture(), c = f.client(), login = await c.login();
-    const headers = { 'x-atlas-csrf': login.csrf };
-    const card = (await c.call('cards/sample-001')).body.card, input = draft(card);
-    const [a, b] = await Promise.all([c.call('cards/sample-001/draft', input, headers), c.call('cards/sample-001/draft', { ...input, operationId: 'operation_002', observations: { FRONT: 'Conflicting edit', BACK: '' } }, headers)]);
-    assert.equal(a.status, 200);
-    assert.equal(b.status, 409);
-    assert.equal(b.body.error, 'DRAFT_CHANGED');
-    assert.equal(a.body.card.draft.revision, 2);
-    assert.equal(a.body.card.history.length, 1);
-    assert.deepEqual(f.review.cards.get('sample-001').history[0], card.draft);
-    assert.equal((await c.call('cards/sample-001/draft', input, headers)).body.card.draft.revision, 2);
-    assert.equal((await c.call('cards/sample-001/draft', { ...input, disposition: 'NEEDS_EVIDENCE' }, headers)).status, 409);
-    assert.equal((await c.call('cards/sample-001')).body.card.draft.observations.FRONT, input.observations.FRONT);
-});
-test('draft rejects cross-evidence, client grades, certification, stale revisions and invalid observations', async () => {
-    const f = fixture(), c = f.client(), login = await c.login();
-    const headers = { 'x-atlas-csrf': login.csrf };
-    const card = (await c.call('cards/sample-001')).body.card, input = draft(card);
-    for (const change of [{ evidenceRevision: 2 }, { evidenceHash: 'other' }, { expectedRevision: 0 }, { grade: 10 }, { disposition: 'CERTIFIED' }, { approvedLessons: [] }, { reviewedSides: ['FRONT', 'FRONT'] }, { observations: { FRONT: 123, BACK: '' } }, { observations: { FRONT: 'x'.repeat(2001), BACK: '' } }, { identityReviewed: 'true' }]) {
-        assert.ok((await c.call('cards/sample-001/draft', { ...input, ...change }, headers)).status >= 400);
-    }
-    assert.equal(f.review.cards.get('sample-001').draft.revision, 1);
-});
-test('draft writes require session CSRF; login CSRF is not review authority', async () => {
-    const c = fixture().client(), login = await c.login(), card = (await c.call('cards/sample-001')).body.card;
-    for (const csrf of ['', 'forged', login.challenge.csrf])
-        assert.equal((await c.call('cards/sample-001/draft', draft(card), { 'x-atlas-csrf': csrf })).status, 403);
-});
-test('ready for human review requires both sides and identity; creates no grade or approval', async () => {
-    const c = fixture().client(), login = await c.login(), headers = { 'x-atlas-csrf': login.csrf };
-    const card = (await c.call('cards/sample-001')).body.card;
-    assert.equal((await c.call('cards/sample-001/draft', draft(card, { disposition: 'READY_FOR_HUMAN' }), headers)).status, 409);
-    const r = await c.call('cards/sample-001/draft', draft(card, { disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT', 'BACK'], identityReviewed: true }), headers);
-    assert.equal(r.status, 200);
-    assert.equal(r.body.card.draft.disposition, 'READY_FOR_HUMAN');
-    assert.equal(r.body.card.certificate, undefined);
-    assert.equal(r.body.card.grade, undefined);
-    assert.equal(r.body.card.approval, undefined);
-    const missing = (await c.call('cards/sample-003')).body.card;
-    assert.equal((await c.call('cards/sample-003/draft', draft(missing, { disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT', 'BACK'], identityReviewed: true }), headers)).status, 409);
-});
-test('issued session cannot be transferred between browsers or legacy cookie names', async () => {
-    const f = fixture(), c = f.client();
-    await c.login();
-    const d = f.client();
-    await d.call('session');
-    d.jar[SESSION_COOKIE] = c.jar[SESSION_COOKIE];
-    assert.equal((await d.call('cards')).status, 401);
-    delete d.jar[SESSION_COOKIE];
-    d.jar.__Host_atlas_staff = c.jar[SESSION_COOKIE];
-    assert.equal((await d.call('cards')).status, 401);
-    assert.ok(c.jar[BROWSER_COOKIE]);
-});
-
-test('expected boundary errors remain recognizable across development module reloads', async () => {
-    const { isBoundaryError } = await import('../lib/server/policy.mjs');
-    const { BoundaryError: ReloadedError } = await import('../lib/server/policy.mjs?reload-test');
-    assert.equal(isBoundaryError(new ReloadedError(409, 'DRAFT_CHANGED')), true);
-    assert.equal(isBoundaryError(new Error('private provider detail')), false);
-});
-
-test('page rendering has no POST, PUT, PATCH or DELETE action surface', async () => {
-    const { pageAccess } = await import('../lib/server/runtime.mjs');
-    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-        const headers = {};
-        const res = { setHeader(key, value) { headers[key] = value; } };
-        const result = await pageAccess({ req: { method }, res });
-        assert.equal(res.statusCode, 405);
-        assert.equal(headers.Allow, 'GET, HEAD');
-        assert.equal(result.props.unavailable, true);
-    }
+    assert.equal((await d.call('session')).body.staff, null);
 });

@@ -1,17 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { syntheticPublicEntry } from './synthetic-public-fixtures.mjs';
 import { performance } from 'node:perf_hooks';
 import { evidenceShapes, adaptiveEvidenceScale, breathingEvidenceScale, createEvidenceMotion } from '../src/evidence-scan-motion.mjs';
 import { createEdgeTour, sampleEdgeTour, edgeVisitedRects, edgeCamera, edgeCameraFrame, edgeContact, EDGE_STRIP } from '../src/evidence-edge-tour.mjs';
-const fixture = JSON.parse(readFileSync(new URL('../../../docs/atlas/design/first-look/reports/approved.json', import.meta.url))).reports.find(report => report.key === 'maye');
+const fixture = syntheticPublicEntry('varied');
 const findings = fixture.packet.report.findings;
 const before = JSON.stringify(fixture);
 
 test('separated evidence preserves all seven saved silhouettes, holes, categories and immutable packet', () => {
   const shapes = evidenceShapes(findings);
   assert.equal(shapes.length, 7);
-  const expected = [62, 98, 43, 110, 126, 4930, 566];
+  const expected = [30, 60, 221, 400, 96, 6000, 180];
   for (const [i, shape] of shapes.entries()) {
     const cells = new Set();
     for (const match of shape.path.matchAll(/M(\d+) (\d+)h(\d+)v1h-\d+Z/g)) {
@@ -26,14 +26,14 @@ test('separated evidence preserves all seven saved silhouettes, holes, categorie
   assert.equal(JSON.stringify(fixture), before);
 });
 
-test('small shapes reach 10x while the 201px trace has a visible bounded four-second breath', () => {
+test('small shapes reach 10x while the 200px trace has a visible bounded four-second breath', () => {
   const shapes = evidenceShapes(findings);
   assert.equal(adaptiveEvidenceScale(shapes[0].bounds), 10);
   const long = shapes[5].bounds;
-  assert.ok(Math.abs(adaptiveEvidenceScale(long) - 1.326865671641791) < 1e-9);
+  assert.ok(Math.abs(adaptiveEvidenceScale(long) - .15 * 1778 / 200) < 1e-9);
   assert.equal(breathingEvidenceScale(long, 0), 1);
   assert.equal(breathingEvidenceScale(long, 4000), 1);
-  assert.ok(Math.abs(breathingEvidenceScale(long, 2000) * 201 - .15 * 1778) < 1e-9);
+  assert.ok(Math.abs(breathingEvidenceScale(long, 2000) * 200 - .15 * 1778) < 1e-9);
   assert.ok(adaptiveEvidenceScale({ width: 1, height: 1 }) > 1, 'already-large traces retain gentle motion');
 });
 

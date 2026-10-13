@@ -74,31 +74,10 @@ test('a historical acknowledgement must match every original binding and is acce
  }
 });
 
-const photoPermission={basis:'owned_original',consumers:['inventory','atlas']};
-test('optional photo permission is absent by default and explicitly retained with the bound draft and confirmation',async()=>{
- const ordinary=fixture();await ordinary.client.read();await ordinary.client.confirm({candidateId:'exact'});assert.equal(Object.hasOwn(ordinary.requests.at(-1).body,'referencePermission'),false);
- const f=fixture();await f.client.read();f.client.choose('exact',null,null,photoPermission);const reopened=createVariantReviewClient(f.options);await reopened.read();
- assert.deepEqual(reopened.retained().draft.referencePermission,photoPermission);await reopened.confirm({candidateId:'exact',referencePermission:photoPermission});
- assert.deepEqual(f.requests.at(-1).body.referencePermission,photoPermission);assert.equal(f.client.retained(),null);
+test('new confirmation requests never forward retired catalog photo permissions',async()=>{
+ const f=fixture();await f.client.read();await f.client.confirm({candidateId:'exact',referencePermission:{basis:'owned_original',consumers:['inventory','atlas']}});
+ assert.equal(Object.hasOwn(f.requests.at(-1).body,'referencePermission'),false);
 });
-test('incomplete or broadened photo rights never submit and an unresolved hold omits even supplied permission',async()=>{
- for(const permission of [{...photoPermission,basis:''},{...photoPermission,consumers:['atlas','public']}]){
-  const f=fixture();await f.client.read();await assert.rejects(f.client.confirm({candidateId:'exact',referencePermission:permission}),{code:'VARIANT_REFERENCE_PERMISSION_INVALID'});assert.equal(f.requests.filter(r=>r.method).length,0);
- }
- const f=fixture();await f.client.read();f.client.choose(null,'CANNOT_TELL',null,photoPermission);assert.equal(Object.hasOwn(f.client.retained().draft,'referencePermission'),false);
- await f.client.confirm({candidateId:null,unresolved:true,referencePermission:photoPermission});assert.equal(Object.hasOwn(f.requests.at(-1).body,'referencePermission'),false);assert.equal(f.requests.at(-1).body.decision,'UNRESOLVED');
-});
-test('denied access retains exact opted-in permission through reload and replay; definite invalid permission clears only its rejected action',async()=>{
- const f=fixture();await f.client.read();f.save=()=>{throw {status:403,code:'SESSION_EXPIRED'};};await assert.rejects(f.client.confirm({candidateId:'exact',referencePermission:photoPermission}));
- const original=f.requests.at(-1).body;assert.deepEqual(f.client.retained().pending.referencePermission,photoPermission);f.save=null;await createVariantReviewClient(f.options).resume();
- assert.deepEqual(f.requests.filter(r=>r.method).map(r=>r.body),[original,original]);
- const g=fixture();await g.client.read();g.save=()=>{throw {status:400,code:'VARIANT_REFERENCE_PERMISSION_INVALID'};};await assert.rejects(g.client.confirm({candidateId:'exact',referencePermission:photoPermission}),{code:'VARIANT_REFERENCE_PERMISSION_INVALID'});assert.equal(g.client.retained(),null);
-});
-test('a changed source or identity cannot reuse a prepared photo-permission confirmation',async()=>{
- for(const field of ['sourceHash','identityHash','identityRevision']){const f=fixture();await f.client.read();f.client.choose('exact',null,null,photoPermission);f.status[field]=field==='identityRevision'?2:hash('f');
- await assert.rejects(f.client.confirm({candidateId:'exact',referencePermission:photoPermission}),{code:'VARIANT_REVIEW_CHANGED'});assert.equal(f.requests.filter(r=>r.method).length,0);}
-});
-
 
 test('a physical Base or named printing choice survives background reference changes in every state',async()=>{
  for(const state of ['NOT_REQUESTED','QUEUED','SEARCHING','FAILED','UNKNOWN','READY']){
@@ -126,7 +105,7 @@ test('a definitively refused old request releases its pending lock without rewri
  for(const code of ['MANUAL_REQUEST_INVALID','VARIANT_CONFIRMATION_INVALID']){
   const f=fixture();await f.client.read();f.save=()=>{throw Error('lost reply');};
   await assert.rejects(f.client.confirm({candidateId:null,manual:{parallel:'Base'}}));
-  const [key,value]=[...f.values][0],saved=JSON.parse(value);saved.pending.observedFeatures='old required note';f.values.set(key,JSON.stringify(saved));
+  const [key,value]=[...f.values][0],saved=JSON.parse(value);saved.pending.referencePermission={basis:'owned_original',consumers:['inventory','atlas']};f.values.set(key,JSON.stringify(saved));
   f.save=()=>{throw {status:400,code};};const reopened=createVariantReviewClient(f.options);
   await assert.rejects(reopened.resume(),{code:'VARIANT_REQUEST_RETIRED'});
   assert.deepEqual(f.requests.at(-1).body,saved.pending,'exact old request is reconciled, never transformed');

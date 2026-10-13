@@ -23,15 +23,14 @@ const fixture=await createOwnedManualFixture(process.argv.slice(2));
 try{
  const checks=[];
  const [installed]=await fixture.admin.$queryRawUnsafe("SELECT to_regclass('atlas_manual.research_effect')::text AS relation");
- assert.equal(installed.relation,'atlas_manual.research_effect','Research must be installed by the tracked staff migration chain');
- assert.equal(await readFile(new URL('../sql/research-effects-proposal.sql',import.meta.url),'utf8'),await readFile(new URL('../../../frontend/atlas-app/prisma/migrations/20260924030000_manual_research_effects/migration.sql',import.meta.url),'utf8'));
+ assert.equal(installed.relation,'atlas_manual.research_effect','Research must be installed by the standalone ATLAS baseline');
  for(const grants of [publicationGrantSQL,presentationGrantSQL,researchGrantSQL])await fixture.cluster.sql(grants('atlas_fixture_manual'),[],fixture.database.name);
  const {boundary,auth,manualClient}=fixture.connect();
  async function login(phone){const boot=await auth.bootstrap(''),browserCookie=`${fixture.config.cookies.browser}=${boot.browserToken}`;
   const challenge=await auth.send(browserCookie,boot.csrf,{phone,requestId:randomUUID()},'fixture-research');
   const verified=await auth.verify(browserCookie,boot.csrf,{challengeId:challenge.challengeId,code:'424242'},'fixture-research');
   return auth.authenticate(`${browserCookie}; ${fixture.config.cookies.session}=${verified.token}`,verified.csrf);}
- const staff=await login('+12025550141'),other=await login('+12025550142'),f=await researchFixture({catalog:true});
+ const staff=await login('+12025550141'),other=await login('+12025550142'),f=await researchFixture();
  const publications=createPublicationRepository({boundary}),manual=createManualRepository({boundary,approvalCommitted:publications.approvalCommitted});
  await manual.provision(staff,{cardId:f.cardId,draft:f.draft});
  const workflow=createManualService({repository:manual,reduce:({card})=>card.draft,buildReport:async()=>f.approval});
@@ -59,11 +58,9 @@ try{
  const market=createPresentationMarketService({repository,approved,artifacts:f.artifacts});
  const selected=await market.select(staff,f.cardId,{requestId:randomUUID(),approvalActionId:f.actionId,expectedRevision:0,previewId:input.requestId,selectedIds:['ebay:111111111110']});assert.equal(selected.revision,1);assert.equal(selected.presentation.market.sales[0].grade,'9');
  assert.deepEqual(await manual.readApproval(staff,f.cardId,f.actionId),before);
- const contribution={previewId:input.requestId,observationId:randomUUID()};f.proposalUnavailable=true;await assert.rejects(research.contribute(staff,f.cardId,contribution),{code:'RESEARCH_CATALOG_UNAVAILABLE'});f.proposalUnavailable=false;
- const receipt=await research.contribute(staff,f.cardId,contribution);assert.equal(receipt.disposition,'requires_authorized_review');
+ assert.equal(research.contribute,undefined);
  await repository.commit(staff,f.cardId,{requestId:randomUUID(),approvalActionId:f.actionId,expectedRevision:1});
- assert.deepEqual(await create().contribute(staff,f.cardId,contribution),receipt);assert.equal(f.proposals.length,2);assert.deepEqual(f.proposals[0],f.proposals[1]);
- checks.push('research sales deliberately select into existing market presentation without changing approval; unreviewed learning proposal recovers an acknowledged host failure and replays after unrelated presentation revision');
+ checks.push('research sales deliberately select into existing market presentation without changing approval; no outgoing catalog contribution capability');
  const late={...command(),expectedRevision:2};await repository.reserveMarket(staff,f.cardId,late,tx=>journal.initializeInTransaction(tx,f.cardId,late.requestId,{kind:'RESEARCH',fixture:true}));
  const hash=digest('owned late request'),claims=await Promise.all([1,2].map(()=>journal.dispatch(staff,f.cardId,late.requestId,hash,{fixture:'exact request'})));
  assert.equal(claims.filter(c=>c.created).length,1);const sequence=claims[0].sequence;
@@ -77,8 +74,8 @@ try{
  await assert.rejects(journal.dispatch(staff,f.cardId,late.requestId,digest('second'),{fixture:true}));
  checks.push('concurrent effect admits one dispatcher; unsettled completion and wrong receipt bindings fail; late exact response survives UNKNOWN and exact ack replay; no new dispatch after settled intent');
  for(const operation of ['UPDATE atlas_manual.research_effect SET evidence=evidence','DELETE FROM atlas_manual.research_effect','TRUNCATE atlas_manual.research_effect'])await assert.rejects(fixture.admin.$executeRawUnsafe(operation));
- const [privileges]=await fixture.admin.$queryRawUnsafe("SELECT has_table_privilege('atlas_fixture_public','atlas_manual.research_effect','SELECT') AS public_read,has_table_privilege('atlas_fixture_manual','atlas_manual.research_effect','UPDATE') AS rewrite,has_function_privilege('atlas_fixture_public','atlas_manual.append_research_receipt(uuid,uuid,integer,text,text,text)','EXECUTE') AS public_receipt");assert.deepEqual(privileges,{public_read:false,rewrite:false,public_receipt:false});
- checks.push('immutable update/delete/truncate guards and limited SQL grants prevent public reads/receipts or history rewriting');
+ const [privileges]=await fixture.admin.$queryRawUnsafe("SELECT has_table_privilege('atlas_fixture_customer','atlas_manual.research_effect','SELECT') AS customer_read,has_table_privilege('atlas_fixture_manual','atlas_manual.research_effect','UPDATE') AS rewrite,has_function_privilege('atlas_fixture_customer','atlas_manual.append_research_receipt(uuid,uuid,integer,text,text,text)','EXECUTE') AS customer_receipt");assert.deepEqual(privileges,{customer_read:false,rewrite:false,customer_receipt:false});
+ checks.push('immutable update/delete/truncate guards and limited SQL grants prevent customer/PUBLIC reads/receipts or history rewriting');
  const pending={...command(),expectedRevision:2};await repository.reserveMarket(staff,f.cardId,pending,tx=>journal.initializeInTransaction(tx,f.cardId,pending.requestId,{kind:'RESEARCH',fixture:true}));
  const held=await journal.dispatch(staff,f.cardId,pending.requestId,digest('late approved'),{fixture:true});
  const next=randomUUID();await workflow.execute(staff,f.cardId,{...approve,actionId:next,expectedRevision:(await workflow.read(staff,f.cardId)).revision});
@@ -86,6 +83,6 @@ try{
  await journal.receipt(f.cardId,pending.requestId,held.sequence,'RESPONSE',held.request_hash,{fixture:'actual late bytes after superseded approval'});
  await assert.rejects(journal.dispatch(staff,f.cardId,pending.requestId,digest('forbidden after approval'),{fixture:true}));
  checks.push('new approval fences research reads/dispatch while narrow admitted receipt can retain an actual late response');
- const report={status:'PASS',checks,schema:installed.relation?'tracked staff migration chain':'tracked chain plus exact research proposal',paidEffects:0,remoteEffects:0,hardwareEffects:0};
+ const report={status:'PASS',checks,schema:'standalone',schemaSource:fixture.cluster.source,paidEffects:0,remoteEffects:0,hardwareEffects:0};
  await writeFile(join(output,'result.json'),JSON.stringify(report,null,2),{mode:0o600});console.log(JSON.stringify(report));
 }finally{await fixture.stop();await copyFile(join(fixture.cluster.directory,'cleanup.json'),join(output,'cleanup.json'));}

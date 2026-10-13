@@ -1,0 +1,13 @@
+# Clean native serving image
+
+`Dockerfile.manual` builds both stages directly from the checked-in official Node image digest. An old ATLAS runtime image is never a base or input. Main and variant processes use this same source-built artifact with separate runtime configuration and entrypoints; the image contains no credentials or database installation step.
+
+Create a **new external directory** with `node frontend/atlas-app/scripts/package-manual-container.mjs OUTPUT VERIFIED_VENDOR_DIRECTORY`. The vendor directory must contain the upstream libheif 1.23.2 and libde265 1.1.1 archives matching the checked-in SHA-256 values. The packager verifies those bytes before writing anything and refuses an existing output directory.
+
+The context includes the current staff/manual dependency closure, shared camera files, build tools and exactly eight Python sources for current preparation and measurement. It excludes test/fixture data, archived reports, SQL/migrations, the standalone schema installer, environment files, private keys, ignored files and existing generated artifacts. `preparation_core.py` belongs to the retired HTTP preparation service; the current worker uses the extracted `preparation_pixels.py` and `preparation_encoding.py`. The package manifest records every source/vendor digest and the recipe/packager hashes.
+
+The build verifies the exact source file set before dependency installation, uses the frozen pnpm lock, builds grading/report bundles and the native HEIF addon, generates Prisma for the build platform, and requires the staff boundary check. It then verifies the eight Python files, the measurement engine source hashes, numpy/OpenCV versions, a generated RGBA lossless roundtrip, sharp PNG output, native addon source/binary hashes and the pinned decoder. These checks run again in the final image. Build receipts are retained under `/opt/atlas-build/`. No source test photographs or archived card data enter the image.
+
+Create a separate package directory for local build qualification. Preserve the final context as a sealed source input; do not install dependencies or run Next in that directory. After source freeze, regenerate and bind the final context manifest and Dockerfile hashes. A remote image build must use that exact context, the pinned base, and the intended Linux platform. Provider credentials, new independent database URLs, schema installation and production cutover are separate lead-owned actions.
+
+The R16 task explicitly requires lead review of the prepared source/build plan before starting the first remote build. Local packaging and source/build qualification do not establish Linux/native acceptance or authorize deployment.

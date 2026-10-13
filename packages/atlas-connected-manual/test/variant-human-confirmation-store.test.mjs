@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {canonical,digest} from '@atlas/manual-service/contract';
-import {createVariantJobStore,variantBinding,validateVariantAction,validateVariantContributionPacket,variantSelectedIdentity} from '../src/variant-job-store.mjs';
+import {createVariantJobStore,variantBinding,validateVariantAction,variantSelectedIdentity} from '../src/variant-job-store.mjs';
 import {variantReviewStatus} from '../src/variant-service.mjs';
 import {importScrydexVariantCandidates,scrydexVariantSearchUrl} from '@tenkings/card-catalog-evidence';
 function fixture({confirmed=true}={}){
@@ -20,8 +20,8 @@ test('Base and named printing confirmations save without notes, catalog or autom
   const b=variantBinding(f.card),action={...f.action,sourceHash:b.sourceHash,identityRevision:b.identityRevision,identityHash:b.identityHash,manualParallel:printing};
   const next={...f.card.draft,identity:{...f.card.draft.identity,parallel:printing},identityRevision:f.card.draft.identityRevision+1};
   validateVariantAction(action);await f.store.validateCommit({tx:f.tx,principal:f.principal,cardId:f.card.cardId,input:{actionId:randomUUID(),action},draft:next});
-  assert.equal(f.writes.length,2);assert.match(f.writes[0].sql,/reprocess_required\) VALUES\(.*false\)/);assert.doesNotMatch(f.writes[0].sql,/analysis_action_id|observed_features/);
-  const payload=JSON.parse(f.writes[1].args[4]);assert.equal(payload.parallel,printing);assert.equal(Object.hasOwn(payload,'observedFeatures'),false);assert(!f.reads.some(sql=>sql.includes('atlas_defect_analysis')));
+  assert.equal(f.writes.length,1);assert.match(f.writes[0].sql,/reprocess_required\) VALUES\(.*false\)/);assert.doesNotMatch(f.writes[0].sql,/analysis_action_id|observed_features/);
+  assert(!f.writes.some(row=>row.sql.includes('variant_contribution')));assert(!f.reads.some(sql=>sql.includes('atlas_defect_analysis')));
  }
 });
 test('physical confirmation preserves source and exact identity checks and never silently defaults Base',async()=>{
@@ -43,10 +43,8 @@ test('missing or unresolved physical confirmation still cannot approve a card',a
  const missing=fixture({confirmed:false});await assert.rejects(missing.store.assertApproval({},missing.card),{code:'VARIANT_CONFIRMATION_REQUIRED'});
  const unresolved=fixture();unresolved.confirmation.decision='UNRESOLVED';await assert.rejects(unresolved.store.assertApproval({},unresolved.card),{code:'VARIANT_CONFIRMATION_REQUIRED'});
 });
-test('optional photo contribution needs explicit rights basis and consumers, never prose',()=>{
- const f=fixture(),valid={basis:'owned_original',consumers:['inventory','atlas']};validateVariantAction({...f.action,referencePermission:valid});
- for(const permission of [null,{}, {...valid,basis:'provider'}, {...valid,consumers:['atlas']},{...valid,extra:true}])assert.throws(()=>validateVariantAction({...f.action,referencePermission:permission}));
- const {manualParallel,...hold}=f.action;assert.throws(()=>validateVariantAction({...hold,decision:'UNRESOLVED',referencePermission:valid}),{code:'VARIANT_REFERENCE_PERMISSION_INVALID'});
+test('retired catalog photo permission is rejected without business writes',()=>{
+ const f=fixture();assert.throws(()=>validateVariantAction({...f.action,referencePermission:{basis:'owned_original',consumers:['inventory','atlas']}}));assert.equal(f.writes.length,0);
 });
 test('Scrydex-verified series names preserve saved set identity during first printing confirmation',()=>{
  const target={category:'POKEMON',name:'Pikachu',year:'2023',setName:'Scarlet & Violet—151',cardNumber:'025/165'};
@@ -64,11 +62,4 @@ test('Scrydex-verified series names preserve saved set identity during first pri
   const reviewed=variantSelectedIdentity({draft:{identity:original}},{decision:'SELECTED',candidateId:candidate.candidateId},{catalog:{candidates:[disputed]}});
   assert.equal(reviewed.productSet,'151');
  }
-});
-test('private reference packet accepts only exact action payload lineage and durable artifact references',async()=>{
- const payload={referencePermission:{basis:'owned_original',detail:'Owned test photographs',consumers:['inventory','atlas']}},cardId=randomUUID(),job={action_id:randomUUID(),claim_id:randomUUID(),card_id:cardId,payload,payload_hash:digest(canonical(payload))},lineage=digest(canonical({cardId,kind:'VARIANT_REFERENCE',sourceHash:job.payload_hash})),sha=digest('private artifact');
- const packet={sourceHash:job.payload_hash,ref:{key:'atlas-private/'+cardId+'/VARIANT_REFERENCE/'+lineage+'-'+sha+'.json',sha256:sha,lineageSha256:lineage,byteCount:12000,kind:'VARIANT_REFERENCE',cardId}};assert.deepEqual(validateVariantContributionPacket(job,packet),packet);
- let writes=0;const store=createVariantJobStore({boundary:{machineTransaction:async(_,work)=>work({tx:{$executeRawUnsafe:async(sql,...args)=>{writes++;assert(sql.includes("state='RUNNING'")&&sql.includes('lease_until>clock_timestamp()'));assert.match(sql,/display_owner_current/);assert(sql.includes('reference_packet IS NULL OR reference_packet=$3'));assert.equal(args[0],job.action_id);assert.equal(args[2],canonical(packet));return 1;}}})}});assert.equal(await store.saveContributionPacket(job,packet),true);assert.equal(writes,1);
- for(const changed of [{...packet,sourceHash:digest('wrong')},{...packet,ref:{...packet.ref,cardId:randomUUID()}},{...packet,ref:{...packet.ref,kind:'GEOMETRY'}},{...packet,ref:{...packet.ref,lineageSha256:digest('wrong')}},{...packet,ref:{...packet.ref,key:'https://external.invalid/private.jpg'}},{...packet,ref:{...packet.ref,bytes:'private photo'}},{...packet,ref:{...packet.ref,byteCount:16777217}}])await assert.rejects(store.saveContributionPacket(job,changed));
- await assert.rejects(store.saveContributionPacket({...job,payload:{referencePermission:null}},packet));assert.equal(writes,1);
 });

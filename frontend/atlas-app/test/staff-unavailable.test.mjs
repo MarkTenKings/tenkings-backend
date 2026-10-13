@@ -51,7 +51,7 @@ test('diagnostic UI displays only a valid opaque reference, never arbitrary reas
   assert.match(text(render({ kind: 'CHECK_FAILED', reference: 'ad39a84d-a916-4f65-a671-03f713624f47' }).tree), /Reference: ad39a84d/);
 });
 test('every staff page forwards the safe category without rendering its protected workspace on failure', () => {
-  const pages = ['index.jsx', 'grading.jsx', 'add-cards.jsx', 'manual/index.jsx', 'manual/[cardId].jsx', 'batch.jsx', 'station.jsx', 'workspace/[cardId].jsx', 'cards/[cardId].jsx', 'operations.jsx'];
+  const pages = ['index.jsx', 'grading.jsx', 'add-cards.jsx', 'manual/index.jsx', 'manual/[cardId].jsx', 'batch.jsx', 'station.jsx', 'customer-operations.jsx'];
   for (const page of pages) {
     const exports = {}, code = compile(readFileSync(new URL('../pages/' + page, import.meta.url), 'utf8'), page);
     vm.runInNewContext(code, { exports, require(name) {

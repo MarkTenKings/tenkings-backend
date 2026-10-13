@@ -17,11 +17,9 @@ import { createStationSigner } from '@atlas/connected-manual/finishing-station-p
 import { manualResearchSettings, manualDealerConfigurationLoader } from './market-runtime-settings.mjs';
 import { createDealerStaffService } from '../../../../packages/atlas-connected-manual/src/dealer-operations.mjs';
 import { variantReviewSettings, validateVariantRuntimeConfiguration } from './variant-runtime-settings.mjs';
-import { createAtlasCatalogClient } from '../../../../packages/atlas-connected-manual/src/research-catalog.mjs';
 import { createVariantCatalogService } from '../../../../packages/atlas-connected-manual/src/variant-catalog.mjs';
 import { createVariantListingProvider } from '../../../../packages/atlas-connected-manual/src/variant-listing-provider.mjs';
 import { createMarketSlabLabeler } from '../../../../packages/atlas-connected-manual/src/market-slab-labels.mjs';
-import { createVariantSourcePhotoReader } from '../../../../packages/atlas-connected-manual/src/variant-source-photos.mjs';
 import { createOrderDeskService } from '../../../../packages/atlas-connected-manual/src/order-desk.mjs';
 import { createOrderDeskInboxService } from '../../../../packages/atlas-connected-manual/src/order-desk-inbox.mjs';
 import { createOrderDeskPhotoReader } from '../../../../packages/atlas-connected-manual/src/order-desk-photos.mjs';
@@ -143,7 +141,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   // remain readable after a cache TTL without acquiring or purchasing anything.
   const variantListings=variantConfig?createVariantListingProvider({cache:variantCache,
     fetchImpl:()=>{throw new Error('Serving reads cannot fetch variant listings');}}):null;
-  const variantCatalog=variantConfig?createVariantCatalogService({catalogClient:variantConfig.catalogToken?createAtlasCatalogClient({token:variantConfig.catalogToken}):null,
+  const variantCatalog=variantConfig?createVariantCatalogService({
     scrydex:variantConfig.scrydex,cache:variantCache,listingProvider:variantListings}):null;
   const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
   const orderPhotoSettings=orderDeskPhotoSettings(env);
@@ -173,7 +171,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient});
     await validateVariantRuntimeConfiguration({enabled:Boolean(variantConfig),client:manualClient,worker:env.ATLAS_VARIANT_WORKER_ENABLED==='true'});
   };
-  return {connected,boundary,variantArtifacts:variantConfig?artifacts:null,readVariantPhotos:variantConfig?createVariantSourcePhotoReader({boundary,intake:connected.intake,workflow:connected.workflow,readGradingPhoto:connected.readGradingPhoto}):null,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();orderPhotoClient?.destroy();}};
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();orderPhotoClient?.destroy();}};
 }
 
 export function manualReportImageSettings(env) {

@@ -17,17 +17,9 @@ assert(output && resolve(output) === output, 'An absolute evidence directory is 
 await mkdir(output, { recursive: true, mode: 0o700 });
 let networkCalls = 0;
 globalThis.fetch = async () => { networkCalls++; assert.fail('This fixture never makes an external request'); };
-const checks = [], historical = [];
-let beforeUpgrade, beforeConstraints, beforeColumns, upgrade;
+const checks = [];
 const identity = parallel => ({ cardName: 'Magikarp', year: '2020', productSet: 'Rebel Clash',
   cardNumber: '039/192', parallel, layoutType: 'POKEMON' });
-async function snapshot(sql, names = null) {
-  names ??= (await sql("SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='r' AND (n.nspname='public' OR n.nspname LIKE 'atlas_%') AND c.relname<>'_prisma_migrations' ORDER BY 1")).rows.map(row => row.name);
-  const tables = {};
-  for (const name of names) tables[name] = (await sql(`SELECT count(*)::int count,encode(sha256(convert_to(COALESCE(string_agg(to_jsonb(t)::text,E'\n' ORDER BY to_jsonb(t)::text),''),'UTF8')),'hex') hash FROM ${name} t`)).rows[0];
-  const grants = (await sql("SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) name,c.relacl::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN('r','S','v') AND (n.nspname='public' OR n.nspname LIKE 'atlas_%') ORDER BY 1")).rows;
-  return { tables, grants };
-}
 const constraints = async sql => (await sql("SELECT conname,contype,pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='atlas_manual_connected.variant_confirmation'::regclass ORDER BY conname")).rows;
 const columns = async sql => (await sql("SELECT attname,attnotnull FROM pg_attribute WHERE attrelid='atlas_manual_connected.variant_confirmation'::regclass AND attnum>0 AND NOT attisdropped ORDER BY attnum")).rows;
 async function seedReadyJob(sql, card, actorId, accessVersion = 1) {
@@ -39,49 +31,7 @@ async function seedReadyJob(sql, card, actorId, accessVersion = 1) {
     [key, canonical(catalog, { maxBytes: 1048576 }), catalog.snapshotHash, result, digest(result)]);
   return { key, resultHash: digest(result), catalogHash: catalog.snapshotHash };
 }
-const fixture = await createOwnedManualFixture(process.argv.slice(2), {
-  async beforeUpgradeFrom79({ sql }) {
-    beforeConstraints = await constraints(sql); beforeColumns = await columns(sql);
-    assert.match(beforeConstraints.find(row => row.conname === 'variant_confirmation_check1').definition, /observed_features/);
-    assert.equal(beforeColumns.find(row => row.attname === 'analysis_action_id').attnotnull, true);
-    const actorId = randomUUID();
-    await sql('INSERT INTO atlas_staff."StaffIdentity"(id,"phoneHash",name) VALUES($1,$2,$3)', [actorId, digest(actorId), 'Synthetic preserved reviewer']);
-    for (const decision of ['MANUAL', 'SELECTED', 'UNRESOLVED']) {
-      const cardId = randomUUID(), actionId = randomUUID(), analysisId = randomUUID();
-      const draft = { source: { sourceHash: digest(cardId) }, identityRevision: 1, identity: identity(decision === 'SELECTED' ? 'Reverse Holo' : 'Holo') };
-      const content = canonical(draft), card = { cardId, revision: 2, contentHash: digest(content), draft };
-      await sql('INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id) VALUES($1,2,$2,$3,$4)', [cardId, content, card.contentHash, actorId]);
-      const job = decision === 'SELECTED' ? await seedReadyJob(sql, card, actorId) : null;
-      const action = { type: 'VARIANT_CONFIRM', ...variantBinding(card), decision, candidateId: job ? candidate.candidateId : null,
-        jobId: job?.key ?? null, resultHash: job?.resultHash ?? null, reviewed: true,
-        observedFeatures: decision === 'MANUAL' ? 'Preserved historical note' : null };
-      delete action.cardId;
-      const request = canonical({ actionId, expectedRevision: 1, action }), result = canonical({ card });
-      await sql('INSERT INTO atlas_manual.action(card_id,action_id,actor_id,expected_revision,result_revision,request_hash,request,result) VALUES($1,$2,$3,1,2,$4,$5,$6)',
-        [cardId, actionId, actorId, digest(request), request, result]);
-      await sql('INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,job_key,result_hash,catalog_hash,candidate_id,decision,observed_features,reprocess_required,analysis_action_id) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11,true,$12)',
-        [cardId, actionId, actorId, draft.source.sourceHash, variantIdentityHash(draft.identity), job?.key ?? null, job?.resultHash ?? null, job?.catalogHash ?? null,
-          job ? candidate.candidateId : null, decision, action.observedFeatures, analysisId]);
-      historical.push({ cardId, actionId, analysisId, decision });
-    }
-    beforeUpgrade = await snapshot(sql);
-    await writeFile(join(output, 'upgrade-before.json'), JSON.stringify({ snapshot: beforeUpgrade, constraints: beforeConstraints, columns: beforeColumns, historical }, null, 2), { mode: 0o600 });
-  },
-  async afterUpgradeTo80({ sql, directory, source }) {
-    assert.deepEqual(await snapshot(sql, Object.keys(beforeUpgrade.tables)), beforeUpgrade, 'Migration80 preserves all historical rows and grants');
-    const afterConstraints = await constraints(sql), afterColumns = await columns(sql);
-    assert.deepEqual(afterConstraints, beforeConstraints.filter(row => row.conname !== 'variant_confirmation_check1'));
-    assert.deepEqual(afterColumns, beforeColumns.map(row => row.attname === 'analysis_action_id' ? { ...row, attnotnull: false } : row));
-    assert.match(afterConstraints.find(row => row.conname === 'variant_confirmation_check').definition, /SELECTED.*job_key.*result_hash.*catalog_hash.*candidate_id/);
-    upgrade = { from: 79, to: 80, preservedTables: Object.keys(beforeUpgrade.tables).length,
-      preservedNonemptyTables: Object.values(beforeUpgrade.tables).filter(row => row.count > 0).length,
-      preservedConfirmations: historical.length, rowsAndGrantsExact: true, registeredSecondDeployNoop: true,
-      removedConstraint: 'variant_confirmation_check1', nullableColumn: 'analysis_action_id', otherConstraintsUnchanged: true,
-      migration: source.staffMigrations[79], fixtureDirectory: directory };
-    await writeFile(join(output, 'upgrade-result.json'), JSON.stringify({ status: 'PASS', ...upgrade, afterConstraints, afterColumns }, null, 2), { mode: 0o600 });
-    checks.push('registered79→80 upgrade preserves every old row/grant and all constraints except manual-note check and analysis-action NOT NULL');
-  },
-});
+const fixture = await createOwnedManualFixture(process.argv.slice(2));
 const connection = fixture.connect({ manualConnectionLimit: 1 });
 let result;
 try {
@@ -105,8 +55,8 @@ try {
   } });
   const review = createVariantReviewService({ store, workflow: { service } });
   const sql = async (query, values = []) => ({ rows: await fixture.admin.$queryRawUnsafe(query, ...values) });
-  const initialHistory = await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.variant_confirmation ORDER BY action_id');
-  const initialActions = await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.action ORDER BY action_id');
+  assert.equal((await columns(sql)).find(row=>row.attname==='analysis_action_id').attnotnull,false);
+  assert.equal((await constraints(sql)).some(row=>row.conname==='variant_confirmation_check1'),false);
   const countAnalysis = async () => (await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_defect_analysis.run'))[0].n;
   assert.equal(await countAnalysis(), 0);
   async function seed(parallel = null) {
@@ -136,9 +86,8 @@ try {
     const [recorded] = await fixture.admin.$queryRawUnsafe('SELECT request,result FROM atlas_manual.action WHERE action_id=$1::uuid', input.actionId);
     assert.equal(Object.hasOwn(JSON.parse(recorded.request).action, 'observedFeatures'), false);
     assert.equal(JSON.parse(recorded.result).card.draft.identity.parallel, parallel);
-    const [contribution] = await fixture.admin.$queryRawUnsafe('SELECT payload FROM atlas_manual_connected.variant_contribution WHERE action_id=$1::uuid', input.actionId);
-    assert.equal(Object.hasOwn(JSON.parse(contribution.payload), 'observedFeatures'), false);
-    assert.equal(JSON.parse(contribution.payload).parallel, parallel);
+    const [retiredContribution] = await fixture.admin.$queryRawUnsafe("SELECT to_regclass('atlas_manual_connected.variant_contribution') IS NOT NULL AS exists");
+    if(retiredContribution.exists){const [contributions] = await fixture.admin.$queryRawUnsafe('SELECT count(*)::int count FROM atlas_manual_connected.variant_contribution WHERE action_id=$1::uuid', input.actionId);assert.equal(contributions.count, 0);}
     await assert.rejects(review.confirm(staff, card.cardId, { ...input, manualParallel: 'Changed replay' }), { code: 'MANUAL_ACTION_ID_CONFLICT' });
     await assert.rejects(review.confirm(staff, card.cardId, { ...input, actionId: randomUUID() }), { code: 'MANUAL_DRAFT_STALE' });
     checks.push(`MANUAL ${parallel} commits without notes or analysis, retains geometry/findings/photos, and replays one immutable action`);
@@ -167,23 +116,22 @@ try {
   await assert.rejects(review.confirm(staff, unresolvedCard.cardId, noBinding), { code: 'VARIANT_SOURCE_STALE' });
   await assert.rejects(review.confirm(staff, unresolvedCard.cardId, { ...noBinding, actionId: randomUUID(), sourceHash: held.sourceHash, identityHash: digest('wrong-identity') }), { code: 'VARIANT_IDENTITY_STALE' });
   checks.push('unresolved and wrong-source/identity commands do not fabricate a physical variant confirmation');
-  await assert.rejects(fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_confirmation SET observed_features='changed' WHERE action_id=$1::uuid", historical[0].actionId));
-  await assert.rejects(fixture.admin.$executeRawUnsafe('DELETE FROM atlas_manual.action WHERE action_id=$1::uuid', historical[0].actionId));
+  const confirmationBefore=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.variant_confirmation WHERE action_id=$1::uuid',selectedInput.actionId);
+  const actionBefore=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE action_id=$1::uuid',selectedInput.actionId);
+  await assert.rejects(fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_confirmation SET observed_features='changed' WHERE action_id=$1::uuid", selectedInput.actionId));
+  await assert.rejects(fixture.admin.$executeRawUnsafe('DELETE FROM atlas_manual.action WHERE action_id=$1::uuid', selectedInput.actionId));
   await assert.rejects(manualClient.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_confirmation SET decision='MANUAL' WHERE action_id=$1::uuid", selectedInput.actionId));
-  const legacyIds = historical.map(value => value.actionId);
-  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.variant_confirmation WHERE action_id=ANY($1::uuid[]) ORDER BY action_id', legacyIds), initialHistory);
-  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE action_id=ANY($1::uuid[]) ORDER BY action_id', legacyIds), initialActions);
+  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.variant_confirmation WHERE action_id=$1::uuid',selectedInput.actionId),confirmationBefore);
+  assert.deepEqual(await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE action_id=$1::uuid',selectedInput.actionId),actionBefore);
   const noAction = inputFor(held, { manualParallel: 'Base' });
   await assert.rejects(fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,decision,reprocess_required) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,\'MANUAL\',false)',
     unresolvedCard.cardId, noAction.actionId, principal.id, held.sourceHash, held.identityRevision, held.identityHash));
   await assert.rejects(fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,decision,reprocess_required) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,\'SELECTED\',false)',
     unresolvedCard.cardId, randomUUID(), principal.id, held.sourceHash, held.identityRevision, held.identityHash), error => error.meta?.code === '23514');
-  checks.push('historical notes/analysis links/actions remain byte-for-byte; immutable triggers, exact-action FK and SELECTED catalog constraint still enforce');
-  const [ledger] = await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_staff._prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL');
-  assert.equal(ledger.n, 80); assert.equal(await countAnalysis(), 0); assert.equal(networkCalls, 0);
+  checks.push('saved confirmation/actions remain byte-for-byte; immutable triggers, exact-action FK and SELECTED catalog constraint enforce');
+   assert.equal(await countAnalysis(), 0); assert.equal(networkCalls, 0);
   const [currentRole] = await manualClient.$queryRawUnsafe('SELECT current_user AS role');
-  result = { status: 'PASS', groups: checks.length, checks, upgrade, staffMigrations: ledger.n,
-    publicMigrations: fixture.cluster.source.publicMigrations.length, humanRole: currentRole.role,
+  result = { status: 'PASS', groups: checks.length, checks, schemaMode:'standalone',schemaSource:fixture.cluster.source, humanRole: currentRole.role,
     analysisRuns: 0, providerCalls: 0, productionCalls: 0, metadataOnlyQualification: true, fixtureDirectory: fixture.cluster.directory };
 } finally {
   await connection.close(); await fixture.stop();
@@ -191,5 +139,5 @@ try {
 const cleanup = JSON.parse(await readFile(join(fixture.cluster.directory, 'cleanup.json'), 'utf8'));
 assert.equal(cleanup.stoppedVerified, true); assert.equal(cleanup.removed, 'owned regenerable database files');
 await writeFile(join(output, 'result.json'), JSON.stringify({ ...result, cleanup }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
-console.log(JSON.stringify({ status: result.status, groups: result.groups, staffMigrations: result.staffMigrations,
+console.log(JSON.stringify({ status: result.status, groups: result.groups, schemaMode: result.schemaMode,
   providerCalls: 0, productionCalls: 0, cleanup, evidence: join(output, 'result.json') }));

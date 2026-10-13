@@ -3,14 +3,12 @@ import { privateManualAccessConfig } from '../../../frontend/atlas-app/lib/serve
 import { createServingConnectedManual } from '../../../frontend/atlas-app/lib/server/connected-manual-runtime.mjs';
 import { variantWorkerSettings, variantWorkerEnvironment } from '../../../frontend/atlas-app/lib/server/variant-runtime-settings.mjs';
 import sharp from 'sharp';
-import { createAtlasCatalogClient } from '../src/research-catalog.mjs';
 import { createVariantCatalogService } from '../src/variant-catalog.mjs';
 import { createVariantListingProvider } from '../src/variant-listing-provider.mjs';
 import { createVariantPhotoProvider } from '../src/variant-photo-provider.mjs';
 import { createVariantWorker } from '../src/variant-worker.mjs';
 import { createVariantWorkers } from './variant-workers.mjs';
 import { createVariantAdmission } from '../src/variant-admission.mjs';
-import { createVariantReferenceContribution } from '../src/variant-reference-contribution.mjs';
 
 // Separate process entry point. Never imported by Next.js or the grading host.
 // No HTTP listener, batch start, original grading dequeue or report approval.
@@ -28,29 +26,13 @@ const runtime = createServingConnectedManual({ env: variantWorkerEnvironment(env
 await runtime.validateConfiguration();
 const connected = runtime.connected, store = connected.variantJobs;
 const listingProvider = settings.listingApiKey ? createVariantListingProvider({ apiKey: settings.listingApiKey, cache: store.cache }) : null;
-const catalog = createVariantCatalogService({ catalogClient: settings.catalogToken ? createAtlasCatalogClient({ token: settings.catalogToken }) : null,
+const catalog = createVariantCatalogService({
   cache: store.cache, scrydex: settings.scrydex, listingProvider });
 const provider = createVariantPhotoProvider({ apiKey: settings.apiKey, readReferenceImage: catalog.readImage });
 const admitDispatch = createVariantAdmission({ boundary: runtime.boundary });
-const contributeReference=createVariantReferenceContribution({store,artifacts:runtime.variantArtifacts,boundary:runtime.boundary,
-  workflow:connected.workflow,loadPhotos:runtime.readVariantPhotos,catalog});
-async function backgroundMaintenance() {
-  if (!settings.catalogToken) return;
-  const job = await store.claimContribution();
-  if (!job) return;
-  try {
-    const metadata = await catalog.submitObservation(job.payload, { signal: AbortSignal.timeout(15000) });
-    const reference=await contributeReference(job,{signal:AbortSignal.timeout(35000)});
-    const receipt={metadata,reference};
-    await store.finishContribution(job, { receipt });
-  } catch (error) {
-    onError(error);
-    await store.finishContribution(job, { code: 'VARIANT_CONTRIBUTION_RETRY' });
-  }
-}
 const worker = createVariantWorker({ store, catalog, provider,
   concurrency: settings.concurrency, intervalMs: settings.intervalMs,
-  onError, maintenance: backgroundMaintenance, admitDispatch });
+  onError, admitDispatch });
 const workers = createVariantWorkers({ worker, reconciler: runtime.analysisReconciler,
   onEvent: event => console.log(JSON.stringify(event)) });
 let stopping = false;

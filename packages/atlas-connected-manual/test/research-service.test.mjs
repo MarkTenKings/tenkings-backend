@@ -11,7 +11,7 @@ test('actual research core, acknowledged providers and current market selection 
  assert.equal(result.preview.candidates[0].sale.grade,'9');assert.equal(result.preview.atlasGrade,10);
  assert(!result.preview.query.includes('PSA'));assert.equal(result.research.candidates[0].conditionDecision.classification,'rejected');
  assert.equal(result.research.candidates[0].identityMatch,true);assert.equal(result.research.candidates[0].imageCompared,true);
- assert.equal(result.research.catalog.status,'not_configured');assert.equal('estimate' in result.research,false);
+ assert.equal('catalog' in result.research,false);assert.equal('knowledge' in result.research,false);assert.equal('estimate' in result.research,false);
  const source=f.calls.find(c=>c.url.startsWith('https://api.sold-comps.com/'));assert.equal(new URL(source.url).searchParams.get('keyword'),'2026 Fixture Local only Synthetic report');assert.equal(new URL(source.url).searchParams.get('count'),'40');assert.equal(new URL(source.url).searchParams.get('hydrateBoa'),'false');
  assert(f.calls.every(c=>c.redirect==='error'));const count=f.calls.length;
  assert.deepEqual(await f.create().preview(f.staff,f.cardId,input),result);assert.equal(f.calls.length,count);
@@ -54,34 +54,9 @@ test('foreign staff and superseded report cannot replay private research or buy 
  f.row.action_id=randomUUID();await assert.rejects(f.service.preview(f.staff,f.cardId,input),{code:'PRESENTATION_APPROVAL_STALE'});assert.equal(f.calls.length,count);
 });
 
-test('catalog absence is truthful; explicit metadata proposal shares advisory learning but no images, keys or human review',async()=>{
- const f=await researchFixture({catalog:true}),input=f.command(),result=await f.service.preview(f.staff,f.cardId,input);
- assert.equal(result.state,'READY');assert.equal(result.research.catalog.status,'no_publication');assert.equal(result.research.knowledge.canContribute,true);
- const command={previewId:input.requestId,observationId:randomUUID()},sent=await f.service.contribute(f.staff,f.cardId,command);
- assert.equal(sent.disposition,'requires_authorized_review');assert.equal(f.proposals.length,1);
- const proposal=f.proposals[0].proposal;assert.equal(proposal.images.length,0);assert.equal(proposal.basedOnPublication,null);assert.equal(proposal.sources.at(-1).kind,'DERIVED');
- assert(proposal.note.includes('Unreviewed machine'));assert(!JSON.stringify(proposal).includes(f.cardId));assert(!JSON.stringify(proposal).includes('private/'));
- const replay=await f.create().contribute(f.staff,f.cardId,command);assert.deepEqual(replay,sent);assert.equal(f.proposals.length,1);
-});
-
-test('explicit lost contribution receipt reconciliation repeats only the host-idempotent proposal and never claims publication',async()=>{
- const f=await researchFixture({catalog:true}),input=f.command();await f.service.preview(f.staff,f.cardId,input);f.loseProposal=true;
- const command={previewId:input.requestId,observationId:randomUUID()};await assert.rejects(f.service.contribute(f.staff,f.cardId,command));assert.equal(f.proposals.length,1);
- f.loseProposal=false;const recovered=await f.create().contribute(f.staff,f.cardId,command);assert.equal(recovered.disposition,'requires_authorized_review');assert.equal(f.proposals.length,2);assert.deepEqual(f.proposals[1],f.proposals[0]);assert.equal(f.events.get(command.observationId).filter(e=>e.event==='DISPATCH').length,1);
-});
-
-test('proposal initialization rollback and lost receipt recover with the same intent after unrelated presentation edits',async()=>{
- const f=await researchFixture({catalog:true}),input=f.command();await f.service.preview(f.staff,f.cardId,input);
- const command={previewId:input.requestId,observationId:randomUUID()};f.loseInit();await assert.rejects(f.service.contribute(f.staff,f.cardId,command));assert.equal(f.searches.has(command.observationId),false);assert.equal(f.proposals.length,0);
- f.loseProposal=true;await assert.rejects(f.service.contribute(f.staff,f.cardId,command));
- await f.repo.commit(f.staff,f.cardId,f.command());f.loseProposal=false;
- const replay=await f.create().contribute(f.staff,f.cardId,command);assert.equal(replay.disposition,'requires_authorized_review');assert.equal(f.proposals.length,2);assert.deepEqual(f.proposals[0],f.proposals[1]);
-});
-
-test('explicit proposal reconciliation retains an acknowledged unavailable host reply and recovers only that exact idempotent payload',async()=>{
- const f=await researchFixture({catalog:true}),input=f.command();await f.service.preview(f.staff,f.cardId,input);const command={previewId:input.requestId,observationId:randomUUID()};
- f.proposalUnavailable=true;await assert.rejects(f.service.contribute(f.staff,f.cardId,command),{code:'RESEARCH_CATALOG_UNAVAILABLE'});
- f.proposalUnavailable=false;const recovered=await f.create().contribute(f.staff,f.cardId,command);assert.equal(recovered.state,'RECORDED');
- assert.deepEqual(f.proposals[0],f.proposals[1]);const events=f.events.get(command.observationId);assert.equal(events.filter(e=>e.event==='DISPATCH').length,2);assert.equal(events.filter(e=>e.event==='RESPONSE').length,2);
- const count=f.calls.length;await f.create().contribute(f.staff,f.cardId,command);assert.equal(f.calls.length,count);
+test('independent research has no contribution capability or catalog transport, even with retired config supplied',async()=>{
+ const f=await researchFixture();f.config.catalogToken='T'.repeat(43);const service=f.create(),input=f.command();
+ const result=await service.preview(f.staff,f.cardId,input);assert.equal(result.state,'READY');assert.equal(service.contribute,undefined);
+ assert(f.calls.length>0);assert(f.calls.every(c=>['api.sold-comps.com','api.openai.com','i.ebayimg.com'].includes(new URL(c.url).hostname)));
+ const sends=f.calls.length;assert.deepEqual(await f.create().preview(f.staff,f.cardId,input),result);assert.equal(f.calls.length,sends);
 });

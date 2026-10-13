@@ -20,7 +20,7 @@ const { chromium } = createRequire(join(resolve(toolModules), '__atlas_customer_
 const babel = require('next/dist/compiled/babel/core'), modules = new Map();
 for (const file of ['components/AccountWorkspace.jsx', 'components/intake/SubmissionHero.jsx', 'components/intake/SubmissionProgress.jsx', 'components/intake/CustomerIntake.jsx', 'components/intake/ProfileFields.jsx', 'components/intake/ServiceChoice.jsx', 'components/intake/SubmissionStationFinder.jsx', 'lib/dealer-map.mjs',
     'components/commerce/CommerceCheckout.jsx', 'components/commerce/OrderReceipt.jsx', 'components/orders/CustomerOrderHistory.jsx', 'components/orders/CustomerOrderTracking.jsx',
-    'components/dealer/DealerWorkspace.jsx', 'components/dealer/DealerPortal.jsx', 'lib/progress.mjs', 'lib/pending-submission.mjs', 'lib/intake-journal.mjs', 'lib/capture-buffer.mjs', 'lib/capture-state.mjs']) {
+    'components/dealer/DealerWorkspace.jsx', 'components/dealer/DealerPortal.jsx', 'lib/intake-journal.mjs', 'lib/capture-buffer.mjs', 'lib/capture-state.mjs']) {
     modules.set(file, babel.transformSync(readFileSync(join(root, file), 'utf8'), { filename: file, presets: [[require.resolve('next/babel'), {
         'preset-env': { targets: { chrome: '120' } }, 'transform-runtime': { helpers: false }
     }]], babelrc: false, configFile: false }).code);
@@ -57,7 +57,7 @@ window.__request=async(path,options={})=>{state.calls.push({path,body:copy(optio
 if(path==='/session')result={csrf:'synthetic-csrf',mode:'LOCAL_FIXTURE',customer:state.signedIn?state.customer:null};
 else if(path==='/auth/request')result={challengeId:'synthetic-code'};
 else if(path==='/auth/verify'){if(body.code!=='424242')failure('CODE_NOT_ACCEPTED');state.signedIn=true;result={csrf:'synthetic-csrf',customer:state.customer};}
-else if(path==='/submissions')result={submissions:[],nextCursor:null};
+
 else if(path==='/profile'){state.customer.profile=copy(body.profile);result={customer:state.customer};}
 else if(path.startsWith('/intake/locations'))result={locations:[kioskLocation],...(path.includes('entry=')?{resolvedLocationId:kioskLocation.id}:{})};
 else if(path==='/intake/drafts'){if(body&&!state.draft)state.draft={id:id(3),revision:1,state:'DRAFT',intakeMethod:body.intakeMethod,kioskId:body.kioskId,cards:[]};result=body?{draft:state.draft}:{drafts:state.draft?[state.draft]:[]};}

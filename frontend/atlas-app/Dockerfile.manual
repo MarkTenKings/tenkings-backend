@@ -1,7 +1,7 @@
 # Build from scripts/package-manual-container.mjs's explicit source closure.
 # Qualified separately from the old Vercel and grading-operator deployments.
-ARG NODE_IMAGE=node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
-FROM ${NODE_IMAGE} AS build
+FROM node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build
+RUN node -e "if (process.versions.node.split('.')[0] !== '22') throw Error('Node22 required')"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv cmake g++ make pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY vendor /opt/vendor
@@ -15,18 +15,34 @@ RUN cd /opt/vendor && echo '5b4fac677018e6074196e8f9889f3e4a5310e46afbf22a893f62
 # Decoder children intentionally omit loader environment variables. Register
 # both reviewed native libraries so transitive libde265 resolution is explicit.
 RUN echo '/opt/atlas-native/lib' > /etc/ld.so.conf.d/atlas-native.conf && ldconfig
-ENV PATH="/opt/atlas-python/bin:${PATH}" LD_LIBRARY_PATH=/opt/atlas-native/lib
+ENV PATH="/opt/atlas-python/bin:${PATH}" NEXT_TELEMETRY_DISABLED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python3 -m venv /opt/atlas-python && pip install --no-cache-dir numpy==1.26.4 opencv-python-headless==4.10.0.84
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /workspace
 COPY source/ ./
+COPY source-manifest.json /opt/atlas-build/source-manifest.json
+RUN node frontend/atlas-app/scripts/verify-manual-container.mjs /opt/atlas-build/source-manifest.json
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter @atlas/staff-app...
 RUN pnpm --filter @tenkings/ebay-sold-comps-v2 build && node packages/atlas-grading-core/scripts/build.mjs && node packages/atlas-manual-workspace/scripts/build.mjs \
     && node packages/atlas-photo-runtime/scripts/build-native.mjs /opt/atlas-native/include /opt/atlas-native/lib /usr/local/include/node \
     && node frontend/atlas-app/scripts/generate-database.mjs
 RUN pnpm --filter @atlas/staff-app exec next build
 RUN node frontend/atlas-app/scripts/check-boundary.mjs
-ENV NODE_ENV=production ATLAS_MANUAL_RUNTIME=private-cpu ATLAS_MANUAL_PYTHON=/opt/atlas-python/bin/python
+RUN node frontend/atlas-app/scripts/verify-manual-container.mjs /opt/atlas-build/source-manifest.json native > /opt/atlas-build/native-build-receipt.json
+
+# The serving image starts independently from the same official base. No old
+# ATLAS image, fixture photo, archive, database migration or build compiler is copied.
+FROM node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /opt/atlas-native /opt/atlas-native
+COPY --from=build /opt/atlas-python /opt/atlas-python
+COPY --from=build /opt/atlas-build /opt/atlas-build
+COPY --from=build --chown=node:node /workspace /workspace
+RUN echo '/opt/atlas-native/lib' > /etc/ld.so.conf.d/atlas-native.conf && ldconfig
+ENV PATH="/opt/atlas-python/bin:${PATH}" NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 ATLAS_MANUAL_RUNTIME=private-cpu ATLAS_MANUAL_PYTHON=/opt/atlas-python/bin/python
+WORKDIR /workspace
+RUN node frontend/atlas-app/scripts/verify-manual-container.mjs /opt/atlas-build/source-manifest.json native > /opt/atlas-build/native-runtime-receipt.json
 USER node
 EXPOSE 4319
 WORKDIR /workspace

@@ -1,7 +1,7 @@
 import {requireThat} from '@atlas/manual-service/contract';
 import {CODEX_ASSOCIATION_REVISION} from './variant-codex.mjs';
 /** Separate-process only: no grading limiter, grading reservation, browser or approval capability. */
-export function createVariantWorker({store,catalog,provider,concurrency=1,intervalMs=5000,heartbeatMs=30000,timers=globalThis,onError=()=>{},maintenance=null,admitDispatch=null}){
+export function createVariantWorker({store,catalog,provider,concurrency=1,intervalMs=5000,heartbeatMs=30000,timers=globalThis,onError=()=>{},admitDispatch=null}){
  requireThat(store&&catalog&&typeof provider==='function'&&Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=4,500,'VARIANT_CONFIG_INVALID');
  const tasks=new Set();let stopped=true,cycling=null,timer=null;const emit=e=>{try{onError({code:/^[A-Z][A-Z0-9_]{0,100}$/.test(e?.code??'')?e.code:'VARIANT_WORKER_INTERRUPTED'});}catch{}};
  async function execute(job){let dispatched=Boolean(job.dispatch_id),saved=Boolean(job.response),lost=false,snapshot=job.catalog,renewing=Promise.resolve();const controller=new AbortController();
@@ -67,7 +67,7 @@ export function createVariantWorker({store,catalog,provider,concurrency=1,interv
   }catch(e){emit(e);try{if(e.code==='VARIANT_GRADING_PRIORITY_DEFERRED'&&!dispatched&&!saved){requireThat(await store.defer(job),409,'VARIANT_LEASE_LOST');return;}if(snapshot&&dispatched&&!saved&&!lost){await finishReview('VARIANT_PROVIDER_OUTCOME_UNKNOWN');return;}await store.finish(job,{state:saved?'RETRY':dispatched?'UNKNOWN':'RETRY',code:saved?'VARIANT_PROJECTION_INTERRUPTED':dispatched?'VARIANT_PROVIDER_OUTCOME_UNKNOWN':'VARIANT_PREPARATION_INTERRUPTED'});}catch(error){emit(error);}}
   finally{timers.clearInterval(heartbeat);await renewing;}
  }
- async function cycle(){if(stopped||cycling||tasks.size>0)return cycling;cycling=(async()=>{await store.discover();if(maintenance)await maintenance();while(!stopped&&tasks.size<concurrency){if(admitDispatch&&!await admitDispatch())break;const job=await store.claim(concurrency);if(!job)break;const task=execute(job).finally(()=>tasks.delete(task));tasks.add(task);}})().catch(emit).finally(()=>{cycling=null;});return cycling;}
+ async function cycle(){if(stopped||cycling||tasks.size>0)return cycling;cycling=(async()=>{await store.discover();while(!stopped&&tasks.size<concurrency){if(admitDispatch&&!await admitDispatch())break;const job=await store.claim(concurrency);if(!job)break;const task=execute(job).finally(()=>tasks.delete(task));tasks.add(task);}})().catch(emit).finally(()=>{cycling=null;});return cycling;}
  return Object.freeze({start(){if(!stopped)return;stopped=false;timer=timers.setInterval(()=>void cycle(),intervalMs);timer.unref?.();void cycle();},wake:cycle,
   async stop(){stopped=true;if(timer)timers.clearInterval(timer);timer=null;await cycling;await Promise.allSettled([...tasks]);},
   async drainOnce(){requireThat(stopped,409,'VARIANT_WORKER_RUNNING');stopped=false;try{await cycle();await Promise.allSettled([...tasks]);}finally{stopped=true;}}

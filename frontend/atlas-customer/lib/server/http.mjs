@@ -1,4 +1,4 @@
-import { BoundaryError, deny, keys, privateHeaders, profile, submission, UUID } from './policy.mjs';
+import { BoundaryError, deny, keys, privateHeaders, profile, UUID } from './policy.mjs';
 import { cardInput, createInput, identityInput, revision, CustomerIntakeError } from '@atlas/customer-intake/contract';
 import { CustomerServiceError } from '@atlas/service-bridge/customer-service';
 import {dealerRoute} from './dealer.mjs';
@@ -16,9 +16,7 @@ export function createHandler(resolveRuntime) {
                 ['GET', /^\/api\/customer\/session$/], ['GET', /^\/api\/customer\/dealer\/(session|memberships)$/], ['POST', /^\/api\/customer\/dealer\/(session|logout)$/], ['POST', /^\/api\/customer\/auth\/(request|verify|logout)$/],
                 ['GET', /^\/api\/customer\/notifications$/], ['POST', /^\/api\/customer\/notifications$/],
                 ['POST', /^\/api\/customer\/email\/(?:request|confirm)$/], ['GET', /^\/api\/customer\/email\/status$/],
-                ['POST', /^\/api\/customer\/profile$/], ['GET', /^\/api\/customer\/submissions$/],
-                ['POST', /^\/api\/customer\/submissions$/],
-                ['GET', /^\/api\/customer\/(submissions|submission-requests|cards)\/([a-f0-9-]{36})$/],
+                ['POST', /^\/api\/customer\/profile$/],
                 ['GET', /^\/api\/customer\/intake\/drafts(?:\/[a-f0-9-]{36})?$/],
                 ['POST', /^\/api\/customer\/intake\/drafts(?:\/[a-f0-9-]{36}\/(?:cards|review|cards\/[a-f0-9-]{36}\/(?:correct|uploads\/[a-f0-9-]{36}\/(?:sign|complete))))?$/],
                 ['GET', /^\/api\/customer\/intake\/locations$/],
@@ -186,19 +184,7 @@ export function createHandler(resolveRuntime) {
                     keys(req.body, ['expectedRevision', 'profile']);
                     body = await auth.call(cookieHeader, 'intake_review', { id, expectedRevision: revision(req.body.expectedRevision), profile: profile(req.body.profile, {allowContact:true}) }, csrf ?? '');
                 } else deny(405, 'METHOD_NOT_ALLOWED');
-            } else if (path === '/api/customer/submissions') {
-                if (method === 'POST') body = await auth.call(cookieHeader, 'submit', { submission: submission(req.body) }, csrf ?? '');
-                else {
-                    const params = new URL(req.url, state.config.origin).searchParams;
-                    if ([...params.keys()].some(key => key !== 'cursor') || params.getAll('cursor').length > 1) deny(400, 'INVALID_REQUEST');
-                    const cursor = params.get('cursor'); if (cursor !== null && !UUID.test(cursor)) deny(400, 'INVALID_REQUEST');
-                    body = await auth.call(cookieHeader, 'list', { cursor });
-                }
-            } else {
-                const match = path.match(/^\/api\/customer\/(submissions|submission-requests|cards)\/([a-f0-9-]{36})$/);
-                if (!match || !UUID.test(match[2])) deny(404, 'NOT_FOUND');
-                body = await auth.call(cookieHeader, match[1] === 'cards' ? 'card' : match[1] === 'submission-requests' ? 'submission_request' : 'submission', { id: match[2] });
-            }
+            } else deny(404, 'NOT_FOUND');
             return res.status(200).json(body);
         } catch (error) {
             const known = error instanceof BoundaryError || error instanceof CustomerIntakeError || error instanceof CustomerServiceError;

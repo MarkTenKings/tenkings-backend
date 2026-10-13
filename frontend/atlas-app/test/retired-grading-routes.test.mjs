@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 
@@ -41,24 +41,7 @@ test('grading and intake render only current screens; missing capability never s
   }
 });
 
-test('legacy card routes preserve authentication failures and redirect authorized staff without translating IDs', async () => {
-  for (const page of ['cards/[cardId]', 'workspace/[cardId]']) {
-    const ctx = { params: { cardId: '../../legacy-specimen' }, query: { returnTo: 'https://example.com' } };
-    for (const access of [{ redirect: { destination: '/', permanent: false } },
-      { props: { unavailable: true, accessFailure: { kind: 'CHECK_FAILED' } } }]) {
-      const route = load(page, access);
-      assert.equal(await route.getServerSideProps(ctx), access);
-      assert.equal(route.calls.length, 1);
-    }
-    for (const manualEnabled of [true, false]) {
-      const route = load(page, { props: { staff: { id: 'reviewer' }, manualEnabled } });
-      assert.deepEqual(JSON.parse(JSON.stringify(await route.getServerSideProps(ctx))), {
-        redirect: { destination: '/grading', permanent: false },
-      });
-      assert.equal(route.default({}), null);
-    }
-    const route = load(page, {}), failure = { kind: 'CHECK_FAILED' };
-    const held = route.default({ unavailable: true, accessFailure: failure });
-    assert.equal(held.type, 'unavailable'); assert.equal(held.props.accessFailure, failure);
-  }
+test('obsolete card/workspace/operations routes have no filesystem route', () => {
+  for (const page of ['cards/[cardId]','workspace/[cardId]','operations'])
+    assert.equal(existsSync(new URL(`../pages/${page}.jsx`,import.meta.url)),false);
 });

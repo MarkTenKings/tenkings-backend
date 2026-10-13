@@ -1,10 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import sharp from 'sharp';
-import { digest } from '@atlas/manual-service/contract';
 import { variantReviewSettings, variantWorkerSettings, variantWorkerEnvironment, validateVariantRuntimeConfiguration } from '../../../frontend/atlas-app/lib/server/variant-runtime-settings.mjs';
-import { createVariantSourcePhotoReader } from '../src/variant-source-photos.mjs';
-import { variantBinding, variantJobGrantSQL } from '../src/variant-job-store.mjs';
+import { connectedGrantSQL } from '../src/details.mjs';
+import { variantJobGrantSQL } from '../src/variant-job-store.mjs';
 
 const env = { ATLAS_MANUAL_ENABLED: 'true', ATLAS_MANUAL_VARIANT_REVIEW_ENABLED: 'true', ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED: 'true',
   ATLAS_MANUAL_DEFECT_MEMORY_ENABLED: 'true', ATLAS_VARIANT_WORKER_ENABLED: 'true', ATLAS_MANUAL_OPENAI_KEY: 'synthetic-config-only-key', ATLAS_VARIANT_OPENAI_KEY:'distinct-synthetic-variant-key',
@@ -58,26 +56,11 @@ test('listing acquisition is explicitly enabled only with its worker credential'
   assert.equal(isolated.ATLAS_MANUAL_BATCH_ENABLED, 'false');
 });
 
-function cardFixture() { return { cardId: 'physical-card', revision: 4, draft: { identityRevision: 2,
-  identity: { cardName: 'Synthetic', year: '2026', productSet: 'Fixture', cardNumber: '1', parallel: 'Reverse Holo' }, source: { sourceHash: digest('pair') } } }; }
-test('worker references use only canonical generated pixels; replacing a source prevents contribution', async () => {
-  const source = await sharp({ create: { width: 2200, height: 2500, channels: 3, background: '#334455' } }).png().toBuffer();
-  let card = cardFixture(), reads = 0, changed = false;
-  const photo = { original: { content: { sha256: digest('original') } }, workingFrame: { raster: { content: { sha256: digest(source) } } }, decodePlan: {} };
-  const pair = { sourceHash: card.draft.source.sourceHash, sides: { FRONT: { photo,upload:{uploadId:'front-upload'} }, BACK: { photo,upload:{uploadId:'back-upload'} } } };
-  const reader = createVariantSourcePhotoReader({ boundary: { machineOwner: x => x }, workflow: { service: { read: async () => card } },
-    intake: { verifiedPair: async () => pair }, readGradingPhoto: async input => { reads++;assert.equal(input.cardId,card.cardId);assert(input.uploadId); if (changed) card = { ...card, draft: { ...card.draft, identityRevision: 3 } }; return {photo:{...photo,workingFrame:{...photo.workingFrame,schemaVersion:3,generation:{sourceFrame:photo.workingFrame}}},bytes:source}; } });
-  const job = { actor_id: 'owner', access_version: 1, card_id: card.cardId, input: variantBinding(card) };
-  const result = await reader(job); assert.equal(reads, 2); assert.equal(result.sourceHash, pair.sourceHash);
-  for (const side of ['FRONT', 'BACK']) { const metadata = await sharp(result[side].bytes).metadata(); assert.equal(metadata.format, 'jpeg');
-    assert.equal(Math.max(metadata.width, metadata.height), 2048); assert.equal(result[side].sha256, digest(result[side].bytes)); }
-  assert.equal(digest(source), photo.workingFrame.raster.content.sha256, 'original source buffer stays unchanged');
-  changed = true; await assert.rejects(reader(job), { code: 'VARIANT_SOURCE_STALE' });
-});
-
-
-test('variant generated source reader never accepts a missing cutout as uploaded-image permission',async()=>{
- const card=cardFixture(),photo={original:{content:{sha256:digest('original')}},workingFrame:{}};
- const reader=createVariantSourcePhotoReader({boundary:{machineOwner:x=>x},workflow:{service:{read:async()=>card}},intake:{verifiedPair:async()=>({sourceHash:card.draft.source.sourceHash,sides:{FRONT:{photo,upload:{uploadId:'front'}},BACK:{photo,upload:{uploadId:'back'}}}})},readGradingPhoto:async()=>null});
- await assert.rejects(reader({actor_id:'owner',access_version:1,card_id:card.cardId,input:variantBinding(card)}),{code:'VARIANT_GENERATED_PHOTO_REQUIRED'});
+test('retired catalog configuration and table grant are absent from main and worker contracts', async () => {
+ assert.deepEqual(variantReviewSettings({...env,ATLAS_MANUAL_CATALOG_ENABLED:'true',ATLAS_MANUAL_CATALOG_TOKEN:'retired-token'}),variantReviewSettings(env));
+ assert.doesNotMatch(connectedGrantSQL('atlas_fixture_role'),/variant_contribution|ON ALL TABLES/);
+ for(const worker of [false,true]){
+  assert.doesNotMatch(variantJobGrantSQL('atlas_fixture_role',{worker}),/variant_contribution/);
+  await validateVariantRuntimeConfiguration({enabled:true,worker,client:{async $queryRawUnsafe(sql){assert.doesNotMatch(sql,/variant_contribution/);return [sql.includes('to_regclass')?{installed:true}:{allowed:true}];}}});
+ }
 });

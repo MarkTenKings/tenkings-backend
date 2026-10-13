@@ -4,44 +4,14 @@ import { deny } from '../policy.mjs';
 // card, change evidence or reach the legacy card/financial schema.
 export const STAFF_GRANTS = Object.freeze({
     StaffControl: {},
-    StaffGradingBridgeControl: {},
     StaffIdentity: { INSERT: ['id', 'phoneHash', 'lastLoginAt'], UPDATE: ['name', 'lastLoginAt'] },
     StaffBrowser: { INSERT: '*' },
     StaffChallenge: { INSERT: '*', UPDATE: ['state', 'verificationSid', 'attempts', 'checkClaimId', 'replayHash', 'replayUntil', 'consumedAt'] },
     StaffSession: { INSERT: '*', UPDATE: ['revokedAt'] },
     StaffRateBucket: { INSERT: '*', UPDATE: '*' },
     StaffAudit: { INSERT: '*' },
-    StaffSpecimen: { UPDATE: ['draftRevision'] },
-    StaffAssignment: {},
-    StaffReviewRevision: { INSERT: '*' },
-    StaffOperation: { INSERT: '*' },
-    StaffAnalysisRevision: {},
-    StaffGradingOperation: { INSERT: '*', UPDATE: ['state', 'dispatchedAt', 'finishedAt', 'resultAnalysisRevision', 'failureCode'] },
-    StaffReportApproval: { INSERT: '*' },
-    StaffApprovedImage: { INSERT: '*' },
-    StaffProposalDecision: { INSERT: '*' },
-    StaffPublicReport: { INSERT: '*', UPDATE: ['currentApprovalId'] },
-    StaffLabelIssue: { INSERT: '*' },
-    StaffNfcJob: { INSERT: '*' },
-    StaffNfcVerification: { INSERT: '*' },
-    StaffPhysicalFinish: { INSERT: '*' },
-    StaffTrustedLearningDecision: { INSERT: '*' },
-    StaffWorkspaceControl: {},
-    StaffWorkspaceCard: { INSERT: '*', UPDATE: ['revision', 'state', 'stage', 'specimenId', 'canonical', 'contentHash', 'updatedAt'] },
-    StaffWorkspaceOperation: { INSERT: '*' },
 });
-const FUNCTIONS = new Set(['lock_control()', 'lock_assignment(uuid, uuid)', 'operator_work_pending(uuid)',
-    'lock_workspace_control()',
-    'lock_workspace_identification_control()',
-    'enqueue_workspace_capture(uuid, uuid, text, text)',
-    'workspace_source_admitted(uuid, uuid)',
-    'read_workspace_operator_control(uuid)', 'control_workspace_operator(uuid, integer, text, uuid, text, integer)',
-    'read_workspace_operator_activity(uuid, integer)',
-    'recover_workspace_operator(uuid, integer, uuid, text, integer, uuid)',
-    'abandon_workspace_operator_attempt(uuid, integer, uuid, text, integer, uuid, text, text)',
-    'read_operator_proposals(uuid)', 'operator_proposals_pending(uuid)', 'lock_nfc_control()',
-    'lock_learning_candidates(uuid, text, uuid, uuid, uuid)',
-    'read_identity_correction_receipt(uuid, uuid, uuid, text, text, text, integer, integer, integer)']);
+const FUNCTIONS = new Set(['lock_control()']);
 
 export function staffGrantSQL(role) {
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(role)) throw new Error('Invalid staff role name');

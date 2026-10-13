@@ -10,7 +10,7 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),require=createR
 const {chromium}=createRequire(join(resolve(process.argv[2]),'fixture.cjs'))('playwright');
 const output=resolve(process.argv[3]??'/private/tmp/atlas-submission-flow-browser');mkdirSync(output,{recursive:true});
 const babel=require('next/dist/compiled/babel/core'), modules=new Map();
-const files=['components/AccountWorkspace.jsx','components/intake/CustomerIntake.jsx','components/intake/ProfileFields.jsx','components/intake/ServiceChoice.jsx','components/intake/SubmissionProgress.jsx','components/intake/SubmissionStationFinder.jsx','components/intake/EmailVerificationPanel.jsx','lib/pending-submission.mjs','lib/progress.mjs','lib/capture-buffer.mjs','lib/capture-state.mjs','lib/intake-journal.mjs','lib/dealer-map.mjs','pages/verify-email.jsx'];
+const files=['components/AccountWorkspace.jsx','components/intake/CustomerIntake.jsx','components/intake/ProfileFields.jsx','components/intake/ServiceChoice.jsx','components/intake/SubmissionProgress.jsx','components/intake/SubmissionStationFinder.jsx','components/intake/EmailVerificationPanel.jsx','lib/capture-buffer.mjs','lib/capture-state.mjs','lib/intake-journal.mjs','lib/dealer-map.mjs','pages/verify-email.jsx'];
 const compile=(path,key)=>modules.set(key,babel.transformSync(readFileSync(path,'utf8'),{filename:key,presets:[[require.resolve('next/babel'),{'preset-env':{targets:{chrome:'120'}},'transform-runtime':{helpers:false}}]],babelrc:false,configFile:false}).code);
 for(const file of files)compile(join(root,file),file);
 for(const file of ['RapidCardCamera.jsx','rapid-camera.mjs'])compile(join(root,'../atlas-shared',file),`atlas-shared/${file}`);
@@ -33,7 +33,7 @@ window.__request=async(path,o={})=>{state.calls.push({path,body:o.body});let res
 if(path==='/session')return{csrf:'fixture',customer:state.signedIn?state.customer:null};
 if(path==='/auth/request')return{challengeId:'synthetic'};
 if(path==='/auth/verify'){state.signedIn=true;save();return{customer:state.customer,csrf:'fixture'};}
-if(path==='/submissions')return{submissions:[]};
+
 if(path==='/intake/drafts'){if(o.body)state.draft??={id:id(3),state:'DRAFT',revision:1,...o.body,cards:[]};result=o.body?{draft:state.draft}:{drafts:state.draft?[state.draft]:[]};}
 else if(path.startsWith('/intake/locations'))return{locations:[{id:id(2),name:'Synthetic Dealer',address:{line1:'1 Fixture Lane',city:'Test',region:'CA',postalCode:'90000'},schedule:{}}]};
 else if(path==='/profile'){state.customer.profile=o.body.profile;return{customer:state.customer};}

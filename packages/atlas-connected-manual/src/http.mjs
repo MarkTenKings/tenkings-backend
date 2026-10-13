@@ -20,7 +20,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market(?:/(search|select))?$`);
   const variantImageRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants/images/([a-f0-9]{64})$`);
   const variantRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants(?:/(confirm|refresh))?$`);
-  const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search|contribute)$`);
+  const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search)$`);
   const dealerRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/dealer-offers$`);
   const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image|thumbnail)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|clean|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
   return async(req,res)=>{
@@ -91,7 +91,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
           && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
         const staff=await boundary.authenticate(req.headers.cookie??'',req.headers['x-atlas-csrf']);
-        const result=researchFound[2]==='search'?await connected.research.preview(staff,researchFound[1],req.body):await connected.research.contribute(staff,researchFound[1],req.body);
+        const result=await connected.research.preview(staff,researchFound[1],req.body);
         res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
       }
       const dealerFound=dealerRoute.exec(url.pathname);

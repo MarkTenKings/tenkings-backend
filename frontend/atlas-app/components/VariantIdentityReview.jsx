@@ -132,7 +132,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const [pending, setPending] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [camera, setCamera] = useState(fitCamera);
   const [side, setSide] = useState('FRONT'), [comparison, setComparison] = useState(null), [reloadNeeded, setReloadNeeded] = useState(false);
-  const [manual, setManual] = useState(null), [referencePermission, setReferencePermission] = useState(null);
+  const [manual, setManual] = useState(null);
   const [drafted, setDrafted] = useState(false), [previewId, setPreviewId] = useState(null), [variantFilter, setVariantFilter] = useState('');
   const comparisonOpener = useRef(null), choiceControls = useRef(null);
   const compare = (candidate, event) => { comparisonOpener.current = event.currentTarget; setComparison(candidate); };
@@ -156,14 +156,11 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     setDrafted(Boolean(draft));
     setChoice(draft ? draft.candidateId : value.confirmation?.selectedCandidateId ?? null);
     setManual(draft?.manual ?? null);
-    const retainedPermission = saved?.pending?.sourceHash === value.sourceHash && saved.pending.identityRevision === value.identityRevision
-      && saved.pending.identityHash === value.identityHash ? saved.pending.referencePermission : null;
-    setReferencePermission(draft?.outcome ? null : draft?.referencePermission ?? retainedPermission ?? null);
     setUnresolved(draft ? draft.outcome : value.confirmation?.decision === 'UNRESOLVED' ? 'CANNOT_TELL' : null);
   }
   useEffect(() => {
     const version = ++generation.current; lock.current = false; client.current = null;
-    setCamera(fitCamera()); setStatus(null); setManual(null); setReferencePermission(null); setDrafted(false); setChoice(null); setUnresolved(null); setPending(null); setBusy(false); setError(''); setNotice(''); setReloadNeeded(false); setComparison(null);
+    setCamera(fitCamera()); setStatus(null); setManual(null); setDrafted(false); setChoice(null); setUnresolved(null); setPending(null); setBusy(false); setError(''); setNotice(''); setReloadNeeded(false); setComparison(null);
     if (!enabled) return;
     Promise.resolve().then(async () => {
       const owner = createClient({ cardId, staffId, storage: window.localStorage,
@@ -204,9 +201,9 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     catch (failure) { if (version === generation.current) { setPending(retainedPending(owner)); setError(variantError(failure)); } }
     finally { if (version === generation.current) { lock.current = false; setBusy(false); } }
   }
-  function choose(candidateId, outcome = null, manualValue = null, permission = referencePermission) {
+  function choose(candidateId, outcome = null, manualValue = null) {
     if (previewOnly || disabled || busy || pending || !current) return;
-    try { client.current.choose(candidateId, outcome, manualValue, outcome ? null : permission); setDrafted(true); setManual(manualValue); setReferencePermission(outcome ? null : permission); setChoice(candidateId); setUnresolved(outcome); setNotice('Choice retained on this device · not yet confirmed'); setError(''); }
+    try { client.current.choose(candidateId, outcome, manualValue); setDrafted(true); setManual(manualValue); setChoice(candidateId); setUnresolved(outcome); setNotice('Choice retained on this device · not yet confirmed'); setError(''); }
     catch (failure) { setError(variantError(failure)); }
   }
   async function refresh() {
@@ -225,7 +222,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     if (!owner || lock.current || disabled || !current || (!unresolved && (!choice && !manual))) return;
     lock.current = true; setBusy(true); setError('');
     try {
-      const result = await owner.confirm({ candidateId: choice, unresolved: Boolean(unresolved), manual, referencePermission });
+      const result = await owner.confirm({ candidateId: choice, unresolved: Boolean(unresolved), manual });
       if (version !== generation.current) return;
       accept(owner, result); setNotice(result.confirmation?.decision === 'UNRESOLVED' ? 'Variant held for review. Your card identification and grading work are saved.' : 'Your identity decision is saved.');
       await refreshWorkspace();
@@ -245,20 +242,19 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const previewPhoto = preview ? variantReference(preview, cardId, { artwork: false, result: status?.result }) : null;
   const unassignedPhotos = unmatchedVariantReferences(status?.result);
   const manualComplete = manual?.parallel.trim();
-  const permissionComplete = !referencePermission || ['owned_original','licensed','permission'].includes(referencePermission.basis);
   const needsChoice = !unresolved && (manual ? !manualComplete : !selected?.parallel?.trim());
   const focusChoices = () => {
     choiceControls.current?.scrollIntoView({ block: 'start' });
     choiceControls.current?.querySelector('input:not(:disabled),button:not(:disabled)')?.focus({ preventScroll: true });
   };
-  const confirmationDisabled = unavailable || !unresolved && (!permissionComplete || (manual ? !manualComplete : !selected?.parallel?.trim())) || Boolean(confirmed);
+  const confirmationDisabled = unavailable || !unresolved && (manual ? !manualComplete : !selected?.parallel?.trim()) || Boolean(confirmed);
   const reviewAction = reloadNeeded || !status && error
     ? { approve: () => void check(), disabled: busy || disabled, approveLabel: 'Reload saved review', message: 'Your saved decision is retained. Reload the review to continue.' }
     : pending
     ? { approve: () => void check(), disabled: busy || disabled, approveLabel: pending.operation === 'REFRESH' ? 'Check reference request' : 'Check saved decision', message: 'Check the retained request before making another choice.' }
     : { approve: needsChoice ? focusChoices : () => void save(), disabled: needsChoice ? unavailable : confirmationDisabled,
       approveLabel: needsChoice ? 'Choose variant' : unresolved ? 'Save for identity review' : 'Confirm variant',
-      message: needsChoice ? 'Choose Base or enter the printing you can verify on your physical card.' : !permissionComplete ? 'Choose the photo rights basis or turn off the optional contribution.' : unresolved ? 'Keep this card for identity review.' : `Confirm ${selected?.label ?? manual?.parallel ?? 'the variant'} from your physical card.` };
+      message: needsChoice ? 'Choose Base or enter the printing you can verify on your physical card.' : unresolved ? 'Keep this card for identity review.' : `Confirm ${selected?.label ?? manual?.parallel ?? 'the variant'} from your physical card.` };
   const savedName = identity?.playerName || identity?.cardName || identity?.name;
   const savedDetails = [['Year',identity?.year],['Manufacturer',identity?.manufacturer ?? (savedIdentification?.sourceHash === sourceHash ? savedIdentification.fields?.manufacturer : null)],['Set',identity?.productSet ?? identity?.setName],['Card number',identity?.cardNumber],['Saved variant',identity?.parallel]];
   const renderGroup = group => {
@@ -320,11 +316,6 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
 
     </div></div>
     {groups.filter(group => group.key !== 'same').map(renderGroup)}
-    {!previewOnly && status && !unresolved && <fieldset aria-label="Optional reference photo contribution" className={styles.contribution} disabled={unavailable}>
-      <label className={styles.contributionChoice}><input type="checkbox" aria-label="Add these photos to the shared reference library" checked={Boolean(referencePermission)} onChange={event => choose(choice, null, manual, event.target.checked ? {basis:'',consumers:['inventory','atlas']} : null)}/><span>Add these photos to the shared reference library <small>Optional</small></span></label>
-      <p>For internal ATLAS and Ten Kings reference review. This submits your original photos for review; it does not publish them automatically.</p>
-      {referencePermission && <div className={styles.contributionFields}><label>Photo rights basis<select aria-label="Photo rights basis" value={referencePermission.basis} onChange={event => choose(choice, null, manual, {...referencePermission,basis:event.target.value})}><option value="">Choose the rights basis</option><option value="owned_original">I own these original photos</option><option value="permission">I have permission to share them</option><option value="licensed">A license allows this use</option></select></label></div>}
-    </fieldset>}
     {status?.refreshable === true && (!previewOnly || !drafted) && <div><p><button type="button" disabled={unavailable} onClick={() => void refresh()}>{drafted ? 'Discard unsaved choice and refresh reference library' : status.jobId === null ? 'Prepare references' : 'Refresh reference library'}</button></p>{drafted && <p className={styles.photoHelp}>This discards only your unsaved variant choice. Your saved variant and grading work stay unchanged.</p>}</div>}
     {error && <p className={styles.error} role="alert">{error}</p>}{(!status || stateText || error || reloadNeeded || pending) && <button type="button" disabled={busy} onClick={() => void check()}>Check saved matches</button>}
     {comparison && <Comparison photo={photograph.url} reference={variantReference(comparison, cardId, { artwork: false, result: status?.result })} candidate={comparison} side={side} onClose={() => { setComparison(null); comparisonOpener.current?.focus(); }}/>}

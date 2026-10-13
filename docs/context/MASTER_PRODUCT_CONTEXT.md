@@ -1,5 +1,15 @@
 # Ten Kings Master Product Context
 
+## Owner-approved ATLAS separation — October 12 Pacific / October 13 UTC, 2026
+
+Mark now authorizes complete ATLAS separation from the shared Ten Kings database and all shared runtime/storage/catalog connections, deletion of obsolete ATLAS versions and card archives, and deletion of the five July grader photographs previously retained for Ten Kings inventory. Preserve unrelated Ten Kings inventory/ownership and actual transaction facts. He explicitly permits **future ATLAS-only backups**, while requiring retirement of old/shared backups. This supersedes the earlier discussion-only separation status and five-photo preservation instruction below.
+
+The lead and an independent Astra Ultra architecture review recommend extracting the current grading product into a dedicated ATLAS database cluster and owned storage, with a current-only schema baseline and source/deployment closure. Do not rewrite the working grading algorithms or clone the shared database. The concrete plan and engineering lessons are in [ATLAS_DATABASE_SEPARATION_20261013](../atlas/plans/ATLAS_DATABASE_SEPARATION_20261013.md); schema dependencies are in [ATLAS_STANDALONE_SCHEMA_MAP_20261013](../atlas/plans/ATLAS_STANDALONE_SCHEMA_MAP_20261013.md). The hard-coded Ten Kings catalog API, public legacy database reader, shared-table migration dependencies and legacy staff privilege contract must be removed, not retained as fallbacks.
+
+The obsolete offline learning activation family is removed in the local candidate: `policy`, `promote-plan`, `release-plan`, `rollback-plan` and both activation modules. Five nonmutating evaluation commands and inactive candidate collection remain; no replacement activation path is introduced. Future influence still requires Mark's personal comparison review and explicit approval of that exact release. Source removal does not erase historical Git/archive/deployment copies by itself.
+
+Separation, archive retirement and five-photo deletion are in progress, **not yet production completion evidence**. R15 remains the latest verified application release. Managed mixed-cluster backups contain unrelated Ten Kings data; immediate cluster-wide destruction requires first migrating and validating Ten Kings, while expiry must be verified from actual provider restore points. Never replay consumed R15 mutation scripts or silently include newly submitted cards in that old purge.
+
 ## Current ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
 
 Application **`8dc73ae21c64c2f12a80e4b804a186fe41b1cfc8`** is live at `https://atlasgrading.com`; staff schema **86** / public **121**. Canonical routing passed at 03:35 UTC and independent postflight completed at 03:43:58 UTC on October 13. Main and isolated variant worker are ready on the qualified image, with zero restarts/OOM and restart policies enabled. Deployment is verified; a fresh human grading workflow is still acceptance pending. Exact deployments and receipts are in [DEPLOY_RUNBOOK](../runbooks/DEPLOY_RUNBOOK.md).

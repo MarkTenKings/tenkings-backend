@@ -22,6 +22,7 @@ import * as tourSound from '../src/evidence-tour-sound.mjs';
 import * as filmSelector from '../../atlas-report-view/src/film-selector.mjs';
 import { defectBase, markDefectSideInspected, confirmDefectFindings, previewDefectReport } from '../src/defect-actions.mjs';
 import { workspace } from './defect-fixtures.mjs';
+import { syntheticPublicEntry } from './synthetic-public-fixtures.mjs';
 
 const require = createRequire(new URL('../../../frontend/atlas-app/package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
@@ -570,8 +571,8 @@ test('returning to a Back inspection without a selected finding restores the Bac
   assert.equal(parseFloat(text(f.control('Current zoom'))),4);
 });
 
-function historicalPublicReport(key = 'abomasnow') {
-  const source = JSON.parse(readFileSync(new URL('../../../docs/atlas/design/first-look/reports/approved.json', import.meta.url), 'utf8')).reports.find(entry => entry.key === key);
+function syntheticPublicReport(key = 'crowded') {
+  const source = syntheticPublicEntry(key);
   const { packet } = source;
   return { report: packet.report, explanation: source.explanation, geometry: packet.geometry,
     images: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { inspection: {
@@ -589,7 +590,7 @@ const publicFindingButton = (f, number) => f.nodes(node => node.type === 'button
 const nearPublic = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≈ ${expected}`);
 
 test('public overview exposes every finding directly; comparison and return preserve all labels and identity', () => {
-  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready();
+  const props = syntheticPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready();
   f.click('Back 13');
   assert.equal(publicSection(f), 'whole'); assert.equal(selectedPublicId(f), '');
   const allLabels = () => f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back '));
@@ -622,12 +623,12 @@ test('public overview exposes every finding directly; comparison and return pres
 });
 
 test('public Findings opens the populated opposite side and an empty report keeps truthful photograph and centering views', () => {
-  const f = harness(historicalPublicReport(), { publicView: true }); f.ready();
+  const f = harness(syntheticPublicReport(), { publicView: true }); f.ready();
   assert.equal(f.control('Front report image').props.hidden, true);
-  assert.equal(f.nodes(node => node.type === 'image' && node.props.href === 'blob:abomasnow-FRONT').length, 1);
+  assert.equal(f.nodes(node => node.type === 'image' && node.props.href === 'blob:crowded-FRONT').length, 1);
   f.click('Findings 13'); assert.equal(f.control('Back report image').props.hidden, false);
   assert.equal(selectedPublicId(f), f.props.report.findings[0].id);
-  const empty = harness(historicalPublicReport('dart'), { publicView: true }); empty.ready();
+  const empty = harness(syntheticPublicReport('empty'), { publicView: true }); empty.ready();
   const before = structuredClone(empty.props.report);
   assert.equal(empty.nodes(node => node.props['aria-label'] === 'All findings').length, 0);
   assert.equal(empty.has('No included damage findings on Front.'), true);
@@ -639,16 +640,16 @@ test('public Findings opens the populated opposite side and an empty report keep
 });
 
 test('public deep links select the exact saved finding only for the matching public report hash', () => {
-  const props = historicalPublicReport(), finding = props.report.findings[8];
+  const props = syntheticPublicReport(), finding = props.report.findings[8];
   const fragment = presentation.reportFindingFragment(props.publication.reportHash, finding.id);
   const f = harness(props, { publicView: true, fragment }); f.ready();
   assert.equal(publicSection(f), 'finding'); assert.equal(selectedPublicId(f), finding.id);
   assert.equal(f.control('Back report image').props.hidden, false);
   assert.equal(f.nodes(node => node.type === 'a' && node.props.href.endsWith(fragment)).length, 1);
-  const wrong = harness(historicalPublicReport(), { publicView: true,
+  const wrong = harness(syntheticPublicReport(), { publicView: true,
     fragment: presentation.reportFindingFragment('1'.repeat(64), finding.id) }); wrong.ready();
   assert.equal(publicSection(wrong), 'whole'); assert.equal(selectedPublicId(wrong), '');
-  const wrongImage = historicalPublicReport(); wrongImage.images.BACK.inspection.sha256 = '2'.repeat(64);
+  const wrongImage = syntheticPublicReport(); wrongImage.images.BACK.inspection.sha256 = '2'.repeat(64);
   const denied = harness(wrongImage, { publicView: true, fragment }); denied.ready();
   assert.equal(denied.button('Print approved report').props.disabled, true);
   assert.equal(all(denied.control('Back report image'), node => node.type === 'canvas').length, 0);
@@ -656,7 +657,7 @@ test('public deep links select the exact saved finding only for the matching pub
 });
 
 test('public printing retains decoded viewers, fits both sides, prints every finding and restores overview/selection', () => {
-  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready();
+  const props = syntheticPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready();
   f.click('Back 13');
   const refs = ['Front', 'Back'].map(side => activePhoto(f, side).props.ref.current);
   const entries = presentation.reportFindingEntries(props.report.findings);
@@ -684,8 +685,8 @@ test('public printing retains decoded viewers, fits both sides, prints every fin
 });
 
 test('public centering instruments preserve saved outlines and calibrated extent without half-pixel correction', () => {
-  const props = historicalPublicReport(), before = structuredClone(props.geometry), f = harness(props, { publicView: true }); f.ready();
-  const expected = { Front: { Top: 3, Right: 2.75, Bottom: 2.75, Left: 2.7 }, Back: { Top: 3.8, Right: 3.2, Bottom: 3.65, Left: 3.35 } };
+  const props = syntheticPublicReport(), before = structuredClone(props.geometry), f = harness(props, { publicView: true }); f.ready();
+  const expected = { Front: { Top: 3.556, Right: 3.175, Bottom: 3.556, Left: 3.175 }, Back: { Top: 3.556, Right: 3.175, Bottom: 3.556, Left: 3.175 } };
   for (const side of ['Front', 'Back']) {
     if (side === 'Back') { f.click('Back 13'); assert.equal(publicSection(f), 'centering', 'side switching retains centering mode'); }
     else f.click('Centering');
@@ -713,7 +714,7 @@ test('public centering instruments preserve saved outlines and calibrated extent
 });
 
 test('public clean-pane wheel, pan and pinch update the same camera and reject cross-pane pointer mixing', () => {
-  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready(); f.click('Findings 13');
+  const props = syntheticPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready(); f.click('Findings 13');
   const clean = () => f.control('Back clean close-up; same photograph, zoom and position');
   const equalCameras = () => assert.equal(JSON.stringify(planeIn(activePhoto(f)).props.style), JSON.stringify(planeIn(clean()).props.style));
   equalCameras();
@@ -739,7 +740,7 @@ test('public clean-pane wheel, pan and pinch update the same camera and reject c
 });
 
 test('public motion retreats, locates and approaches; gestures, reselection and reduced motion cancel stale animation', () => {
-  const props = historicalPublicReport(), f = harness(props, { publicView: true, controlledFrames: true }); f.ready(); f.click('Findings 13');
+  const props = syntheticPublicReport(), f = harness(props, { publicView: true, controlledFrames: true }); f.ready(); f.click('Findings 13');
   assert.equal(f.control('Back report image').props['data-motion-phase'], 'approach'); f.finishMotion();
   selectPublicId(f, props.report.findings[1].id);
   assert.equal(f.control('Back report image').props['data-motion-phase'], 'retreat');
@@ -759,7 +760,7 @@ test('public motion retreats, locates and approaches; gestures, reselection and 
   const target = viewportMath.focusInspectionBounds(presentation.reportFindingBounds(props.report.findings[4]), { width: 400, height: 540 });
   const scale = viewportMath.fitInspectionScale({ width: 400, height: 540 });
   nearPublic(planeIn(activePhoto(f)).props.style.width, 1350 * scale * target.zoom);
-  const reduced = harness(historicalPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); reduced.ready(); reduced.click('Findings 13');
+  const reduced = harness(syntheticPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); reduced.ready(); reduced.click('Findings 13');
   assert.equal(reduced.pendingFrames(), 0); assert.equal(reduced.control('Back report image').props['data-motion-phase'], 'idle');
   assert.ok(parseFloat(text(reduced.control('Current zoom'))) > 1);
 });
@@ -772,7 +773,7 @@ const awaitFingerprint = async f => {
 };
 
 test('public fingerprint waits for the exact photo, shows honest empty sides and leaves all evidence unchanged', () => {
-  const props = historicalPublicReport(), before = structuredClone(props), f = harness(props, { publicView: true });
+  const props = syntheticPublicReport(), before = structuredClone(props), f = harness(props, { publicView: true });
   assert.equal(f.control('ATLAS Card fingerprint').props.disabled, true); f.ready();
   assert.equal(publicSection(f), 'whole', 'report arrival never hides findings for an intro');
   openFingerprint(f); assert.equal(publicSection(f), 'fingerprint');
@@ -783,13 +784,13 @@ test('public fingerprint waits for the exact photo, shows honest empty sides and
   f.click('Whole card'); assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back ')).length, 13);
   assert.deepEqual(props.report, before.report); assert.deepEqual(props.images, before.images); assert.deepEqual(props.explanation, before.explanation);
   f.unmount();
-  const bad = historicalPublicReport(); bad.images.FRONT.inspection.sha256 = 'a'.repeat(64);
+  const bad = syntheticPublicReport(); bad.images.FRONT.inspection.sha256 = 'a'.repeat(64);
   const denied = harness(bad, { publicView: true }); denied.ready(); assert.equal(denied.control('ATLAS Card fingerprint').props.disabled, true);
   assert.equal(denied.nodes(node => node.props.className === 'rr-fingerprint-layer' && !node.props.hidden).length, 0); denied.unmount();
 });
 
 test('real public tide returns to the same photograph, cancels on navigation/print/unmount and never changes paper findings', async () => {
-  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, controlledFrames: true }); f.ready(); f.click('Back 13'); f.finishMotion();
+  const props = syntheticPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, controlledFrames: true }); f.ready(); f.click('Back 13'); f.finishMotion();
   const url = all(activePhoto(f), node => node.type === 'img')[0].props.src;
   openFingerprint(f); await awaitFingerprint(f); assert.equal(f.pendingFrames(), 1);
   f.finishMotion(); assert.equal(activeFingerprint(f).props.ref.current.style['--rr-fingerprint-amount'], '1');
@@ -806,7 +807,7 @@ test('real public tide returns to the same photograph, cancels on navigation/pri
 });
 
 test('reduced-motion public fingerprint renders a direct state and source replacement cannot reuse old artwork', async () => {
-  const f = harness(historicalPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); f.ready(); f.click('Back 13');
+  const f = harness(syntheticPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); f.ready(); f.click('Back 13');
   openFingerprint(f); await awaitFingerprint(f); assert.equal(f.pendingFrames(), 0);
   assert.equal(activeFingerprint(f).props.ref.current.style['--rr-fingerprint-amount'], '1');
   f.click('Play tide'); assert.equal(f.pendingFrames(), 0); assert.equal(publicSection(f), 'fingerprint');
@@ -818,7 +819,7 @@ test('reduced-motion public fingerprint renders a direct state and source replac
 });
 
 test('desktop whole card preserves both verified photographs, every direct shape, and original category zoom', () => {
-  const props = historicalPublicReport(), before = structuredClone(props), f = harness(props, { publicView: true, desktop: true }); f.ready();
+  const props = syntheticPublicReport(), before = structuredClone(props), f = harness(props, { publicView: true, desktop: true }); f.ready();
   for (const side of ['Front', 'Back']) assert.equal(f.control(`${side} report image`).props.hidden, true, 'exact inspector stays mounted for drill-in');
   assert.equal(f.nodes(node => node.type === 'image' && /blob:/.test(node.props.href)).length, 2);
   const shapes = () => f.nodes(node => node.props.className === 'finding-hit');
@@ -842,7 +843,7 @@ test('desktop whole card preserves both verified photographs, every direct shape
 });
 
 test('category inspection fields preserve saved memberships and original numbers on drill-in', () => {
-  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, desktop: true }); f.ready();
+  const props = syntheticPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, desktop: true }); f.ready();
   const entries = presentation.reportFindingEntries(props.report.findings);
   for (const category of ['corners', 'edges', 'surface']) {
     f.click(category[0].toUpperCase() + category.slice(1));
@@ -867,10 +868,10 @@ test('category inspection fields preserve saved memberships and original numbers
 });
 
 test('public grade science uses actual saved weights, deductions, raw grade and rounding; category link opens evidence', () => {
-  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, desktop: true }); f.ready(); f.click('Grade science');
+  const props = syntheticPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, desktop: true }); f.ready(); f.click('Grade science');
   assert.equal(publicSection(f), 'science');
   const story = f.control('A grade you can follow'), model = gradeStory.gradeStoryModel(props.explanation);
-  assert.ok(model); assert.equal(model.raw, 9.85); assert.equal(model.final, 10); assert.equal(text(story).includes('9.35'), false);
+  assert.ok(model); assert.equal(model.raw, props.report.grade.overall.rawGrade); assert.equal(model.final, props.report.finalGrade); assert.ok(model.deduction>0);
   for (const value of [model.raw, model.final, model.deduction]) assert.ok(all(story, node => node.type === 'data' && node.props.value === value).length > 0);
   for (const row of model.rows) {
     const button = all(story, node => node.props.className === 'rr-grade-row' && node.props['aria-label'].startsWith(`${row.label}:`))[0];
@@ -884,7 +885,7 @@ test('public grade science uses actual saved weights, deductions, raw grade and 
 });
 
 test('actual public grade animation restarts while playing, pauses, resumes and completes at the saved final grade', () => {
-  const props = historicalPublicReport(), f = harness(props, { publicView: true, desktop: true, controlledFrames: true }); f.ready(); f.click('Grade science'); f.finishMotion();
+  const props = syntheticPublicReport(), f = harness(props, { publicView: true, desktop: true, controlledFrames: true }); f.ready(); f.click('Grade science'); f.finishMotion();
   const story = () => f.control('A grade you can follow');
   f.click('Replay calculation'); assert.equal(story().props['data-motion'], 'playing');
   f.frame(); f.frame(); f.click('Restart calculation');
@@ -893,7 +894,7 @@ test('actual public grade animation restarts while playing, pauses, resumes and 
   f.click('Resume calculation'); assert.ok(f.pendingFrames() > 0); f.finishMotion();
   assert.equal(story().props['data-motion'], 'complete'); assert.equal(story().props['data-final'], true);
   assert.ok(text(story()).includes(`Final grade ${props.explanation.overall.finalGrade} · calculation complete`));
-  const reduced = harness(historicalPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); reduced.ready(); reduced.click('Grade science'); reduced.click('Replay calculation');
+  const reduced = harness(syntheticPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); reduced.ready(); reduced.click('Grade science'); reduced.click('Replay calculation');
   assert.equal(reduced.control('A grade you can follow').props['data-motion'], 'complete'); assert.equal(reduced.pendingFrames(), 0);
 });
 
@@ -947,8 +948,8 @@ test('new report calculations show the global factor, policy bands and base weig
   assert.deepEqual(props.preview, before); assert.equal(f.readyValues.at(-1), true);
 });
 
-test('saved historical reports keep original condition scale, arithmetic and allowance without a global policy field', () => {
-  const props = historicalPublicReport(), before = structuredClone(props);
+test('synthetic prior-rule reports keep their condition scale, arithmetic and allowance without a global policy field', () => {
+  const props = syntheticPublicReport(), before = structuredClone(props);
   assert.equal(props.explanation.policy.globalDamageMultiplier, undefined);
   const f = harness(props, { publicView: true }); f.ready(); f.click('Grade science');
   const thresholds = f.nodes(node => node.props.className === 'rr-threshold' && text(node).includes('Weighted category damage'));
@@ -976,7 +977,7 @@ test('saved historical reports keep original condition scale, arithmetic and all
 });
 
 test('changing the bound inspection source suppresses the previous whole-card photograph immediately', () => {
-  const props = historicalPublicReport('maye'), f = harness(props, { publicView: true, desktop: true }); f.ready();
+  const props = syntheticPublicReport('varied'), f = harness(props, { publicView: true, desktop: true }); f.ready();
   assert.equal(f.nodes(node => node.props.className === 'rr-approved-whole').length, 1);
   const oldURL = props.images.FRONT.inspection.url;
   f.props.report = { ...props.report, inspection: { ...props.report.inspection, front: { ...props.report.inspection.front, imageSha256: '9'.repeat(64) } } };
@@ -991,7 +992,7 @@ test('changing the bound inspection source suppresses the previous whole-card ph
 });
 
 test('whole-card pause and centering choices survive original-photo inspection and other report tabs', () => {
-  const f = harness(historicalPublicReport('maye'), { publicView: true, desktop: true }); f.ready();
+  const f = harness(syntheticPublicReport('varied'), { publicView: true, desktop: true }); f.ready();
   f.click('Ⅱ Pause'); f.click('Centering on');
   f.nodes(node => node.type === 'button' && node.props.className?.startsWith('fc-label'))[0].props.onClick(); f.render();
   assert.equal(publicSection(f), 'finding');

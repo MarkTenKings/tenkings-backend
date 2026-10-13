@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { syntheticPublicEntry } from './synthetic-public-fixtures.mjs';
 import { wholeCardShapes, exactPixelPerimeter, findingCalloutLayout, calloutFrame, WHOLE_FRAME } from '../src/whole-card-layout.mjs';
 import { reportFindingMask, reportTraceSpans } from '../src/report-review-ui.mjs';
-const fixture = JSON.parse(readFileSync(new URL('../../../docs/atlas/design/first-look/reports/approved.json', import.meta.url))).reports.find(value => value.key === 'maye');
+const fixture = syntheticPublicEntry('varied');
 
 test('whole card preserves every saved row, independent identity and stable side numbers', () => {
   const before = JSON.stringify(fixture.packet);

@@ -1,8 +1,5 @@
-import { parsePublicReport } from '@atlas/report-view/public-contract';
 import { digest, unavailable } from './policy.mjs';
-import { assertPublicPrivileges } from './privileges.mjs';
 import { canonical } from '@atlas/service-bridge/protocol';
-import { parseApprovedImageDescriptor } from '@atlas/service-bridge/public-media';
 import { parseSpeedsterTraceRleV1, decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
@@ -12,9 +9,8 @@ import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 import { parseReportImages } from '@atlas/report-view/report-images-contract';
 
 export class PublicReportReader {
-    constructor(client, config, media = null, manual = null) { if (!client && (!manual || media)) unavailable(); this.client = client; this.config = config; this.media = media; this.manual = manual; }
+    constructor(config, manual) { if (typeof manual?.read !== 'function') unavailable(); this.config = config; this.manual = manual; }
     async manualReport({ token, version }) {
-        if (!this.manual) return null;
         const result = await this.manual.read({ kind: 'REPORT', token, version, side: null, findingId: null });
         if (!result) return null;
         const packet = parsePublicManualReport(result.packet);
@@ -30,7 +26,7 @@ export class PublicReportReader {
             ...(presentation ? { presentation } : {}), ...(reportImages ? { reportImages } : {}) };
     }
     async reportImage({ token, version, side, outputSha256 }) {
-        if (!this.manual || !version || !['FRONT', 'BACK'].includes(side)
+        if (!version || !['FRONT', 'BACK'].includes(side)
             || !/^[a-f0-9]{64}$/.test(outputSha256 ?? '')) return null;
         const selected = (await this.manualReport({ token, version }))?.reportImages?.images?.[side];
         if (!selected || selected.sha256 !== outputSha256) return null;
@@ -53,42 +49,17 @@ export class PublicReportReader {
         if (bytes.length !== extra.slabPhoto.byteCount || digest(bytes) !== extra.slabPhoto.sha256) unavailable();
         return { bytes, contentType: extra.slabPhoto.contentType };
     }
-    async read({ token, version }) {
-        const config = this.config;
-        const legacy = this.client ? await this.client.$transaction(async tx => {
-            await assertPublicPrivileges(tx);
-            const rows = await tx.$queryRaw`SELECT * FROM atlas_staff.read_approved_report(${token}::text,${version}::integer,
-                ${config.deploymentId}::text,${config.releaseSha}::text,${config.configHash}::text)`;
-            if (!rows.length) return null;
-            if (rows.length !== 1 || digest(rows[0].canonical) !== rows[0].digest) unavailable();
-            const packet = parsePublicReport(JSON.parse(rows[0].canonical));
-            if (packet.mode !== config.mode || packet.publicToken !== token || (version !== null && packet.approvalVersion !== version)) unavailable();
-            return { packet, publicHash: rows[0].digest };
-        }, { maxWait: 5000, timeout: 10_000 }) : null;
-        return legacy ?? this.manualReport({ token, version });
+    async read(selector) {
+        return this.manualReport(selector);
     }
     async imageDescriptor({ token, version, side }) {
         if (!version || !['FRONT', 'BACK'].includes(side)) return null;
-        const config = this.config;
-        const legacy = this.client ? await this.client.$transaction(async tx => {
-            await assertPublicPrivileges(tx);
-            const rows = await tx.$queryRaw`SELECT * FROM atlas_staff.read_approved_image(${token}::text,${version}::integer,${side}::text,
-                ${config.deploymentId}::text,${config.releaseSha}::text,${config.configHash}::text)`;
-            if (!rows.length) return null;
-            if (rows.length !== 1 || rows[0].mode !== config.mode || digest(rows[0].canonical) !== rows[0].digest) unavailable();
-            const descriptor = parseApprovedImageDescriptor(JSON.parse(rows[0].canonical), config.mode);
-            if (canonical(descriptor) !== rows[0].canonical) unavailable();
-            return { descriptor, publicHash: rows[0].public_hash };
-        }, { maxWait: 5000, timeout: 10_000 }) : null;
-        if (legacy) return legacy;
         const manual = await this.manualReport({ token, version });
-        return manual ? { descriptor: manual.packet.images[side], publicHash: manual.publicHash, manual: true } : null;
+        return manual ? { descriptor: manual.packet.images[side], publicHash: manual.publicHash } : null;
     }
     async image(selector) {
         const selected = await this.imageDescriptor(selector); if (!selected) return null;
-        if (!(selected.manual ? this.manual : this.media)) unavailable();
-        const found = selected.manual ? await this.manual.read({ kind: 'IMAGE', ...selector, findingId: null })
-            : await this.media.read({ ...selector, publicHash: selected.publicHash, imageHash: selected.descriptor.sha256 }, selected.descriptor);
+        const found = await this.manual.read({ kind: 'IMAGE', ...selector, findingId: null });
         if (!found) unavailable();
         const bytes = Buffer.from(found);
         if (bytes.length !== selected.descriptor.byteCount || digest(bytes) !== selected.descriptor.sha256
@@ -96,7 +67,7 @@ export class PublicReportReader {
         return { bytes, contentType: selected.descriptor.contentType };
     }
     async imageAccess({ token, version, side }) {
-        if (!this.manual || !version || !['FRONT', 'BACK'].includes(side)) return null;
+        if (!version || !['FRONT', 'BACK'].includes(side)) return null;
         const found = await this.manual.read({ kind: 'IMAGE_ACCESS', token, version, side, findingId: null });
         // The private reader verifies the immutable approved packet and its
         // exact media, then rechecks current publication authority before reply.
@@ -104,18 +75,6 @@ export class PublicReportReader {
     }
     async trace({ token, version, findingId }) {
         if (!version || typeof findingId !== 'string' || findingId.length < 1 || findingId.length > 180) return null;
-        const config = this.config;
-        const legacy = this.client ? await this.client.$transaction(async tx => {
-            await assertPublicPrivileges(tx);
-            const rows = await tx.$queryRaw`SELECT * FROM atlas_staff.read_approved_trace(${token}::text,${version}::integer,${findingId}::text,
-                ${config.deploymentId}::text,${config.releaseSha}::text,${config.configHash}::text)`;
-            if (!rows.length) return null;
-            if (rows.length !== 1 || !['FRONT', 'BACK'].includes(rows[0].side)) unavailable();
-            const trace = parseSpeedsterTraceRleV1(JSON.parse(rows[0].trace));
-            return { side: rows[0].side, publicHash: rows[0].public_hash,
-                traceWire: encodeSpeedsterTraceBitmapWireV1(decodeSpeedsterTraceRleV1(trace), trace.sha256) };
-        }, { maxWait: 5000, timeout: 10_000 }) : null;
-        if (legacy) return legacy;
         const manual = await this.manualReport({ token, version });
         const finding = manual?.packet.report.findings.find(value => value.id === findingId), trace = finding?.finalTrace ?? finding?.detectorMask;
         if (!trace) return null;

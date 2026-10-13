@@ -63,7 +63,6 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
         clearPending(intentId(input)); throw fail('VARIANT_REFRESH_UNAVAILABLE');
       }
       if (error?.status === 409 && error.code === 'VARIANT_FINISH_UNRESOLVED') { clearPending(input.actionId); throw error; }
-      if (error?.status === 400 && error.code === 'VARIANT_REFERENCE_PERMISSION_INVALID') { clearPending(input.actionId); throw error; }
       if (operation === 'CONFIRM' && error?.status === 400 && ['MANUAL_REQUEST_INVALID','VARIANT_CONFIRMATION_INVALID'].includes(error.code)) {
         // A previous application version can retain a request with retired
         // fields. A definitive contract refusal did not commit that request.
@@ -78,29 +77,23 @@ export function createVariantReviewClient({ cardId, staffId, request, storage, c
   }
   async function exclusive(work) { check(!running, 'VARIANT_SAVE_PENDING'); running = true; try { return await work(); } finally { running = false; } }
   return Object.freeze({ read, retained,
-    choose(candidateId, outcome = null, manual = null, referencePermission = null) {
+    choose(candidateId, outcome = null, manual = null) {
       check(latest && !retained()?.pending, 'VARIANT_SAVE_PENDING');
       check(candidateId === null || latest.result?.catalog.candidates.some(candidate => candidate.candidateId === candidateId), 'VARIANT_CANDIDATE_STALE');
       store({ draft: { binding: variantBindingKey(latest), candidateId, outcome, manual,
-        candidateIdentityKey: candidateIdentityKey(latest.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId)),
-        ...(!outcome && referencePermission ? { referencePermission } : {}) } });
+        candidateIdentityKey: candidateIdentityKey(latest.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId)) } });
     },
-    confirm: ({ candidateId, unresolved = false, manual = null, referencePermission = null }) => exclusive(async () => {
+    confirm: ({ candidateId, unresolved = false, manual = null }) => exclusive(async () => {
       check(latest && !retained()?.pending, 'VARIANT_SAVE_PENDING');
       const basis = latest, current = await read();
       check(variantBindingKey(basis) === variantBindingKey(current), 'VARIANT_REVIEW_CHANGED');
       const chosen = current.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId);
       const expectedChoice = retained()?.draft?.candidateIdentityKey ?? candidateIdentityKey(basis.result?.catalog.candidates.find(candidate => candidate.candidateId === candidateId));
       check(unresolved || manual || chosen && expectedChoice === candidateIdentityKey(chosen), 'VARIANT_CANDIDATE_STALE');
-      const permission = !unresolved && referencePermission ? referencePermission : null;
-      check(!permission || Object.keys(permission).sort().join('|') === 'basis|consumers'
-        && ['owned_original','licensed','permission'].includes(permission.basis)
-        && Array.isArray(permission.consumers) && permission.consumers.join('|') === 'inventory|atlas', 'VARIANT_REFERENCE_PERMISSION_INVALID');
       const input = { actionId: cryptoImpl.randomUUID(), expectedRevision: current.revision, sourceHash: current.sourceHash,
         identityRevision: current.identityRevision, identityHash: current.identityHash, jobId: manual || unresolved ? null : current.jobId, resultHash: manual || unresolved ? null : current.resultHash,
         decision: manual ? 'MANUAL' : unresolved ? 'UNRESOLVED' : 'SELECTED', candidateId: manual || unresolved ? null : candidateId, reviewed: true,
-        ...(manual ? { manualParallel: manual.parallel.trim() } : {}),
-        ...(permission ? { referencePermission: { basis: permission.basis, consumers: ['inventory','atlas'] } } : {}) };
+        ...(manual ? { manualParallel: manual.parallel.trim() } : {}) };
       check(!manual || input.manualParallel.length > 0 && input.manualParallel.length <= 120, 'VARIANT_MANUAL_INVALID');
       store({ pending: input }); return send(input);
     }),
@@ -127,7 +120,6 @@ export function variantError(error) {
     VARIANT_LOCAL_INVALID: 'The retained decision could not be read. Keep this tab open and reload your access before continuing.',
     VARIANT_FINISH_UNRESOLVED: 'This reference does not identify a printing. Choose another match, or record the details you can verify on the physical card.',
     VARIANT_MANUAL_INVALID: 'Choose Base or enter the printing visible on the physical card.',
-    VARIANT_REFERENCE_PERMISSION_INVALID: 'Choose the photo rights basis, or turn off the optional photo contribution.',
     VARIANT_REFRESH_UNAVAILABLE: 'Reference preparation cannot be refreshed in its current state. Check the saved status first.',
     VARIANT_SAVE_PENDING: 'Check the retained decision before making another change.',
   })[error?.code] ?? 'The save is not confirmed. Your decision is retained. Check its saved status before trying another choice.';

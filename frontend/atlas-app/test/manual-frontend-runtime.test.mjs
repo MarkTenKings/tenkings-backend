@@ -284,7 +284,7 @@ test('actual configured Next parser rejects more than 2 MiB before runtime, auth
   assert.deepEqual(f.events, []); assert.equal(f.requests.length, 0); assert.equal(f.providerCalls(), 0);
 });
 
-test('larger catchall parser preserves ordinary 16 KiB, learning 32 KiB and legacy grading handler caps before side effects', async () => {
+test('retired draft, learning and grading routes stay unavailable even behind the larger manual parser', async () => {
   const f = fixture(), effects = [];
   const api = staffApi({ connectedManual: f.runtime, auth: f.auth, review: { save() { effects.push('draft'); } },
     learning: { decide() { effects.push('learning'); } }, grading: { run() { effects.push('grade'); } },
@@ -294,7 +294,7 @@ test('larger catchall parser preserves ordinary 16 KiB, learning 32 KiB and lega
     const req = await f.request({ url: path }), body = { padding: 'x'.repeat(limit + 1 - Buffer.byteLength(JSON.stringify({ padding: '' }))) };
     req.body = await parseNextBody(req, JSON.stringify(body), api.config);
     const res = response(); await api.default(req, res);
-    assert.equal(res.statusCode, 413); assert.deepEqual(res.value, { error: 'REQUEST_TOO_LARGE' });
+    assert.equal(res.statusCode, 404); assert.deepEqual(res.value, { error: 'NOT_FOUND' });
   }
   assert.deepEqual(effects, []); assert(!f.events.includes('staff-auth'));
   assert.equal(f.requests.length, 0); assert.equal(f.providerCalls(), 0);

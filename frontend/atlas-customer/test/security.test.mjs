@@ -1,13 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { normalizePhone, profile, submission, BoundaryError, cookies, hash } from '../lib/server/policy.mjs';
+import { normalizePhone, profile, BoundaryError, cookies, hash } from '../lib/server/policy.mjs';
 import { makeConfig, productionConfig, cookie, COOKIE_NAMES, LOCAL_COOKIES } from '../lib/server/config.mjs';
 import { CustomerAuth } from '../lib/server/auth.mjs';
 import { createHandler } from '../lib/server/http.mjs';
-import { summary, milestones } from '../lib/progress.mjs';
 import { twilioVerifyTransport } from '../lib/server/twilio.mjs';
-import { retainSubmission, readRetainedSubmission, clearRetainedSubmission } from '../lib/pending-submission.mjs';
 import { customerPage } from '../lib/server/page.mjs';
 import { acceptsSiteRequest } from '@atlas/site-router/server';
 import { signRoute } from '@atlas/site-router/proof';
@@ -22,17 +20,12 @@ test('U.S. phone aliases share identity while explicit international numbers ret
     assert.equal(normalizePhone('+44 7700 900123'), '+447700900123');
     for (const raw of ['447700900123', '0012025550141', '+1 202 555 0141 ext 2', '+01 202 555 0141', '+1/202/555/0141', '++12025550141', '+1234', '', null, 12025550141]) fails(() => normalizePhone(raw), 'USE_INTERNATIONAL_PHONE');
 });
-test('new profile requires email; legacy submission retry retains historical seven-field profile', () => {
+test('current profile requires valid email and rejects caller identity or malformed return details', () => {
     assert.equal(profile({ ...returns, name: ' Alex Customer ', country: 'us' }).name, 'Alex Customer');
-    const input = { requestId: randomUUID(), profile: returns, cards: [{ title: '1999 Example card', category: 'SPORTS' }], confirmed: true, intakeMethod: 'MAIL_IN' };
-    assert.equal(submission(input).intakeMethod, 'MAIL_IN');
-    for (const changed of [{ profile: null }, { confirmed: false }, { intakeMethod: 'DIRECT' }, { cards: [] }, { cards: Array(26).fill(input.cards[0]) }]) assert.throws(() => submission({ ...input, ...changed }));
-    fails(() => submission({ ...input, accountId: randomUUID() }), 'INVALID_REQUEST');
     fails(() => profile({ ...returns, phone: '+12025550141' }), 'INVALID_REQUEST');
     fails(() => profile({ ...returns, name: 'Alex\nCustomer' }), 'RETURN_DETAILS_REQUIRED');
-    const { email, ...legacy } = returns;
-    assert.throws(() => profile(legacy));
-    assert.deepEqual(submission({ ...input, profile: legacy }).profile, legacy);
+    const { email, ...missingEmail } = returns;
+    assert.throws(() => profile(missingEmail));
     fails(() => profile({ ...returns, email: 'bad email' }), 'RETURN_DETAILS_REQUIRED');
 });
 test('separate cookie names, path and CSRF purpose deny staff or browser authority at customer session writes', () => {
@@ -64,26 +57,6 @@ test('account pages and Next data require signed customer ingress and remain pri
     const res = mockResponse(); await customerPage({ req, res }, {}, async () => { throw new BoundaryError(503, 'CUSTOMER_ACCESS_NOT_ENABLED'); });
     assert.equal(res.statusCode, 503);
 });
-test('mixed-card progress does not advance sibling cards or fill unrecorded milestones', () => {
-    const cards = [{ stage: 'SUBMITTED', events: [{ kind: 'SUBMITTED', recordedAt: '2026-09-09T00:00:00Z' }] },
-        { stage: 'APPROVED', events: [{ kind: 'SUBMITTED', recordedAt: '2026-09-09T00:00:00Z' }, { kind: 'APPROVED', recordedAt: '2026-09-09T01:00:00Z' }] }];
-    assert.deepEqual(summary(cards).map(row => [row.stage, row.count]), [['SUBMITTED', 1], ['APPROVED', 1]]);
-    assert.equal(milestones(cards[1]).find(step => step.kind === 'ENCAPSULATED').recordedAt, null);
-    assert.equal(milestones(cards[1]).find(step => step.kind === 'FINAL_REVIEW').recordedAt, null);
-});
-test('uncertain submission recovery survives a new page instance and remains customer-bound', () => {
-    const values = new Map(), storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
-    const customerId = randomUUID(), body = { requestId: randomUUID(), profile: returns, cards: [{ title: 'Example card', category: 'SPORTS' }], confirmed: true, intakeMethod: 'MAIL_IN' };
-    retainSubmission(storage, customerId, body);
-    const restored = readRetainedSubmission(storage, customerId);
-    assert.deepEqual(restored.submission, body); assert.equal(restored.uncertain, true);
-    assert.equal(readRetainedSubmission(storage, randomUUID()), null);
-    retainSubmission(storage, customerId, restored.submission, restored.uncertain);
-    assert.equal(readRetainedSubmission(storage, customerId).submission.requestId, body.requestId);
-    clearRetainedSubmission(storage); assert.equal(readRetainedSubmission(storage, customerId), null);
-    assert.throws(() => retainSubmission({ setItem() { throw Error('storage unavailable'); } }, customerId, body), /storage unavailable/);
-});
-
 function mockResponse() {
     return { headers: {}, code: null, body: null, setHeader(key, value) { this.headers[key] = value; }, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } };
 }
@@ -91,9 +64,9 @@ test('private HTTP boundaries refuse wrong origin, missing CSRF, foreign routes 
     const config = cfg(), browser = randomBytes(32).toString('base64url'), token = randomBytes(32).toString('base64url'); let calls = 0;
     const auth = new CustomerAuth({ config, database: { async call() { calls++; return {}; } } });
     const handler = createHandler({ config, auth, assertRequest() {}, clientAddress() { return 'test'; } });
-    const base = { method: 'POST', url: '/api/customer/submissions', headers: { origin: config.origin, 'content-type': 'application/json',
+    const base = { method: 'POST', url: '/api/customer/profile', headers: { origin: config.origin, 'content-type': 'application/json',
         cookie: `${config.cookies.browser}=${browser}; ${config.cookies.session}=${token}`, 'x-atlas-customer-csrf': auth.digest(`session:${token}`) },
-        body: { requestId: randomUUID(), profile: returns, cards: [{ title: 'A card', category: 'SPORTS' }], confirmed: true, intakeMethod: 'MAIL_IN' } };
+        body: { profile: returns } };
     for (const changed of [{ headers: { ...base.headers, origin: 'https://evil.example' } }, { headers: { ...base.headers, 'x-atlas-customer-csrf': '' } },
         { url: '/api/staff/cards' }, { url: '/api/customerish/submissions' }, { body: { ...base.body, accountId: randomUUID() } }, { headers: { ...base.headers, 'sec-fetch-site': 'cross-site' } }]) {
         const response = mockResponse(); await handler({ ...base, ...changed }, response); assert([400, 403, 404].includes(response.code));

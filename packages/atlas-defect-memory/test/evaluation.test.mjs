@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, digest } from '../src/contract.mjs';
 import { validateEvaluationCorpus, compareLearningEvaluation, shadowCollectionPlan, traceIntersectionOverUnion } from '../src/evaluation.mjs';
-import { learningReleasePlan, learningRollbackPlan } from '../src/release-plan.mjs';
 import { fixtures } from './fixtures.mjs';
 
 // These are synthetic harness assertions, not an optical benchmark or expert
@@ -86,20 +85,4 @@ test('shadow plan never exports independent truth, severity, grades or expert id
   const text = JSON.stringify(plan);
   for (const forbidden of ['synthetic-expert', 'findings', 'severity', 'truth', 'trace']) assert(!text.includes(forbidden));
   assert.equal(plan.paidCallsMade, 0); assert.equal(new Set(plan.jobs.map(j => j.idempotencyKey)).size, 8);
-});
-test('release plan requires exact evaluated corpus and separate owner truth audit; rollback uses compare-and-swap', () => {
-  const f = evaluationFixture(), evaluation = compareLearningEvaluation(f.input, f);
-  const args = { id: 'synthetic-release', expectedActiveReleaseId: 'baseline-20260928', publications: f.publications, evaluation };
-  assert.throws(() => learningReleasePlan(args), { code: 'LEARNING_RELEASE_OWNER_APPROVAL_REQUIRED' });
-  const ownerApproval = { evaluationSha256: evaluation.sha256, approvedBy: 'synthetic-test-owner', approvedAt: '2026-01-03T00:00:00.000Z', independentTruthAuditSha256: digest('synthetic-audit') };
-  const plan = learningReleasePlan({ ...args, ownerApproval }); assert.equal(plan.changesMade, false);
-  assert.deepEqual(JSON.parse(plan.manifest).qualification.bindings, evaluation.bindings);
-  assert.deepEqual(JSON.parse(plan.manifest).learningMembership, { DEFECT: [1], CLEAN: [], GEOMETRY: [] });
-  const { sha256: _sha, ...body } = evaluation, wrongRole = { ...body, domain: 'CLEAN' };
-  wrongRole.sha256 = digest(canonical(wrongRole, { maxBytes: 16777216 }));
-  assert.throws(() => learningReleasePlan({ ...args, evaluation: wrongRole, ownerApproval: { ...ownerApproval, evaluationSha256: wrongRole.sha256 } }), { code: 'LEARNING_RELEASE_DOMAIN_INVALID' });
-  assert(plan.sql.includes('Active learning release changed')); assert(!plan.sql.includes('DELETE'));
-  assert.throws(() => learningReleasePlan({ ...args, publications: [], ownerApproval }), { code: 'LEARNING_RELEASE_CORPUS_MISMATCH' });
-  const rollback = learningRollbackPlan({ expectedActiveReleaseId: args.id, restoreReleaseId: args.expectedActiveReleaseId, reason: 'Synthetic regression' });
-  assert.equal(rollback.changesMade, false); assert(rollback.sql.includes('FOR UPDATE'));
 });

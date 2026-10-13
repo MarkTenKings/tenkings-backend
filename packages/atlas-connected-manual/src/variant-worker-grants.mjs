@@ -25,7 +25,7 @@ ${variantJobGrantSQL(role,{worker:true})}`;}
 export const VARIANT_WORKER_FORBIDDEN_WRITES=Object.freeze([
  'atlas_manual.card','atlas_manual.action','atlas_manual.approval','atlas_manual.publication',
  'atlas_manual_intake.card','atlas_manual_intake.upload','atlas_manual_intake.discarded_card',
- 'atlas_manual_connected.variant_confirmation','atlas_manual_connected.variant_contribution',
+ 'atlas_manual_connected.variant_confirmation',
  'atlas_manual_connected.market_job','atlas_manual_connected.batch_grading',
  'atlas_manual.learning_publication','atlas_manual.learning_publication_job','atlas_manual.learning_release','atlas_manual.learning_control',
 ]);

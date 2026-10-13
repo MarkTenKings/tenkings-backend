@@ -59,17 +59,6 @@ export function profile(input, { requireEmail = true, allowContact = false } = {
     if ((requireEmail || result.email !== undefined) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email)) deny(400, 'RETURN_DETAILS_REQUIRED');
     return result;
 }
-export function submission(input) {
-    keys(input, ['requestId', 'profile', 'cards', 'confirmed', 'intakeMethod']);
-    if (!UUID.test(input.requestId ?? '') || input.confirmed !== true || !Array.isArray(input.cards)
-        || input.cards.length < 1 || input.cards.length > 25 || !['DEALER_DROP_OFF', 'MAIL_IN'].includes(input.intakeMethod)) deny(400, 'INVALID_SUBMISSION');
-    return { requestId: input.requestId, profile: profile(input.profile, { requireEmail: false }), intakeMethod: input.intakeMethod, confirmed: true, cards: input.cards.map(card => {
-        keys(card, ['title', 'category']);
-        if (typeof card.title !== 'string' || !card.title.trim() || card.title.length > 180
-            || /[\u0000-\u001f\u007f]/.test(card.title) || !['SPORTS', 'POKEMON'].includes(card.category)) deny(400, 'INVALID_SUBMISSION');
-        return { title: card.title.trim(), category: card.category };
-    }) };
-}
 export function privateHeaders(res) {
     for (const [name, value] of Object.entries({ 'Cache-Control': 'private, no-store, max-age=0',
         'CDN-Cache-Control': 'no-store', 'Vercel-CDN-Cache-Control': 'no-store', 'Pragma': 'no-cache',
