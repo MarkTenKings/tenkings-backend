@@ -1,34 +1,48 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R16 — October 12, 2026, 11:23 p.m. Pacific
+## Current ATLAS production R16 — October 13, 2026, 12:08 a.m. Pacific
 
-Live application source **`14411f8611789f565587067f41b8a5f2b7c96b46`**. Dedicated database: DigitalOcean cluster `319da142-ed77-400b-815c-445ae9e43e6f` / `atlas-grading-pg17-20261013`, database `atlas_grading`, PostgreSQL17.11. Its current-only baseline replaces the old migration chain. Do not run historical shared-database migration/recovery scripts against this database.
+Live application source **`424fc79c4d1caff5fe097a72480461f9684bcbb9`**. Dedicated database: DigitalOcean cluster `319da142-ed77-400b-815c-445ae9e43e6f` / `atlas-grading-pg17-20261013`, database `atlas_grading`, PostgreSQL17.11. Its current-only baseline replaces the old migration chain. Do not run historical shared-database migration/recovery scripts against this database.
 
 | Component | Verified production identity |
 | --- | --- |
-| Staff | `dpl_CdGFGQA81WDtMLWERNs1Sz64ExkM` |
-| Customer | `dpl_QT8teHWkTaspohCtcCajuFginZx9` |
-| Public | `dpl_5o2ezx4UpCbUGSnHNSgQPTPjNaTo` |
-| Native image | `sha256:ea0f12a00da7e5260bbe7e9f647e2f9bdc7e15ef57861018e9d43f6ae54053dc` |
-| Main container | `bdc9af11b1840abf0a0f8f9a72d1f4f6ca4c63ecd5934c037127920e3dbdbb3e` |
-| Variant worker | `0205245f19b9a506abd0f2d7416f5f2eeeba9248949223685ad7c11113b0b00b` |
+| Staff | `dpl_ENgh8FGQZfwwTgmaSDZRiUMCxay2` |
+| Customer | `dpl_FDWkocPR6czMKC4zjRi4SpMfMsZe` |
+| Public | `dpl_E4PJKJYTnkD4Kq9aUz9njg7WvrQf` |
+| Native image | `sha256:7ffcfe25d8d742d9521f3c0b597df29400f813d27f3f1f06ab8edc1d72af857c` |
+| Main container | `a28841de539de226bc433fa53c2a70c8d76df43bcf3f6bfe29a83bac93a34b16` |
+| Variant worker | `0c912407fa65871d964d484323fa9c2ba6e5c406116c253e988abd9a81be7585` |
 
-Completed order: new schema/roles → qualified fresh native/web artifacts → disable old controls and stop/disconnect old writers → verify final source drain → selectively copy29 allowed rows into disabled target → start new services → activate target controls at `2026-10-13T06:18:33.450Z` → promote all three web candidates → verify canonical pages/assets and old report404 → seal new restart policies → revoke old eight-role login/password/CONNECT and terminate the sole remaining old session. Every completed mutation intent is consumed; never replay it. Both new services had zero restarts/OOM at postactivation and seal. Browser inspected at normal staff sign-in without manufacturing authentication.
+Initial independent-database cutover order (source14411, before final artifact cleanup): new schema/roles → qualified fresh native/web artifacts → disable old controls and stop/disconnect old writers → verify final source drain → selectively copy29 allowed rows into disabled target → start new services → activate target controls at `2026-10-13T06:18:33.450Z` → promote all three web candidates → verify canonical pages/assets and old report404 → seal new restart policies → revoke old eight-role login/password/CONNECT and terminate the sole remaining old session. Every completed mutation intent is consumed; never replay it. Both new services had zero restarts/OOM at postactivation and seal. Browser inspected at normal staff sign-in without manufacturing authentication.
 
-All runtime database URLs resolve to the dedicated ATLAS cluster; five fresh application roles have independent passwords. The new native image has no old ATLAS image ancestor. The ATLAS-only bucket credential was verified and retained, not rotated. Existing HTTPS ingress/reverse-proxy transport on the Ten Kings host remains an explicit infrastructure dependency; it contains no grading engine or database fallback and must not be removed solely because its path/name is old. Old artifact/schema retirement is separate ongoing work.
+Final source-clean cutover removed the dormant public-media module/export from all new artifacts. The native manifest has505files; web uploads705files. Controls changed only their release bindings at07:08:09.921Z, followed by promotion and canonical/native checks. No database/card/learning migration accompanied this artifact refresh.
+
+All runtime database URLs resolve to the dedicated ATLAS cluster; five fresh application roles have independent passwords. The new native image has no old ATLAS image ancestor. The ATLAS-only bucket credential was verified and retained, not rotated. Existing HTTPS ingress/reverse-proxy transport on the Ten Kings host remains an explicit infrastructure dependency; it contains no grading engine or database fallback and must not be removed solely because its path/name is old. All seven old ATLAS schemas/eight roles were subsequently removed. All224superseded ATLAS web deployments are deleted (221prior versions plus3superseded initial R16 artifacts); only one current424 deployment per ATLAS project remains. The final native/file retirement also passed: three stopped containers, 33 obsolete images, 104 server roots and 625 local targets removed, preserving current services and transport without restart. The final five-photo reference cleanup also passed: all 45 image pointers are NULL with ten inventory/business rows preserved. All 11 temporary old credential/photo-preimage files were then deleted and independently checked absent; current credentials and sanitized proof hashes are preserved.
 
 Private evidence root `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`:
 
 | Receipt | SHA-256 |
 | --- | --- |
 | `r16-isolation/target-copy-result.json` | `3f275a58c437bae1531b14bdbe43c8c4368e258ae1dedbb121cf37ea75b4fb0d` |
-| `release-r16/native-clean-linux-proof-14411f861178/acceptance.json` | `13a2b0b36bf4bd9e1dceb1a1b8e9f1edb1db209fa5375067e847c54d90b3b9c9` |
-| `r16-isolation/runtime/postactivation-01.json` | `96489c81c6a4971ecf39ffb22f75b66651914def925275abf74a8a49d2b63adf` |
-| `release-r16/web/canonical-result.json` | `fab339edc0391a1d6380e56333351df540faa09279fb38295b50799a977a5f63` |
-| `r16-isolation/runtime/seal-result.json` | `8e4f01fa7401fe8167cc77b7d88494fc304811fbaa7f0b675ac37b8c66e09ac5` |
+| `release-r16/native-clean-linux-proof-424fc79c4d1c/acceptance.json` | `92888ec54e545c95583802125e6eef892fb6fd8b7cb389e775c70d4e5ec4716b` |
+| `release-r16-cleanup/runtime/postactivation-01.json` | `2236a940eb52a3d44c3db988b5ea962f8f6aec2f9e12c8b018a141e5a6b367f9` |
+| `release-r16-cleanup/web/canonical-result.json` | `1ec42a7d90eac1bc66316fb7104e70487888e7d89aa04045ee38f56f182bd99e` |
+| `release-r16-cleanup/runtime/seal-result.json` | `bcd84d0efcf498446378de74067849831728470c60df25050bf4a89c02772a5e` |
 | `r16-isolation/old-role-fence-result-01.json` | `380a78a45a5a73133339c6cff7269ccce319f8e8929d7129b1ca85b70411b7f8` |
+| `r16-isolation/owned-schema-retirement-result-01.json` | `90d54f53e27880b569918f32ffad6c724037d28460bc5fe3a22eecacdab83089` |
+| `release-r16-cleanup/retirement/consolidated-result-01.json` | `2ef99bc520e101a9c8d289bac4d4d006091388372d11a2421cbed30fc0782eab` |
+| `release-r16-cleanup/retirement/final-health-01.json` | `6de2d95f98f98e678133562456aa2c02c8b0d7dd1aab71e72bd5cc3f81ab2ade` |
+| `release-r16-cleanup/retirement/held-residual-result-01.json` | `e8963f4c091cb62ca3d10576834961987337f7be01faec56d8c83ab76d6e152b` |
 
-`target-activation-result.json`, `web/publication-result.json` and the separate retirement receipts record actual operations. Software/schema qualification and deployment are established; a new authenticated human card workflow and physical printing/NFC are not yet accepted. Future ATLAS-only backups are allowed. Old mixed-cluster managed backups still require observed retention expiry or a separately completed Ten Kings migration; do not destroy the serving Ten Kings cluster.
+`target-activation-result.json`, `web/publication-result.json` and the separate retirement receipts record actual operations. Historical raw receipt directories intentionally removed by the archive purge must not be recreated; minimal source-free summaries are retained under `release-r16-cleanup/retirement/preserved-current`, including the current self-contained transport helper/configuration. Historical hashes below remain records of their observed executions, not executable recovery plans. Software/schema qualification and deployment are established; a new authenticated human card workflow and physical printing/NFC are not yet accepted. Future ATLAS-only backups are allowed. Old mixed-cluster managed backups still require observed retention expiry or a separately completed Ten Kings migration; do not destroy the serving Ten Kings cluster.
+
+### Separate Ten Kings missing-photo compatibility release
+
+Actual Ten Kings production is `dpl_J6Y1ytJLx6cgLWBQ2JV8H76yZBdK`, verified original source `f02c430bd4cee3958ac4b56182c59c64dccbc840` plus narrow patch `16414f51197c5647173da63ed765f5ed9d691c322ba881111cf5cfb33ddee989`. The ATLAS branch was not deployed to Ten Kings. Full candidate build, 20 offline consumer checks and nine owned PostgreSQL groups passed. Local backport is commit `11dd0444`; this does not change the live ATLAS source424 identity.
+
+The actual Ten Kings worker is `611e0bcbed9b3e2defd1411c5be3a4aa807c7bf97d4b2f23332a8a4174321dd3`, image `sha256:c0d8469e3f416c16612e457ef38466b1b9eb2371303a5768ee24dcff68576a1d`, with two id-only result projections added to its original deployed code. Normal SIGTERM and SIGINT did not stop the prior worker; a separately reviewed exact-container forced stop completed under a zero-card-job claim lock. Its replacement runs with zero restarts/OOM, original environment values/ports/network/restart policy and working unauthenticated endpoint. The first postcheck compared environment array order and refused after replacement; read-only reconciliation established semantic equality, without replay. The lost in-memory pre-stop job digest is not claimed as preserved; current terminal counts/timestamps and Docker event scope are retained instead. Reference computation may repeat after interruption; durable backlog and committed records remain. Receipt `r16-isolation/ten-kings-photo-worker-reconciled-03.json` SHA `4a7f269375d9ff9643dcfbfca800d5abb6b99e6a012c8dff0d1d3983b1387e30`.
+
+Exact SQL `f322900c0bc3e87479216b1b0e98f5ac51f5904c2a3d1b4d92b0101b98f8584f` ran once at07:52:24UTC: registered `20261013064500_card_asset_optional_source_photo`, made two source-pointer columns nullable, and removed ten remaining dead strings from five assets. All 45 photo fields across the five assets/five items are now NULL, with every other business field preserved. Result `r16-isolation/ten-kings-photo-null-result-01.json` SHA `f344aea5f0322818036e3280e6d7652dd75d1ea7ac133a80935dcddba3910ba5`. No ATLAS database or application change was part of this Ten Kings compatibility operation. Independent direct read at07:57:04UTC verifies all 45 NULL fields, all ten unchanged business hashes, Ten Kings public ledger122 with the exact new migration checksum, healthy worker and both canonical web aliases. Receipt `r16-isolation/ten-kings-photo-independent-postflight-01.json` SHA `c2d4bca0cb0963d215509b9c5452bcafbfa0dc057849e1f8635733e9176f66bb`.
 
 ## Historical ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
 
