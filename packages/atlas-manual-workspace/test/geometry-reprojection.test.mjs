@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGeometryWorkspace, applyGeometryEdit, applyPreparedFrame, geometryBase, preparationBase } from '../src/geometry-actions.mjs';
+import { createGeometryWorkspace, applyGeometryEdit, applyPreparedFrame, geometryBase, preparationBase, geometryMeasurementFrame } from '../src/geometry-actions.mjs';
 import { createDefectWorkspace, adoptDefectProposals, defectBase, defectStatus, markDefectSideInspected,
   runDefectMeasurement, applyDefectMeasurement, discardPendingDefectEdit, parseDefectWorkspace, confirmDefectFindings, markDefectFindingReviewed } from '../src/defect-actions.mjs';
 import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
@@ -70,6 +70,22 @@ test('identity and translation preserve exact holes, disconnected components, so
     assert.equal(defectStatus(pending).canConfirm,false);assert.equal(defectStatus(pending).sides.FRONT.settled,false);
     assert.equal(pending.confirmation,null);assert.deepEqual(input,before);
   }
+});
+
+test('Astra material contour remains in both exact frame identities after a human outline adjustment', () => {
+  const input=structuredClone(fixture([[500,600,30,40]],{x:210}));
+  const oldContour=[{x:.01,y:0},{x:.99,y:0},{x:1,y:.01},{x:1,y:.99},{x:.99,y:1},{x:.01,y:1},{x:0,y:.99},{x:0,y:.01}];
+  const nextContour=oldContour.map(p=>({x:Math.max(0,p.x-.005),y:p.y}));
+  input.previousGeometry.sides.FRONT.prepared.frame.materialContour=oldContour;
+  input.geometry.sides.FRONT.prepared.frame.materialContour=nextContour;
+  input.workspace.sides.FRONT.frame=geometryMeasurementFrame(input.previousGeometry,'FRONT');
+  const result=beginReprojectDefectFrame(input);
+  assert.deepEqual(result.sides.FRONT.frame,geometryMeasurementFrame(input.geometry,'FRONT'));
+  assert.deepEqual(result.sides.FRONT.frame.materialContour,nextContour);
+  assert.deepEqual(result.sides.FRONT.pending.geometryReprojection.previousFrame.materialContour,oldContour);
+  assert.deepEqual(result.sides.FRONT.findings[0].geometryReprojections[0].sourceFrame.materialContour,oldContour);
+  const drift=structuredClone(input);drift.workspace.sides.FRONT.frame.materialContour=nextContour;
+  assert.throws(()=>beginReprojectDefectFrame(drift),{code:'ATLAS_DEFECT_STALE'},'a genuinely different saved material frame is still detected');
 });
 
 test('perspective reprojects the actual mask through source pixels rather than reusing canonical coordinates', () => {

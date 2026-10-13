@@ -7,7 +7,7 @@ const SIDES = ['FRONT', 'BACK'];
  * artifact and reauthorizes after its read; current brackets the whole batch.
  * Each side verifies/signs one image at a time, bounding raster reads to two.
  */
-export function createImageDescriptors({ current, readSource, readManifest, imageReadUrl, imageUrl, reviewDisplay = null, readCleanDescriptor = null }) {
+export function createImageDescriptors({ current, readSource, readManifest, imageReadUrl, imageUrl, readCleanDescriptor = null }) {
   return async function imageDescriptors({ card, state, staff, imageScope = 'all' }) {
     requireThat(['all', 'inspection'].includes(imageScope), 400, 'MANUAL_IMAGE_SCOPE_INVALID');
     await current(staff, card);
@@ -32,9 +32,7 @@ export function createImageDescriptors({ current, readSource, readManifest, imag
         for (const [kind, image] of Object.entries(saved.images))
           if (imageScope === 'all' || kind === 'inspection') images[kind] = await descriptor(kind, image);
         try {
-          const durablePreview = reviewDisplay ? await reviewDisplay.inspection(source.photo,saved.images.inspection,saved.inspectionPreview) : null;
-          if(durablePreview) images.inspection={...images.inspection,preview:durablePreview};
-          const preview = reviewDisplay ? null : inspectionPreviewMedia(saved.inspectionPreview, saved.images.inspection, source.photo);
+          const preview = inspectionPreviewMedia(saved.inspectionPreview, saved.images.inspection, source.photo);
           if (preview && imageReadUrl) images.inspection = { ...images.inspection,
             preview: inspectionPreviewGrant(preview, await descriptor('preview', preview.descriptor)) };
         } catch(error) { rethrowPreviewControlFailure(error); }

@@ -1,4 +1,4 @@
-import { parseGeometryWorkspace, validatePreparedPhotoFrame } from './geometry-actions.mjs';
+import { parseGeometryWorkspace, validatePreparedPhotoFrame, geometryMeasurementFrame } from './geometry-actions.mjs';
 import { DefectActionError, parseDefectWorkspace } from './defect-actions.mjs';
 import { decodeSpeedsterTraceRleV1, encodeSpeedsterTraceRleV1,
   SPEEDSTER_TRACE_WIDTH as WIDTH, SPEEDSTER_TRACE_HEIGHT as HEIGHT,
@@ -44,11 +44,6 @@ function point(m, x, y) {
 function noHorizon(m, width, height) {
   const values = [[0,0], [width-1,0], [width-1,height-1], [0,height-1]].map(([x,y]) => m[6]*x+m[7]*y+m[8]);
   return values.every(n => Number.isFinite(n) && n > 0) || values.every(n => Number.isFinite(n) && n < 0);
-}
-function frame(slot) {
-  return { imageVersion: slot.image.version, originalSha256: slot.image.originalSha256,
-    preparationVersion: slot.prepared.frame.version, frameId: slot.prepared.frame.id,
-    inspectionImageSha256: slot.prepared.frame.inspection.sha256, rectifiedImageSha256: slot.prepared.frame.rectified.sha256 };
 }
 
 /** Nearest-neighbor inverse sampling in the frozen canonical pixel grid. Source
@@ -109,7 +104,7 @@ export function beginReprojectDefectFrame({ workspace, side, previousGeometry, g
   requireThat([previous, current].every(g => g.cardId === state.cardId && g.profile === state.profile), 'ATLAS_DEFECT_STALE');
   const oldSlot = previous.sides[side], newSlot = current.sides[side], slot = state.sides[side];
   requireThat(oldSlot.prepared && newSlot.prepared, 'ATLAS_DEFECT_GEOMETRY_REQUIRED');
-  requireThat(equal(oldSlot.image, newSlot.image) && equal(slot.frame, frame(oldSlot))
+  requireThat(equal(oldSlot.image, newSlot.image) && equal(slot.frame, geometryMeasurementFrame(previous, side))
     && slot.cornerShape === oldSlot.cornerShape, 'ATLAS_DEFECT_STALE');
   requireThat(newSlot.prepared.frame.version > oldSlot.prepared.frame.version, 'ATLAS_DEFECT_STALE');
   requireThat(!slot.pending, 'ATLAS_DEFECT_MEASUREMENT_PENDING');
@@ -161,7 +156,7 @@ export function beginReprojectDefectFrame({ workspace, side, previousGeometry, g
         sourceFeatureFingerprintTraceSha256: finding.featureFingerprintTraceSha256 ?? null }] };
   });
   return parseDefectWorkspace({ ...state, draftRevision: state.draftRevision+1, confirmation: null,
-    sides: { ...state.sides, [side]: { ...slot, frame: frame(newSlot), cornerShape: newSlot.cornerShape,
+    sides: { ...state.sides, [side]: { ...slot, frame: geometryMeasurementFrame(current, side), cornerShape: newSlot.cornerShape,
       findingRevision: slot.findingRevision+1, findings, inspection: null, measurement: null,
       pending: { actor: 'HUMAN', action: { type: 'REMEASURE' }, geometryReprojection: { version: VERSION, previousFrame: slot.frame } } } } });
 }

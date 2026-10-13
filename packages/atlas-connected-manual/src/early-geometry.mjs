@@ -4,16 +4,16 @@ import { descriptorSha256, parseDerivative } from '@atlas/photo-core';
 import { processedPhoto } from '@atlas/manual-intake';
 import { geometryProcessingSettings } from './geometry-processing.mjs';
 import { geometrySideSettings } from './details.mjs';
-import { applyGeometryEdit, geometryBase, preparationBase } from '@atlas/manual-workspace/geometry-actions';
+import { geometryBase, preparationBase, parseGeometryWorkspace } from '@atlas/manual-workspace/geometry-actions';
 import { machineGeometryCandidate, MACHINE_GEOMETRY_POLICY } from './machine-geometry.mjs';
-import { ASTRA_GEOMETRY_POLICY, runAstraGeometry, geometryProposal, originalToCanonical } from './astra-geometry.mjs';
+import { ASTRA_GEOMETRY_POLICY, runAstraGeometry, geometryProposal, gradingToCanonical } from './astra-geometry.mjs';
 import { preparationRuntimeIdentity, preparePhotoGeometry, describePreparationDerivative,
   describePreparationPreview,
   adoptPhysicalGeometryProposal, adoptGeometryPreparation, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1,
   preparationOutputNames } from '@atlas/preparation-runtime';
 
 const SIDES = ['FRONT', 'BACK'];
-const POLICY = 'atlas-early-photo-geometry-v1';
+const POLICY = 'atlas-early-clean-geometry-v2';
 const TERMINAL = ['READY', 'NEEDS_REVIEW', 'FAILED'];
 const safeCode = error => /^(?:GEOMETRY|PREPARATION|PHOTO|MANUAL_PROCESSING)_[A-Z_]{1,80}$/.test(error?.code ?? '') ? error.code : 'GEOMETRY_PROCESSING_FAILED';
 const equal = (a, b) => canonical(a) === canonical(b);
@@ -35,7 +35,7 @@ export function geometryJobStatus(job, uploadId = null, key = null) {
     physical: job?.result?.physical ?? null, printed: job?.result?.printed ?? null, prepared: job?.result?.prepared === true,
     machineUsable: job?.result?.machineUsable === true,
     requiresHumanConfirmation: true, ambiguous: job?.result?.ambiguous === true,
-    unresolved: job?.result?.unresolved ?? [], ...(job?.result?.learningAdvice ? { learningAdvice: job.result.learningAdvice } : {}) };
+    unresolved: job?.result?.unresolved ?? [] };
 }
 
 /** Rebind verified immutable pixel work to the actual current workspace only
@@ -55,8 +55,12 @@ export function adoptEarlyGeometry(geometry, side, packet, input) {
   for (const result of [packet.preparation].filter(Boolean)) requireThat(
     result.frameDescriptorSha256 === frame && equal(result.identity, input.engine.runtime.identity), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
   if (packet.physical) requireThat(packet.physical.frameDescriptorSha256 === frame
-    && equal(packet.physical.identity, packet.physical.actor === 'ASTRA' ? ASTRA_GEOMETRY_POLICY : input.engine.runtime.identity), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
+    && equal(packet.physical.identity, ASTRA_GEOMETRY_POLICY), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
   let state = geometry;
+  if (packet.visual) state=parseGeometryWorkspace({...state,sides:{...state.sides,[side]:{...state.sides[side],visualObservation:{
+    frameSha256:photoFrame.raster.content.sha256,responseHash:packet.visual.responseHash,model:ASTRA_GEOMETRY_POLICY.model,reasoning:ASTRA_GEOMETRY_POLICY.reasoning,
+    ...Object.fromEntries(['physical','printed'].map(kind=>[kind,{outlineLocated:Boolean(packet.visual[kind].quad),uncertainty:packet.visual[kind].uncertainty,observation:packet.visual[kind].observation}]))
+  }}}});
   if (packet.physical) state = adoptPhysicalGeometryProposal(state, { ...packet.physical, side, base: geometryBase(state, side, 'PHYSICAL') }).state;
   if (!state.sides[side].physical || !packet.preparation) return { geometry: state, prepared: null };
   const prepared = packet.preparation;
@@ -67,7 +71,7 @@ export function adoptEarlyGeometry(geometry, side, packet, input) {
 }
 
 export function createEarlyGeometry({ store, intake, details, storage, artifacts, keyPrefix, limited, pythonExecutable, limits,
-  runtimeIdentity = preparationRuntimeIdentity, physical = null, model = null, readCleanPhoto = null, isCleanPhotoPrepared = null, prepare = preparePhotoGeometry,
+  runtimeIdentity = preparationRuntimeIdentity, model = null, readGradingPhoto, isCleanPhotoPrepared = null, prepare = preparePhotoGeometry, runVisual = runAstraGeometry,
   geometryConcurrency = 2, geometryDiscoveryPageSize = 2, intervalMs = 2000, onEvent = () => {} }) {
   geometryProcessingSettings({ geometryConcurrency, geometryDiscoveryPageSize });
   let enginePromise = null, stopped = true, closed = false, timer = null, cycling = null, discoveryCursor = null, wakePending = false;
@@ -88,14 +92,16 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     for (const side of SIDES) {
       const upload = card.sides[side].upload;
       if (!upload?.source) { result[side] = null; continue; }
-      const { photo } = await intake.readSource(staff, cardId, upload.uploadId);
+      const { photo: uploaded } = await intake.readSource(staff, cardId, upload.uploadId);
+      if (!await cleanPrepared({cardId,uploadId:upload.uploadId,side})) { result[side] = { pendingClean:true, cardId, uploadId:upload.uploadId, side }; continue; }
+      const { photo } = await readGradingPhoto({ cardId, uploadId:upload.uploadId, side, photo:uploaded });
       result[side] = geometryCacheInput(upload, photo, settingsOverride?.[side] ?? saved.details, actualEngine);
     }
     return result;
   }
   async function statusFor(staff, cardId, current) {
     return Object.fromEntries(await Promise.all(SIDES.map(async side => {
-      const input = current[side], key = input ? digest(canonical(input)) : null;
+      const input = current[side], key = input && !input.pendingClean ? digest(canonical(input)) : null;
       return [side, geometryJobStatus(key ? await store.read(staff, cardId, key, input) : null, input?.uploadId ?? null, key)];
     })));
   }
@@ -104,35 +110,34 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     const input = job.input;
     requireThat(input.policy === POLICY && equal(input.engine, await engine()), 409, 'GEOMETRY_ENGINE_CHANGED');
     const stored = await artifacts.read(input.photoSource.ref, { cardId: input.cardId, kind: 'PHOTO_SOURCE', sourceHash: input.photoSource.photoSourceHash }, { signal });
-    const photo = processedPhoto(stored, input.plan, input.verification);
+    const uploaded = processedPhoto(stored, input.plan, input.verification);
+    const { photo, bytes } = await readGradingPhoto({cardId:input.cardId,uploadId:input.uploadId,side:input.side,photo:uploaded,signal});
     requireThat(descriptorSha256(photo.workingFrame) === input.frameDescriptorSha256, 409, 'GEOMETRY_PHOTO_CHANGED');
-    const found = await storage.readDecodedFrame({ frame: photo.workingFrame, original: photo.original, decodePlan: photo.decodePlan, signal });
-    const source = { original: photo.original, decodePlan: photo.decodePlan, frame: photo.workingFrame, bytes: found.bytes };
+    const source = { original: photo.original, decodePlan: photo.decodePlan, frame: photo.workingFrame, bytes };
     const options = { source, matColor: input.settings.matColor, engine: input.engine.runtime, limits: input.engine.limits, pythonExecutable, signal };
-    const cleanPhoto = readCleanPhoto ? await readCleanPhoto({ cardId: input.cardId, uploadId: input.uploadId, side: input.side, signal, waitMs: 0 }) : null;
-    const visual = physical ? null : await runAstraGeometry({ job, source, cleanPhoto, model, store, artifacts, signal });
-    const proposed = physical ? await physical(options) : { id: visual.responseHash, actor: 'ASTRA', identity: ASTRA_GEOMETRY_POLICY,
+    const visual = await runVisual({ job, source, model, store, artifacts, signal });
+    const proposed = { id: visual.responseHash, actor: 'ASTRA', identity: ASTRA_GEOMETRY_POLICY,
       frameDescriptorSha256: input.frameDescriptorSha256, proposal: geometryProposal(visual, 'physical'),
       ...(visual.physical.contour.length ? { materialContour: visual.physical.contour } : {}) };
     const quad = usable(proposed.proposal);
     const packet = { policy: POLICY, key: job.key, binding: input, photoFrame: photo.workingFrame,
-      physical: proposed, ...(visual ? { visual } : {}), preparation: null, preparedImages: null };
+      physical: proposed, visual, preparation: null, preparedImages: null };
     let printed = null, preparationError = null;
     if (quad) {
       try {
       const prepared = await limited(() => prepare({ ...options, quad, outputContract: PREPARATION_CORE_V1 }));
-      if (visual) {
-        prepared.actor = 'ASTRA';
-        prepared.proposal = geometryProposal(visual, 'printed');
-        if (visual.printed.quad) prepared.proposal.proposal = originalToCanonical(visual.printed.quad, source, prepared);
-        if (visual.physical.contour.length) prepared.frame.materialContour = originalToCanonical(visual.physical.contour, source, prepared, { pixelCenters: true })
-          .map(p => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) }));
-      }
       const names = preparationOutputNames(PREPARATION_CORE_V1);
-      requireThat(prepared.outputContract === PREPARATION_CORE_V1 && prepared.outputs
+      requireThat(prepared.outputContract === PREPARATION_CORE_V1 && prepared.outputs && prepared.frame
         && equal(prepared.sourceQuad, quad)
         && Object.keys(prepared.outputs).length === names.length && names.every(name => prepared.outputs[name]),
       503, 'GEOMETRY_STORED_CONTENT_INVALID');
+      {
+        prepared.actor = 'ASTRA';
+        prepared.proposal = geometryProposal(visual, 'printed');
+        if (visual.printed.quad) prepared.proposal.proposal = gradingToCanonical(visual.printed.quad, source, prepared);
+        if (visual.physical.contour.length) prepared.frame.materialContour = gradingToCanonical(visual.physical.contour, source, prepared, { pixelCenters: true })
+          .map(p => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) }));
+      }
       const images = {};
       for (const [name, output] of Object.entries(prepared.outputs)) {
         const descriptor = describePreparationDerivative(prepared, name, source, { id: `${prepared.id}:${name}`,
@@ -166,7 +171,6 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     const result = { ref, sourceHash: job.key, physical: quad, printed, prepared: Boolean(packet.preparation),
       machineUsable: Boolean(quad && packet.preparation && !preparationError),
       ambiguous: Boolean(machineGeometryCandidate(proposed.proposal)?.ambiguous || machineGeometryCandidate(packet.preparation?.proposal)?.ambiguous),
-      ...(packet.learningAdvice ? { learningAdvice: packet.learningAdvice } : {}),
       unresolved: [!quad && 'PHYSICAL_GEOMETRY_UNRESOLVED', !packet.preparation && 'PREPARED_FRAME_UNAVAILABLE',
         !printed && 'PRINTED_GEOMETRY_UNRESOLVED'].filter(Boolean) };
     return { state: result.machineUsable ? 'READY' : 'NEEDS_REVIEW', result, error: preparationError };
@@ -209,10 +213,12 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
         try {
           const plan = JSON.parse(row.plan), verification = JSON.parse(row.verification), source = JSON.parse(row.source);
           const stored = await artifacts.read(source.ref, { cardId: row.card_id, kind: 'PHOTO_SOURCE', sourceHash: source.photoSourceHash });
-          const photo = processedPhoto(stored, plan, verification);
+          if (!await cleanPrepared({cardId:row.card_id,uploadId:row.upload_id,side:row.side})) continue;
+          const uploaded = processedPhoto(stored, plan, verification);
+          const { photo } = await readGradingPhoto({cardId:row.card_id,uploadId:row.upload_id,side:row.side,photo:uploaded});
           const pendingInput = geometryCacheInput({ uploadId: row.upload_id, side: row.side, version: plan.binding.version,
             source, plan, verification }, photo, row.settings, actualEngine);
-          if (await cleanPrepared(pendingInput)) await store.stage(pendingInput);
+          await store.stage(pendingInput);
         } catch (error) { emit({ event: 'MANUAL_GEOMETRY_SOURCE_PENDING', uploadId: row.upload_id, code: safeCode(error) }); }
       }
       if (!stopped) {
@@ -256,12 +262,14 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
       if (retry) { object(request, ['side','expectedKey']); requireThat(SIDES.includes(request.side) && /^[a-f0-9]{64}$/.test(request.expectedKey)); }
       else object(request, []);
       const current = await inputs(staff, cardId, settingsOverride);
-      if (retry) requireThat(current[request.side] && digest(canonical(current[request.side])) === request.expectedKey, 409, 'GEOMETRY_RETRY_STALE');
-      for (const side of SIDES) if (current[side] && (!retry || side === request.side) && await cleanPrepared(current[side])) await store.ensure(staff, current[side], { retry });
+      if (retry) requireThat(current[request.side] && !current[request.side].pendingClean && digest(canonical(current[request.side])) === request.expectedKey, 409, 'GEOMETRY_RETRY_STALE');
+      for (const side of SIDES) if (current[side] && !current[side].pendingClean && (!retry || side === request.side) && await cleanPrepared(current[side])) await store.ensure(staff, current[side], { retry });
       api.start(); wake();
       return { earlyGeometry: await statusFor(staff, cardId, current) };
     },
     async consume(staff, cardId, side, upload, photo, settings, { timeoutMs = 0 } = {}) {
+      if (!await cleanPrepared({cardId,uploadId:upload.uploadId,side})) return {input:null,packet:null};
+      ({photo}=await readGradingPhoto({cardId,uploadId:upload.uploadId,side,photo}));
       const input = geometryCacheInput(upload, photo, settings, await engine());
       const key = digest(canonical(input));
       if (!await cleanPrepared(input)) return { input, packet: null };

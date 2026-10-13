@@ -43,7 +43,7 @@ export function sampleFilm(scene,time) {
   return { t,yaw,tilt:.035*Math.sin(t*.55),roll:-.028,center:[.5-.16*inspect-.12*end,.52+.065*end],size:.95-.10*inspect-.18*end,
     inspect,fingerprint:ease(10.5,11.4,t)*(1-ease(13,14,t)),end,
     side: Math.cos(yaw)>0?'FRONT':'BACK',centerAmount:1-ease(2.8,3.4,t),
-    chapter:t<3.4?'CENTERING':t<7?'RECORDED FINDINGS':t<10.7?'ORIGINAL EVIDENCE':t<13.4?'CARD FINGERPRINT':'KNOW WHAT YOU HAVE' };
+    chapter:t<3.4?'CENTERING':t<7?'RECORDED FINDINGS':t<10.7?'GRADING EVIDENCE':t<13.4?'CARD FINGERPRINT':'KNOW WHAT YOU HAVE' };
 }
 /** Same projection for the photo plane, centering endpoints and evidence anchors. */
 export function projectFilmPoint(uv,side,s,w,h) {

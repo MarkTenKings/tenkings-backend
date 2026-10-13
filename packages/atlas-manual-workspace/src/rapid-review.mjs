@@ -25,7 +25,15 @@ export async function approveRapidGeometrySide(view, input, execute, sourceQuadT
   let compact=false;
   const save=async(action,intermediate=false)=>{
     const refresh=intermediate&&refreshView?'state':'view';
-    current=await execute(action,{refresh});compact=refresh==='state';checkpoint.base=currentBase();
+    try {
+      current=await execute(action,{refresh});compact=refresh==='state';checkpoint.base=currentBase();
+    } catch (error) {
+      // A prior compact save can already be durable while the mounted editor
+      // still shows its old base. Publish the saved state before returning a
+      // failure; do not advance this checkpoint for an unacknowledged action.
+      if (refreshView) await refreshView().catch(()=>{});
+      throw error;
+    }
   };
   if(checkpoint.step<1){
     if(!sameQuad(current.geometry.sides[side].physical?.quad,physical))

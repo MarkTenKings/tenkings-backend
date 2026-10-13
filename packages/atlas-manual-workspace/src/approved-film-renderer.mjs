@@ -94,12 +94,12 @@ export async function createApprovedFilmRenderer(canvas,scene,photos,{signal,per
       ctx.save();ctx.beginPath();ctx.rect(ox,oy,iw,ih);ctx.clip();ctx.fillStyle='rgba(255,40,77,.32)';const shape=scene.sides[m.finding.side].shapes.find(v=>v.finding.id===m.finding.id);
       for(const span of shape.spans??[]){const a=p(span.x,span.y);ctx.fillRect(a.x,a.y,span.width*scale,scale);}
       poly(ctx,m.region.canonicalContour.map(v=>p(v.x*1269,v.y*1777)),GREEN,2);ctx.restore();
-      text(ctx,'ORIGINAL PHOTO · SAVED TRACE',x,y-23,20,GOLD);const b=m.bounds,a=p(b.x,b.y),z=p(b.x+b.width,b.y+b.height);
+      text(ctx,'GRADING IMAGE · SAVED TRACE',x,y-23,20,GOLD);const b=m.bounds,a=p(b.x,b.y),z=p(b.x+b.width,b.y+b.height);
       if(m.calibratedBounds){line(ctx,{x:a.x-20,y:a.y},{x:a.x-20,y:z.y});line(ctx,{x:a.x,y:z.y+20},{x:z.x,y:z.y+20});for(const yy of[a.y,z.y])line(ctx,{x:a.x-26,y:yy},{x:a.x-14,y:yy});for(const xx of[a.x,z.x])line(ctx,{x:xx,y:z.y+14},{x:xx,y:z.y+26});badge(ctx,`${m.region.measurement.heightMm.toFixed(2)} mm`,clamp(a.x-85,x+85,x+w-85),(a.y+z.y)/2,24);badge(ctx,`${m.region.measurement.widthMm.toFixed(2)} mm`,(a.x+z.x)/2,Math.min(y+h-18,z.y+61),24);}
       fitted(ctx,`${m.region.zone} · ${m.region.measurement.widthMm.toFixed(2)} × ${m.region.measurement.heightMm.toFixed(2)} mm`,x,y+h+42,25,w,'#fff');
       const anchor=projectFilmPoint([(b.x+b.width/2)/1270,(b.y+b.height/2)/1778],m.finding.side,s,1080,1920);line(ctx,anchor,{x:x+w+34,y:y+h/2},RED,2);line(ctx,{x:x+w+34,y:y+h/2},{x:x+w,y:y+h/2},RED,2);ctx.restore();
     }
-    const caption=s.chapter==='CARD FINGERPRINT'?'A pattern from the saved defects.':s.chapter==='ORIGINAL EVIDENCE'?(scene.macro?'Measured on the original photograph.':'No included damage findings recorded.'):s.chapter==='RECORDED FINDINGS'?`${scene.manifest.packet.report.findings.length} recorded findings. Every trace retained.`:s.chapter==='CENTERING'?'The physical edge. The printed border.':scene.name;
+    const caption=s.chapter==='CARD FINGERPRINT'?'A pattern from the saved defects.':s.chapter==='GRADING EVIDENCE'?(scene.macro?'Measured on the grading image.':'No included damage findings recorded.'):s.chapter==='RECORDED FINDINGS'?`${scene.manifest.packet.report.findings.length} recorded findings. Every trace retained.`:s.chapter==='CENTERING'?'The physical edge. The printed border.':scene.name;
     text(ctx,s.chapter,66,1570,23,GOLD);fitted(ctx,caption,66,1630,35,948,'#fff');
     if(s.end>.001){ctx.globalAlpha=s.end;text(ctx,String(scene.grade),1010,1460,178,GOLD,'right',650);ctx.globalAlpha=1;}
     const foot=scene.manifest.packet.mode==='LOCAL_FIXTURE'?'SYNTHETIC DEMONSTRATION':scene.manifest.packet.reportNumber;

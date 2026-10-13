@@ -14,11 +14,7 @@ test('thumbnail HTTP route is authenticated, read-only and returns explicit pend
  assert.equal((await f.request('thumbnail/FRONT')).statusCode,404);assert.equal((await f.request('thumbnail?mode=full')).statusCode,404);
  assert.equal(f.calls.filter(x=>x[0]==='thumbnail').length,1);
 });
-test('display retry HTTP requires same-origin POST, CSRF and authenticated source-scoped command',async()=>{
- const f=setup(),body={side:'FRONT',photoSourceHash:'a'.repeat(64),jobId:cardId,actionId:cardId};
- assert.equal((await f.request('display-retry','GET')).statusCode,405);
- assert.equal((await f.request('display-retry','POST',body,{origin:'https://other.invalid'})).statusCode,403);
- assert.equal((await f.request('display-retry','POST',body,{'x-atlas-csrf':undefined})).statusCode,403);
- const r=await f.request('display-retry','POST',body);assert.equal(r.statusCode,200);
- assert.deepEqual(f.calls.at(-1),['retry',{owner:true},cardId,body]);assert.equal(f.calls.filter(x=>x[0]==='retry').length,1);
+test('retired raw display retry route is not executable',async()=>{
+ const f=setup();assert.equal((await f.request('display-retry','POST',{})).statusCode,404);
+ assert.equal(f.calls.length,0);
 });

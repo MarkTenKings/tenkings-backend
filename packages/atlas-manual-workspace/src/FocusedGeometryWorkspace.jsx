@@ -158,7 +158,7 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
     <div className="fg-stage" ref={viewport} onPointerDown={startPan} onPointerMove={pointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
       <div className="fg-stage-label">{label} <span>Geometry</span></div>
       {image&&camera&&(verified.url||preview.url)&&<img key={`${contentKey}:${verified.url?'full':'preview'}`} className="fg-photo" src={verified.url??preview.url} draggable={false}
-        alt={`${label} card${verified.url?', original geometry view':' preview; full detail is loading'}`} onLoad={verified.url?loaded:undefined}
+        alt={`${label} card${verified.url?', clean geometry view':' preview; full detail is loading'}`} onLoad={verified.url?loaded:undefined}
         onError={()=>{setReadyKey(null);setError('Photo unavailable. Reload the photo.');}}
         style={{left:camera.left,top:camera.top,width:camera.width,height:camera.height}} />}
       {ready&&camera&&<><svg className="fg-outlines" width={size.width} height={size.height} aria-hidden="true">
@@ -183,6 +183,11 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
         <span className="atlas-review-status" role="status">{taskStatus}</span><p className={error?'fg-error':undefined} role={error?'alert':undefined}>{taskCopy}</p>
         {needsPlacement&&ready&&<p className="atlas-review-hint">Drag each corner, or focus its handle and use the arrow keys. Unplaced outlines are placement guides.</p>}
       </section>
+      {slot.visualObservation&&<section className="atlas-review-task" aria-label="Astra geometry observations">
+        <span className="atlas-review-eyebrow">Astra · xhigh</span>
+        {['physical','printed'].map(kind=>{const observation=slot.visualObservation[kind];return <p key={kind}><strong>{kind==='physical'?'Physical edge':'Printed border'} · {observation.outlineLocated?'outline proposed':'no outline proposed'}</strong><br/>{observation.observation}<br/><small>Uncertainty: {observation.uncertainty.toLowerCase()}</small></p>;})}
+        {outlines.needsPrintedPlacement&&!outlines.printedAbsent&&<p>The dashed printed outline is a placement guide. It was not returned by Astra.</p>}
+      </section>}
       <div className="fg-precision" aria-label="Corner precision view"><div className="fg-precision-title"><strong>Precision view</strong><span>3×</span></div>
         {(dragging||handleFocused)&&ready&&camera?<div className="fg-loupe" aria-label={`${corners[selected.corner]} ${selected.kind==='PHYSICAL'?'physical edge':'printed border'} enlarged photograph`}>
           <img src={verified.url} alt="" draggable={false} style={{width:camera.width*3,height:camera.height*3,left:70-selectedPoint.x*camera.width*3,top:70-selectedPoint.y*camera.height*3}}/><span/>

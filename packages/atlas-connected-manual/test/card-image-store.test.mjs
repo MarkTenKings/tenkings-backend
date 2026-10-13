@@ -4,7 +4,7 @@ import { canonical, digest } from '@atlas/manual-service/contract';
 import { createReportImageStore } from '../src/report-image-store.mjs';
 import { createCardImageStore } from '../src/card-image-store.mjs';
 import { REPORT_IMAGE_RECIPE, reportImageJobKey, reportImageRecipeHash } from '../src/report-image-provider.mjs';
-import { photo } from './review-display-fixture.mjs';
+import { photo } from './photo-fixture.mjs';
 
 function fixture() {
   const original = photo.original;
@@ -16,7 +16,7 @@ function fixture() {
   const f = { writes: [], transactions: 0, queries: [], retained: null, prior: null,
     current: { id: upload.upload_id, plan: canonical(plan), plan_hash: digest(canonical(plan)),
       verification: canonical(verified), verification_hash: digest(canonical(verified)), source_hash: digest(upload.source) } };
-  const key = reportImageJobKey(media.descriptor.raster.content.sha256, REPORT_IMAGE_RECIPE);
+  const key = reportImageJobKey(media.descriptor.raster.content.sha256, REPORT_IMAGE_RECIPE, upload.upload_id);
   let bindingReads = 0;
   const store = createCardImageStore({ parsed: x => x ?? null, boundary: { async machineTransaction(_authority, work) {
     f.transactions++;
@@ -53,14 +53,6 @@ test('image admission binds the original to the current saved plan, verified obj
     const g = fixture(); mutate(g); await assert.rejects(g.store.enqueuePhoto(g.upload, g.media, REPORT_IMAGE_RECIPE));
     assert.equal(g.writes.length, 0);
   }
-});
-
-test('retained exact-original ready output binds without creating another generation job', async () => {
-  const f = fixture(); f.retained = 'd'.repeat(64);
-  assert.equal(await f.store.enqueuePhoto(f.upload, f.media, REPORT_IMAGE_RECIPE), f.retained);
-  assert.equal(f.writes.length, 1);
-  assert.match(f.writes[0].sql, /INSERT INTO atlas_manual_connected.card_image_binding/);
-  assert.equal(f.writes[0].args[4], f.retained);
 });
 
 test('repeat and concurrent binding return the immutable winning job', async () => {

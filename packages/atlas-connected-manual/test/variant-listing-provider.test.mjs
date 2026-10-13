@@ -137,14 +137,20 @@ test('a Scrydex exact image does not suppress the durable listing search for its
  assert.equal(dispatched,1);assert.equal(result.candidates[0].label,'Snowflake Stamp');assert.ok(result.problems.includes('LISTING_SOURCE_OUTCOME_UNKNOWN'));
 });
 
-test('graded photos remain outside catalog choices until the slab label is read',async()=>{
- const choices=scrydexChoices(),cache=cacheFixture(),bytes=await png(),requests=[];
+test('all catalog choices are checkpointed before acquisition; saved photos append without becoming verified choices',async()=>{
+ const choices=scrydexChoices(),cache=cacheFixture(),bytes=await png(),requests=[],checkpoints=[];
  const p=provider({cache,now,fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'image/png'}})});
  const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:choices,problems:[],truncated:false})}],listingProvider:p,now});
- const result=await service.prepare({identity},{executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>{if(retainedOnly)return {state:'MISSING'};requests.push(request);return {state:'SAVED',source:source(request,[item(1,'Mewtwo PSA 9')])};}});
+ const result=await service.prepare({identity},{onCatalog:async snapshot=>{checkpoints.push(snapshot);},executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>{
+  assert.equal(checkpoints[0].candidates.length,choices.length);assert(checkpoints[0].problems.includes('REFERENCE_ACQUISITION_PENDING'));
+  assert.equal(checkpoints[0].referencePhotos?.length??0,0);
+  if(retainedOnly)return {state:'MISSING'};requests.push(request);return {state:'SAVED',source:source(request,[item(1,'Mewtwo PSA 9')])};}});
  assert.equal(requests.length,choices.length);assert(requests.every(r=>!r.query.includes('graded')&&!r.query.includes('PSA')));
  assert.equal(result.referencePhotos.length,1);assert.equal(result.candidates.length,choices.length);
  assert(result.candidates.every(c=>c.images.every(i=>i.relationship!=='listing_photo')));
+ assert.equal(checkpoints.length,choices.length+1);assert.equal(checkpoints.at(-1).referencePhotos.length,1);
+ assert(checkpoints.every(snapshot=>snapshot.problems.includes('REFERENCE_ACQUISITION_PENDING')));
+ assert(!result.problems.includes('REFERENCE_ACQUISITION_PENDING'));
 });
 
 test('explicit missing-reference refresh has a new durable key without changing the search or historical keys',()=>{
@@ -225,6 +231,10 @@ test('one concise printing query preserves printed numbers, admits raw cards and
  assert.equal(pika.query,'pikachu 025/165 cosmos holo');
  const ball=prepare({...sports,name:'LaMelo Ball',cardNumber:'BD-13'},{name:'Ball of Duty',language:null});
  assert.equal(ball.query,'lamelo ball bd-13 ball of duty');
+ const curry={...sports,name:'Stephen Curry',cardNumber:'135'};
+ assert.equal(prepare(curry,{name:'BASE CARDS I',language:null}).query,'stephen curry 135');
+ assert.equal(prepare(curry,{name:'BASE CARDS I Gold',language:null}).query,'stephen curry 135 gold');
+ assert.equal(prepare({...sports,name:'Nick Kurtz',cardNumber:'93'},{name:'Base Cards Chrome Rookie Red RC Variation',language:null}).query,'nick kurtz 93 red rc');
  for(const r of [stamped,pika,ball]){const u=new URL(r.url);assert.equal(u.searchParams.get('count'),'240');assert.equal(u.searchParams.get('exactMatch'),'true');assert.doesNotMatch(r.query,/graded|psa|cgc|bgs|sgc/i);}
 });
 test('raw, conflicting, unreadable and multi-card seller claims all remain unassigned source rows',()=>{

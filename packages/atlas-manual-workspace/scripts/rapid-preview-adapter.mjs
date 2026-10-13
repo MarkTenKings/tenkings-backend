@@ -2,11 +2,12 @@
  * Nothing here authenticates staff, writes production data or certifies a report. */
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
+import {descriptorSha256,parseDecodedFrame} from '../../atlas-photo-core/src/index.mjs';
 import {verifyAndDecodePhoto,describeDecodedFrame} from '../../atlas-photo-runtime/src/index.mjs';
 import {prepareGeometry} from '../../atlas-preparation-runtime/src/index.mjs';
 import {measureDefectWorkspaceEdit} from '../../atlas-measurement-runtime/src/index.mjs';
 import {createGeometryWorkspace,applyGeometryEdit,applyPreparedFrame,geometryBase,preparationBase,
-  markPrintedBorderAbsent,confirmBothGeometry} from '../src/geometry-actions.mjs';
+  markPrintedBorderAbsent,confirmBothGeometry,geometryMeasurementFrame} from '../src/geometry-actions.mjs';
 import {createDefectWorkspace,adoptDefectProposals,defectBase,invalidateDefectFindingReviews,beginDefectEdit,
   applyDefectMeasurement,markDefectFindingReviewed,markDefectSideInspected,confirmDefectFindings,
   previewDefectReport} from '../src/defect-actions.mjs';
@@ -19,12 +20,7 @@ const SIDES=['FRONT','BACK'];
 const limits={maxInputBytes:12_000_000,maxPixels:5_000_000,maxOutputBytes:20_000_000,timeoutMs:30_000};
 const measurementLimits={maxInputBytes:8_000_000,maxOutputBytes:16_000_000,maxFindings:200,timeoutMs:30_000};
 const sharp=createRequire(new URL('../../../frontend/atlas-app/package.json',import.meta.url))('sharp');
-const frameFromGeometry=(geometry,side)=>{
-  const slot=geometry.sides[side],frame=slot.prepared.frame;
-  return {imageVersion:slot.image.version,preparationVersion:frame.version,frameId:frame.id,
-    originalSha256:slot.image.originalSha256,inspectionImageSha256:frame.inspection.sha256,
-    rectifiedImageSha256:frame.rectified.sha256};
-};
+
 
 export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=async()=>{}}={}) {
   if(!pythonExecutable?.startsWith('/'))throw Error('ATLAS_FIXTURE_PYTHON must name an absolute local CPU Python executable');
@@ -41,9 +37,17 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
       limits:{...limits,maxRasterBytes:40_000_000},
       uploadPlan:{schemaVersion:1,uploadId:`demo-${side}`,binding:{cardId,pairId:'demo-pair',side,version:1},
         object:{key,versionId:null},expected:{sha256:sha(sourcePng),byteCount:sourcePng.length}},observedObject:{key,versionId:null}});
-    sources[side]={original:decoded.original,decodePlan:decoded.decodePlan,bytes:decoded.png,
-      frame:describeDecodedFrame(decoded,{id:`${side}-source`,object:{key:`working/${side}.png`,versionId:null}})};
-    retain(decoded.png,'image/png');
+    const uploadedFrame=describeDecodedFrame(decoded,{id:`${side}-source`,object:{key:`working/${side}.png`,versionId:null}});
+    // Synthetic generated pixels exercise the clean-only contract without a paid image call.
+    const clean=await sharp(decoded.png).ensureAlpha().png().toBuffer();
+    const frame=parseDecodedFrame({schemaVersion:3,kind:'decoded-frame',id:`${side}-synthetic-clean`,
+      originalDescriptorSha256:descriptorSha256(decoded.original),decodePlanSha256:descriptorSha256(decoded.decodePlan),
+      raster:{content:{mime:'image/png',sha256:sha(clean),byteCount:clean.length},dimensions:uploadedFrame.raster.dimensions,
+        object:{key:`generated/${side}.png`,versionId:null}},sourceToFrame:[1,0,0,0,1,0,0,0,1],
+      treatment:{decoder:'synthetic-generated-fixture',version:'v1',policyVersion:'atlas-generated-grading-image-v1',channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'},
+      generation:{sourceFrame:uploadedFrame,recipeHash:sha('synthetic-clean-recipe'),model:'synthetic-image-fixture',promptVersion:'fixture-v1'}},decoded.original,decoded.decodePlan);
+    sources[side]={original:decoded.original,decodePlan:decoded.decodePlan,bytes:clean,frame};
+    retain(clean,'image/png');
   }
   geometry=createGeometryWorkspace({cardId,profile:'SPORTS',sides:Object.fromEntries(SIDES.map(side=>{
     const source=sources[side],raster=source.frame.raster;
@@ -61,12 +65,13 @@ export async function createRapidPreviewAdapter({pythonExecutable,beforePrepare=
   const initial=focusedFixture().workspace;
   for(const side of SIDES){
     geometry=applyGeometryEdit(geometry,{side,kind:'PHYSICAL',base:geometryBase(geometry,side,'PHYSICAL'),
-      quad:initial.sides[side].physical.quad,actor:'HUMAN'}).state;
+      quad:initial.sides[side].physical.quad,actor:'ASTRA',proposal:{id:'synthetic-astra-contour',ambiguous:false},
+      materialContour:initial.sides[side].physical.quad}).state;
     const prepared=await prepare(geometry,side);geometry=prepared.geometry;retainPrepared(prepared.result);
     geometry=applyGeometryEdit(geometry,{side,kind:'PRINTED',base:geometryBase(geometry,side,'PRINTED'),quad:printed,actor:'HUMAN'}).state;
   }
   defects=createDefectWorkspace({cardId,profile:'SPORTS',sides:Object.fromEntries(SIDES.map(side=>[side,{
-    frame:frameFromGeometry(geometry,side),cornerShape:'SQUARE'}]))});
+    frame:geometryMeasurementFrame(geometry,side),cornerShape:'SQUARE'}]))});
   for(const side of SIDES)defects=adoptDefectProposals(defects,{side,base:defectBase(defects,side),findings:[structuredClone(measurements[side])],
     source:{method:'DETECTOR',version:'synthetic-fixture-only',id:`fixture-${side}`}}).state;
 

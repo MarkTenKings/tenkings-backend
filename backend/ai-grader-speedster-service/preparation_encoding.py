@@ -11,7 +11,7 @@ PREVIEW_MAX_BYTES = 1024 * 1024
 
 
 def encode_lossless_webp(raster):
-    if raster.dtype != np.uint8 or raster.ndim not in (2, 3) or (raster.ndim == 3 and raster.shape[2] != 3):
+    if raster.dtype != np.uint8 or raster.ndim not in (2, 3) or (raster.ndim == 3 and raster.shape[2] not in (3, 4)):
         raise ValueError("PREPARATION_RASTER_UNSUPPORTED")
     # OpenCV explicitly selects lossless WebP at a quality greater than 100.
     success, encoded = cv2.imencode(".webp", raster, [cv2.IMWRITE_WEBP_QUALITY, 101])
@@ -20,12 +20,22 @@ def encode_lossless_webp(raster):
     data = encoded.tobytes()
     decoded = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_UNCHANGED)
     expected = cv2.cvtColor(raster, cv2.COLOR_GRAY2BGR) if raster.ndim == 2 else raster
+    if expected.ndim == 3 and expected.shape[2] == 4:
+        expected = expected.copy()
+        expected[expected[:, :, 3] == 0, :3] = 0
+        # WebP omits an entirely opaque alpha plane. Compare the same visible
+        # RGBA samples; a nonopaque alpha plane must still survive exactly.
+        if decoded is not None and decoded.ndim == 3 and decoded.shape[2] == 3 and np.all(expected[:, :, 3] == 255):
+            decoded = cv2.cvtColor(decoded, cv2.COLOR_BGR2BGRA)
     if decoded is None or decoded.dtype != expected.dtype or decoded.shape != expected.shape or not np.array_equal(decoded, expected):
         raise ValueError("PREPARATION_OUTPUT_INVALID")
     return data
 
 
 def encode_inspection_preview(inspection, transform):
+    if inspection.ndim == 3 and inspection.shape[2] == 4:
+        alpha = inspection[:, :, 3:4].astype(np.float32) / 255
+        inspection = np.rint(inspection[:, :, :3] * alpha + 255 * (1 - alpha)).astype(np.uint8)
     height, width = inspection.shape[:2]
     scale = min(1, PREVIEW_MAX_EDGE / max(width, height))
     size = (max(1, round(width * scale)), max(1, round(height * scale)))

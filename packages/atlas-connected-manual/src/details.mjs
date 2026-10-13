@@ -43,6 +43,12 @@ export function mergeSuggestions(current, result, sourceHash) {
     // Keep the full suggested text for review; never silently truncate it.
     next.fields[field] = typeof value === 'string' ? value : '';
   }
+  // Identification's named printing is the initial unreviewed parallel
+  // proposal. A human choice or explicit clear always wins.
+  if (!next.touched.includes('parallel')) {
+    const value = next.fields.variant;
+    next.parallel = value.length <= 120 ? value : '';
+  }
   if (!next.touched.includes('profile')) next.profile = ({ 'Sports cards':'SPORTS','Pokémon':'POKEMON' })[next.fields.category] ?? null;
   if (!next.touched.includes('layoutType')) {
     const proposed=result.layout;

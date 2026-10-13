@@ -1,13 +1,13 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 
 export const REPORT_IMAGE_MODEL = 'gpt-image-2.5-sunburst-2026-09-08';
-export const REPORT_IMAGE_PROMPT_VERSION = 'atlas-background-extraction-api-v2';
+export const REPORT_IMAGE_PROMPT_VERSION = 'atlas-background-grading-api-v3';
 export const REPORT_IMAGE_PROMPT = 'Cut out the entire physical trading card from this photograph. Make every pixel outside its physical edge transparent (alpha 0). Keep the whole card opaque, including its printed borders, all corners, text, artwork, foil and defects. Preserve the card’s existing position, scale and framing. Do not create any colored background, gradient, shadow or checkerboard. Return one RGBA PNG with transparent space around the card.';
 export const REPORT_IMAGE_RECIPE = Object.freeze({ version: 'atlas-report-image-recipe-v1', execution: 'OPENAI_IMAGES_API',
   model: REPORT_IMAGE_MODEL, promptVersion: REPORT_IMAGE_PROMPT_VERSION, prompt: REPORT_IMAGE_PROMPT,
   background: 'transparent', output_format: 'png', quality: 'xhigh', size: '1104x1520', n: 1 });
 export const reportImageRecipeHash = recipe => digest(canonical(recipe));
-export const reportImageJobKey = (sourceSha256, recipe) => digest(canonical({ sourceSha256, recipeHash: reportImageRecipeHash(recipe) }));
+export const reportImageJobKey = (sourceSha256, recipe, uploadId) => digest(canonical({ sourceSha256, recipeHash: reportImageRecipeHash(recipe), ...(uploadId ? {uploadId} : {}) }));
 const error = (code, disposition = 'UNKNOWN', receipt = null) => Object.assign(new Error(code), { code, disposition, receipt });
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 // Upfront edits receive the full working PNG, before any geometry crop. The

@@ -289,6 +289,13 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
       const stored = await writeExpected(derivedExpectation(planned), png, signal);
       return parseDecodedFrame({ ...planned, raster: { ...planned.raster, object: stored.object } }, original, decodePlan);
     },
+    async writeGeneratedFrame({ frame, original, decodePlan, bytes, signal } = {}) {
+      original = parseOriginal(original); decodePlan = clone(decodePlan);
+      const planned = parseDecodedFrame(frame, original, decodePlan);
+      check(planned.schemaVersion === 3 && planned.raster.object.versionId === null, 'PHOTO_STORAGE_CONFLICT');
+      const stored = await writeExpected(derivedExpectation(planned), bytes, signal);
+      return parseDecodedFrame({ ...planned, raster: { ...planned.raster, object: stored.object } }, original, decodePlan);
+    },
     async readDecodedFrame({ frame, original, decodePlan, signal } = {}) {
       frame = parseDecodedFrame(frame, original, decodePlan);
       return readExpected(derivedExpectation(frame), signal);

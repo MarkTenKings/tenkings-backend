@@ -92,6 +92,428 @@
           "locator": "page:14"
         }
       ]
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "baseball",
+      "year": "2025",
+      "setName": "2025 Bowman Chrome Baseball",
+      "checklistSha256": "3ee770b295a63bc8482899b50fb651bcc6cdb55796d53e3bf4b1bd1efc5cc55f",
+      "subset": "BASE CARDS",
+      "source": {
+        "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2025_Bowman_Chrome_Baseball_Odds.pdf?v=1758563114",
+        "sha256": "287d0f8cba2a80724e186138c146832c2559418e99e73fb68d31add65da0d346",
+        "linkedFrom": "https://www.topps.com/pages/odds",
+        "byteCount": 193556
+      },
+      "printings": [
+        {
+          "sourceName": "Base Cards Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Refractor"
+        },
+        {
+          "sourceName": "Base Cards Pulsar Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Pulsar Refractor"
+        },
+        {
+          "sourceName": "Base Cards Fuchsia Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Fuchsia Refractor"
+        },
+        {
+          "sourceName": "Base Cards Fuchsia Wave Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Fuchsia Wave Refractor"
+        },
+        {
+          "sourceName": "Base Cards Aqua RayWave Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Aqua RayWave Refractor"
+        },
+        {
+          "sourceName": "Base Cards Blue Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Blue Refractor"
+        },
+        {
+          "sourceName": "Base Cards Blue Wave Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Blue Wave Refractor"
+        },
+        {
+          "sourceName": "Base Cards Wave Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Wave Refractor"
+        },
+        {
+          "sourceName": "Base Cards Green Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Green Refractor"
+        },
+        {
+          "sourceName": "Base Cards Green Wave Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Green Wave Refractor"
+        },
+        {
+          "sourceName": "Base Cards Yellow Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Yellow Refractor"
+        },
+        {
+          "sourceName": "Base Cards Gold Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Gold Refractor"
+        },
+        {
+          "sourceName": "Base Cards Orange Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Orange Refractor"
+        },
+        {
+          "sourceName": "Base Cards Black Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Black Refractor"
+        },
+        {
+          "sourceName": "Base Cards Red Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Red Refractor"
+        },
+        {
+          "sourceName": "Base Cards Superfractor Parallel",
+          "locator": "page:1",
+          "parallel": "Superfractor"
+        },
+        {
+          "sourceName": "Base Cards Geometric Refractor Parallel",
+          "locator": "page:1",
+          "parallel": "Geometric Refractor"
+        },
+        {
+          "sourceName": "Base Cards Purple Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Purple Geometric"
+        },
+        {
+          "sourceName": "Base Cards Blue Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Blue Geometric"
+        },
+        {
+          "sourceName": "Base Cards Aqua Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Aqua Geometric"
+        },
+        {
+          "sourceName": "Base Cards Green Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Green Geometric"
+        },
+        {
+          "sourceName": "Base Cards Yellow Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Yellow Geometric"
+        },
+        {
+          "sourceName": "Base Cards Gold Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Gold Geometric"
+        },
+        {
+          "sourceName": "Base Cards Orange Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Orange Geometric"
+        },
+        {
+          "sourceName": "Base Cards Black Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Black Geometric"
+        },
+        {
+          "sourceName": "Base Cards Red Geometric Parallel",
+          "locator": "page:1",
+          "parallel": "Red Geometric"
+        }
+      ]
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "basketball",
+      "year": "2025-26",
+      "setName": "2025-26 Topps Basketball",
+      "checklistSha256": "4cdf0c5061e930e4a9d881e7dd1b552e84b06d5c163f330cba8fb12aaa312343",
+      "subset": "BASE CARDS I",
+      "source": {
+        "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2025_26_Topps_Basketball_Odds.pdf?v=1759325369",
+        "sha256": "43f0e9ba0c6426915442b6a60d2357e5f23eed1256d8c8cc94f6bf64871fcf5c",
+        "linkedFrom": "https://www.topps.com/pages/odds",
+        "byteCount": 260205
+      },
+      "printings": [
+        {
+          "sourceName": "BASE GOLD",
+          "locator": "page:1",
+          "parallel": "Gold"
+        },
+        {
+          "sourceName": "BASE RAINBOW FOILBOARD",
+          "locator": "page:1",
+          "parallel": "Rainbow Foilboard"
+        },
+        {
+          "sourceName": "BASE PURPLE RAINBOW",
+          "locator": "page:1",
+          "parallel": "Purple Rainbow"
+        },
+        {
+          "sourceName": "BASE BLUE RAINBOW",
+          "locator": "page:1",
+          "parallel": "Blue Rainbow"
+        },
+        {
+          "sourceName": "BASE GREEN RAINBOW",
+          "locator": "page:1",
+          "parallel": "Green Rainbow"
+        },
+        {
+          "sourceName": "BASE GOLD RAINBOW",
+          "locator": "page:1",
+          "parallel": "Gold Rainbow"
+        },
+        {
+          "sourceName": "BASE ORANGE RAINBOW",
+          "locator": "page:1",
+          "parallel": "Orange Rainbow"
+        },
+        {
+          "sourceName": "BASE WOOD",
+          "locator": "page:1",
+          "parallel": "Wood"
+        },
+        {
+          "sourceName": "BASE BLACK RAINBOW",
+          "locator": "page:1",
+          "parallel": "Black Rainbow"
+        },
+        {
+          "sourceName": "BASE RED RAINBOW",
+          "locator": "page:1",
+          "parallel": "Red Rainbow"
+        },
+        {
+          "sourceName": "BASE FOILFRACTOR",
+          "locator": "page:1",
+          "parallel": "FoilFractor"
+        },
+        {
+          "sourceName": "BASE FIRST CARD",
+          "locator": "page:1",
+          "parallel": "First Card"
+        },
+        {
+          "sourceName": "BASE VICTORY",
+          "locator": "page:1",
+          "parallel": "Victory"
+        },
+        {
+          "sourceName": "BASE SANDGLITTER",
+          "locator": "page:1",
+          "parallel": "Sandglitter"
+        },
+        {
+          "sourceName": "BASE BLUE SANDGLITTER",
+          "locator": "page:1",
+          "parallel": "Blue Sandglitter"
+        },
+        {
+          "sourceName": "BASE HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Holo Foil"
+        },
+        {
+          "sourceName": "BASE PURPLE HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Purple Holo Foil"
+        },
+        {
+          "sourceName": "BASE BLUE HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Blue Holo Foil"
+        },
+        {
+          "sourceName": "BASE GREEN HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Green Holo Foil"
+        },
+        {
+          "sourceName": "BASE GOLD HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Gold Holo Foil"
+        },
+        {
+          "sourceName": "BASE ORANGE HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Orange Holo Foil"
+        },
+        {
+          "sourceName": "BASE BLACK HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Black Holo Foil"
+        },
+        {
+          "sourceName": "BASE RED HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Red Holo Foil"
+        },
+        {
+          "sourceName": "BASE PLATINUM HOLO FOIL",
+          "locator": "page:1",
+          "parallel": "Platinum Holo Foil"
+        },
+        {
+          "sourceName": "BASE DIAMANTE",
+          "locator": "page:1",
+          "parallel": "Diamante"
+        },
+        {
+          "sourceName": "BASE PINK DIAMANTE",
+          "locator": "page:1",
+          "parallel": "Pink Diamante"
+        },
+        {
+          "sourceName": "BASE GOLD DIAMANTE",
+          "locator": "page:1",
+          "parallel": "Gold Diamante"
+        },
+        {
+          "sourceName": "BASE ORANGE DIAMANTE",
+          "locator": "page:1",
+          "parallel": "Orange Diamante"
+        },
+        {
+          "sourceName": "BASE BLACK DIAMANTE",
+          "locator": "page:1",
+          "parallel": "Black Diamante"
+        },
+        {
+          "sourceName": "BASE RED DIAMANTE",
+          "locator": "page:2",
+          "parallel": "Red Diamante"
+        },
+        {
+          "sourceName": "BASE SEASON TIP OFF",
+          "locator": "page:2",
+          "parallel": "Season Tip Off"
+        },
+        {
+          "sourceName": "BASE SEASON TIP OFF GREEN FOILBOARD",
+          "locator": "page:2",
+          "parallel": "Season Tip Off Green Foilboard"
+        },
+        {
+          "sourceName": "BASE SEASON TIP OFF GOLD FOILBOARD",
+          "locator": "page:2",
+          "parallel": "Season Tip Off Gold Foilboard"
+        },
+        {
+          "sourceName": "BASE SEASON TIP OFF ORANGE FOILBOARD",
+          "locator": "page:2",
+          "parallel": "Season Tip Off Orange Foilboard"
+        },
+        {
+          "sourceName": "BASE SEASON TIP OFF RED FOILBOARD",
+          "locator": "page:2",
+          "parallel": "Season Tip Off Red Foilboard"
+        },
+        {
+          "sourceName": "BASE SEASON TIP OFF BLACK FOILBOARD",
+          "locator": "page:2",
+          "parallel": "Season Tip Off Black Foilboard"
+        },
+        {
+          "sourceName": "BASE TOPPS FOIL PATTERN",
+          "locator": "page:2",
+          "parallel": "Topps Foil Pattern"
+        },
+        {
+          "sourceName": "BASE BLACK",
+          "locator": "page:2",
+          "parallel": "Black"
+        },
+        {
+          "sourceName": "BASE AQUA HOLO FOIL",
+          "locator": "page:2",
+          "parallel": "Aqua Holo Foil"
+        },
+        {
+          "sourceName": "BASE PINK HOLO FOIL",
+          "locator": "page:2",
+          "parallel": "Pink Holo Foil"
+        },
+        {
+          "sourceName": "BASE CRACKLEBOARD FOIL",
+          "locator": "page:2",
+          "parallel": "Crackleboard Foil"
+        },
+        {
+          "sourceName": "BASE GREEN CRACKLEBOARD FOIL",
+          "locator": "page:2",
+          "parallel": "Green Crackleboard Foil"
+        },
+        {
+          "sourceName": "BASE GOLD CRACKLEBOARD FOIL",
+          "locator": "page:2",
+          "parallel": "Gold Crackleboard Foil"
+        },
+        {
+          "sourceName": "BASE ORANGE CRACKLEBOARD FOIL",
+          "locator": "page:2",
+          "parallel": "Orange Crackleboard Foil"
+        },
+        {
+          "sourceName": "BASE BLACK CRACKLEBOARD FOIL",
+          "locator": "page:2",
+          "parallel": "Black Crackleboard Foil"
+        },
+        {
+          "sourceName": "BASE RED CRACKLEBOARD FOIL",
+          "locator": "page:2",
+          "parallel": "Red Crackleboard Foil"
+        },
+        {
+          "sourceName": "BASE PLATINUM CRACKLEBOARD FOIL",
+          "locator": "page:2",
+          "parallel": "Platinum Crackleboard Foil"
+        },
+        {
+          "sourceName": "BASE SURGE",
+          "locator": "page:17",
+          "parallel": "Surge"
+        },
+        {
+          "sourceName": "BASE FLASH DROP",
+          "locator": "page:17",
+          "parallel": "Flash Drop"
+        },
+        {
+          "sourceName": "BASE CART LOAD",
+          "locator": "page:17",
+          "parallel": "Cart Load"
+        },
+        {
+          "sourceName": "BASE CYBER CIRCUIT",
+          "locator": "page:17",
+          "parallel": "Cyber Circuit"
+        },
+        {
+          "sourceName": "BASE DOORBUSTER",
+          "locator": "page:17",
+          "parallel": "Doorbuster"
+        }
+      ]
     }
   ]
 }

@@ -276,7 +276,6 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       const binding = defectAnalysisBinding(card, state, preparation);
       requireThat(SIDES.every(side => canonical(input.base[side]) === canonical(defectBase(state.defects, side))), 409, 'DEFECT_ANALYSIS_STALE');
       const images = await imageEffects.currentImages(staff, card, binding, INSPECTION_CONTEXT_CROP_LAYOUT);
-      const generatedViews = await imageEffects.generatedViews?.(staff, card, binding, { signal: dispatchSignal }) ?? [];
       // This is a fresh database retrieval for every new request, after costly
       // image preparation. Lifecycle retrieval excludes unavailable source
       // lessons individually and records the fallback in immutable evidence.
@@ -285,14 +284,13 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       const cleanScope = knowledge.status === 'BASELINE_WITHOUT_EXAMPLES' ? null : await roleSnapshot(staff, card, state, 'CLEAN');
       const authoritativeImageBytes = images.reduce((total, side) => total + side.whole.bytes.byteLength
         + side.crops.reduce((sum, image) => sum + image.bytes.byteLength, 0), 0)
-        + lessonImages.reduce((total, image) => total + image.bytes.byteLength + image.traceOverlay.bytes.byteLength, 0)
-        + generatedViews.reduce((total, image) => total + image.bytes.byteLength, 0);
+        + lessonImages.reduce((total, image) => total + image.bytes.byteLength + image.traceOverlay.bytes.byteLength, 0);
       const cleanLearning = cleanScope && (cleanScope.policy || cleanScope.selection.reason !== 'POLICY_NOT_ACTIVE') ? await consumeCleanLearning({ selection: cleanScope.selection,
         loadImage: imageEffects.cleanImage, limit: Math.min(4, 12 - knowledge.lessons.length),
         remainingImageBytes: Math.max(0, ANALYSIS_LIMITS.totalImageBytes - authoritativeImageBytes) }) : null;
       const prepared = await buildAstraContextBackgroundDefectRequestAsync({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
         cornerShapes: Object.fromEntries(SIDES.map(side => [side, state.defects.sides[side].cornerShape])),
-        binding, images, knowledge, lessonImages, ...(generatedViews.length ? { generatedViews } : {}), ...(cleanLearning ? { cleanLearning } : {}) }, { signal: dispatchSignal });
+        binding, images, knowledge, lessonImages, ...(cleanLearning ? { cleanLearning } : {}) }, { signal: dispatchSignal });
       await executor.prepareAndRun(staff, { cardId, actionId: input.actionId, prepared,
         expiresAt: new Date(Date.now() + 180000).toISOString(), baseHash, dispatchSignal, admitDispatch,
         ...(input.replacement ? { replacement: input.replacement } : {}) });

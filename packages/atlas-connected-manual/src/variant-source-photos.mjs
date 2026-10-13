@@ -1,12 +1,12 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { variantBinding } from './variant-job-store.mjs';
 
-export const VARIANT_SOURCE_PHOTO_POLICY = Object.freeze({ version: 'atlas-variant-photo-input-v1', maxDimension: 2048,
+export const VARIANT_SOURCE_PHOTO_POLICY = Object.freeze({ version: 'atlas-variant-photo-input-v2', maxDimension: 2048,
   maxInputPixels: 52_000_000, maxOutputBytes: 4 * 1024 * 1024, quality: 92, chromaSubsampling: '4:4:4' });
 
 /** This image decode runs only in the separately constrained variant process.
- * The original card photographs and grading derivatives are never rewritten. */
-export function createVariantSourcePhotoReader({ boundary, intake, workflow, storage, transform = null }) {
+ * Only the canonical generated grading pixels may contribute a reference. */
+export function createVariantSourcePhotoReader({ boundary, intake, workflow, readGradingPhoto, transform = null }) {
   const convert = transform ?? (async bytes => {
     const sharp = (await import('sharp')).default;
     return sharp(bytes, { limitInputPixels: VARIANT_SOURCE_PHOTO_POLICY.maxInputPixels, failOn: 'warning' })
@@ -23,8 +23,9 @@ export function createVariantSourcePhotoReader({ boundary, intake, workflow, sto
     const result = { sourceHash: binding.sourceHash, policy: VARIANT_SOURCE_PHOTO_POLICY };
     for (const side of ['FRONT', 'BACK']) {
       signal?.throwIfAborted();
-      const photo = pair.sides[side].photo;
-      const found = await storage.readDecodedFrame({ frame: photo.workingFrame, original: photo.original, decodePlan: photo.decodePlan, signal });
+      requireThat(typeof readGradingPhoto==='function',503,'VARIANT_GENERATED_PHOTO_REQUIRED');
+      const slot=pair.sides[side],found=await readGradingPhoto({cardId:job.card_id,uploadId:slot.upload.uploadId,side,photo:slot.photo,signal}),photo=found?.photo;
+      requireThat(photo?.workingFrame?.schemaVersion===3 && photo.workingFrame.generation && found.bytes instanceof Uint8Array,503,'VARIANT_GENERATED_PHOTO_REQUIRED');
       const bytes = await convert(found.bytes);
       signal?.throwIfAborted();
       requireThat(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= VARIANT_SOURCE_PHOTO_POLICY.maxOutputBytes, 413, 'VARIANT_IMAGES_TOO_LARGE');

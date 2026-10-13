@@ -46,7 +46,7 @@ export function createCardImageStore({ boundary, parsed }) {
       const sourceHash = sourceMedia.descriptor.raster.content.sha256;
       const originalHash = sourceMedia.original.content.sha256;
       const recipeHash = reportImageRecipeHash(recipe), sourceText = canonical(sourceMedia, { maxBytes: 32768 });
-      const key = reportImageJobKey(sourceHash, recipe);
+      const key = reportImageJobKey(sourceHash, recipe, upload.upload_id);
       requireThat(sourceMedia.original.uploadId === upload.upload_id && sourceMedia.original.binding.cardId === upload.card_id
         && sourceMedia.original.binding.side === upload.side, 503, 'REPORT_IMAGE_SOURCE_MISMATCH');
       parseDecodedFrame(sourceMedia.descriptor, sourceMedia.original, sourceMedia.decodePlan);
@@ -70,21 +70,14 @@ export function createCardImageStore({ boundary, parsed }) {
           && canonical(sourceMedia.original.object) === canonical(observed.object), 503, 'REPORT_IMAGE_SOURCE_MISMATCH');
         const [prior] = await tx.$queryRawUnsafe('SELECT job_key FROM atlas_manual_connected.card_image_binding WHERE upload_id=$1::uuid', upload.upload_id);
         if (prior) return prior.job_key;
-        // A previously generated report cutout of these exact original bytes
-        // is reusable. This only reads READY evidence; no old dispatch executes.
-        const [retained] = await tx.$queryRawUnsafe(`SELECT key FROM atlas_manual_connected.report_image_job
-          WHERE state='READY' AND mode=$1 AND recipe_hash=$2
-          AND source_media::jsonb->'original'->'content'->>'sha256'=$3
-          AND source_media::jsonb->'original'->'binding'->>'side'=$4 ORDER BY created_at,key LIMIT 1`,
-        principal.mode, recipeHash, originalHash, upload.side);
-        if (!retained) await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.report_image_job
+        await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.report_image_job
           (key,source_hash,recipe_hash,recipe,mode,source_card_id,source_media,source_media_hash)
           VALUES($1,$2,$3,$4,$5,$6::uuid,$7,$8) ON CONFLICT DO NOTHING`,
         key, sourceHash, recipeHash, canonical(recipe), principal.mode, upload.card_id, sourceText, digest(sourceText));
-        const selected = retained?.key ?? key;
+        const selected = key;
         const [job] = await tx.$queryRawUnsafe('SELECT mode,source_hash,recipe_hash FROM atlas_manual_connected.report_image_job WHERE key=$1', selected);
         requireThat(job?.mode === principal.mode && job.recipe_hash === recipeHash
-          && (retained || job.source_hash === sourceHash), 409, 'REPORT_IMAGE_CACHE_CONFLICT');
+          && job.source_hash === sourceHash, 409, 'REPORT_IMAGE_CACHE_CONFLICT');
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.card_image_binding(upload_id,card_id,side,original_sha256,job_key)
           VALUES($1::uuid,$2::uuid,$3,$4,$5) ON CONFLICT DO NOTHING`, upload.upload_id, upload.card_id, upload.side, originalHash, selected);
         const [bound] = await tx.$queryRawUnsafe('SELECT job_key FROM atlas_manual_connected.card_image_binding WHERE upload_id=$1::uuid', upload.upload_id);

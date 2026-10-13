@@ -14,6 +14,7 @@ function fixture() {
     assert.equal(actualStaff, staff); assert.equal(actualCardId, cardId); calls.push(name);
   };
   const dependencies = {
+    gradingPhotoStatus:async()=>({state:'READY',code:null}),readGradingPhoto:async({photo})=>({photo,bytes:Buffer.from("generated")} ),
     intake: {
       async read(actualStaff, actualCardId) {
         checked('authorize-photo-read', actualStaff, actualCardId);
@@ -91,4 +92,18 @@ for (const changed of ['sourceHash', 'uploadId']) test(`batch metadata read stil
   else f.job.uploads.FRONT = 'replaced-front';
   await assert.rejects(createBatchPreparation({ connected: { ...f.dependencies, open: f.open } }).run(f.staff, f.job), error => error.code === 'BATCH_PHOTOS_CHANGED');
   assert.equal(f.calls.some(call => call.startsWith('preview-')), false);
+});
+
+
+test('pending generated photos never expose the uploaded original to review',async()=>{
+ const f=fixture();f.dependencies.gradingPhotoStatus=async()=>({state:'QUEUED',code:null});
+ const open=createConnectedCardReader(f.dependencies),r=await open(f.staff,f.cardId);
+ assert.deepEqual(r.previews,{});assert.equal(f.calls.some(c=>c.startsWith('preview-')),false);
+});
+
+for(const state of ['FAILED','UNKNOWN'])test(`terminal ${state} clean-image status stays visible without reading uploaded pixels`,async()=>{
+ const f=fixture();f.dependencies.gradingPhotoStatus=async()=>({state,code:'REPORT_IMAGE_RESPONSE_UNKNOWN'});
+ const result=await createConnectedCardReader(f.dependencies)(f.staff,f.cardId);
+ assert.deepEqual(result.gradingImages.FRONT,{uploadId:'FRONT',state,code:'REPORT_IMAGE_RESPONSE_UNKNOWN'});
+ assert.deepEqual(result.previews,{});assert.equal(f.calls.some(c=>c.startsWith('preview-')),false);
 });

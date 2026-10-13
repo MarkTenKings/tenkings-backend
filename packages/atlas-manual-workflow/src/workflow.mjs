@@ -1,6 +1,6 @@
 import { canonical, digest, object, requireThat, ManualServiceError } from '@atlas/manual-service/contract';
 import { createManualService } from '@atlas/manual-service';
-import { applyGeometryEdit, markPrintedBorderAbsent, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, updateGeometrySettings, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
+import { applyGeometryEdit, markPrintedBorderAbsent, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, updateGeometrySettings, GeometryActionError, geometryMeasurementFrame } from '@atlas/manual-workspace/geometry-actions';
 import { beginDefectEdit, applyDefectMeasurement, confirmDefectFindings, createDefectWorkspace, defectBase,
   markDefectSideInspected, markDefectFindingReviewed, invalidateDefectFindingReviews, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement-runtime';
@@ -19,10 +19,7 @@ const sourceHash = value => digest(JSON.stringify(value));
 export function frameFromGeometry(geometry, side) {
   const slot = geometry.sides[side];
   requireThat(slot.prepared, 409, 'MANUAL_GEOMETRY_REQUIRED');
-  return { imageVersion: slot.image.version, originalSha256: slot.image.originalSha256,
-    preparationVersion: slot.prepared.frame.version, frameId: slot.prepared.frame.id,
-    inspectionImageSha256: slot.prepared.frame.inspection.sha256, rectifiedImageSha256: slot.prepared.frame.rectified.sha256,
-    ...(slot.prepared.frame.materialContour ? { materialContour: slot.prepared.frame.materialContour } : {}) };
+  return geometryMeasurementFrame(geometry, side);
 }
 
 /** Server-only composition. Authentication/ACL and CAS belong to manual-service.

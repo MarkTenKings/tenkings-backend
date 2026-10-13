@@ -37,11 +37,10 @@ def checked_image(request):
     width, height = struct.unpack(">II", data[16:24])
     require(width == source["width"] and height == source["height"], "PREPARATION_SOURCE_MISMATCH")
     require(width >= 2 and height >= 2 and width * height <= limits["maxPixels"], "PREPARATION_LIMIT")
-    # The retained engines operate on opaque RGB8. Never silently flatten alpha
-    # or reduce native 16-bit evidence to make that engine contract fit.
-    require(data[24] == 8 and data[25] == 2, "PREPARATION_RASTER_UNSUPPORTED")
+    # Generated grading images retain their alpha through the geometric warp.
+    require(data[24] == 8 and data[25] in (2, 6), "PREPARATION_RASTER_UNSUPPORTED")
     image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_UNCHANGED)
-    require(image is not None and image.shape == (height, width, 3) and image.dtype == np.uint8)
+    require(image is not None and image.shape in ((height, width, 3), (height, width, 4)) and image.dtype == np.uint8)
     return image
 
 
@@ -69,7 +68,11 @@ def execute(request):
     inspection, inspection_transform = warp_to_inspection_map(image, source)
     rasters = {"rectified": rectified, "inspection": inspection}
     if output_contract == FULL_OUTPUT_CONTRACT:
-        normalized, micro, directional = reveal_views(inspection)
+        reveal_input = inspection
+        if inspection.ndim == 3 and inspection.shape[2] == 4:
+            alpha = inspection[:, :, 3:4].astype(np.float32) / 255
+            reveal_input = np.rint(inspection[:, :, :3] * alpha + 255 * (1 - alpha)).astype(np.uint8)
+        normalized, micro, directional = reveal_views(reveal_input)
         rasters.update(normalized=normalized, microDefect=micro, directional=directional)
     frames, output_bytes = {}, 0
     for name, raster in rasters.items():

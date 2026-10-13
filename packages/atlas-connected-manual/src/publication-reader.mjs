@@ -20,7 +20,7 @@ async function optionalReportImages(reportImages, row, packet) {
   } finally { clearTimeout(timer); }
 }
 
-export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null, reviewDisplay = null, reportImages = null }) {
+export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null, reportImages = null }) {
   async function presentation(row, token) {
     if (!presentationEnabled) return null;
     const rows = await client.$transaction(tx => tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY revision DESC LIMIT 1', row.card_id, row.action_id), { maxWait: 1500, timeout: 3000 });
@@ -102,9 +102,8 @@ export function createApprovedManualReader({ client, artifacts, storage, present
       // derivative lookup, parsing, storage or signing failures cannot hide it.
       let access=parseInspectionAccess(baseAccess);
       try{
-        let preview=reviewDisplay?await reviewDisplay.inspection(saved,saved.descriptor,saved.inspectionPreview,{expiresIn,signal}):null;
-        if(!preview&&!reviewDisplay){const persisted=inspectionPreviewMedia(saved.inspectionPreview,saved.descriptor,saved);
-          if(persisted)preview=inspectionPreviewGrant(persisted,await (storage.createImmutableDerivativeRead??storage.createDerivativeRead)({...saved,descriptor:persisted.descriptor,expiresIn,signal}));}
+        const persisted=inspectionPreviewMedia(saved.inspectionPreview,saved.descriptor,saved);
+        const preview=persisted?inspectionPreviewGrant(persisted,await (storage.createImmutableDerivativeRead??storage.createDerivativeRead)({...saved,descriptor:persisted.descriptor,expiresIn,signal})):null;
         if(preview)access=parseInspectionAccess({...baseAccess,image:{...image,preview}});
       }catch{/* Keep independently verified full access; never emit an invalid preview. */}
       result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify(access)) };

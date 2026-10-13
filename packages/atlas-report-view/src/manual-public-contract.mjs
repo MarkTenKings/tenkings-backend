@@ -15,10 +15,12 @@ const grade = z.strictObject({ front: sideGrade, back: sideGrade,
   subgrades: z.strictObject({ centering: score, corners: score, edges: score, surface: score }),
   overall: z.strictObject({ displayGrade: score, rawGrade: score }) });
 const identity = z.union([
-  z.strictObject({ playerName: text, year: z.string().min(1).max(24), manufacturer: text, productSet: text, parallel: optionalText, insert: optionalText, cardNumber: optionalText }),
+  // The approved identity allows an unknown year and sports manufacturer.
+  // Preserve those nulls through delivery instead of inventing metadata.
+  z.strictObject({ playerName: text, year: z.string().min(1).max(24).nullable(), manufacturer: text.nullable(), productSet: text, parallel: optionalText, insert: optionalText, cardNumber: optionalText }),
   // Preserve the optional manufacturer admitted by the authoritative Pokémon
   // identity contract. Historical reports must keep this field omitted.
-  z.strictObject({ cardName: text, year: z.string().min(1).max(24), manufacturer: z.string().min(1).max(120).optional(), productSet: text, parallel: optionalText, cardNumber: optionalText, layoutType: z.enum(['POKEMON', 'TRAINER', 'ENERGY']).optional() }),
+  z.strictObject({ cardName: text, year: z.string().min(1).max(24).nullable(), manufacturer: z.string().min(1).max(120).optional(), productSet: text, parallel: optionalText, cardNumber: optionalText, layoutType: z.enum(['POKEMON', 'TRAINER', 'ENERGY']).optional() }),
 ]);
 const inspection = z.strictObject({ inspected: z.literal(true), imageSha256: hash, findingRevision: z.number().int().positive() });
 const measurement = z.strictObject({ widthMm: positive, heightMm: positive, areaMm2: positive, zonePercent: positive, multiplier: positive,

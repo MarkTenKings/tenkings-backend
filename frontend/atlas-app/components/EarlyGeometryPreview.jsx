@@ -21,17 +21,16 @@ export function EarlyGeometryStatus({status,settingsChanged=false,retrying=false
     {!settingsChanged&&status.canRetry&&<button type="button" disabled={retrying} onClick={onRetry}>{retrying?'Requesting geometry…':status.error==='GEOMETRY_REFRESH_AVAILABLE'?'Request Astra geometry':'Retry geometry'}</button>}
   </div>;
 }
-export default function EarlyGeometryPreview({src,cleanSrc=null,side,status,settingsChanged=false}){
-  const [size,setSize]=useState(null),[failed,setFailed]=useState(false),[showOriginal,setShowOriginal]=useState(false);
-  const clean=Boolean(cleanSrc&&!showOriginal),displaySrc=clean?cleanSrc:src;
-  const quad=!clean&&!settingsChanged&&status?.physical;
+export default function EarlyGeometryPreview({src,side,status,settingsChanged=false}){
+  const [size,setSize]=useState(null),[failed,setFailed]=useState(false);
+  const displaySrc=src;
+  const quad=!settingsChanged&&status?.physical;
   const points=size&&Array.isArray(quad)&&quad.length===4&&quad.every(point=>Number.isFinite(point.x)&&Number.isFinite(point.y))
     ?quad.map(point=>`${point.x*size.width},${point.y*size.height}`).join(' '):null;
   return <div><div className="mc-photo-preview">
-    <img key={displaySrc} alt={`${side} ${clean?'clean card view':'original working view'}`} src={displaySrc} onLoad={event=>{setFailed(false);setSize({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight});}} onError={()=>{setSize(null);setFailed(true);}}/>
+    <img key={displaySrc} alt={`${side} background-removed grading image`} src={displaySrc} onLoad={event=>{setFailed(false);setSize({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight});}} onError={()=>{setSize(null);setFailed(true);}}/>
     {points&&<svg viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="xMidYMid meet" aria-label="Automatically detected physical edge"><polygon points={points} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke"/>{quad.map((point,i)=><circle key={i} cx={point.x*size.width} cy={point.y*size.height} r={Math.max(size.width,size.height)/160} fill="currentColor"/>)}</svg>}
-    {failed&&<span className="mc-preview-unavailable" role="status">Photo preview unavailable. The saved original is retained.</span>}
+    {failed&&<span className="mc-preview-unavailable" role="status">Photo preview unavailable. The grading image is saved.</span>}
     {points&&<span className="mc-preview-caption">Physical edge · automatic proposal</span>}
-    {clean&&<span className="mc-preview-caption">Clean card view</span>}
-  </div>{cleanSrc&&<button type="button" onClick={()=>{setSize(null);setFailed(false);setShowOriginal(value=>!value);}}>{clean?'View original and geometry':'View clean card'}</button>}</div>;
+  </div></div>;
 }

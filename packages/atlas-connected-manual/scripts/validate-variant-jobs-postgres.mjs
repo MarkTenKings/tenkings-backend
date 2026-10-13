@@ -1,3 +1,5 @@
+import {validateVariantPackets} from './variant-packet-postgres.mjs';
+import {validateGradingPhotoReader} from './grading-photo-reader-postgres.mjs';
 import {validateVariantLocalRefresh} from './variant-local-refresh-postgres.mjs';
 import {variantUpgradePreservation} from './variant-upgrade-preservation.mjs';
 import {validateCodexJournal} from './variant-codex-postgres.mjs';
@@ -71,6 +73,8 @@ try{
  assert(await store.finishContribution(photoContribution,{code:'SYNTHETIC_REFERENCE_ACK_RETRY'}));await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_contribution SET available_at=clock_timestamp()-interval '1 second' WHERE action_id=$1::uuid",photoContribution.action_id);const resumedPhoto=await store.claimContribution();assert.equal(resumedPhoto.action_id,photoContribution.action_id);assert.deepEqual(resumedPhoto.referencePacket,packet);assert(await store.finishContribution(resumedPhoto,{receipt:{state:'PENDING_REVIEW',proposalId:'synthetic-reference-only'}}));checks.push('private artifact packet ref requires exact permission/payload/claim; replay preserves same ref and bytes; conflicting ref SQL denied; retry claim recovers immutable packet');
  const supersedingInput={...again,actionId:randomUUID(),expectedRevision:repeated.revision};const superseding=await review.confirm(staff,b,supersedingInput),oldAck=await review.confirm(staff,b,again);assert.equal(oldAck.confirmation.actionId,supersedingInput.actionId);assert.equal(oldAck.acknowledgedRequest.requestId,again.actionId);assert.equal(oldAck.acknowledgedRequest.operation,'CONFIRM');
  const [analysisCount]=await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_defect_analysis.run WHERE card_id=$1::uuid',b);assert.equal(analysisCount.n,0);checks.push('metadata corrections and repeated physical confirmations never enqueue grading analysis; exact superseded replay still acknowledges original request');
+ if(currentSchema)checks.push(...await validateVariantPackets({fixture,store,review,staff,seed}));
+
  const c=await seed();await worker.drainOnce();assert.equal((await review.status(staff,c)).state,'READY');
  const previous=await review.status(staff,c),refreshInput={requestId:randomUUID(),sourceHash:previous.sourceHash,identityRevision:previous.identityRevision,identityHash:previous.identityHash,jobId:previous.jobId};
  const refreshed=await review.refresh(staff,c,refreshInput);assert.equal(refreshed.state,'QUEUED');assert.equal(refreshed.refreshRequestId,refreshInput.requestId);assert.notEqual(refreshed.jobId,previous.jobId);assert.equal(refreshed.refreshable,false);assert.deepEqual(await review.refresh(staff,c,refreshInput),refreshed);
@@ -118,5 +122,6 @@ try{
  assert.equal((await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_manual_connected.variant_job WHERE card_id=$1::uuid',raceCard))[0].n,1);
  checks.push('approved manual identity can explicitly prepare references under ordinary grants; exact replay and concurrent discovery create one job while card, actions, approval and confirmation remain byte-identical');
  checks.push(...await validateVariantLocalRefresh({fixture,store,staff,seed,review,service,worker,catalog,candidate}));
+ if(currentSchema)checks.push(...await validateGradingPhotoReader({fixture,connection,workerClient,machine,staff}));
  await writeFile(join(output,'result.json'),JSON.stringify({status:'PASS',schemaMode:currentSchema?'current':'upgrade-78-to-79',staffMigrations:fixture.cluster.source.staffMigrations.length,publicMigrations:fixture.cluster.source.publicMigrations.length,upgradeProof:!currentSchema,checks,providerCalls:calls,labelFixtureCalls:2,productionCalls:0,fixtureDirectory:fixture.cluster.directory},null,2));console.log(JSON.stringify({status:'PASS',groups:checks.length,providerCalls:calls}));
 }finally{await workerClient?.$disconnect();await connection.close();await fixture.stop();}

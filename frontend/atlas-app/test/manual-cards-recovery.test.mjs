@@ -510,21 +510,21 @@ test('intake uses the source-bound small context preview without downloading ful
  const invalid=harness(storage(null),async()=>assert.fail('No image mutation'),{readCard:()=>card});invalid.render();await flush();invalid.render();assert.equal(invalid.previewSrc('Front'),'/canonical.png');invalid.dispose();
 });
 
-test('intake context-only descriptors use source dimensions for both previews and reject mismatched evidence',async()=>{
- const card=sportsCard(),sha='a'.repeat(64);
- card.previews=Object.fromEntries(['FRONT','BACK'].map(side=>{
-  card.card.sides[side].upload={source:{ready:true}};
-  return [side,{sha256:sha,byteCount:20000000,mime:'image/png',width:3024,height:4032,displayState:{state:'READY'},
-   preview:{url:`/context-${side}.jpg`,sha256:'c'.repeat(64),sourceSha256:sha,byteCount:90000,mime:'image/jpeg',width:576,height:768}}];
- }));
- const render=async()=>{const f=harness(storage(null),async()=>assert.fail('Preview inspection must not save'),{readCard:()=>card});f.render();await flush();f.render();return f;};
- const ready=await render();
- assert.equal(ready.previewSrc('Front'),'/context-FRONT.jpg');assert.equal(ready.previewSrc('Back'),'/context-BACK.jpg');ready.dispose();
- for(const change of [{sourceSha256:'d'.repeat(64)},{width:700},{width:900,height:1200}]){
-  const original=card.previews.FRONT.preview;card.previews.FRONT.preview={...original,...change};
-  const invalid=await render();assert.notEqual(invalid.previewSrc('Front'),'/context-FRONT.jpg');assert.equal(invalid.previewSrc('Back'),'/context-BACK.jpg');invalid.dispose();
-  card.previews.FRONT.preview=original;
- }
+test('intake waits for a clean grading image without exposing an old context-only photograph',async()=>{
+ const card=sportsCard();card.card.sides.FRONT.upload={source:{ready:true}};
+ card.previews={FRONT:{sha256:'a'.repeat(64),preview:{url:'/old-context.jpg',sourceSha256:'a'.repeat(64)}}};
+ const f=harness(storage(null),async()=>assert.fail('No image mutation'),{readCard:()=>card});f.render();await flush();f.render();
+ assert.equal(f.previewSrc('Front'),undefined);assert.match(f.text(),/Preparing the background-removed grading image\./);f.dispose();
+});
+
+for(const state of ['FAILED','UNKNOWN'])test(`intake explains terminal ${state} background removal without replacing or retrying the saved request`,async()=>{
+ const card=sportsCard();card.card.sides.FRONT.upload={uploadId:'front',source:{ready:true}};
+ card.gradingImages={FRONT:{uploadId:'front',state,code:state==='FAILED'?'REPORT_IMAGE_ALPHA_INVALID':'REPORT_IMAGE_RESPONSE_UNKNOWN'}};
+ const f=harness(storage(null),async()=>assert.fail('Terminal status must not send a provider request'),{readCard:()=>card});
+ f.render();await flush();f.render();assert.equal(f.previewSrc('Front'),undefined);
+ assert.match(f.text(),state==='FAILED'?/Background removal could not finish/ : /Background removal has no confirmed result/);
+ assert.match(f.text(),state==='FAILED'?/returned image could not be used for grading/ : /saved request needs review before another image request/);
+ assert.match(f.text(),/Check Front image status/);assert.doesNotMatch(f.text(),/Preparing the background-removed grading image/);f.dispose();
 });
 
 const failedPhotos = () => {
@@ -533,7 +533,7 @@ const failedPhotos = () => {
  value.earlyGeometry=Object.fromEntries(['FRONT','BACK'].map(side=>[side,{uploadId:side,key:side,state:'NEEDS_REVIEW',machineUsable:false,canRetry:true}]));
  return value;
 };
-test('failed photo has a direct manual editor path, saves exact side settings, and selects the requested side without detector retry',async()=>{
+test('failed geometry has a direct manual editor path and saves card details without detector retry',async()=>{
  let card=failedPhotos();const posts=[],f=harness(storage(null),async(path,{body})=>{
   if(path.endsWith('/geometry')){assert.deepEqual(plain(body),{});return {};}
   posts.push({path,body:plain(body)});
@@ -543,20 +543,18 @@ test('failed photo has a direct manual editor path, saves exact side settings, a
  },{readCard:()=>card,fromBatch:true});
  f.render();await flush();f.render();
  assert.equal(f.has('Edit Front geometry'),true);assert.equal(f.has('Edit Back geometry'),true);
- f.change('Front photo background','WHITE');f.render();
- assert.equal(f.field('Back photo background').props.value,'BLACK');
- assert.equal(f.previewSettings('Front'),true);assert.equal(f.previewSettings('Back'),false);
+ f.change('Name','Corrected player');f.render();
  f.click('Edit Back geometry');await flush();f.render();
  assert.deepEqual(posts.map(p=>p.path.split('/').at(-1)),['details','initialize']);
- assert.deepEqual(posts[0].body.changes,{frontMatColor:'WHITE'});assert.equal(posts[1].body.detailsRevision,4);
+ assert.deepEqual(posts[0].body.changes,{name:'Corrected player'});assert.equal(posts[1].body.detailsRevision,4);
  assert.equal(f.workspaceProps().initialGeometrySide,'BACK');assert.equal(f.workspace(),true);
 });
 test('manual entry explains invalid details and retains changes without starting geometry',async()=>{
  let card=failedPhotos();const posts=[],f=harness(storage(null),async(path)=>{posts.push(path);return {};},{readCard:()=>card,fromBatch:true});
- f.render();await flush();f.render();f.change('Name','');f.change('Front photo background','WHITE');f.render();
+ f.render();await flush();f.render();f.change('Name','');f.render();
  f.click('Edit Front geometry');await flush();f.render();
  assert.equal(posts.filter(p=>!p.endsWith('/geometry')).length,0);assert.equal(f.workspace(),false);
- assert.equal(f.field('Name').props['aria-invalid'],true);assert.equal(f.field('Front photo background').props.value,'WHITE');
+ assert.equal(f.field('Name').props['aria-invalid'],true);
 });
 test('manual entry cannot race an incomplete pair, upload, or uncertain command',async()=>{
  for(const blocker of ['pair','upload','command']){

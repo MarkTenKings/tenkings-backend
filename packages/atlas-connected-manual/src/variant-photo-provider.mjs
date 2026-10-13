@@ -7,7 +7,7 @@ import { CODEX_LABEL_POLICY, CODEX_LABEL_MODEL, CODEX_ASSOCIATION_REVISION, code
 export const VARIANT_PHOTO_MODEL = CODEX_LABEL_MODEL;
 export const VARIANT_LABEL_POLICY = CODEX_LABEL_POLICY;
 export const VARIANT_PHOTO_LIMITS = Object.freeze({ imageBytes: 4 * 1024 * 1024, totalBytes: 20 * 1024 * 1024,
-  referenceImages: 8, responseBytes: 1024 * 1024, timeoutMs: 120000 });
+  referenceImages: 8, responseBytes: 1024 * 1024, timeoutMs: 300000 });
 const ENDPOINT = 'https://api.openai.com/v1/responses';
 const HASH = /^[a-f0-9]{64}$/;
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');

@@ -1,4 +1,4 @@
-import { ATLAS_IDENTIFICATION_LAYOUT_VERSIONS } from './identification-layout.mjs';
+import { ATLAS_IDENTIFICATION_LAYOUT_VERSION, ATLAS_IDENTIFICATION_LAYOUT_VERSIONS } from './identification-layout.mjs';
 import { parseCardIdentificationInput, parseCardIdentificationOcrOutput } from '@tenkings/card-identification-core';
 import { CARD_IDENTIFICATION_VERSION_V2 } from '@tenkings/card-identification-core/v2';
 import { digest, object, requireThat } from '@atlas/manual-service/contract';
@@ -73,6 +73,7 @@ export async function identificationRetryCount(row, access) {
 /** Recovery never infers OCR or substitutes photos. The original model request
  * contains the exact JPEGs whose hashes are in the immutable engine input. */
 export async function prepareIdentificationRecovery(row, access, model = null, { rateLimit = false } = {}) {
+  refuse(JSON.parse(row.input)?.engineVersion === ATLAS_IDENTIFICATION_LAYOUT_VERSION);
   refuse(row.state === 'UNKNOWN' && row.result === null && row.finished_at != null);
   model ??= await recordedIdentificationEffect(row, 'MODEL', access);
   refuse(rateLimit ? isRateLimitRejection(model) : isCreditBalanceRejection(model));

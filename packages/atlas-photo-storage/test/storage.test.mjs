@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import { deflateSync } from 'node:zlib';
 import { webcrypto } from 'node:crypto';
 import { S3Client } from '@aws-sdk/client-s3';
 import { descriptorSha256 } from '@atlas/photo-core';
 import { createPhotoStorage } from '../src/index.mjs';
-import { rgb16Png, sha256, limits as decodeLimits } from '../../atlas-photo-runtime/test/helpers.mjs';
+import { rgb16Png, chunk, sha256, limits as decodeLimits } from '../../atlas-photo-runtime/test/helpers.mjs';
 
 const bytes = rgb16Png(4, 3);
 const storageLimits = { maxObjectBytes: 4_000_000, timeoutMs: 1000 };
@@ -426,4 +427,28 @@ test('immutable derivative grant checks pinned metadata with HEAD only while pro
   await assert.rejects(store.readDerivative({...args,descriptor:saved}),code('PHOTO_STORAGE_CONFLICT'));
   const wrong=structuredClone(saved);wrong.frameDescriptorSha256='0'.repeat(64);
   await assert.rejects(signed.createImmutableDerivativeRead({...args,descriptor:wrong}));
+});
+
+
+test('generated RGBA grading frame persists its own dimensions and exact bytes with immutable upload lineage',async()=>{
+ const {store,decoded,client}=await fixture();
+ const sourceFrame=await store.writeDecodedFrame(decoded,{id:'source',key:'test/derived/source.png'});
+ const width=7,height=9,header=Buffer.alloc(13);header.writeUInt32BE(width);header.writeUInt32BE(height,4);header[8]=8;header[9]=6;
+ const samples=Buffer.alloc(height*(1+width*4));
+ for(let y=1;y<height-1;y++)for(let x=1;x<width-1;x++){const i=y*(1+width*4)+1+x*4;samples[i]=122;samples[i+1]=140;samples[i+2]=180;samples[i+3]=253;}
+ const bytes=Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',header),chunk('IDAT',deflateSync(samples)),chunk('IEND',Buffer.alloc(0))]);
+ const frame={schemaVersion:3,kind:'decoded-frame',id:'generated',originalDescriptorSha256:descriptorSha256(decoded.original),decodePlanSha256:descriptorSha256(decoded.decodePlan),
+  raster:{object:{key:'test/derived/generated.png',versionId:null},content:{mime:'image/png',byteCount:bytes.length,sha256:sha256(bytes)},dimensions:{width,height}},sourceToFrame:[1,0,0,0,1,0,0,0,1],
+  treatment:{decoder:'openai-images-edit',version:'fixture-model',policyVersion:'atlas-generated-grading-image-v1',channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'},
+  generation:{sourceFrame,recipeHash:'a'.repeat(64),model:'fixture-model',promptVersion:'fixture-prompt'}};
+ const args={frame,original:decoded.original,decodePlan:decoded.decodePlan,bytes};
+ const stored=await store.writeGeneratedFrame(args),read=await store.readDecodedFrame({...args,frame:stored});
+ assert.deepEqual(read.bytes,bytes);assert.deepEqual(stored.raster.dimensions,{width,height});assert.notDeepEqual(stored.raster.dimensions,sourceFrame.raster.dimensions);
+ assert.deepEqual(stored.generation.sourceFrame,sourceFrame);assert.equal(stored.raster.object.versionId!==null,true);
+ assert.deepEqual(await store.writeGeneratedFrame(args),stored);assert.equal(putCount(client),3);
+ const substituted={...args,frame:{...frame,sourceToFrame:[2,0,0,0,2,0,0,0,1]}};
+ await assert.rejects(store.writeGeneratedFrame(substituted),code('PHOTO_SOURCE_MISMATCH'));
+ await assert.rejects(store.writeGeneratedFrame({...args,bytes:Buffer.from('other pixels')}),code('PHOTO_STORAGE_CONFLICT'));
+ const wrong=structuredClone(decoded.original);wrong.binding.side='BACK';
+ await assert.rejects(store.readDecodedFrame({...args,frame:stored,original:wrong}),code('PHOTO_SOURCE_MISMATCH'));
 });

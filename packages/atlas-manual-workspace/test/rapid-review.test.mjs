@@ -101,3 +101,14 @@ test('edited geometry uses compact authoritative reads only between saves and re
  assert.deepEqual(modes,['state','state','view']);assert.equal(boundaryReads,0,'final printed save already refreshed the full view');
  assert.equal(f.actions[2].edit.base.prepared.frame.id,'new-FRONT');
 });
+
+test('failed preparation publishes acknowledged compact geometry so the retained draft can retry',async()=>{
+ const f=fixture(),checkpoint={},input={side:'BACK',base:geometryBase(f.view.geometry,'BACK','REVIEW'),physical:[{x:.01,y:.01},{x:.99,y:.01},{x:.99,y:.99},{x:.01,y:.99}],printedOriginal:[{x:.1,y:.1},{x:.9,y:.1},{x:.9,y:.9},{x:.1,y:.9}]};
+ let mounted=f.view,fail=true,refreshes=0;
+ const execute=async(action,options)=>{if(action.type==='PREPARE_SIDE'&&fail){fail=false;throw {code:'ATLAS_DEFECT_STALE'};}const next=await f.execute(action);if(options.refresh==='view')mounted=next;return next;};
+ const refresh=async()=>{refreshes++;mounted=f.view;return mounted;};
+ await assert.rejects(approveRapidGeometrySide(mounted,input,execute,(_g,_s,q)=>q,checkpoint,refresh),{code:'ATLAS_DEFECT_STALE'});
+ assert.equal(refreshes,1);assert.deepEqual(checkpoint.base,geometryBase(mounted.geometry,'BACK','REVIEW'));
+ await approveRapidGeometrySide(mounted,input,execute,(_g,_s,q)=>q,checkpoint,refresh);
+ assert.deepEqual(f.actions.map(a=>a.type),['GEOMETRY_EDIT','PREPARE_SIDE','GEOMETRY_EDIT']);
+});

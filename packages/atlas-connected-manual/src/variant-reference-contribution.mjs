@@ -83,7 +83,7 @@ export function createVariantReferenceContribution({store,artifacts,boundary,wor
     const payload=job.payload;
     if(!payload.referencePermission)return null;
     validateVariantReferencePermission(payload.referencePermission);
-    const payloadHash=digest(canonical(payload,{maxBytes:2097152}));
+    const payloadHash=digest(canonical(payload,{maxBytes:8388608}));
     requireThat(payloadHash===job.payload_hash,503,'VARIANT_CONTRIBUTION_CORRUPT');
     const binding=await current(job),source={cardId:job.card_id,kind:'VARIANT_REFERENCE',sourceHash:payloadHash};
     let pinned=job.referencePacket,packet;

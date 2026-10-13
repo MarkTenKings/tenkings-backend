@@ -1,10 +1,11 @@
 import sharp from 'sharp';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { parseDerivative, descriptorSha256 } from '@atlas/photo-core';
+import { parseDerivative, parseDecodedFrame, descriptorSha256 } from '@atlas/photo-core';
 import { processedPhoto } from '@atlas/manual-intake';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { parseReportImages, reportImageURL } from '@atlas/report-view/report-images-contract';
 import { reportImageRecipeHash } from './report-image-provider.mjs';
+import { createGradingPhotoReader } from './grading-photo-reader.mjs';
 
 const SIDES = ['FRONT','BACK'];
 const safeCode = error => /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'REPORT_IMAGE_INTERRUPTED';
@@ -47,23 +48,30 @@ function sourceMatches(saved, packet, side, cardId) {
     && d.raster.content.mime === expected.contentType && d.raster.dimensions.width === expected.width
     && d.raster.dimensions.height === expected.height, 503, 'REPORT_IMAGE_SOURCE_MISMATCH');
 }
-function outputDescriptor(job, output, keyPrefix) {
-  const source = job.sourceMedia, image = source.descriptor, dimensions = image.raster.dimensions;
-  const sx = output.width / dimensions.width, sy = output.height / dimensions.height;
-  const h = image.kind === 'decoded-frame' ? [1,0,0,0,1,0,0,0,1] : image.frameToDerivative;
-  // Approximate display frame only. No consumer may use this generated raster
-  // or its transform for condition measurement or evidence inspection.
-  const transform = [sx*h[0]+(sx-1)/2*h[6],sx*h[1]+(sx-1)/2*h[7],sx*h[2]+(sx-1)/2*h[8],
-    sy*h[3]+(sy-1)/2*h[6],sy*h[4]+(sy-1)/2*h[7],sy*h[5]+(sy-1)/2*h[8],...h.slice(6)];
+function gradingFrame(job, output, keyPrefix) {
+  const source = job.sourceMedia;
+  return parseDecodedFrame({ schemaVersion: 3, kind: 'decoded-frame', id: `grading-image:${job.key}`,
+    originalDescriptorSha256: descriptorSha256(source.original), decodePlanSha256: descriptorSha256(source.decodePlan),
+    raster: { content: { mime:'image/png', sha256:output.sha256, byteCount:output.byteCount },
+      dimensions: { width:output.width, height:output.height },
+      object: { key:`${keyPrefix}/derived/${job.source_card_id}/grading-image/${job.key}/${output.sha256}.png`, versionId:null } },
+    sourceToFrame:[1,0,0,0,1,0,0,0,1],
+    treatment:{decoder:'openai-images-edit',version:job.recipe.model,policyVersion:'atlas-generated-grading-image-v1',
+      channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'},
+    generation:{sourceFrame:source.frame,recipeHash:reportImageRecipeHash(job.recipe),model:job.recipe.model,promptVersion:job.recipe.promptVersion},
+  }, source.original, source.decodePlan);
+}
+function outputDescriptor(job, output, keyPrefix, frame) {
+  const source = job.sourceMedia;
   return parseDerivative({ schemaVersion: 1, kind: 'derivative',
-    originalDescriptorSha256: source.frame.originalDescriptorSha256, frameDescriptorSha256: descriptorSha256(source.frame),
-    id: `card-cutout:${job.key}`, purpose: 'reveal', frameToDerivative: transform,
+    originalDescriptorSha256: frame.originalDescriptorSha256, frameDescriptorSha256: descriptorSha256(frame),
+    id: `card-cutout:${job.key}`, purpose: 'reveal', frameToDerivative: [1,0,0,0,1,0,0,0,1],
     raster: { content: { mime: 'image/png', sha256: output.sha256, byteCount: output.byteCount },
       dimensions: { width: output.width, height: output.height },
       object: { key: `${keyPrefix}/derived/${job.source_card_id}/card-cutout/${job.key}/${output.sha256}.png`, versionId: null } },
     encoder: { name: job.recipe.execution === 'OPENAI_BUILT_IN' ? 'openai-built-in-image-edit' : 'openai-images-edit',
       version: job.recipe.model ?? 'model-not-reported', settingsSha256: reportImageRecipeHash(job.recipe) } },
-  source.frame, source.original, source.decodePlan);
+  frame, source.original, source.decodePlan);
 }
 
 /** A cold, optional worker/read facade. Only start()/tick() discover or execute
@@ -111,9 +119,10 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
   }
   async function persist(job, bytes, receipt, signal) {
     const output = await inspect(bytes); signal.throwIfAborted();
-    const descriptor = await storage.writeDerivative({ ...job.sourceMedia, descriptor: outputDescriptor(job, output, keyPrefix), bytes, signal });
+    const frame = await storage.writeGeneratedFrame({ ...job.sourceMedia, frame:gradingFrame(job, output, keyPrefix), bytes, signal });
+    const descriptor = await storage.writeDerivative({ ...job.sourceMedia, frame, descriptor: outputDescriptor(job, output, keyPrefix, frame), bytes, signal });
     return { version: 'atlas-report-image-result-v1', sourceSha256: job.source_hash, recipeHash: reportImageRecipeHash(job.recipe),
-      media: { ...job.sourceMedia, descriptor }, output, receipt };
+      media: { ...job.sourceMedia, frame, descriptor }, output, receipt };
   }
   const tasks = new Set(), controllers = new Set(); let stopped = true, closed = false, timer = null, cycling = null;
   async function execute(job) {
@@ -196,11 +205,7 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
   }
   return Object.freeze({
     manifest,
-    async isPhotoPrepared({cardId,uploadId,side}) {
-      if (!await store.photoIntent(cardId,uploadId,side)) return true;
-      const job=await store.photo(cardId,uploadId,side);
-      return ['READY','FAILED','UNKNOWN'].includes(job?.state);
-    },
+    ...createGradingPhotoReader({ photo: (cardId, uploadId, side) => store.photo(cardId, uploadId, side), storage }),
     async photo({ cardId, uploadId, side }) {
       requireThat(SIDES.includes(side), 404, 'REPORT_IMAGE_NOT_FOUND');
       return store.photo(cardId, uploadId, side);

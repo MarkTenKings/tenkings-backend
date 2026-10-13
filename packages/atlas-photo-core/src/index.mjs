@@ -239,7 +239,31 @@ function decodedShape(value) {
   matrix(value.sourceToFrame); treatment(value.treatment);
 }
 export function parseDecodedFrame(value, originalValue, decodePlan) {
-  const original = parseOriginal(originalValue); validateDecodePlan(decodePlan, original); decodedShape(value);
+  const original = parseOriginal(originalValue); validateDecodePlan(decodePlan, original);
+  if (value?.schemaVersion === 3) {
+    // A generated grading image starts its own pixel coordinate system. The
+    // uploaded photograph remains explicit lineage, never a claimed geometric
+    // transform between generated and camera pixels.
+    object(value, ['schemaVersion', 'kind', 'id', 'originalDescriptorSha256', 'decodePlanSha256',
+      'raster', 'sourceToFrame', 'treatment', 'generation']);
+    requireThat(value.kind === 'decoded-frame'); text(value.id);
+    raster(value.raster); treatment(value.treatment);
+    object(value.generation, ['sourceFrame', 'recipeHash', 'model', 'promptVersion']);
+    requireThat([1, 2].includes(value.generation.sourceFrame?.schemaVersion));
+    const source = parseDecodedFrame(value.generation.sourceFrame, original, decodePlan);
+    sha(value.generation.recipeHash); text(value.generation.model); text(value.generation.promptVersion);
+    requireThat(value.originalDescriptorSha256 === hash(original) && value.decodePlanSha256 === hash(decodePlan)
+      && equal(value.sourceToFrame, [1,0,0,0,1,0,0,0,1])
+      && value.raster.object.key !== original.object.key && value.raster.object.key !== source.raster.object.key
+      && value.raster.content.mime === 'image/png' && value.treatment.channels === 4
+      && value.treatment.bitDepth === 8 && value.treatment.colorSpace === 'sRGB'
+      && value.treatment.policyVersion === 'atlas-generated-grading-image-v1', 'PHOTO_SOURCE_MISMATCH');
+    const pixels = value.raster.dimensions.width * value.raster.dimensions.height;
+    requireThat(pixels <= decodePlan.limits.maxPixels && pixels * 4 <= decodePlan.limits.maxRasterBytes
+      && value.raster.content.byteCount <= decodePlan.limits.maxOutputBytes, 'PHOTO_DECODE_LIMIT');
+    return copy(value);
+  }
+  decodedShape(value);
   requireThat(value.originalDescriptorSha256 === hash(original) && value.decodePlanSha256 === hash(decodePlan)
     && value.raster.dimensions.width === decodePlan.geometry.width
     && value.raster.dimensions.height === decodePlan.geometry.height

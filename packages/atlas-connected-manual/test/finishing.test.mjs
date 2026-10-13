@@ -6,6 +6,8 @@ import { publicationFixture } from './publication-fixture.mjs';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { validateManualFinishingPlan } from '@atlas/finishing/manual';
 import { renderManualLabel, validateManualLabel } from '@atlas/finishing/label';
+import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
+import { publishedMarketQuery } from '../src/presentation-market.mjs';
 
 async function fixture(options) {
   const f = await publicationFixture(options); await f.publication.publish({}, f.cardId, f.actionId);
@@ -21,6 +23,33 @@ test('authenticated immutable approval becomes exact repeatable label and paired
   assert.notEqual(f.approval.grade.overall.displayGrade, plan.label.finalGrade, 'fixture distinguishes tenth detail from final award');
   assert.equal(reportAwardedGrade(f.approval), plan.label.finalGrade, 'completion snapshot and immutable printed label agree');
   assert.equal(JSON.stringify(plan).includes('private/'), false); assert.equal(JSON.stringify(plan).includes('actorId'), false);
+});
+test('approved unknown metadata publishes, renders a label and prepares sales without inventing identity or reapproving', async () => {
+  for (const [cardProfile, identity, query] of [
+    ['SPORTS', { playerName: 'Stephen Curry', year: null, manufacturer: 'Topps', productSet: 'Flagship', parallel: 'Base', insert: null, cardNumber: '135' }, 'Stephen Curry 135'],
+    ['SPORTS', { playerName: 'Synthetic sports card', year: null, manufacturer: null, productSet: 'Local only', parallel: null, insert: null, cardNumber: 'B-013' }, 'Synthetic sports card B-013'],
+    ['POKEMON', { cardName: 'Synthetic Pokémon', year: null, productSet: 'Local only', parallel: null, cardNumber: '025/165', layoutType: 'POKEMON' }, 'Synthetic Pokémon 025/165'],
+  ]) {
+    const f = await publicationFixture({ cardProfile, identity });
+    const approval = { actionId: f.row.action_id, report: f.row.report, reportHash: f.row.report_hash, sourceHash: f.row.source_hash, result: f.row.result };
+    assert.equal((await f.publication.publish({}, f.cardId, f.actionId)).state, 'PUBLISHED');
+    const loader = createManualFinishing({ repository: f.repository, artifacts: f.artifacts });
+    const source = await loader.loadPacket({}, f.cardId, f.actionId), plan = await loader.load({}, f.cardId, f.actionId);
+    assert.deepEqual(parsePublicManualReport(source.packet).report.identity, identity);
+    assert.deepEqual(plan.label.identity, identity); assert.equal(plan.label.finalGrade, f.approval.finalGrade);
+    assert.deepEqual(source.packet.report.grade, f.approval.grade);
+    assert.equal(publishedMarketQuery(source).query, query);
+    const label = renderManualLabel({ label: plan.label, measureText: (value, size) => value.length * size * 0.45 });
+    assert.match(label.front, /<svg/); assert.doesNotMatch(label.front, /\b(?:null|undefined)\b/);
+    assert.deepEqual({ actionId: f.row.action_id, report: f.row.report, reportHash: f.row.report_hash, sourceHash: f.row.source_hash, result: f.row.result }, approval);
+    assert.equal(f.completeCalls, 1); await f.publication.publish({}, f.cardId, f.actionId); assert.equal(f.completeCalls, 1);
+    for (const year of ['', 2026, undefined, 'x'.repeat(25)]) {
+      const packet = structuredClone(source.packet); packet.report.identity.year = year;
+      assert.throws(() => parsePublicManualReport(packet));
+      const invalidLabel = structuredClone(plan.label); invalidLabel.identity.year = year;
+      assert.throws(() => validateManualLabel(invalidLabel), /MANUAL_LABEL_IDENTITY_INVALID/);
+    }
+  }
 });
 test('private packet loader retains the same immutable source and reauthenticates without preparing output', async () => {
   const f = await fixture(), before = structuredClone(f.row);

@@ -116,22 +116,32 @@ async function bundledParallelFamilies() {
     check(['manufacturer','sport','year','setName','subset'].every(k => string(family[k], 240))
       && HASH.test(family.checklistSha256) && HASH.test(family.source?.sha256)
       && string(family.source.url, 2048) && new URL(family.source.url).protocol === 'https:'
-      && Array.isArray(family.printings) && family.printings.length > 0 && family.printings.length <= 47
+      && Array.isArray(family.printings) && family.printings.length > 0 && family.printings.length <= 10000
       && family.printings.every(p => string(p.parallel,120) && string(p.sourceName,120) && string(p.locator,160))
       && new Set(family.printings.map(p => norm(p.parallel))).size === family.printings.length, 'parallel family');
   }
   return data.families;
 }
 
+async function bundledProductAliases() {
+  const data=JSON.parse(await boundedFile(new URL('../data/manufacturer-product-aliases.json',import.meta.url),128*1024));
+  check(data.schemaVersion==='manufacturer-product-aliases/v1' && data.complete===false && Array.isArray(data.products) && data.products.length<=100,'product aliases');
+  for(const product of data.products)check(['manufacturer','sport','year','setName'].every(k=>string(product[k]))
+    && HASH.test(product.checklistSha256) && HASH.test(product.source?.sha256) && string(product.source.url,2048)
+    && new URL(product.source.url).protocol==='https:' && string(product.source.locator,160)
+    && Array.isArray(product.aliases) && product.aliases.length<=12 && product.aliases.every(v=>string(v)), 'product alias');
+  return data.products;
+}
+
 /** A server-only reader of retained manufacturer rows. It performs no network
  * request, publication, inference from unrelated parallels, or human decision.
  * The bundled catalog is a partial acquisition snapshot, never complete scope.
  */
-export function createManufacturerChecklistVariantProvider({ catalog = null, loadCatalog = null, loadShard = null, limit = 48 } = {}) {
-  check(Number.isSafeInteger(limit) && limit > 0 && limit <= 48, 'limit');
+export function createManufacturerChecklistVariantProvider({ catalog = null, loadCatalog = null, loadShard = null, limit = Infinity } = {}) {
+  check(limit === Infinity || Number.isSafeInteger(limit) && limit > 0, 'limit');
   check(catalog === null || loadCatalog === null, 'choose one catalog reader');
   check(loadShard === null || typeof loadShard === 'function', 'shard reader');
-  let loaded, families, loading = Promise.resolve();
+  let loaded, families, productAliases, loading = Promise.resolve();
   const cache = new Map(), inFlight = new Map();
   async function load() {
     if (!loaded) loaded = (async () => {
@@ -181,12 +191,15 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       // A caller-supplied archive is self-contained. Production's bundled
       // player rows and supplemental odds metadata form one retained catalog.
       families ??= catalog || loadCatalog ? [] : await bundledParallelFamilies();
+      productAliases ??= catalog || loadCatalog ? [] : await bundledProductAliases();
       const { sources, index, cell } = archive;
       const scope = productScope(identity.setName), athlete = athleteName(identity.name);
       const maker = norm(identity.manufacturer);
       function matchesProduct(source) {
         return [source.manufacturer, ...(source.manufacturerAliases ?? [])].some(v => norm(v) === maker)
-          && source.products.has(productName(scope.product, source.manufacturer));
+          && (source.products.has(productName(scope.product, source.manufacturer)) || productAliases.some(product=>
+            product.checklistSha256===source.sha256 && ['manufacturer','sport','year','setName'].every(k=>product[k]===source[k])
+            && product.aliases.some(alias=>productName(alias,source.manufacturer)===productName(scope.product,source.manufacturer))));
       }
       function matchesSource(source, year, basketballOnly) {
         return checklistYear(source.year) === checklistYear(year) && (!basketballOnly || source.sport === 'basketball')

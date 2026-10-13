@@ -3,6 +3,7 @@ import { adoptDefectProposals, createDefectWorkspace, parseDefectWorkspace, defe
 import { calculateAtlasReview, ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { calculateAtlasFinalGrade, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { geometryMeasurementFrame } from '@atlas/manual-workspace/geometry-actions';
 
 const SIDES = ['FRONT', 'BACK'];
 export const proposalFindingId = id => `astra-${digest(id).slice(0, 32)}`;
@@ -77,9 +78,7 @@ export function finalReviewPreview(card, state) {
   const ready = SIDES.every(side => {
     const slot = state.geometry.sides[side], defects = state.defects?.sides[side], frame = slot.prepared?.frame;
     return slot.physical && frame && defects && !defects.pending
-      && canonical(defects.frame) === canonical({ imageVersion: slot.image.version, originalSha256: slot.image.originalSha256,
-        preparationVersion: frame.version, frameId: frame.id, inspectionImageSha256: frame.inspection.sha256,
-        rectifiedImageSha256: frame.rectified.sha256 });
+      && canonical(defects.frame) === canonical(geometryMeasurementFrame(state.geometry, side));
   });
   if (!ready) return { state: 'PENDING', sourceRevision: card.revision, sourceHash: card.contentHash };
   const unresolvedGeometry = SIDES.filter(side => !state.geometry.sides[side].printed)

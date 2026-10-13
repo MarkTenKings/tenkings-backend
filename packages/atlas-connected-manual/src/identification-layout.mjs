@@ -1,5 +1,5 @@
 import {parseCardIdentificationInput,parseCardIdentificationOutput} from '@tenkings/card-identification-core';
-import {identifyCardV2,parseCardIdentificationResultV2,cardIdentificationInputHashV2,CARD_IDENTIFICATION_VERSION_V2} from '@tenkings/card-identification-core/v2';
+import {parseCardIdentificationResultV2,cardIdentificationInputHashV2,CARD_IDENTIFICATION_VERSION_V2} from '@tenkings/card-identification-core/v2';
 import {digest,object,requireThat} from '@atlas/manual-service/contract';
 import {identifyAtlasCardWithExtendedRuntime,ATLAS_IDENTIFICATION_XHIGH_POLICY} from './identification-xhigh.mjs';
 export {ATLAS_IDENTIFICATION_XHIGH_POLICY} from './identification-xhigh.mjs';
@@ -7,9 +7,9 @@ export {ATLAS_IDENTIFICATION_XHIGH_POLICY} from './identification-xhigh.mjs';
 // ATLAS-only adaptation. Shared Inventory V1/V2 requests and historical receipts
 // keep their existing versions and byte interpretation.
 export const ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION='atlas-identification-layout-v1';
-export const ATLAS_IDENTIFICATION_LAYOUT_VERSION='atlas-identification-layout-v2';
-export const ATLAS_IDENTIFICATION_LAYOUT_VERSIONS=Object.freeze([ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,ATLAS_IDENTIFICATION_LAYOUT_VERSION]);
-export const atlasIdentificationRunningWindow=version=>version===ATLAS_IDENTIFICATION_LAYOUT_VERSION?ATLAS_IDENTIFICATION_XHIGH_POLICY.runningWindowMs:120000;
+export const ATLAS_IDENTIFICATION_LAYOUT_VERSION='atlas-identification-layout-v3';
+export const ATLAS_IDENTIFICATION_LAYOUT_VERSIONS=Object.freeze([ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,'atlas-identification-layout-v2',ATLAS_IDENTIFICATION_LAYOUT_VERSION]);
+export const atlasIdentificationRunningWindow=version=>['atlas-identification-layout-v2',ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(version)?ATLAS_IDENTIFICATION_XHIGH_POLICY.runningWindowMs:120000;
 const layouts=['POKEMON','TRAINER','ENERGY'];
 const bad=ok=>requireThat(ok,503,'IDENTIFICATION_LAYOUT_INVALID');
 const policy='ATLAS also requests one additional field, layout_type, using the same value/confidence/evidence shape. It is an unreviewed machine proposal for the front layout, never a grade or human approval. First establish that the pair depicts the same Pokémon TCG card. For Pokémon creature cards use POKEMON only when the front shows creature-card structure such as a named Pokémon with HP and attacks or evolution/stage information. Use TRAINER only when the front visibly identifies Trainer, Supporter, Item, Stadium or Pokémon Tool structure. Use ENERGY only when the front visibly identifies a Basic or Special Energy card and its energy symbol/rules structure. The Pokémon back, game logo, character artwork, saved card name or generic Pokémon TCG category alone cannot distinguish these layouts. A Trainer with Pokémon artwork is still TRAINER. Quote the distinguishing visible front text/structure with a Front location in evidence (at most 240 characters). Use high confidence only for unambiguous visible layout markers. For other games, conflicting pairs, ambiguous structure or unreadable front evidence return value:null, confidence:unknown, evidence:null. Keep all eight original descriptive fields and their rules unchanged; output exactly those eight fields plus layout_type.';
@@ -27,7 +27,7 @@ export function atlasIdentificationInputHash(input,engineVersion=ATLAS_IDENTIFIC
 export function parseAtlasIdentificationResult(value,expectedInput,engineVersion=value?.provenance?.engine_version){
  const input=parseCardIdentificationInput(expectedInput);object(value,['suggestions','warnings','provenance','layout']);
  bad(ATLAS_IDENTIFICATION_LAYOUT_VERSIONS.includes(engineVersion)&&value.provenance?.engine_version===engineVersion&&value.provenance.input_sha256===atlasIdentificationInputHash(input,engineVersion));
- const xhigh=engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION;
+ const xhigh=engineVersion!==ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION;
  bad(value.provenance.reasoning_effort===(xhigh?'xhigh':'low'));
  object(value.layout,['authority','value','confidence','evidence','front_sha256']);
  bad(value.layout.authority==='MACHINE_PROPOSAL'&&value.layout.front_sha256===input.photos.front.sha256);
@@ -48,22 +48,22 @@ export function parseAtlasIdentificationResult(value,expectedInput,engineVersion
  return {...parsed,layout:{authority:'MACHINE_PROPOSAL',...proposal,front_sha256:input.photos.front.sha256},provenance:{...parsed.provenance,...timing,engine_version:engineVersion,input_sha256:atlasIdentificationInputHash(input,engineVersion),reasoning_effort:xhigh?'xhigh':'low'}};
 }
 export async function identifyAtlasCard(input,effects,options={}){
- const {engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,cleanViews=[],...runtimeOptions}=options;
- bad(ATLAS_IDENTIFICATION_LAYOUT_VERSIONS.includes(engineVersion));
- const xhigh=engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION;
- // Historical retries rebuild their exact original request; only new v2
- // attempts opt into the longer execution and truthful xhigh provenance.
+ const {engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,...runtimeOptions}=options;
+ bad(engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION);
+ const xhigh=engineVersion!==ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION;
+ // Historical results remain readable; execution is only the current
+ // generated-image policy with extra-high reasoning.
  const executionOptions={...runtimeOptions,...(xhigh?{deadlines:ATLAS_IDENTIFICATION_XHIGH_POLICY.deadlines}:{})};
  const data=parseCardIdentificationInput(input),inputHash=atlasIdentificationInputHash(data,engineVersion);let proposal,requestHash,responseHash;
- const identify=xhigh?identifyAtlasCardWithExtendedRuntime:identifyCardV2;
- const result=await identify(data,{...effects,
+ const result=await identifyAtlasCardWithExtendedRuntime(data,{...effects,
   readPhoto:(photo,context)=>effects.readPhoto(photo,{...context,inputHash}),
   ocr:(request,context)=>effects.ocr(request,{...context,inputHash}),
   async model(base,context){
    const request=structuredClone(base);request.instructions=request.instructions.replace('Output only the eight requested fields.','Output the eight descriptive fields and layout_type.')+' '+policy;
    request.text.format.name='atlas_card_details_layout_v1';request.text.format.schema.required.push('layout_type');request.text.format.schema.properties.layout_type=layoutSchema;
    if(xhigh){request.reasoning={effort:ATLAS_IDENTIFICATION_XHIGH_POLICY.reasoningEffort};request.max_output_tokens=ATLAS_IDENTIFICATION_XHIGH_POLICY.maxOutputTokens;request.text.format.name='atlas_card_details_layout_v2';}
-   if(cleanViews.length)request.input.push(...structuredClone(cleanViews));
+   request.instructions=request.instructions.replace('A copyright year alone, a player statistics year, or a memorized release date is insufficient: use null and never add or subtract a year.', 'For sports cards without a printed release label, use a clearly printed maker copyright year as a medium-confidence year proposal and quote the copyright line as evidence. A player statistics year or memorized release date is insufficient. Never add or subtract a year or invent a season; the catalog and human review resolve the exact release.');
+   request.text.format.name='atlas_card_details_layout_v3';
    requestHash=digest(JSON.stringify(request));
    // The durable adapter sees/acknowledges the actual augmented request and
    // complete raw response before this local compatibility projection occurs.

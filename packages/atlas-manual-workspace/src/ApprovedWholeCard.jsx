@@ -3,7 +3,6 @@ import { gsap } from 'gsap';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { wholeCardShapes, calloutViewBox, WHOLE_FRAME } from './whole-card-layout.mjs';
 import { FindingCallouts } from './FindingCallouts.jsx';
-import { usePresentationImage } from './report-presentation-image.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const { width: W, height: H, padding: P, cardWidth: CW, cardHeight: CH } = WHOLE_FRAME;
@@ -40,16 +39,15 @@ function Instruments({ geometry, side, id, borders }) {
   </g>;
 }
 
-function WholeCard({ report, explanation, side, photo, presentation, original, geometry, shapes, center, compact, onSelect, playing, reduced, replayKey, signalOffset, signalTotal, id, lastFindingId }) {
+function WholeCard({ report, explanation, side, photo, geometry, shapes, center, compact, onSelect, playing, reduced, replayKey, signalOffset, signalTotal, id, lastFindingId }) {
   const [focusedId, setFocusedId] = useState(null);
   const borders = useMemo(() => { if (!validQuad(geometry?.printedQuad)) return null; try { return measureSpeedsterCenteringBorders(geometry.printedQuad); } catch { return null; } }, [geometry]);
   const centering = explanation?.sides?.[side]?.centering;
-  const edited = !original && Boolean(presentation);
   return <article className="study-card" data-side={side}><header><h2>{title(side)}</h2><span><i className="red-dot"/>{shapes.length} findings</span></header>
-    <p className="presentation-note">{edited ? 'AI presentation · Measurements from original' : 'Original photograph · Saved measurements'}</p>
+    <p className="presentation-note">Background-removed grading image · Saved measurements</p>
     <div className="finding-callout-stage"><svg className="card-stage" viewBox={calloutViewBox(side, compact)} role="group" aria-label={`${title(side)} photograph with saved defects and centering`}>
       <defs><filter id={`${id}-shadow`} x="-30%" y="-20%" width="160%" height="160%"><feDropShadow dx="0" dy="24" stdDeviation="23" floodColor="#102c34" floodOpacity=".12"/></filter></defs>
-      <g filter={edited ? `url(#${id}-shadow)` : undefined}><image href={edited ? presentation : photo} width={W} height={H} preserveAspectRatio="none" aria-label={`${title(side)} ${edited ? 'AI presentation; alignment approximate; original available in inspection' : 'original saved photograph'}`}/></g>
+      <g filter={`url(#${id}-shadow)`}><image href={photo} width={W} height={H} preserveAspectRatio="none" aria-label={`${title(side)} grading image with matching saved coordinates`}/></g>
       <g style={{ visibility: center ? 'visible' : 'hidden' }}><Instruments geometry={geometry} side={side} id={id} borders={borders}/></g>
       <g transform={`translate(${P} ${P})`} className="defect-layer">{shapes.filter(shape => shape.path && shape.bounds).map(({ finding, number, path, perimeter, bounds: b, scale }, index) => {
         const x = b.x + b.width / 2, y = b.y + b.height / 2, w = b.width, h = b.height;
@@ -74,13 +72,10 @@ function WholeCard({ report, explanation, side, photo, presentation, original, g
 export function ApprovedWholeCard({ report, explanation, images, geometry, photos, publication, activeSide, onChooseSide, onSelect, reduced = false, lastFinding = {}, controls, onControlsChange, motionState }) {
   const root = useRef(null), motion = useRef(null), defects = useRef([]);
   const token = useId().replaceAll(':', '');
-  const { playing, original, center, sequence } = controls;
+  const { playing, center, sequence } = controls;
   const [compact, setCompact] = useState(false);
   const change = (key, value) => onControlsChange(previous => ({ ...previous, [key]: typeof value === 'function' ? value(previous[key]) : value }));
   const shapes = useMemo(() => Object.fromEntries(SIDES.map(side => [side, wholeCardShapes(report.findings, side)])), [report.findings]);
-  const front = usePresentationImage(images?.FRONT?.presentation, { enabled: Boolean(photos.FRONT), side: 'FRONT', sourceSha256: report.inspection.front.imageSha256, publication });
-  const back = usePresentationImage(images?.BACK?.presentation, { enabled: Boolean(photos.BACK), side: 'BACK', sourceSha256: report.inspection.back.imageSha256, publication });
-  const presentations = { FRONT: front, BACK: back };
   const [offscreen, setOffscreen] = useState(false);
   useEffect(() => {
     const query = window.matchMedia?.('(max-width: 1100px)');
@@ -127,13 +122,12 @@ export function ApprovedWholeCard({ report, explanation, images, geometry, photo
   }, [playing, reduced, compact, activeSide, sequence, offscreen]);
   const replay = () => { if (!reduced) { motion.current?.restart(); defects.current.forEach(tween => tween.restart()); } onControlsChange(previous => ({ ...previous, playing: true, sequence: previous.sequence + 1 })); };
   const total = shapes.FRONT.length + shapes.BACK.length;
-  return <div ref={root} className="rr-approved-whole" data-background={original ? 'original' : 'presentation'} data-compact={compact}>
+  return <div ref={root} className="rr-approved-whole" data-background="grading-image" data-compact={compact}>
     <nav className="study-toolbar" aria-label="Whole card controls"><div className="view-name">Whole card<span>Defects + centering</span></div><div className="actions">
-      <button type="button" aria-pressed={original} disabled={!front && !back} onClick={() => change('original', value => !value)}>{original ? 'AI presentation' : 'Original photo'}</button>
       <button type="button" aria-pressed={center} onClick={() => change('center', value => !value)}>Centering {center ? 'on' : 'off'}</button><button type="button" onClick={replay}>↻ Replay</button>
       <button type="button" className="pause" disabled={reduced} onClick={() => change('playing', value => !value)}>{reduced ? 'Motion reduced' : playing ? 'Ⅱ Pause' : '▶ Play'}</button></div></nav>
     {compact && <div className="side-switch" role="group" aria-label="Whole card side">{SIDES.map(side => <button type="button" key={side} aria-pressed={side === activeSide} onClick={() => onChooseSide(side)}>{title(side)}<span>{shapes[side].length}</span></button>)}</div>}
-    <section className="card-pair" aria-label="Centering and defects together">{(compact ? [activeSide] : SIDES).map(side => <WholeCard key={side} report={report} explanation={explanation} side={side} photo={photos[side]} presentation={presentations[side]} original={original} geometry={geometry?.[side]} shapes={shapes[side]} center={center} compact={compact} onSelect={onSelect} playing={playing && !offscreen} reduced={reduced} replayKey={sequence} signalOffset={compact || side === 'FRONT' ? 0 : shapes.FRONT.length} signalTotal={compact ? shapes[side].length : total} id={`whole-${token}-${side}`} lastFindingId={lastFinding[side]}/>)}</section>
-    <footer className="study-notes"><span><i className="cyan-dot"/> Saved centering geometry <i className="red-dot"/> Saved defect traces</span><p>{!original && (front || back) ? 'AI presentation alignment is approximate. Measurements come from the original photographs; select a finding to inspect its original evidence.' : 'Select any finding to inspect its exact saved trace and measurements on the original photograph.'}</p></footer>
+    <section className="card-pair" aria-label="Centering and defects together">{(compact ? [activeSide] : SIDES).map(side => <WholeCard key={side} report={report} explanation={explanation} side={side} photo={photos[side]} geometry={geometry?.[side]} shapes={shapes[side]} center={center} compact={compact} onSelect={onSelect} playing={playing && !offscreen} reduced={reduced} replayKey={sequence} signalOffset={compact || side === 'FRONT' ? 0 : shapes.FRONT.length} signalTotal={compact ? shapes[side].length : total} id={`whole-${token}-${side}`} lastFindingId={lastFinding[side]}/>)}</section>
+    <footer className="study-notes"><span><i className="cyan-dot"/> Saved centering geometry <i className="red-dot"/> Saved defect traces</span><p>Select any finding to inspect its saved trace and measurements on the grading image.</p></footer>
   </div>;
 }

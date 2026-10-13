@@ -52,6 +52,16 @@ test('physical preparation, measurement, and frame mismatch withhold stale numbe
     const f=fixture();change(f);const result=finalReviewPreview(f.card,f.state);assert.equal(result.state,'PENDING');assert.equal(result.report,undefined);
   }
 });
+test('current Astra material frames produce the live preview and contour drift remains pending',()=>{
+  const f=fixture(),contour=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}];
+  for(const side of sides){
+    f.state.geometry.sides[side].prepared.frame.materialContour=structuredClone(contour);
+    f.state.defects.sides[side].frame.materialContour=structuredClone(contour);
+  }
+  assert.equal(finalReviewPreview(f.card,f.state).state,'READY');
+  f.state.defects.sides.FRONT.frame.materialContour[0].x=.01;
+  assert.equal(finalReviewPreview(f.card,f.state).state,'PENDING');
+});
 test('explicit findings confirmation records removal as rejection without altering original proposal or creating a new finding',()=>{
   const f=fixture(),proposal={id:'original-proposal',side:'FRONT'},finding=f.state.defects.sides.FRONT.findings[0];
   finding.id=proposalFindingId(proposal.id);

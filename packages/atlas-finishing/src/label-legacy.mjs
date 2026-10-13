@@ -15,12 +15,14 @@ export function validateManualLabel(label) {
     || !Number.isFinite(label.finalGrade) || label.finalGrade < 0 || label.finalGrade > 10 || !Number.isInteger(label.finalGrade * 2)
     || label.finalGradePolicy !== 'atlas-final-half-point-v1') fail('MANUAL_LABEL_INVALID');
   const identity = label.identity, sports = label.cardProfile === 'SPORTS';
-  const required = sports ? ['playerName', 'year', 'manufacturer', 'productSet'] : ['cardName', 'year', 'productSet'];
+  const required = sports ? ['playerName', 'productSet'] : ['cardName', 'productSet'];
+  const nullableMetadata = sports ? ['year', 'manufacturer'] : ['year'];
   const optional = sports ? ['parallel', 'insert', 'cardNumber'] : ['parallel', 'cardNumber'];
   if (!identity || typeof identity !== 'object' || Array.isArray(identity)
     || required.some(key => !text(identity[key], key === 'year' ? 24 : 180))
+    || nullableMetadata.some(key => !text(identity[key], key === 'year' ? 24 : 180, true))
     || optional.some(key => identity[key] !== '' && !text(identity[key], 120, true))
-    || Object.keys(identity).some(key => ![...required, ...optional, ...(!sports ? ['layoutType', 'manufacturer'] : [])].includes(key))
+    || Object.keys(identity).some(key => ![...required, ...nullableMetadata, ...optional, ...(!sports ? ['layoutType', 'manufacturer'] : [])].includes(key))
     || !sports && identity.manufacturer !== undefined && !text(identity.manufacturer, 120)
     || !sports && identity.layoutType !== undefined && !['POKEMON', 'TRAINER', 'ENERGY'].includes(identity.layoutType)) fail('MANUAL_LABEL_IDENTITY_INVALID');
   return label;

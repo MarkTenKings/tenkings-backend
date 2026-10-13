@@ -111,13 +111,12 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     const key=`${kind}:${contextOnly}:${descriptorSha256(descriptor)}`,cached=reads.get(key);
     if(cached&&cached.expires>Date.now())return cached.value;
     let value;
-    if(kind==='original'&&connected.reviewDisplay)value=await connected.reviewDisplay.read(photo,photoSource,{contextOnly});
-    else if(kind==='original'&&contextOnly)value={...descriptor.raster.content,...descriptor.raster.dimensions,displayState:{state:'PENDING',retryable:true}};
-    else value=kind==='original'?await storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300})
+    if(kind==='original')requireThat(descriptor.schemaVersion===3,503,'GRADING_IMAGE_REQUIRED');
+    value=kind==='original'?await storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300})
       :await storage.createImmutableDerivativeRead({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300});
     for(const grant of [value,value.preview,value.display,value.display?.preview])if(grant?.url)
       requireThat(new URL(grant.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');
-    if(kind!=='original')value={...value,...descriptor.raster.dimensions,descriptorSha256:descriptorSha256(descriptor)};
+    value={...value,...descriptor.raster.dimensions,descriptorSha256:descriptorSha256(descriptor)};
     if(reads.size>=1000)reads.delete(reads.keys().next().value);
     if((!value.displayState||value.displayState.state==='READY')&&(!value.previewState||value.previewState.state==='READY'))
       reads.set(key,{value,expires:Date.now()+240000});
@@ -159,7 +158,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
   requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
   const connected=createConnectedManual({orderDesk,orderDeskInbox,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,marketLabeler,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
-    processing:manualProcessingSettings(env),onWorkerError});
+    readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.
@@ -167,14 +166,14 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     pending:input=>connected.assistance.executor.pending(input),
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
-  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers,reviewDisplay:connected.reviewDisplay});
+  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers});
   const validateConfiguration=async()=>{
     await validateOrderDeskConfiguration({enabled:Boolean(orderDesk),client:manualClient});
     await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
     await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient});
     await validateVariantRuntimeConfiguration({enabled:Boolean(variantConfig),client:manualClient,worker:env.ATLAS_VARIANT_WORKER_ENABLED==='true'});
   };
-  return {connected,boundary,variantArtifacts:variantConfig?artifacts:null,readVariantPhotos:variantConfig?createVariantSourcePhotoReader({boundary,intake:connected.intake,workflow:connected.workflow,storage}):null,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();orderPhotoClient?.destroy();}};
+  return {connected,boundary,variantArtifacts:variantConfig?artifacts:null,readVariantPhotos:variantConfig?createVariantSourcePhotoReader({boundary,intake:connected.intake,workflow:connected.workflow,readGradingPhoto:connected.readGradingPhoto}):null,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();orderPhotoClient?.destroy();}};
 }
 
 export function manualReportImageSettings(env) {

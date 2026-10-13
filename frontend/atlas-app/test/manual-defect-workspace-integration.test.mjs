@@ -470,21 +470,13 @@ test('explicit photo editor entry opens geometry even when a final report exists
  assert.equal(f.machine(),undefined);assert.deepEqual(f.actions,[]);f.dispose();
 });
 
-test('focused geometry uses the original photographs without exposing the removed paired editor background fallback',async()=>{
+test('focused geometry uses the grading image descriptors without the removed paired editor',async()=>{
  const f=harness({initialGeometrySide:'BACK'});await flush();f.render();assert.equal(f.geometry().side,'BACK');assert.equal(f.geometry().images,f.current.images);assert.equal(f.geometry().onBackground,undefined);assert.equal(f.actions.length,0);f.dispose();
 });
 
-test('failed display retry keeps its exact source/job action across lost acknowledgement and only reloads grants afterward',async()=>{
+test('focused geometry does not expose the retired raw display retry action',async()=>{
  const f=harness({initialGeometrySide:'FRONT'});await flush();f.render();
- const retry={jobId:'display-job',photoSourceHash:'a'.repeat(64)};
- f.publish({...f.current,images:{FRONT:{original:{displayState:{state:'FAILED',retry}}}}});
- let failed=true;f.respond=async(path,options)=>{if(path.endsWith('/display-retry')){if(failed){failed=false;throw {code:'LOST_ACK'};}return {state:'PENDING'};}return f.current;};
- await assert.rejects(f.geometry().onRetryDisplay({side:'FRONT',...retry}),error=>error.code==='LOST_ACK');
- await f.geometry().onRetryDisplay({side:'FRONT',...retry});
- const posts=f.calls.filter(call=>call.path.endsWith('/display-retry'));
- assert.equal(posts.length,2);assert.deepEqual(posts[0].options.body,posts[1].options.body);assert.equal(posts[0].options.body.photoSourceHash,retry.photoSourceHash);assert.equal(posts[0].options.csrf,'csrf');
- assert.ok(f.calls.at(-1).path.endsWith('/view'));assert.equal(f.actions.length,0,'retry never changes originals or approves a draft');
- await assert.rejects(f.geometry().onRetryDisplay({side:'FRONT',...retry,jobId:'old-job'}),error=>error.code==='REVIEW_DISPLAY_RETRY_STALE');f.dispose();
+ assert.equal(f.geometry().onRetryDisplay,undefined);f.dispose();
 });
 
 test('proposal correction awaits measurement and propagates a failure instead of advancing with a pending trace',async()=>{

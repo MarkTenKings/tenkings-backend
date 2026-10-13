@@ -60,17 +60,24 @@ test('listing acquisition is explicitly enabled only with its worker credential'
 
 function cardFixture() { return { cardId: 'physical-card', revision: 4, draft: { identityRevision: 2,
   identity: { cardName: 'Synthetic', year: '2026', productSet: 'Fixture', cardNumber: '1', parallel: 'Reverse Holo' }, source: { sourceHash: digest('pair') } } }; }
-test('worker downsizes copies of both current photos; replacing a source during read prevents use', async () => {
+test('worker references use only canonical generated pixels; replacing a source prevents contribution', async () => {
   const source = await sharp({ create: { width: 2200, height: 2500, channels: 3, background: '#334455' } }).png().toBuffer();
   let card = cardFixture(), reads = 0, changed = false;
   const photo = { original: { content: { sha256: digest('original') } }, workingFrame: { raster: { content: { sha256: digest(source) } } }, decodePlan: {} };
-  const pair = { sourceHash: card.draft.source.sourceHash, sides: { FRONT: { photo }, BACK: { photo } } };
+  const pair = { sourceHash: card.draft.source.sourceHash, sides: { FRONT: { photo,upload:{uploadId:'front-upload'} }, BACK: { photo,upload:{uploadId:'back-upload'} } } };
   const reader = createVariantSourcePhotoReader({ boundary: { machineOwner: x => x }, workflow: { service: { read: async () => card } },
-    intake: { verifiedPair: async () => pair }, storage: { readDecodedFrame: async () => { reads++; if (changed) card = { ...card, draft: { ...card.draft, identityRevision: 3 } }; return { bytes: source }; } } });
+    intake: { verifiedPair: async () => pair }, readGradingPhoto: async input => { reads++;assert.equal(input.cardId,card.cardId);assert(input.uploadId); if (changed) card = { ...card, draft: { ...card.draft, identityRevision: 3 } }; return {photo:{...photo,workingFrame:{...photo.workingFrame,schemaVersion:3,generation:{sourceFrame:photo.workingFrame}}},bytes:source}; } });
   const job = { actor_id: 'owner', access_version: 1, card_id: card.cardId, input: variantBinding(card) };
   const result = await reader(job); assert.equal(reads, 2); assert.equal(result.sourceHash, pair.sourceHash);
   for (const side of ['FRONT', 'BACK']) { const metadata = await sharp(result[side].bytes).metadata(); assert.equal(metadata.format, 'jpeg');
     assert.equal(Math.max(metadata.width, metadata.height), 2048); assert.equal(result[side].sha256, digest(result[side].bytes)); }
   assert.equal(digest(source), photo.workingFrame.raster.content.sha256, 'original source buffer stays unchanged');
   changed = true; await assert.rejects(reader(job), { code: 'VARIANT_SOURCE_STALE' });
+});
+
+
+test('variant generated source reader never accepts a missing cutout as uploaded-image permission',async()=>{
+ const card=cardFixture(),photo={original:{content:{sha256:digest('original')}},workingFrame:{}};
+ const reader=createVariantSourcePhotoReader({boundary:{machineOwner:x=>x},workflow:{service:{read:async()=>card}},intake:{verifiedPair:async()=>({sourceHash:card.draft.source.sourceHash,sides:{FRONT:{photo,upload:{uploadId:'front'}},BACK:{photo,upload:{uploadId:'back'}}}})},readGradingPhoto:async()=>null});
+ await assert.rejects(reader({actor_id:'owner',access_version:1,card_id:card.cardId,input:variantBinding(card)}),{code:'VARIANT_GENERATED_PHOTO_REQUIRED'});
 });

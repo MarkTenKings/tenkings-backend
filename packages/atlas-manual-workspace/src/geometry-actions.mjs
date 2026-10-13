@@ -158,7 +158,18 @@ function validateState(state) {
   for (const name of SIDES) {
     const side = state.sides[name];
     object(side, ['image', 'imageRevision', 'cornerShape', 'matColor', 'settingsRevision', 'physicalRevision',
-      'preparationRevision', 'printedRevision', 'reviewRevision', 'physical', 'prepared', 'printed', 'confirmation'], ['printedAbsence']);
+      'preparationRevision', 'printedRevision', 'reviewRevision', 'physical', 'prepared', 'printed', 'confirmation'], ['printedAbsence','visualObservation']);
+    if (side.visualObservation) {
+      const visual=side.visualObservation;
+      object(visual,['frameSha256','responseHash','model','reasoning','physical','printed']);
+      sha(visual.frameSha256);sha(visual.responseHash);
+      requireThat(visual.frameSha256===side.image?.frameSha256&&visual.model==='gpt-6-astra'&&visual.reasoning==='xhigh');
+      for(const kind of ['physical','printed']) {
+        object(visual[kind],['outlineLocated','uncertainty','observation']);
+        requireThat(typeof visual[kind].outlineLocated==='boolean'&&['LOW','MEDIUM','HIGH'].includes(visual[kind].uncertainty)
+          &&typeof visual[kind].observation==='string'&&visual[kind].observation.length<=2000);
+      }
+    }
     settings(side); integer(side.imageRevision); integer(side.settingsRevision, 1);
     for (const key of ['physicalRevision', 'preparationRevision', 'printedRevision', 'reviewRevision']) {
       integer(side[key]); requireThat(side[key] < state.reportRevision);
@@ -237,6 +248,16 @@ export function preparationBase(state, side) {
   validateState(state); requireThat(SIDES.includes(side));
   requireThat(state.sides[side].physical, 'ATLAS_GEOMETRY_PHYSICAL_REQUIRED');
   return copy(baseFor(state, side, 'PREPARATION'));
+}
+/** One complete measurement identity for preparation, reprojection and reports. */
+export function geometryMeasurementFrame(state, side) {
+  const slot = state.sides[side];
+  requireThat(slot?.prepared, 'ATLAS_GEOMETRY_PREPARED_FRAME_REQUIRED');
+  const frame = slot.prepared.frame;
+  return copy({ imageVersion: slot.image.version, originalSha256: slot.image.originalSha256,
+    preparationVersion: frame.version, frameId: frame.id,
+    inspectionImageSha256: frame.inspection.sha256, rectifiedImageSha256: frame.rectified.sha256,
+    ...(frame.materialContour ? { materialContour: frame.materialContour } : {}) });
 }
 /** Retry automatic detection only where no physical/prepared/review work has
  * ever been adopted. A missing outline after replacing reviewed imagery is not
@@ -322,7 +343,7 @@ export function replaceGeometryImage(state, action) {
   // adopted. A newer selected version can therefore skip unused versions.
   requireThat(action.image.version >= next(side.imageRevision), 'ATLAS_GEOMETRY_IMAGE_VERSION_INVALID');
   return change(state, action.side, { ...side, image: action.image, imageRevision: action.image.version,
-    physical: null, prepared: null, printed: null, confirmation: null, ...(side.printedAbsence ? {printedAbsence:null} : {}) },
+    physical: null, prepared: null, printed: null, confirmation: null, ...(side.printedAbsence ? {printedAbsence:null} : {}), ...(side.visualObservation ? {visualObservation:null} : {}) },
   ['physical', 'preparation', 'printed', 'centering', 'mapRegistration', 'findings', 'measurement', 'inspection', 'geometryReview']);
 }
 

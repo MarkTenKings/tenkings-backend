@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createCleanPhotoDescriptor} from '../src/clean-photo-descriptor.mjs';
-import {photo} from './review-display-fixture.mjs';
+import {photo} from './photo-fixture.mjs';
 
 test('saved clean grants retain their generating frame and cannot bind to a different original',async()=>{
   const media={original:photo.original,frame:photo.workingFrame,decodePlan:photo.decodePlan,

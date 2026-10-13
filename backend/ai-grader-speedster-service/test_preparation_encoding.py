@@ -7,13 +7,26 @@ import preparation_encoding as encoding
 
 
 class PreparationEncodingTest(unittest.TestCase):
+    def test_opaque_generated_rgba_may_omit_only_the_redundant_alpha_plane(self):
+        raster = np.random.default_rng(18).integers(0, 256, (73, 91, 4), np.uint8)
+        raster[:, :, 3] = 255
+        encoded = encoding.encode_lossless_webp(raster)
+        decoded = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_UNCHANGED)
+        np.testing.assert_array_equal(decoded, raster[:, :, :3])
+        raster[0, 0, 3] = 254
+        with patch.object(encoding.cv2, 'imdecode', return_value=decoded):
+            with self.assertRaisesRegex(ValueError, 'PREPARATION_OUTPUT_INVALID'):
+                encoding.encode_lossless_webp(raster)
+
     def test_rgb_and_gray_samples_survive_actual_webp_codec_exactly(self):
         rng = np.random.default_rng(317)
-        for shape in [(73, 91, 3), (73, 91)]:
+        for shape in [(73, 91, 3), (73, 91), (73, 91, 4)]:
             raster = rng.integers(0, 256, shape, np.uint8)
             encoded = encoding.encode_lossless_webp(raster)
             decoded = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_UNCHANGED)
             expected = cv2.cvtColor(raster, cv2.COLOR_GRAY2BGR) if raster.ndim == 2 else raster
+            if expected.ndim == 3 and expected.shape[2] == 4:
+                expected[expected[:, :, 3] == 0, :3] = 0
             np.testing.assert_array_equal(decoded, expected)
 
     def test_lossy_or_wrong_shape_decode_and_encode_failure_are_refused(self):
@@ -31,7 +44,7 @@ class PreparationEncodingTest(unittest.TestCase):
                 encoding.encode_lossless_webp(raster)
 
     def test_unsupported_rasters_are_not_flattened_or_reduced(self):
-        for raster in [np.zeros((3, 4, 4), np.uint8), np.zeros((3, 4, 3), np.uint16), np.zeros((3, 4, 1), np.uint8)]:
+        for raster in [np.zeros((3, 4, 3), np.uint16), np.zeros((3, 4, 1), np.uint8)]:
             with self.assertRaisesRegex(ValueError, 'PREPARATION_RASTER_UNSUPPORTED'):
                 encoding.encode_lossless_webp(raster)
 

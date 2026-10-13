@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
-import { descriptorSha256 } from '@atlas/photo-core';
+import { descriptorSha256, parseDecodedFrame } from '@atlas/photo-core';
+import sharp from 'sharp';
 import { PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, PREPARATION_LOSSLESS_SETTINGS, INSPECTION_PREVIEW_POLICY } from '@atlas/preparation-runtime';
 import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
 import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
@@ -12,6 +13,7 @@ import { memoryPhotoStorage, sha } from '../../atlas-manual-intake/test/helpers.
 import { createWorkLimiter } from '../src/index.mjs';
 import { adoptEarlyGeometry, createEarlyGeometry, geometryCacheInput } from '../src/early-geometry.mjs';
 import { MACHINE_GEOMETRY_POLICY } from '../src/machine-geometry.mjs';
+import { ASTRA_GEOMETRY_POLICY } from '../src/astra-geometry.mjs';
 import { geometrySideSettings } from '../src/details.mjs';
 
 const settings = { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', profile: null, fields: { name: '' } };
@@ -21,6 +23,27 @@ const quad = [{ x: .125, y: .1 }, { x: .875, y: .1 }, { x: .875, y: .9 }, { x: .
 const error = code => Object.assign(new Error(code), { code, status: 409 });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) { for (let i = 0; i < 200; i++) { if (await check()) return; await pause(5); } assert.fail('Expected bounded geometry progress'); }
+
+test('discovery, cache, compute and consume bind the same generated grading frame exclusively',async()=>{
+ const f=await fixture(),upload=await f.upload('FRONT'),uploaded=f.photos.get(upload.uploadId);
+ const bytes=await sharp({create:{width:20,height:28,channels:4,background:'#dda040'}}).png().toBuffer();
+ const frame=parseDecodedFrame({schemaVersion:3,kind:'decoded-frame',id:'synthetic-generated-frame',
+  originalDescriptorSha256:descriptorSha256(uploaded.original),decodePlanSha256:descriptorSha256(uploaded.decodePlan),
+  raster:{content:{mime:'image/png',sha256:digest(bytes),byteCount:bytes.length},dimensions:{width:20,height:28},object:{key:'intake/derived/generated.png',versionId:null}},
+  sourceToFrame:[1,0,0,0,1,0,0,0,1],treatment:{decoder:'synthetic-generator',version:'v1',policyVersion:'atlas-generated-grading-image-v1',channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'},
+  generation:{sourceFrame:uploaded.workingFrame,recipeHash:digest('recipe'),model:'synthetic-generator',promptVersion:'v1'}},uploaded.original,uploaded.decodePlan);
+ const photo={...uploaded,workingFrame:frame};let prepared=false,calls=0,reads=0;
+ const service=f.build({isCleanPhotoPrepared:async()=>prepared,readGradingPhoto:async input=>{
+  reads++;assert.equal(input.uploadId,upload.uploadId);assert.equal(input.photo.original.content.sha256,uploaded.original.content.sha256);return{photo,bytes};
+ },runVisual:async input=>{calls++;assert.deepEqual(input.source.frame,frame);assert.deepEqual(input.source.bytes,bytes);return{responseHash:digest('generated-response'),physical:{quad:null,contour:[],uncertainty:'HIGH',observation:'Synthetic missing outline.'},printed:{quad:null,uncertainty:'HIGH',observation:'Synthetic missing frame.'}};}});
+ try{
+  f.intents.add(upload.uploadId);service.start();await pause(20);assert.equal(reads,0);assert.equal(calls,0);
+  prepared=true;await until(()=>calls===1);await until(()=>[...f.jobs.values()][0]?.state==='NEEDS_REVIEW');
+  const result=await service.consume(f.staff,f.cardId,'FRONT',upload,uploaded,settings);
+  assert.equal(result.input.frameDescriptorSha256,descriptorSha256(frame));assert.notEqual(result.input.frameDescriptorSha256,descriptorSha256(uploaded.workingFrame));
+  assert.deepEqual(result.packet.photoFrame,frame);assert.equal(calls,1);
+ }finally{await service.stop();}
+});
 
 async function fixture() {
   const cardId = randomUUID(), pairId = randomUUID(), selected = {}, photos = new Map(), jobs = new Map(), intents = new Set();
@@ -73,6 +96,7 @@ async function fixture() {
       Object.assign(current, { state, result, error: failure, claimId: null }); return true;
     },
   };
+  let printed = { quad:null,uncertainty:'LOW',observation:'No coherent printed frame.' };
   let calls = 0, preparation = async () => { throw new Error('Unexpected preparation of rejected outline'); };
   let physical = async input => ({ id: `proposal-${++calls}`, identity: identity.identity,
     frameDescriptorSha256: descriptorSha256(input.source.frame), proposal: { outcome: 'REJECTED', proposal: null } });
@@ -81,12 +105,18 @@ async function fixture() {
     runtimeIdentity: async () => identity, limited, intervalMs: 5,
     intake: { async read() { return { card: { cardId, sides: Object.fromEntries(['FRONT','BACK'].map(side => [side, { upload: selected[side] ?? null }])) } }; },
       async readSource(_staff, _card, id) { return { photo: photos.get(id) }; } },
-    details: { async read() { return { details: currentSettings }; } }, physical: input => physical(input),
+    details: { async read() { return { details: currentSettings }; } },
+    readGradingPhoto:options.readGradingPhoto??(async({photo})=>({photo,bytes:(await storage.readDecodedFrame({frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan})).bytes})),
+    runVisual:options.runVisual??(async input=>{
+      const proposed=await physical(input),q=proposed.proposal.outcome==='ACCEPTED'?proposed.proposal.proposal:null;
+      const contour=q?Array.from({length:16},(_,i)=>{const edge=Math.floor(i/4),t=i%4/4,a=q[edge],b=q[(edge+1)%4];return{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};}):[];
+      return {physical:{quad:q,contour,uncertainty:'LOW',observation:'Fixture outline.'},printed:structuredClone(printed),responseHash:digest(proposed.id)};
+    }),
     prepare: input => preparation(input) });
-  return { cardId, staff, upload, build, jobs, intents, selected, photos, store, identity, limits, artifacts,
+  return { cardId, staff, storage, upload, build, jobs, intents, selected, photos, store, identity, limits, artifacts,
     breakArtifact(uploadId) { objects.delete(photos.get(uploadId) && Object.values(selected).find(u => u.uploadId === uploadId).source.ref.key); },
     setSettings(value) { currentSettings = { ...currentSettings, ...value }; },
-    setPhysical(value) { physical = value; }, setPrepare(value) { preparation = value; }, get calls() { return calls; }, get maximum() { return maximum; } };
+    setPhysical(value) { physical = value; }, setPrinted(value) { printed = value; }, setPrepare(value) { preparation = value; }, get calls() { return calls; }, get maximum() { return maximum; } };
 }
 
 test('a single Back photo is processed without profile, identity or Front, and duplicate starts reuse the durable result', async () => {
@@ -138,11 +168,12 @@ test('a native preparation refusal retains its valid physical proposal and expos
   } finally { await service.stop(); }
 });
 
-for (const proposalKind of ['accepted', 'provisional ambiguous', 'missing printed']) test(`automatic cache retains exact core pixels and ${proposalKind} geometry provenance`, async () => {
-  const provisional = proposalKind === 'provisional ambiguous', missingPrinted = proposalKind === 'missing printed';
+for (const proposalKind of ['accepted', 'ambiguous missing', 'missing printed']) test(`automatic cache retains exact core pixels and ${proposalKind} geometry provenance`, async () => {
+  const provisional = proposalKind === 'ambiguous missing', missingPrinted = proposalKind === 'missing printed';
   const f = await fixture(), service = f.build();
   f.setPhysical(async input => ({ id: 'physical-core', identity: identity.identity,
     frameDescriptorSha256: descriptorSha256(input.source.frame), proposal: { outcome: 'ACCEPTED', proposal: quad } }));
+  f.setPrinted({quad:missingPrinted||provisional?null:[{x:.21875,y:.18},{x:.78125,y:.18},{x:.78125,y:.82},{x:.21875,y:.82}],uncertainty:provisional?'HIGH':'LOW',observation:missingPrinted?'No printed frame.':provisional?'Interrupted frame is unresolved.':'Supported inner rails.'});
   f.setPrepare(async input => {
     assert.equal(input.outputContract, PREPARATION_CORE_V1);
     const transform = [141, 0, -211.5, 0, 138.828125, -222.125, 0, 0, 1];
@@ -154,15 +185,7 @@ for (const proposalKind of ['accepted', 'provisional ambiguous', 'missing printe
     const outputs = { rectified: output('rectified', 1270, 1778), inspection: output('inspection', 1350, 1858) };
     const previewBytes = Buffer.from('fixture-jpeg-preview'), hasPreview = proposalKind === 'accepted';
     return { id: 'core-result', frameDescriptorSha256: descriptorSha256(input.source.frame), identity: identity.identity,
-      outputContract: PREPARATION_CORE_V1, sourceQuad: input.quad, proposal: missingPrinted
-        ? { mode: 'PRINTED_FRAME', outcome: 'NOT_APPLICABLE', authority: 'PROPOSER_ONLY', proposal: null, advisory: { code: 'NO_PRINTED_FRAME' } }
-        : provisional
-        ? { mode: 'PRINTED_FRAME', outcome: 'ABSTAIN', authority: 'PROPOSER_ONLY', proposal: null,
-          ambiguity: { ambiguous: true }, advisory: { code: 'AMBIGUOUS_PRINTED_FRAME' },
-          diagnosticCandidate: { policy: 'atlas-supported-printed-candidate-v1', authority: 'PROPOSER_ONLY', reason: 'AMBIGUOUS_SUPPORTED_TRANSITIONS', quad },
-          sideEvidence: Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side,
-            { medianContrastDeltaE: 24, supportFraction: .8, sampleCount: 200, candidateCount: 2 }])) }
-        : { outcome: 'ACCEPTED', proposal: quad },
+      outputContract: PREPARATION_CORE_V1, sourceQuad: input.quad, proposal: {outcome:'NOT_APPLICABLE',proposal:null},
       encoderSettings: hasPreview ? PREPARATION_LOSSLESS_SETTINGS : { format: 'webp', quality: 92, sourceBitDepth: 8 }, outputs,
       ...(hasPreview ? { inspectionPreview: { filename: 'inspection-preview.jpg', policyVersion: INSPECTION_PREVIEW_POLICY,
         sourceSha256: outputs.inspection.sha256, bytes: previewBytes, sha256: sha(previewBytes), byteCount: previewBytes.length,
@@ -209,10 +232,10 @@ for (const proposalKind of ['accepted', 'provisional ambiguous', 'missing printe
       assert.equal(adopted.geometry.sides.FRONT.printed, null);
       assert.deepEqual(adopted.geometry.sides.FRONT.physical.quad, quad);
       assert.ok(adopted.geometry.sides.FRONT.prepared);
-      assert.equal(packet.preparation.proposal.advisory.code, provisional ? 'AMBIGUOUS_PRINTED_FRAME' : 'NO_PRINTED_FRAME');
+      assert.equal(packet.preparation.proposal.observation,provisional?'Interrupted frame is unresolved.':'No printed frame.');
     } else {
-      assert.deepEqual(adopted.geometry.sides.FRONT.printed.quad, quad);
-      assert.equal(adopted.geometry.sides.FRONT.printed.actor, 'ENGINE');
+      assert.ok(adopted.geometry.sides.FRONT.printed.quad.every((p,i)=>Math.abs(p.x-quad[i].x)<.001&&Math.abs(p.y-quad[i].y)<.001));
+      assert.equal(adopted.geometry.sides.FRONT.printed.actor, 'ASTRA');
       assert.equal(adopted.geometry.sides.FRONT.printed.proposal.ambiguous, provisional);
     }
     assert.equal(adopted.geometry.sides.FRONT.confirmation, null);
@@ -330,14 +353,14 @@ test('cache adoption uses the real profile and refuses later human geometry with
   const engine = { policy: 'atlas-early-photo-geometry-v1', runtime: identity, limits };
   const input = geometryCacheInput(upload, photo, settings, engine), frame = photo.workingFrame;
   const packet = { policy: input.policy, key: digest(canonical(input)), binding: input, photoFrame: frame, preparation: null,
-    physical: { id: 'early-test', identity: identity.identity, frameDescriptorSha256: descriptorSha256(frame), proposal: { outcome: 'ACCEPTED', proposal: quad } } };
+    physical: { id: 'early-test', actor:'ASTRA', identity: ASTRA_GEOMETRY_POLICY, frameDescriptorSha256: descriptorSha256(frame), proposal: { outcome: 'ACCEPTED', proposal: quad } } };
   const geometry = createGeometryWorkspace({ cardId: f.cardId, profile: 'POKEMON', sides: {
     FRONT: { ...input.settings, image: { version: upload.version, originalSha256: photo.original.content.sha256, frameId: frame.id,
       frameSha256: frame.raster.content.sha256, ...frame.raster.dimensions, coordinateSpace: 'ORIENTED_DECODED' } },
     BACK: { ...input.settings, image: null },
   } });
   const adopted = adoptEarlyGeometry(geometry, 'FRONT', packet, input);
-  assert.equal(adopted.geometry.profile, 'POKEMON'); assert.equal(adopted.geometry.sides.FRONT.physical.actor, 'ENGINE');
+  assert.equal(adopted.geometry.profile, 'POKEMON'); assert.equal(adopted.geometry.sides.FRONT.physical.actor, 'ASTRA');
   assert.deepEqual(adopted.geometry.sides.BACK, geometry.sides.BACK); assert.equal(adopted.geometry.sides.FRONT.confirmation, null);
   const human = applyGeometryEdit(geometry, { side: 'FRONT', kind: 'PHYSICAL', base: geometryBase(geometry, 'FRONT', 'PHYSICAL'), quad, actor: 'HUMAN', proposal: null }).state;
   assert.throws(() => adoptEarlyGeometry(human, 'FRONT', packet, input), e => e.code === 'GEOMETRY_CACHE_STALE');

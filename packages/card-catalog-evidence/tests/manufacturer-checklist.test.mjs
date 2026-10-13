@@ -311,3 +311,24 @@ test('frozen manufacturer source identifies the unknown-year LaMelo number as a 
  assert.equal(result.candidates[0].identity.cardNumber,'BD-13');assert.equal(result.candidates[0].source.sha256,lameloSource.sha256);
  assert.equal(input.year,null);assert.equal(result.candidates[0].applicability,'unknown');
 });
+
+
+test('Curry Flagship resolves the official product and every supported base printing without a 48-choice cut',async()=>{
+ const p=createManufacturerChecklistVariantProvider();
+ const identity={category:'SPORTS',name:'Stephen Curry',year:null,setName:'Flagship',cardNumber:'135',manufacturer:'Topps',language:null};
+ const result=await p.prepare(identity);
+ assert.equal(result.candidates.length,58);assert.equal(result.truncated,false);
+ for(const c of result.candidates){assert.equal(c.identity.year,'2025-26');assert.equal(c.identity.cardNumber,'135');assert.equal(c.applicability,'unknown');}
+ for(const parallel of ['BASE CARDS I','BASE CARDS I GOLDEN MIRROR IMAGE VARIATION','Gold','Rainbow Foilboard','Gold Rainbow','Holo Foil','Doorbuster'])assert(result.candidates.some(c=>c.parallel===parallel),parallel);
+ assert.equal(createVariantReviewSnapshot({identity,candidates:result.candidates,capturedAt:'2026-10-13T00:00:00.000Z'}).candidates.length,58);
+ for(const patch of [{setName:'Topps Chrome'},{year:'2024-25'},{name:'Seth Curry'},{cardNumber:'136'}])assert(!(await p.prepare({...identity,...patch})).candidates.some(c=>c.parallel==='Doorbuster'));
+});
+
+test('Nick Kurtz base Refractor is supplied by the exact official Bowman Chrome odds, not unrelated prospect parallels',async()=>{
+ const result=await createManufacturerChecklistVariantProvider().prepare({category:'SPORTS',name:'Nick Kurtz',year:null,setName:'Bowman Chrome',cardNumber:'93',manufacturer:'Topps',language:null});
+ assert.equal(result.candidates.length,28);assert.equal(result.truncated,false);
+ const refractor=result.candidates.find(c=>c.parallel==='Refractor');assert(refractor);
+ assert.equal(refractor.source.sha256,'287d0f8cba2a80724e186138c146832c2559418e99e73fb68d31add65da0d346');
+ assert.equal(refractor.identity.year,'2025');assert.equal(refractor.source.references[0].sha256,'3ee770b295a63bc8482899b50fb651bcc6cdb55796d53e3bf4b1bd1efc5cc55f');
+ assert(!result.candidates.some(c=>/Speckle|Reptilian|Shimmer/.test(c.parallel)));
+});

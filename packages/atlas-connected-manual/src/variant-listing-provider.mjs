@@ -39,7 +39,8 @@ export function prepareVariantListingRequest(input,printing=null,{generation=nul
   printing={name:normalize(printing.name).toLowerCase(),language:normalizeVariantIdentity({category:identity.category,language:printing.language}).language};
   check(!identity.language||!printing.language||identity.language===printing.language,'VARIANT_LISTING_PRINTING_LANGUAGE');
  }
- const finish=printing?.name.replace(/\bholofoil\b|\bholographic\b/g,'holo').replace(/^expansion stamp$/,'stamped');
+ const finish=printing?.name.replace(/\bholofoil\b|\bholographic\b/g,'holo').replace(/^expansion stamp$/,'stamped')
+  .replace(/^base cards?(?: [ivx]+)?(?:\s+|$)/,'').replace(/^chrome rookie red rc variation$/,'red rc');
  const term=/^(?:base|normal|base cards?)$/.test(finish??'')?null:finish;
  const query=[identity.name,identity.cardNumber.replace(/^#/,'').trim(),term,printing?.language&&printing.language!=='en'?languageNames[printing.language]??printing.language:null].filter(Boolean).join(' ');
  const url=new URL(endpoint);url.search=new URLSearchParams({keyword:query,ebaySite:'ebay.com',count:'240',page:'1',sold:'true',includeCompleteListing:'true',exactMatch:'true',hydrateBoa:'false'}).toString();

@@ -69,6 +69,7 @@ export async function validateVariantRuntimeConfiguration({ enabled, client, wor
     ${worker ? '' : `AND has_table_privilege(current_user,'atlas_manual_connected.variant_contribution','INSERT')`} AND
     has_function_privilege(current_user,'atlas_manual_connected.display_owner_version(uuid)','EXECUTE')
     ${worker ? `AND has_function_privilege(current_user,'atlas_manual_connected.display_owner_current(uuid,integer)','EXECUTE')
+      AND has_function_privilege(current_user,'atlas_manual_connected.read_grading_photo(uuid,uuid,text,text)','EXECUTE')
       AND (SELECT bool_and(has_column_privilege(current_user,'atlas_manual_connected.variant_job',c,'UPDATE')) FROM unnest(ARRAY['state','attempts','claim_id','lease_until','dispatch_id','catalog','catalog_hash','response','response_hash','result','result_hash','code','available_at','updated_at','audit']) c)
       AND (SELECT bool_and(has_column_privilege(current_user,'atlas_manual_connected.variant_contribution',c,'UPDATE')) FROM unnest(ARRAY['state','attempts','claim_id','lease_until','receipt','receipt_hash','reference_packet','reference_packet_hash','code','available_at']) c)
       AND (SELECT rolconnlimit=1 FROM pg_roles WHERE rolname=current_user)` : ''} AS allowed`);

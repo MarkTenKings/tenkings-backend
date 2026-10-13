@@ -410,13 +410,12 @@ test('catalog choice can be confirmed during reference processing without loaded
  assert.equal(f.button('Confirm selected identity').props.disabled,false);f.button('Confirm selected identity').props.onClick();await flush();f.render();
  assert.equal(f.writes.length,1);assert.equal(f.writes[0].decision,'SELECTED');f.dispose();
 });
-test('ready clean presentation defaults on, switches to original, and detailed comparison uses the original',async()=>{
- const f=fixture();f.props.geometry=null;f.props.images={FRONT:{original:{url:'original'},clean:{url:'clean',generative:true}},BACK:{original:{url:'back'}}};await flush();f.render();
- assert.equal(f.button('Clean').props['aria-pressed'],true);assert.match(f.text(),/AI generated/);
- const image=()=>f.find(node=>node.type==='img'&&String(node.props.alt).includes('card photograph'))[0];assert.equal(image().props.src,'blob:clean');
- f.button('Original').props.onClick();f.render();assert.equal(image().props.src,'blob:verified');assert.equal(f.button('Original').props['aria-pressed'],true);
- f.button('Clean').props.onClick();f.render();f.find(node=>node.type==='button'&&node.props['aria-label']==='Enlarge your uploaded photograph')[0].props.onClick({currentTarget:{}});f.render();
- const comparison=f.find(node=>node.type===f.exports.Comparison)[0];assert.equal(comparison.props.photo,'blob:verified');assert.doesNotMatch(f.text(),/unchanged pixels/);f.dispose();
+test('variant selection and detailed comparison share only the clean grading image',async()=>{
+ const f=fixture();f.props.geometry=null;f.props.images={FRONT:{original:{url:'grading-clean'}},BACK:{original:{url:'back-grading-clean'}}};await flush();f.render();
+ assert.equal(f.button('Clean'),undefined);assert.equal(f.button('Original'),undefined);assert.match(f.text(),/Background-removed grading image/);
+ const image=f.find(node=>node.type==='img'&&String(node.props.alt).includes('background-removed grading image'))[0];assert.equal(image.props.src,'blob:verified');
+ f.find(node=>node.type==='button'&&node.props['aria-label']==='Enlarge your grading image')[0].props.onClick({currentTarget:{}});f.render();
+ assert.equal(f.find(node=>node.type===f.exports.Comparison)[0].props.photo,'blob:verified');f.dispose();
 });
 
 test('source-supported sports season alias stays in this card printings without merging unrelated years',()=>{

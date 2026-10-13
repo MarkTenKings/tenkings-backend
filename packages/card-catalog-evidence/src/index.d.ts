@@ -94,7 +94,7 @@ export function observationRetryDisposition(existingReceipt: ProposalReceipt | n
 
 export const VARIANT_REVIEW_VERSION: 'atlas-variant-catalog/v1';
 export const VARIANT_CATALOG_REVISION: 'variant-catalog-2026-10-09-v1';
-export const VARIANT_REVIEW_LIMITS: Readonly<{ candidates: 48; imagesPerCandidate: 4; diagnostics: 16; bytes: number }>;
+export const VARIANT_REVIEW_LIMITS: Readonly<{ imagesPerCandidate: 4; diagnostics: 16; bytes: number }>;
 export const VARIANT_WARNING_CODES: readonly string[];
 export const VARIANT_PROBLEM_CODES: readonly string[];
 export type VariantIdentity = { category: Category; name: string | null; year: string | null; setName: string | null;

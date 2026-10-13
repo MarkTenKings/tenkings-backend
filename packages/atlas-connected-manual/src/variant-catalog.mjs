@@ -98,7 +98,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       const prepared = prepareVariantCatalogObservation(payload);
       return bounded(signal, timeoutMs, active => catalogClient.submit(prepared.proposal, active));
     },
-    async prepare(input, { signal, executeListingSource, priorCatalog = null } = {}) {
+    async prepare(input, { signal, executeListingSource, priorCatalog = null, onCatalog = null } = {}) {
       const localOnly = input.localOnly === true;
       // Initial preparation has a durable browser request ID, but it still
       // reuses ordinary paid journals. Only an explicit refresh of a prior
@@ -139,6 +139,11 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
       if(!listingProvider||base.problems.includes('IDENTITY_INCOMPLETE'))return base;
       const identity=normalizeVariantIdentity(input.identity),problems=base.problems.filter(p=>!['NO_VARIANTS_FOUND','NO_DIAGNOSTIC_PHOTOS'].includes(p));
       let candidates=base.candidates,truncated=base.coverage.metadata==='truncated';const referencePhotos=new Map((priorCatalog?.referencePhotos??[]).map(p=>[p.sha256,p]));let labelPool=referencePhotos.size>0;
+      const checkpoint=async()=>{
+        if(onCatalog)await onCatalog(createVariantReviewSnapshot({identity,candidates,problems:[...problems,'REFERENCE_ACQUISITION_PENDING'],truncated,
+          capturedAt:new Date(now()).toISOString(),...(labelPool?{referencePhotos:[...referencePhotos.values()]}:{})}));
+      };
+      await checkpoint();
       // Metadata discovery has its own timeout. Paid listing work follows the
       // worker lease; image reads have their own bounded transport/byte checks.
       if(typeof executeListingSource!=='function')problems.push('LISTING_SOURCE_NOT_CONFIGURED');
@@ -201,6 +206,7 @@ export function createVariantCatalogService({ catalogClient = null, providers, c
               await revisitReadings(evidence.referencePhotos);
               // Retain every saved photograph; local-only refresh never buys OCR.
               for(const image of evidence.referencePhotos)if(!referencePhotos.has(image.sha256))referencePhotos.set(image.sha256,image);
+              await checkpoint();
             }
         };
         // R8 libraries contained only matched photos. Read every current

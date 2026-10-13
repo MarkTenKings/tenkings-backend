@@ -84,7 +84,6 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
       if (name === './ApprovedReportTour.jsx') return modules.ApprovedReportTour;
       if (name === '../../atlas-report-view/src/film-selector.mjs') return filmSelector;
       if (name === './whole-card-layout.mjs') return wholeCardLayout;
-      if (name === './report-presentation-image.mjs') return { usePresentationImage: () => null };
       if (name === './FindingCallouts.jsx') return modules.FindingCallouts;
       if (name === './ApprovedWholeCard.jsx') return modules.ApprovedWholeCard;
       if (name === './PublicEvidenceExplorer.jsx') return modules.PublicEvidenceExplorer;

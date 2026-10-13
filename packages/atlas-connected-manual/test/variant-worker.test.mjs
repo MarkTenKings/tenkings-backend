@@ -7,8 +7,8 @@ import {prepareVariantLabelRequest} from '../src/variant-photo-provider.mjs';
 import {variantReviewStatus} from '../src/variant-service.mjs';
 import {variantBinding,variantJobKey,variantSelectedIdentity,validateVariantAction,variantJobGrantSQL} from '../src/variant-job-store.mjs';
 const hash='a'.repeat(64),card={cardId:'16b96563-96ac-4e94-8337-2f1999271aa1',revision:4,draft:{source:{sourceHash:hash},identityRevision:1,identity:{cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:null,layoutType:'POKEMON'}}};
-async function fixture({count=1,failPrepare=false,failProvider=false,failProjection=false,loseResponse=false,images=true}={}){
- const snapshot=labelCatalog({photos:images?1:0}),rows=Array.from({length:count},(_,n)=>({key:String(n),state:'QUEUED',attempts:0,input:{...variantBinding(card)}}));let sends=0,prepares=0,maximum=0,active=0,discoveries=0;
+async function fixture({count=1,failPrepare=false,failProvider=false,failProjection=false,loseResponse=false,images=true,photos=null,retainedReadings=0}={}){
+ const snapshot=labelCatalog({photos:photos??(images?1:0)}),rows=Array.from({length:count},(_,n)=>({key:String(n),state:'QUEUED',attempts:0,labels:snapshot.referencePhotos.slice(0,retainedReadings).map(p=>({sha256:p.sha256})),input:{...variantBinding(card)}}));let sends=0,prepares=0,maximum=0,active=0,discoveries=0;
  const store={async discover(){discoveries++;},async claim(){const r=rows.find(r=>r.state==='QUEUED');if(!r)return null;r.state='RUNNING';r.attempts++;r.claim_id=String(r.attempts);return structuredClone(r);},async renew(){return true;},async saveCatalog(j,c){rows[+j.key].catalog=c;return true;},
   async codexReadings(j){return {readings:rows[+j.key].labels??[]};},
   async labelSource(j,request,evidence){const r=rows[+j.key];if(r.label_response)return {state:'REUSED'};if(r.reserved)return {state:'UNKNOWN'};if(!evidence)return {state:'MISSING'};r.reserved=true;r.evidence=evidence;return {state:'RESERVED',reservation:{job:j,request}};},
@@ -23,7 +23,7 @@ async function fixture({count=1,failPrepare=false,failProvider=false,failProject
 }
 test('cold construction; own bounded worker processes every card independent of browser and grading limiter',async()=>{const f=await fixture({count:17});assert.equal(f.sends(),0);assert.equal(f.discoveries(),0);while(f.rows.some(r=>r.state==='QUEUED'))await f.worker.drainOnce();assert.equal(f.sends(),17);assert(f.maximum()<=2);assert(f.rows.every(r=>r.state==='READY'&&r.label_response&&r.evidence.requestSha256===hash));});
 test('preflight image failure does not record paid dispatch; unavailable catalog produces truthful READY without model',async()=>{const f=await fixture({failPrepare:true});await f.worker.drainOnce();assert.equal(f.sends(),0);assert.equal(f.rows[0].dispatch_id,undefined);const g=await fixture({images:false});await g.worker.drainOnce();assert.equal(g.sends(),0);assert.equal(g.rows[0].result.suggestion.candidateId,null);});
-test('uncertain send and lost response acknowledgement never repeat provider dispatch',async()=>{for(const options of[{failProvider:true},{loseResponse:true}]){const f=await fixture(options);await f.worker.drainOnce();await f.worker.drainOnce();assert.equal(f.sends(),1);assert.equal(f.rows[0].state,'UNKNOWN');}});
+test('uncertain send and lost response acknowledgement never repeat provider dispatch',async()=>{for(const options of[{failProvider:true},{loseResponse:true}]){const f=await fixture(options);await f.worker.drainOnce();await f.worker.drainOnce();assert.equal(f.sends(),1);assert.equal(f.rows[0].state,'READY');assert.equal(f.rows[0].result.catalog.referencePhotos.length,1);assert.equal(f.rows[0].result.labelProcessing.unread,1);}});
 test('saved raw response supports local-only projection recovery with immutable request evidence',async()=>{const f=await fixture({failProjection:true});await f.worker.drainOnce();assert.equal(f.rows[0].state,'QUEUED');const response=f.rows[0].label_response;await f.worker.drainOnce();assert.equal(f.sends(),1);assert.equal(f.rows[0].state,'READY');assert.deepEqual(f.rows[0].label_response,response);});
 test('dedup binds source, identity revision/hash and policy; manual unknown finish is never guessed',()=>{const b=variantBinding(card);assert.equal(variantJobKey(b),variantJobKey({...b}));assert.notEqual(variantJobKey(b),variantJobKey({...b,identityRevision:2}));const action={type:'VARIANT_CONFIRM',...Object.fromEntries(['sourceHash','identityRevision','identityHash'].map(k=>[k,b[k]])),jobId:hash,resultHash:hash,decision:'SELECTED',candidateId:candidate.candidateId,reviewed:true};validateVariantAction(action);assert.equal(variantSelectedIdentity(card,action,{catalog}).parallel,'Reverse Holo');assert.throws(()=>variantSelectedIdentity(card,action,{catalog:{candidates:[{...candidate,parallel:null}]}}),{code:'VARIANT_FINISH_UNRESOLVED'});assert.throws(()=>validateVariantAction({...action,decision:'MANUAL',candidateId:null,manualParallel:'',observedFeatures:'foil visible'}));});
 test('status exposes only current binding, saved result and explicit human confirmation; worker gets no confirmation INSERT',()=>{const s=variantReviewStatus({card,job:null,confirmation:null,approvalReady:false,reason:'VARIANT_CONFIRMATION_REQUIRED'});assert.equal(s.state,'NOT_REQUESTED');assert.equal(s.revision,4);assert.equal(s.sourceHash,hash);assert.equal(s.approvalReady,false);assert.equal(s.response,undefined);assert(!/INSERT ON atlas_manual_connected.variant_confirmation/.test(variantJobGrantSQL('atlas_variant_worker',{worker:true})));assert.throws(()=>variantJobGrantSQL('unsafe"role'));});
@@ -71,4 +71,15 @@ for(const scenario of ['success','uncertain','saved_acknowledgement_lost','retai
  assert.equal(sourceCalls,['retained','priority'].includes(scenario)?0:1);
  if(scenario==='priority'){assert.deepEqual(events,['deferred']);assert.equal(finished,undefined);}
  else{assert.equal(outcome.state,{success:'SAVED',uncertain:'UNKNOWN',saved_acknowledgement_lost:'UNKNOWN',retained:'REUSED'}[scenario]);assert(finished.result);}
+});
+
+
+test('Nick-shaped 240-photo catalog remains reviewable with32 saved readings after an uncertain next batch',async()=>{
+ const f=await fixture({photos:240,retainedReadings:32,failProvider:true});
+ await f.worker.drainOnce();await f.worker.drainOnce();
+ assert.equal(f.sends(),1,'unknown paid batch is not dispatched again');
+ assert.equal(f.rows[0].state,'READY');assert.equal(f.rows[0].result.catalog.referencePhotos.length,240);
+ assert.equal(f.rows[0].result.referenceLabels.readings.length,32);
+ assert.deepEqual(f.rows[0].result.labelProcessing,{total:240,read:32,unread:208});
+ assert.equal(f.rows[0].result.suggestion.candidateId,null);
 });

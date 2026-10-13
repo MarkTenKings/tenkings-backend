@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "manufacturer-product-aliases/v1",
+  "complete": false,
+  "products": [
+    {
+      "manufacturer": "Topps",
+      "sport": "basketball",
+      "year": "2025-26",
+      "setName": "2025-26 Topps Basketball",
+      "checklistSha256": "4cdf0c5061e930e4a9d881e7dd1b552e84b06d5c163f330cba8fb12aaa312343",
+      "aliases": [
+        "Flagship",
+        "Topps Flagship",
+        "Topps Flagship Basketball"
+      ],
+      "source": {
+        "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2025_26_Topps_Basketball_Odds.pdf?v=1759325369",
+        "sha256": "43f0e9ba0c6426915442b6a60d2357e5f23eed1256d8c8cc94f6bf64871fcf5c",
+        "linkedFrom": "https://www.topps.com/pages/odds",
+        "byteCount": 260205,
+        "locator": "page:1; header NBA-FLAGSHIP 2025-26"
+      }
+    }
+  ]
+}

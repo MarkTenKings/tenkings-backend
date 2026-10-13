@@ -42,8 +42,8 @@ function deferred() {
 // stores. Transactions serialize, roll back on errors, and enforce row CAS and
 // unique effect claims. They do not establish PostgreSQL or staff-session proof.
 async function fixture({ category = 'Sports cards', values = {}, pauseModel = false,
-  engineVersion=V2,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false,
-  clock=()=>Date.now(), limited, readCleanPhoto=null, isCleanPhotoPrepared=null } = {}) {
+  engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false,
+  clock=()=>Date.now(), limited, readGradingPhoto=null, isCleanPhotoPrepared=null } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID(), edit: true };
   const sourceHash = digest('original synthetic pair'), objects = new Map();
   const db = { attempts: new Map(), details: new Map(), actions: new Map(), events: new Map() };
@@ -154,13 +154,15 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
     await intakeRepository.authorizeInTransaction(tx, principal, id);
     return { card: { cardId, ready: true, sourceHash: pair.sourceHash } };
   } };
-  const storage = { async readDecodedFrame(args) {
+  const storage = { async readDecodedFrame() { assert.fail('Uploaded pixels must never enter identification'); } };
+  readGradingPhoto ??= async ({cardId:readCardId,uploadId,side,photo,signal}) => {
+    assert.equal(readCardId,cardId); assert.equal(uploadId,pair.sides[side].upload.uploadId);
+    const args={frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan};
     calls.reads.push(clone(args));
-    const side = args.frame.side;
     assert.deepEqual(args, { frame: pair.sides[side].photo.workingFrame,
       original: pair.sides[side].photo.original, decodePlan: pair.sides[side].photo.decodePlan });
-    return { bytes: Buffer.from(workingBytes[side]) };
-  } };
+    return { photo:{...photo,workingFrame:{...photo.workingFrame,schemaVersion:3,generation:{sourceFrame:photo.workingFrame,recipeHash:digest('fixture generated'),model:'fixture-image-model',promptVersion:'fixture-v1'}}},bytes:Buffer.from(workingBytes[side]) };
+  };
   const artifactStore = createManualArtifactStore({ transport: {
     async putIfAbsent(value) {
       assert.equal(objects.has(value.key), false, 'immutable fixture keys must be create-only');
@@ -201,7 +203,7 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
     },
   });
   const details = createDetailsStore({ boundary, intakeRepository });
-  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, clock, limited, readCleanPhoto, isCleanPhotoPrepared, ...(engineVersion?{engineVersion}:{}) };
+  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, clock, limited, readGradingPhoto, isCleanPhotoPrepared, ...(engineVersion?{engineVersion}:{}) };
   const identification = createIdentification(config);
   return { cardId, staff, sourceHash, originalPair, workingBytes, objects, db, calls, artifacts, details,
     identification, proposed, modelEntered, modelRelease,
@@ -294,9 +296,9 @@ test('shutdown admission does not cancel an identification model already dispatc
 
 test('new sports attempt transports V2 OCR envelopes and retains exact request, response and original-frame evidence', async () => {
   const f = await fixture(), result = await f.identification.run(f.staff, f.cardId);
-  assert.equal(result.state, 'COMPLETE'); assert.equal(result.result.provenance.engine_version, V2);
+  assert.equal(result.state, 'COMPLETE'); assert.equal(result.result.provenance.engine_version, ATLAS_IDENTIFICATION_LAYOUT_VERSION);
   const saved = JSON.parse(f.currentRow().input);
-  assert.equal(saved.engineVersion, V2); assert.equal(saved.input.subject.revision, f.sourceHash);
+  assert.equal(saved.engineVersion, ATLAS_IDENTIFICATION_LAYOUT_VERSION); assert.equal(saved.input.subject.revision, f.sourceHash);
   const ocr = f.calls.http.filter(call => call.url.hostname === 'vision.googleapis.com');
   assert.equal(ocr.length, 2); assert.equal(f.calls.http.length, 3);
   for (const call of ocr) {
@@ -310,7 +312,7 @@ test('new sports attempt transports V2 OCR envelopes and retains exact request, 
   const requests = f.artifactsOf('IDENTIFICATION_REQUEST');
   assert.equal(requests.length, 3);
   for (const evidence of requests) {
-    assert.equal(evidence.engineVersion, V2); assert.equal(evidence.request, undefined);
+    assert.equal(evidence.engineVersion, ATLAS_IDENTIFICATION_LAYOUT_VERSION); assert.equal(evidence.request, undefined);
     assert.equal(digest(evidence.requestJson), evidence.requestHash);
     const request = JSON.parse(evidence.requestJson);
     const event = f.db.events.get(`${result.attemptId}:${evidence.stage}:DISPATCH`);
@@ -327,7 +329,7 @@ test('new sports attempt transports V2 OCR envelopes and retains exact request, 
   const responses = f.artifactsOf('IDENTIFICATION_RESPONSE');
   assert.equal(responses.length, 3); assert.equal(f.calls.receipts.length, 3);
   for (const response of responses) {
-    assert.equal(response.engineVersion, V2); assert.equal(response.status, 200);
+    assert.equal(response.engineVersion, ATLAS_IDENTIFICATION_LAYOUT_VERSION); assert.equal(response.status, 200);
     assert.equal(digest(Buffer.from(response.base64, 'base64')), response.sha256);
   }
   assert.deepEqual(responses.find(value => value.stage === 'MODEL').usage, { input_tokens: 120, output_tokens: 80 });
@@ -335,7 +337,8 @@ test('new sports attempt transports V2 OCR envelopes and retains exact request, 
   for (const image of images) {
     const side = image.original.side;
     assert.deepEqual(image.original, f.originalPair.sides[side].photo.original);
-    assert.deepEqual(image.workingFrame, f.originalPair.sides[side].photo.workingFrame);
+    assert.equal(image.workingFrame.schemaVersion,3);
+    assert.deepEqual(image.workingFrame.generation.sourceFrame,f.originalPair.sides[side].photo.workingFrame);
     assert.equal(image.mime, 'image/jpeg');
     assert.notEqual(digest(Buffer.from(image.base64, 'base64')), digest(f.workingBytes[side]));
   }
@@ -370,14 +373,14 @@ test('Pokémon V2 uses one model call with dependent Front detail; publisher and
   assert.equal(digest(parent), savedInput.photos.front.sha256);
   const adopted = await f.details.read(f.staff, f.cardId);
   assert.equal(adopted.details.profile, 'POKEMON'); assert.equal(adopted.details.fields.manufacturer, 'The Pokémon Company');
-  assert.equal(adopted.details.fields.variant, 'Holo'); assert.equal(adopted.details.parallel, '');
+  assert.equal(adopted.details.fields.variant, 'Holo'); assert.equal(adopted.details.parallel, 'Holo');
   assert.equal(adopted.details.fields.card_number.length, 80);
   assert.throws(() => gradingIdentity(adopted.details), { name: 'SpeedsterIdentityValidationError' });
   const reviewed = await f.save({ layoutType: 'POKEMON' }), identity = gradingIdentity(reviewed.details);
   assert.equal(identity.cardName, 'Pikachu'); assert.equal(identity.cardNumber.length, 80);
   assert.equal(identity.manufacturer,'The Pokémon Company');
   for (const forbidden of ['playerName', 'insert', 'variant']) assert.equal(Object.hasOwn(identity, forbidden), false);
-  assert.equal(identity.parallel, null);
+  assert.equal(identity.parallel, 'Holo');
 });
 
 test('in-flight staff edits and explicit clears survive V2 result adoption and recovered COMPLETE replay', async () => {
@@ -526,7 +529,7 @@ test('core model timeout while request-artifact save is pending fences late MODE
 
     // Exercise the actual core's unchanged 25-second model deadline. The
     // adapter receives no timeout option, injected engine or cancellation hook.
-    t.mock.timers.tick(25001);
+    t.mock.timers.tick(ATLAS_IDENTIFICATION_XHIGH_POLICY.deadlines.model+1);
     const result = await running;
     assert.equal(result.state, 'UNKNOWN'); assert.equal(f.currentRow().state, 'UNKNOWN');
     assert.equal(f.currentRow().result, null); assert.equal(f.db.details.size, 0);
@@ -553,7 +556,7 @@ test('core timeout after MODEL dispatch retains its late raw response receipt wi
     const row = f.currentRow(), dispatch = f.db.events.get(`${row.id}:MODEL:DISPATCH`);
     assert.ok(dispatch); assert.equal(f.db.events.has(`${row.id}:MODEL:RESPONSE`), false);
 
-    t.mock.timers.tick(25001);
+    t.mock.timers.tick(ATLAS_IDENTIFICATION_XHIGH_POLICY.deadlines.model+1);
     const result = await running;
     assert.equal(result.state, 'UNKNOWN'); assert.equal(f.currentRow().state, 'UNKNOWN');
     assert.equal(f.currentRow().result, null);
@@ -566,8 +569,8 @@ test('core timeout after MODEL dispatch retains its late raw response receipt wi
     assert.equal(receipt.request_hash, dispatch.request_hash);
     const { ref } = JSON.parse(receipt.evidence);
     const response = await f.artifacts.read(ref, { cardId: f.cardId, kind: 'IDENTIFICATION_RESPONSE', sourceHash: f.sourceHash });
-    const expected = raw(modelReply(f.proposed));
-    assert.equal(response.engineVersion, V2); assert.equal(response.status, 200);
+    const expected = raw(modelReply({...f.proposed,layout_type:{value:null,confidence:'unknown',evidence:null}}));
+    assert.equal(response.engineVersion, ATLAS_IDENTIFICATION_LAYOUT_VERSION); assert.equal(response.status, 200);
     assert.deepEqual(Buffer.from(response.base64, 'base64'), expected); assert.equal(response.sha256, digest(expected));
     assert.deepEqual(response.usage, { input_tokens: 120, output_tokens: 80 });
     assert.equal(f.currentRow().state, 'UNKNOWN'); assert.equal(f.currentRow().result, null);
@@ -655,7 +658,7 @@ test('a429 receipt retained before process loss closes the old RUNNING claim wit
   // Reproduce the persisted snapshot immediately after RESPONSE and before the
   // original process's terminal update; retain all immutable request evidence.
   Object.assign(f.currentRow(),{state:'RUNNING',finished_at:null,error:null});
-  now+=120001;let result=await f.restart().runMachine(f.staff,f.cardId);
+  now+=ATLAS_IDENTIFICATION_XHIGH_POLICY.runningWindowMs+1;let result=await f.restart().runMachine(f.staff,f.cardId);
   assert.equal(result.state,'RETRY_WAIT');assert.equal(result.retryAfterMs,30000);assert.equal(f.calls.http.length,3);
   now+=30000;f.setModel(200);result=await f.restart().runMachine(f.staff,f.cardId);
   assert.equal(result.state,'COMPLETE');assert.equal(f.calls.http.length,4);
@@ -668,7 +671,7 @@ test('machine retries never dispatch for unknown, accepted, unproven, or noncapa
     await f.identification.runMachine(f.staff,f.cardId);
     if(kind==='missing-model-response')f.db.events.delete(`${f.currentRow().id}:MODEL:RESPONSE`);
     if(kind==='accepted')Object.assign(f.currentRow(),{state:'RUNNING',finished_at:null,result:null,error:null});
-    now+=180000;const result=await f.restart().runMachine(f.staff,f.cardId);
+    now+=ATLAS_IDENTIFICATION_XHIGH_POLICY.runningWindowMs+1;const result=await f.restart().runMachine(f.staff,f.cardId);
     assert.equal(result.state,'UNKNOWN');assert.equal(f.calls.http.length,3);assert.equal(f.db.attempts.size,1);
   });
 });
@@ -756,7 +759,7 @@ test('a timed-out child claim retains same-action recovery and cannot dispatch a
   const command=retryInput(f);f.setModel(200);t.mock.timers.enable({apis:['setTimeout']});
   try{
     const pending=f.identification.retry(f.staff,f.cardId,command);await f.claimEntered.promise;
-    t.mock.timers.tick(25001);
+    t.mock.timers.tick(ATLAS_IDENTIFICATION_XHIGH_POLICY.deadlines.model+1);
     await assert.rejects(pending,{status:503,code:'IDENTIFICATION_RETRY_CLAIM_UNCERTAIN'});
     f.claimRelease.resolve();await nextTurn();
     const replay=await f.identification.retry(f.staff,f.cardId,command);
@@ -903,28 +906,19 @@ test('ATLAS layout attempt credit recovery reuses the exact augmented request an
  await f.restart().retry(f.staff,f.cardId,command);assert.equal(f.calls.http.length,4);
 });
 
-test('production default selects the ATLAS layout version while a completed historical V2 result replays unchanged',async()=>{
- const fresh=await fixture({engineVersion:null});const current=await fresh.identification.run(fresh.staff,fresh.cardId);assert.equal(current.state,'COMPLETE');assert.equal(current.result.provenance.engine_version,ATLAS_IDENTIFICATION_LAYOUT_VERSION);assert.equal(current.result.layout.value,null);
- const historical=await fixture(),prior=await historical.identification.run(historical.staff,historical.cardId);assert.equal(prior.result.provenance.engine_version,V2);
- assert.deepEqual((await historical.restartWithDefault().run(historical.staff,historical.cardId)).result,prior.result);assert.equal(historical.calls.http.length,3);
-});
-
-for(const category of ['Sports cards','Pokémon'])test(`ATLAS xhigh changes only its versioned model policy for ${category}, retaining exact photos and shared descriptive rules`,async()=>{
- const legacy=await fixture({engineVersion:ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,category});
+for(const category of ['Sports cards','Pokémon'])test(`current generated-image identification uses Astra xhigh for ${category}`,async()=>{
  const current=await fixture({engineVersion:null,category});
- const prior=await legacy.identification.run(legacy.staff,legacy.cardId),result=await current.identification.run(current.staff,current.cardId);
- assert.equal(prior.state,'COMPLETE');assert.equal(result.state,'COMPLETE');
- const request=f=>f.calls.http.find(call=>call.url.hostname==='api.openai.com').body;
- const expected=clone(request(legacy));expected.reasoning={effort:'xhigh'};expected.max_output_tokens=32768;expected.text.format.name='atlas_card_details_layout_v2';
- assert.deepEqual(request(current),expected);
- const images=request(current).input[0].content.filter(part=>part.type==='input_image');
+ const result=await current.identification.run(current.staff,current.cardId);assert.equal(result.state,'COMPLETE');
+ const request=current.calls.http.find(call=>call.url.hostname==='api.openai.com').body;
+ assert.deepEqual(request.reasoning,{effort:'xhigh'});assert.equal(request.max_output_tokens,32768);
+ assert.equal(request.text.format.name,'atlas_card_details_layout_v3');
+ const images=request.input[0].content.filter(part=>part.type==='input_image');
  assert.equal(images.length,category==='Pokémon'?3:2);assert(images.every(part=>part.detail==='high'));
- assert.equal(result.result.provenance.reasoning_effort,'xhigh');assert.equal(prior.result.provenance.reasoning_effort,'low');
- assert.equal(result.result.provenance.engine_version,'atlas-identification-layout-v2');
- assert.equal(JSON.parse(current.currentRow().input).engineVersion,'atlas-identification-layout-v2');
+ assert.equal(result.result.provenance.reasoning_effort,'xhigh');
+ assert.equal(result.result.provenance.engine_version,ATLAS_IDENTIFICATION_LAYOUT_VERSION);
+ assert.match(request.instructions,/copyright year as a medium-confidence year proposal/);
+ assert.doesNotMatch(request.instructions,/A copyright year alone, a player statistics year/);
  assert.equal(current.calls.http.length,3);
- assert.deepEqual((await legacy.restartWithDefault().run(legacy.staff,legacy.cardId)).result,prior.result);
- assert.equal(legacy.calls.http.length,3,'an existing v1 completion is never re-identified to adopt xhigh');
 });
 
 test('xhigh identification survives the old 25s model, 45s provenance and 120s status limits without duplicate dispatch',async t=>{
@@ -977,17 +971,9 @@ test('a manual xhigh retry that outlives the frontend socket reconciles its exac
  }finally{f.modelRelease.resolve();t.mock.timers.reset();}
 });
 
-test('new default recovers a proven historical ATLAS layout v1 refusal with identical low-reasoning request bytes',async()=>{
- const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,httpStatus:429,modelError:exhausted});
- const first=await f.identification.run(f.staff,f.cardId);assert.equal(first.state,'UNKNOWN');f.setModel(200);
- const command={actionId:randomUUID(),expectedAttemptId:first.attemptId,sourceHash:f.sourceHash};
- const result=await f.restartWithDefault().retry(f.staff,f.cardId,command);assert.equal(result.state,'COMPLETE');
- assert.equal(result.result.provenance.engine_version,ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION);
- assert.equal(result.result.provenance.reasoning_effort,'low');
- const models=f.calls.http.filter(call=>call.url.hostname==='api.openai.com');
- assert.equal(models.length,2);assert.equal(models[0].init.body,models[1].init.body);
- assert.equal(models[1].body.max_output_tokens,2400);assert.deepEqual(models[1].body.reasoning,{effort:'low'});
- await f.restartWithDefault().retry(f.staff,f.cardId,command);assert.equal(f.calls.http.length,4);
+test('retired low-reasoning execution policies cannot create new attempts',async()=>{
+ for(const engineVersion of [V2,ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION,'atlas-identification-layout-v2'])
+  await assert.rejects(fixture({engineVersion}),{code:'IDENTIFICATION_VERSION_UNSUPPORTED'});
 });
 
 test('ATLAS v2 result validation preserves real long timings and refuses cross-version, effort or timing drift',async()=>{
@@ -1003,12 +989,6 @@ test('ATLAS v2 result validation preserves real long timings and refuses cross-v
   value=>{value.provenance.stage_timings_ms.extra=1;},
  ]){const invalid=clone(result);change(invalid);assert.throws(()=>parseAtlasIdentificationResult(invalid,input));}
  assert.throws(()=>parseAtlasIdentificationResult(result,input,ATLAS_IDENTIFICATION_LEGACY_LAYOUT_VERSION));
-});
-
-test('production default reconstructs historical V2 credit recovery without adding a layout field or changing paid request bytes',async()=>{
- const f=await fixture({httpStatus:429,modelError:{type:'insufficient_quota',code:'credit_balance_exhausted',param:null}});const first=await f.identification.run(f.staff,f.cardId);f.setModel(200);
- const result=await f.restartWithDefault().retry(f.staff,f.cardId,{actionId:randomUUID(),expectedAttemptId:first.attemptId,sourceHash:f.sourceHash});assert.equal(result.state,'COMPLETE');assert.equal(result.result.provenance.engine_version,V2);assert.equal(result.result.layout,undefined);
- const requests=f.calls.http.filter(c=>c.url.hostname==='api.openai.com');assert.equal(requests.length,2);assert.equal(requests[0].init.body,requests[1].init.body);assert(!requests[1].body.text.format.schema.required.includes('layout_type'));
 });
 
 test('optional per-side mat edits preserve legacy records, identification, action replay and workspace fences', async () => {
@@ -1035,22 +1015,38 @@ test('optional per-side mat edits preserve legacy records, identification, actio
 });
 
 
-test('upfront generated clean views accompany originals and retry reuses exact retained auxiliary bytes', async()=>{
-  const bytes=await sharp({create:{width:24,height:32,channels:4,background:'#33445580'}}).png().toBuffer();
-  const cleanCalls=[];
-  const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,httpStatus:429,modelError:exhausted,
-    readCleanPhoto:async input=>{cleanCalls.push(input);return{bytes,sha256:digest(bytes),contentType:'image/png',width:24,height:32};}});
-  await f.identification.run(f.staff,f.cardId);
-  assert.equal(cleanCalls.length,2);assert(cleanCalls.every(call=>call.cardId===f.cardId&&call.uploadId));
-  const model=f.calls.http.find(call=>call.url.hostname==='api.openai.com');
-  const clean=model.body.input.filter(item=>item.content?.[0]?.text?.startsWith('ATLAS generated background-removed view:'));
-  assert.equal(clean.length,2);assert.equal(model.body.reasoning.effort,'xhigh');
-  assert.equal(f.artifactsOf('IDENTIFICATION_IMAGE').length,2,'original inputs remain retained');
-  const command=retryInput(f);f.setModel(200);
-  assert.equal((await f.restart().retry(f.staff,f.cardId,command)).state,'COMPLETE');
-  assert.equal(cleanCalls.length,2,'retry never reads a newer clean view');
-  const models=f.calls.http.filter(call=>call.url.hostname==='api.openai.com');
-  assert.equal(models[1].init.body,models[0].init.body);
+test('only generated pixels enter Vision and Astra; refused retries reuse exact saved generated bytes',async()=>{
+ const bytes=Object.fromEntries(await Promise.all(['FRONT','BACK'].map(async(side,i)=>[side,await sharp({create:{width:24,height:32,channels:4,background:i?'#112233ff':'#33445580'}}).png().toBuffer()])));
+ const cleanCalls=[];
+ const f=await fixture({httpStatus:429,modelError:exhausted,
+  readGradingPhoto:async input=>{cleanCalls.push(input);return{photo:{...input.photo,workingFrame:{schemaVersion:3,generation:{sourceFrame:input.photo.workingFrame}}},bytes:bytes[input.side]};}});
+ await f.identification.run(f.staff,f.cardId);
+ assert.equal(cleanCalls.length,2);assert(cleanCalls.every(call=>call.cardId===f.cardId&&call.uploadId));
+ assert.equal(f.calls.reads.length,0,'uploaded image reader is unused');
+ const model=f.calls.http.find(call=>call.url.hostname==='api.openai.com');
+ const images=model.body.input.flatMap(item=>item.content??[]).filter(item=>item.type==='input_image');
+ assert.equal(images.length,2);assert.equal(model.body.reasoning.effort,'xhigh');
+ const jpeg=await Promise.all(['FRONT','BACK'].map(async side=>(await sharp(bytes[side]).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer()).toString('base64')));
+ assert(images.every((image,i)=>image.image_url===`data:image/jpeg;base64,${jpeg[i]}`));
+ assert.deepEqual(f.calls.http.filter(call=>call.url.hostname==='vision.googleapis.com').map(call=>call.body.requests[0].image.content).sort(),jpeg.sort());
+ const command=retryInput(f);f.setModel(200);
+ assert.equal((await f.restart().retry(f.staff,f.cardId,command)).state,'COMPLETE');
+ assert.equal(cleanCalls.length,2,'retry never reads or regenerates a newer image');
+ const models=f.calls.http.filter(call=>call.url.hostname==='api.openai.com');assert.equal(models[1].init.body,models[0].init.body);
+});
+
+test('missing generated bytes never fall back to uploaded bytes or dispatch OCR',async()=>{
+ const f=await fixture({readGradingPhoto:async()=>null});
+ await assert.rejects(f.identification.run(f.staff,f.cardId),{code:'IDENTIFICATION_GENERATED_PHOTO_REQUIRED'});
+ assert.equal(f.calls.http.length,0);assert.equal(f.db.attempts.size,0);assert.equal(f.calls.reads.length,0);
+});
+
+test('Nick Kurtz printed Refractor survives identification adoption into the grading identity',async()=>{
+ const f=await fixture({values:{name:'Nick Kurtz',manufacturer:'Topps',set_name:'Bowman Chrome',card_number:'93',year:'2025',variant:'Refractor'},ocrText:'REFRACTOR 93 NICK KURTZ ©2025 THE TOPPS COMPANY'});
+ assert.equal((await f.identification.run(f.staff,f.cardId)).state,'COMPLETE');
+ const {details}=await f.details.read(f.staff,f.cardId);
+ assert.equal(details.parallel,'Refractor');assert.equal(gradingIdentity(details).parallel,'Refractor');
+ assert(!details.touched.includes('parallel'),'machine proposal is not a human decision');
 });
 
 test('queued upfront cutouts defer new identification without occupying a model attempt or buying calls',async()=>{

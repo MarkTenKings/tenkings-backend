@@ -117,7 +117,7 @@ function Comparison({ photo, reference, candidate, side, onClose }) {
     <p>Check the printed number, language, stamp and foil pattern against your physical card. Artwork alone does not confirm a finish.</p>
     <button type="button" aria-pressed={camera.scale > 1} onClick={() => setCamera(camera.scale > 1 ? fitCamera() : {...fitCamera(),scale:2})}>{camera.scale > 1 ? 'Fit both photos' : 'Enlarge both photos'}</button>
     {reference?.associationStatus === 'UNASSIGNED' && <p>This saved photograph has not been matched to a catalog printing. Inspect its label and details; opening it makes no variant selection.</p>}
-    <p>Scroll or pinch to zoom either photograph. Drag to inspect the same area in both.</p><div className={styles.compare}><figure><figcaption>Your saved photograph</figcaption><VariantPhotoPane camera={camera} setCamera={setCamera} label="Uploaded photograph zoom">{photo ? <img src={photo} alt="Your unchanged uploaded photograph" draggable={false}/> : <span>Photograph unavailable</span>}</VariantPhotoPane></figure>
+    <p>Scroll or pinch to zoom either photograph. Drag to inspect the same area in both.</p><div className={styles.compare}><figure><figcaption>Your saved photograph</figcaption><VariantPhotoPane camera={camera} setCamera={setCamera} label="Grading image zoom">{photo ? <img src={photo} alt="Your unchanged uploaded photograph" draggable={false}/> : <span>Photograph unavailable</span>}</VariantPhotoPane></figure>
       <figure><figcaption>{referenceLabel(reference)}</figcaption><VariantPhotoPane camera={camera} setCamera={setCamera} label="Reference photograph zoom"><ReferencePhoto image={reference} label={candidate?.label ?? 'Reference'} enlarged/></VariantPhotoPane>{reference?.labelReading && <p className={styles.labelReading}><strong>Visible card / label text</strong> {reference.labelReading.text}</p>}{referenceSource(reference, candidate, styles.comparisonSource)}</figure></div>
     {candidate?.diagnostics?.length > 0 && <ul>{candidate.diagnostics.map(cue => <li key={cue.id}>{cue.description}</li>)}</ul>}
   </dialog>;
@@ -130,7 +130,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   createClient = createVariantReviewClient, pollIntervalMs = 3000 }) {
   const [status, setStatus] = useState(null), [choice, setChoice] = useState(null), [unresolved, setUnresolved] = useState(null);
   const [pending, setPending] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [camera, setCamera] = useState(fitCamera), [photoView, setPhotoView] = useState('AUTO');
+  const [camera, setCamera] = useState(fitCamera);
   const [side, setSide] = useState('FRONT'), [comparison, setComparison] = useState(null), [reloadNeeded, setReloadNeeded] = useState(false);
   const [manual, setManual] = useState(null), [referencePermission, setReferencePermission] = useState(null);
   const [drafted, setDrafted] = useState(false), [previewId, setPreviewId] = useState(null), [variantFilter, setVariantFilter] = useState('');
@@ -140,11 +140,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   callbacks.current = { onGateChange, onSaved, onActivityChange, previewOnly };
   const front = useVerifiedImage(images?.FRONT?.original ?? (geometry?.sides?.FRONT ? geometryImage(geometry, 'FRONT', 'PHYSICAL', images) : null));
   const back = useVerifiedImage(images?.BACK?.original ?? (geometry?.sides?.BACK ? geometryImage(geometry, 'BACK', 'PHYSICAL', images) : null));
-  const cleanFront = useVerifiedImage(images?.FRONT?.clean?.generative ? images.FRONT.clean : null);
-  const cleanBack = useVerifiedImage(images?.BACK?.clean?.generative ? images.BACK.clean : null);
-  const originalPhoto = side === 'FRONT' ? front : back, cleanPhoto = side === 'FRONT' ? cleanFront : cleanBack;
-  const showClean = photoView !== 'ORIGINAL' && Boolean(cleanPhoto.url);
-  const photograph = showClean ? cleanPhoto : originalPhoto;
+  const photograph = side === 'FRONT' ? front : back;
   const matchesWorkspace = value => value?.sourceHash === sourceHash && value?.identityRevision === identityRevision
     && (revision === undefined || value.revision === revision);
   const current = matchesWorkspace(status);
@@ -167,7 +163,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   }
   useEffect(() => {
     const version = ++generation.current; lock.current = false; client.current = null;
-    setCamera(fitCamera()); setPhotoView('AUTO'); setStatus(null); setManual(null); setReferencePermission(null); setDrafted(false); setChoice(null); setUnresolved(null); setPending(null); setBusy(false); setError(''); setNotice(''); setReloadNeeded(false); setComparison(null);
+    setCamera(fitCamera()); setStatus(null); setManual(null); setReferencePermission(null); setDrafted(false); setChoice(null); setUnresolved(null); setPending(null); setBusy(false); setError(''); setNotice(''); setReloadNeeded(false); setComparison(null);
     if (!enabled) return;
     Promise.resolve().then(async () => {
       const owner = createClient({ cardId, staffId, storage: window.localStorage,
@@ -294,9 +290,8 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
 
     <p className={styles.photoHelp}>Scroll or pinch on either photo to zoom. Drag to pan. <button type="button" onClick={() => setCamera(fitCamera())}>Fit both photos</button></p>
     <div className={styles.layout}><div className={styles.original}>
-      <div className={styles.sideButtons} aria-label="Uploaded photograph side">{['FRONT','BACK'].map(value => <button key={value} type="button" aria-pressed={side === value} onClick={() => { setSide(value); setCamera(fitCamera()); }}>{value === 'FRONT' ? 'Front' : 'Back'}</button>)}</div>
-      {cleanPhoto.url && <div className={styles.sideButtons} aria-label="Card photograph view"><button type="button" aria-pressed={!showClean} onClick={() => { setPhotoView('ORIGINAL'); setCamera(fitCamera()); }}>Original</button><button type="button" aria-pressed={showClean} onClick={() => { setPhotoView('CLEAN'); setCamera(fitCamera()); }}>Clean</button></div>}
-      <figure><div className={styles.originalPhoto}><VariantPhotoPane camera={camera} setCamera={setCamera} label="Uploaded photograph zoom">{photograph.url ? <button type="button" className={styles.photoButton} onClick={event => compare(preview ?? {}, event)} aria-label="Enlarge your uploaded photograph"><img src={photograph.url} alt={`${showClean ? 'Generated clean view of your' : 'Your original'} ${side.toLowerCase()} card photograph`} draggable={false}/></button> : <span role="status">{photograph.error ? 'Saved photograph unavailable' : 'Verifying your saved photograph…'}</span>}</VariantPhotoPane></div><figcaption>{showClean ? 'Clean presentation · AI generated · use Original to inspect details' : 'Your original uploaded card'}</figcaption></figure>
+      <div className={styles.sideButtons} aria-label="Grading image side">{['FRONT','BACK'].map(value => <button key={value} type="button" aria-pressed={side === value} onClick={() => { setSide(value); setCamera(fitCamera()); }}>{value === 'FRONT' ? 'Front' : 'Back'}</button>)}</div>
+      <figure><div className={styles.originalPhoto}><VariantPhotoPane camera={camera} setCamera={setCamera} label="Grading image zoom">{photograph.url ? <button type="button" className={styles.photoButton} onClick={event => compare(preview ?? {}, event)} aria-label="Enlarge your grading image"><img src={photograph.url} alt={`${side.toLowerCase()} background-removed grading image`} draggable={false}/></button> : <span role="status">{photograph.error ? 'Saved photograph unavailable' : 'Verifying your saved photograph…'}</span>}</VariantPhotoPane></div><figcaption>Background-removed grading image</figcaption></figure>
       {(!front.url || !back.url) && onReloadImages && <button type="button" onClick={onReloadImages} disabled={busy}>Reload photographs</button>}
 
     </div><div className={styles.choices}>
@@ -332,6 +327,6 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     </fieldset>}
     {status?.refreshable === true && (!previewOnly || !drafted) && <div><p><button type="button" disabled={unavailable} onClick={() => void refresh()}>{drafted ? 'Discard unsaved choice and refresh reference library' : status.jobId === null ? 'Prepare references' : 'Refresh reference library'}</button></p>{drafted && <p className={styles.photoHelp}>This discards only your unsaved variant choice. Your saved variant and grading work stay unchanged.</p>}</div>}
     {error && <p className={styles.error} role="alert">{error}</p>}{(!status || stateText || error || reloadNeeded || pending) && <button type="button" disabled={busy} onClick={() => void check()}>Check saved matches</button>}
-    {comparison && <Comparison photo={originalPhoto.url} reference={variantReference(comparison, cardId, { artwork: false, result: status?.result })} candidate={comparison} side={side} onClose={() => { setComparison(null); comparisonOpener.current?.focus(); }}/>}
+    {comparison && <Comparison photo={photograph.url} reference={variantReference(comparison, cardId, { artwork: false, result: status?.result })} candidate={comparison} side={side} onClose={() => { setComparison(null); comparisonOpener.current?.focus(); }}/>}
   </section>;
 }

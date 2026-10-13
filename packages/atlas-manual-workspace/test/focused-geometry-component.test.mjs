@@ -33,6 +33,14 @@ test('rapid geometry starts on one side with both outlines and exactly one Appro
   assert.equal(f.nodes(n=>n.type==='input'&&n.props.type==='checkbox').length,0);assert.equal(f.nodes(n=>n.type==='button'&&text(n)==='Approve').length,1);
   assert.equal(f.has('Back is next'),true);
 });
+test('missing Astra printed proposal shows its exact observation and distinguishes the local guide',async()=>{
+ const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;
+ fixture.workspace.sides.FRONT.visualObservation={frameSha256:fixture.workspace.sides.FRONT.image.frameSha256,responseHash:'a'.repeat(64),model:'gpt-6-astra',reasoning:'xhigh',
+  physical:{outlineLocated:true,uncertainty:'LOW',observation:'Visible material edge.'},printed:{outlineLocated:false,uncertainty:'HIGH',observation:'Interrupted printed rails need review.'}};
+ const f=harness(fixture);await f.ready();
+ assert.ok(f.has('Astra · xhigh'));assert.ok(f.has('Printed border · no outline proposed'));assert.ok(f.has('Interrupted printed rails need review.'));
+ assert.ok(f.has('It was not returned by Astra.'));assert.ok(f.has('Uncertainty: high'));
+});
 test('the single Approve submits outer and inner adjustments in the source frame and retains them after failure',async()=>{
   const calls=[],f=harness({onApproveSide:async action=>{calls.push(structuredClone(action));throw new Error('save failed');}});await f.ready();
   const before=focus.focusedGeometryOutlines(f.props.workspace,'FRONT');f.nudge('FRONT physical edge Top left');f.nudge('FRONT printed border Top right');

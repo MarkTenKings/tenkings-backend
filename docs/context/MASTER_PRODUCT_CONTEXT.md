@@ -1,5 +1,8 @@
 # Ten Kings Master Product Context
 
+> Owner correction, 2026-10-12 (R15 repair in progress): OpenAI generative background removal must finish FIRST. The resulting Front and Back images are the sole card inputs to Google Vision OCR, Astra xhigh identification/geometry/defect analysis and human grading review. Geometry and findings bind to the generated image coordinates; uploaded originals are lineage only and may never be an automatic input/display fallback. This replaces earlier original-plus-auxiliary-clean guidance. R14 did not satisfy this requirement. The owner also authorized permanent removal of all ATLAS physical card records, including graded cards, before the next deployment; shared reference catalogs and unrelated Ten Kings data are excluded.
+
+
 ## Current ATLAS production R14 — October 12, 2026, 4:43 p.m. Pacific
 
 Application `331415b09a21b2cfc2be495f11853a7c35cabcce` is deployed; staff schema **83** / public **121**. Canonical staff/public/customer routing and both runtime services passed verification. Independent postflight at23:43:29UTC verified zero restarts/OOM and preservation of64manual cards,401actions,14approvals/publications, existing image and analysis records, and customer settings. The only historical-table change was three new ordinary local-only reference generations; old jobs and human choices remain byte-identical.

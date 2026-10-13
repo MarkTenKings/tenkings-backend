@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { randomUUID } from 'node:crypto';
-import { descriptorSha256 } from '@atlas/photo-core';
+import { descriptorSha256, parseDecodedFrame } from '@atlas/photo-core';
 import { digest, canonical } from '@atlas/manual-service/contract';
 import { parseReportImages } from '@atlas/report-view/report-images-contract';
 import { createReportImages, inspectReportImage } from '../src/report-images.mjs';
 import { createReportImageStore } from '../src/report-image-store.mjs';
 import { createReportImageProvider, REPORT_IMAGE_RECIPE, reportImageRecipeHash, reportImageJobKey } from '../src/report-image-provider.mjs';
-import { photo, working } from './review-display-fixture.mjs';
+import { photo, working } from './photo-fixture.mjs';
 
 const output = await sharp({ create: { width: 40, height: 56, channels: 4, background: '#00000000' } })
   .composite([{ input: await sharp({ create: { width: 30, height: 46, channels: 4, background: '#abcdef' } }).png().toBuffer(), left: 5, top: 5 }]).png().toBuffer();
@@ -21,7 +21,7 @@ test('provider makes one private-byte multipart edit with pinned recipe and audi
     assert.equal(options.body.get('model'), REPORT_IMAGE_RECIPE.model); assert.equal(options.body.get('background'), 'transparent');
     assert.equal(options.body.get('output_format'), 'png'); assert.equal(options.body.get('n'), '1');
     assert.equal(options.body.get('size'), '1104x1520'); assert.equal(options.body.get('quality'), 'xhigh');
-    assert.equal(options.body.get('prompt'), REPORT_IMAGE_RECIPE.prompt); assert.equal(REPORT_IMAGE_RECIPE.promptVersion, 'atlas-background-extraction-api-v2');
+    assert.equal(options.body.get('prompt'), REPORT_IMAGE_RECIPE.prompt); assert.equal(REPORT_IMAGE_RECIPE.promptVersion, 'atlas-background-grading-api-v3');
     assert.equal(options.headers['X-Client-Request-Id'], apiArgs.requestId);
     assert.deepEqual(Buffer.from(await options.body.get('image[]').arrayBuffer()), apiArgs.bytes);
     return Response.json({ data: [{ b64_json: output.toString('base64') }], usage: { input_tokens: 42, output_tokens: 7, secret: 'omit' } }, { headers: { 'x-request-id': 'req_fixture' } });
@@ -121,6 +121,8 @@ function fixture({ count = 1, failure = null, dispatch = true } = {}) {
   } };
   const storage = {
     async readDerivative({ descriptor: image }) { f.reads++; return { bytes: image.purpose === 'inspection' ? working.png : f.objects.get(image.raster.object.key) }; },
+    async writeGeneratedFrame({frame,original,decodePlan,bytes}) { parseDecodedFrame(frame,original,decodePlan); f.objects.set(frame.raster.object.key,Buffer.from(bytes)); return frame; },
+    async readDecodedFrame({frame}) { return {bytes:f.objects.get(frame.raster.object.key) ?? working.png}; },
     async writeDerivative({ descriptor: image, bytes }) { f.writes++; f.objects.set(image.raster.object.key, Buffer.from(bytes)); return image; },
   };
   f.service = createReportImages({ store, artifacts: {}, storage, provider, keyPrefix: 'test', concurrency: 2, onError: e => f.errors.push(e),
@@ -272,6 +274,26 @@ test('upfront preparation readiness defers only live image work and never starts
  const f=fixture(),input={cardId:'synthetic-card',uploadId:'synthetic-upload',side:'FRONT'};
  f.store.photoIntent=async()=>true;f.store.photo=async()=>f.jobs[0];
  for(const state of ['QUEUED','RUNNING','REQUESTED']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),false);}
- for(const state of ['READY','FAILED','UNKNOWN']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),true);}
- f.store.photoIntent=async()=>false;assert.equal(await f.service.isPhotoPrepared(input),true);assert.equal(f.generations,0);
+ for(const state of ['READY','FAILED','UNKNOWN']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),false);}
+ f.jobs[0].state='READY';f.jobs[0].result={media:{frame:{schemaVersion:3}}};assert.equal(await f.service.isPhotoPrepared(input),true);
+ f.store.photo=async()=>null;assert.equal(await f.service.isPhotoPrepared(input),false);assert.equal(f.generations,0);
+});
+
+
+test('generated grading source owns its exact pixels and coordinates with no failed-image fallback',async()=>{
+ const f=fixture(),job=f.jobs[0];job.sourceMedia.descriptor=job.sourceMedia.frame;
+ job.bound_original_sha256=photo.original.content.sha256;f.store.photo=async()=>job;
+ const input={cardId:'synthetic-card',uploadId:'synthetic-upload',side:'FRONT',photo};
+ await assert.rejects(f.service.readGradingPhoto(input),{code:'GRADING_IMAGE_PENDING'});
+ await f.service.tick();assert.equal(job.state,'READY');
+ const generated=await f.service.readGradingPhoto(input);
+ assert.deepEqual(generated.bytes,output);assert.equal(generated.photo.workingFrame.schemaVersion,3);
+ assert.deepEqual(generated.photo.workingFrame.raster.dimensions,{width:40,height:56});
+ assert.deepEqual(generated.photo.workingFrame.generation.sourceFrame,photo.workingFrame);
+ assert.deepEqual(generated.photo.workingFrame.sourceToFrame,[1,0,0,0,1,0,0,0,1]);
+ assert.notEqual(generated.photo.workingFrame.raster.content.sha256,photo.workingFrame.raster.content.sha256);
+ const changed=structuredClone(photo);changed.original.content.sha256='a'.repeat(64);
+ await assert.rejects(f.service.readGradingPhoto({...input,photo:changed}),{code:'GRADING_IMAGE_SOURCE_MISMATCH'});
+ job.state='FAILED';await assert.rejects(f.service.readGradingPhoto(input),{code:'GRADING_IMAGE_PENDING'});
+ assert.equal(f.generations,1);
 });

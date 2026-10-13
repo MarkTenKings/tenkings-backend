@@ -3,14 +3,14 @@ import { canonicalJson, CatalogContractError } from './index.mjs';
 
 export const VARIANT_REVIEW_VERSION = 'atlas-variant-catalog/v1';
 export const VARIANT_CATALOG_REVISION = 'variant-catalog-2026-10-09-v1';
-export const VARIANT_REVIEW_LIMITS = Object.freeze({ candidates: 48, imagesPerCandidate: 4, diagnostics: 16, bytes: 768 * 1024 });
+export const VARIANT_REVIEW_LIMITS = Object.freeze({ imagesPerCandidate: 4, diagnostics: 16, bytes: 3 * 1024 * 1024 });
 export const VARIANT_WARNING_CODES = Object.freeze(['LANGUAGE_UNCONFIRMED', 'DENOMINATOR_UNVERIFIED', 'FINISH_UNVERIFIED',
   'SET_NAME_REQUIRES_REVIEW', 'REFERENCE_IMAGE_MISSING', 'CARD_ART_ONLY', 'APPLICABILITY_UNCONFIRMED', 'SCOPE_UNCONFIRMED',
   'LISTING_CLAIMS_UNREVIEWED', 'REFERENCE_USAGE_NOT_REVIEWED']);
 export const VARIANT_PROBLEM_CODES = Object.freeze(['IDENTITY_INCOMPLETE', 'CATALOG_NOT_CONFIGURED', 'CATALOG_UNAVAILABLE',
   'CATALOG_TRUNCATED', 'PROVIDER_UNAVAILABLE', 'PROVIDER_TRUNCATED', 'PROVIDER_NOT_SUPPORTED', 'NO_VARIANTS_FOUND',
   'LANGUAGE_UNCONFIRMED', 'NO_DIAGNOSTIC_PHOTOS', 'REFERENCE_PERMISSION_REQUIRED',
-  'LISTING_SOURCE_OUTCOME_UNKNOWN', 'LISTING_SOURCE_UNAVAILABLE', 'LISTING_SOURCE_NOT_CONFIGURED']);
+  'REFERENCE_ACQUISITION_PENDING', 'LISTING_SOURCE_OUTCOME_UNKNOWN', 'LISTING_SOURCE_UNAVAILABLE', 'LISTING_SOURCE_NOT_CONFIGURED']);
 const HASH = /^[a-f0-9]{64}$/;
 const fields = ['category', 'name', 'year', 'setName', 'cardNumber', 'manufacturer', 'language'];
 const digest = value => createHash('sha256').update(canonicalJson(value)).digest('hex');
@@ -243,8 +243,9 @@ export function createVariantReviewSnapshot({ identity, candidates = [], problem
   }
   const ordered = [...seen.values()].sort((a, b) => (a.authority === b.authority ? 0 : a.authority === 'reviewed_catalog' ? -1 : 1)
     || a.candidateId.localeCompare(b.candidateId));
-  truncated ||= ordered.length > VARIANT_REVIEW_LIMITS.candidates;
-  const selected = ordered.slice(0, VARIANT_REVIEW_LIMITS.candidates);
+  // All catalog choices fit or the bounded transport rejects the packet.
+  // Never silently remove official printings by their position in the list.
+  const selected = ordered;
   if (truncated) problems = [...problems, 'PROVIDER_TRUNCATED'];
   if (!selected.length) problems = [...problems, 'NO_VARIANTS_FOUND'];
   if (!selected.some(c => c.images.some(i => isVariantPhotoComparable(c, i)))) problems = [...problems, 'NO_DIAGNOSTIC_PHOTOS'];
@@ -265,7 +266,7 @@ export function validateVariantReviewSnapshot(input) {
   fail(typeof s.capturedAt === 'string' && Number.isFinite(Date.parse(s.capturedAt)) && new Date(s.capturedAt).toISOString() === s.capturedAt, 'snapshot.capturedAt');
   fail(keys(s.coverage, ['metadata', 'applicability', 'images']) && Object.values(s.coverage).every(v => ['partial', 'unknown', 'truncated'].includes(v)), 'snapshot.coverage');
   fail(list(s.problems, 16) && unique(s.problems) && s.problems.every(v => VARIANT_PROBLEM_CODES.includes(v)), 'snapshot.problems');
-  fail(list(s.candidates, VARIANT_REVIEW_LIMITS.candidates) && unique(s.candidates.map(c => c.candidateId)), 'snapshot.candidates');
+  fail(Array.isArray(s.candidates) && unique(s.candidates.map(c => c.candidateId)), 'snapshot.candidates');
   s.candidates.forEach(validateVariantCandidate);
   if (Object.hasOwn(s, 'referencePhotos')) {
     fail(Array.isArray(s.referencePhotos) && unique(s.referencePhotos.map(i => i.imageId))

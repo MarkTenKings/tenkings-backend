@@ -1,10 +1,9 @@
 import {ATLAS_IDENTIFICATION_LAYOUT_VERSION,ATLAS_IDENTIFICATION_LAYOUT_VERSIONS,atlasIdentificationRunningWindow,identifyAtlasCard,parseAtlasIdentificationResult} from './identification-layout.mjs';
 import { randomUUID } from 'node:crypto';
-import { identificationCleanViews, retainedIdentificationCleanViews } from './identification-clean-views.mjs';
 import sharp from 'sharp';
 import { CARD_IDENTIFICATION_VERSION, parseCardIdentificationInput, parseCardIdentificationResult } from '@tenkings/card-identification-core';
 import { CARD_IDENTIFICATION_VERSION_V2, CARD_IDENTIFICATION_GOOGLE_TEXT_FIELDS_V2,
-  identifyCardV2, parseCardIdentificationResultV2 } from '@tenkings/card-identification-core/v2';
+  parseCardIdentificationResultV2 } from '@tenkings/card-identification-core/v2';
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
 import { batchActionId } from '@atlas/batch-grading';
 import { recordedIdentificationEffect, isCreditBalanceRejection, isRateLimitRejection, identificationRetryCount,
@@ -54,9 +53,9 @@ export function identificationEffects({ openaiKey, googleKey, fetchImpl=fetch })
     model:(request,context)=>send('https://api.openai.com/v1/responses',request,{Authorization:`Bearer ${openaiKey}`},context.signal) };
 }
 
-export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,readCleanPhoto=null,isCleanPhotoPrepared=null,
+export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,readGradingPhoto=null,isCleanPhotoPrepared=null,
   clock = () => Date.now(), limited = work => work() }) {
-  requireThat([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+  requireThat(engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION,503,'IDENTIFICATION_VERSION_UNSUPPORTED');
   requireThat(!effects || typeof receiptClient?.$queryRawUnsafe==='function',503,'IDENTIFICATION_RECEIPT_STORE_REQUIRED');
   async function transaction(staff,cardId,work,{sourceHash=null,edit=false}={}) {
     return boundary.transaction(staff,async context=>{
@@ -147,12 +146,12 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.identification SET state=$1,result=$2,error=$3,finished_at=clock_timestamp() WHERE id=$4::uuid AND state='RUNNING'",state,result?canonical(result):null,error,row.id);
     },{edit:true});
   }
-  async function execute(staff,seedRow,loaded,recovery=null,dispatchSignal=null,cleanViews=[]){
+  async function execute(staff,seedRow,loaded,recovery=null,dispatchSignal=null){
     const saved=storedInput(seedRow);
     const cardId=seedRow.card_id, pair={sourceHash:seedRow.source_hash};
     let row=recovery?null:seedRow, claimError=null, claimStarted=false;
     const verifiedOcr=new Set();
-      requireThat([CARD_IDENTIFICATION_VERSION_V2,...ATLAS_IDENTIFICATION_LAYOUT_VERSIONS].includes(saved.engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+      requireThat(saved.engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION,503,'IDENTIFICATION_VERSION_UNSUPPORTED');
       let dispatched=false;
       const effect=kind=>async(request,context)=>{
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
@@ -184,9 +183,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         }
       };
       try {
-        const atlas=ATLAS_IDENTIFICATION_LAYOUT_VERSIONS.includes(saved.engineVersion);
-        const identify=atlas?identifyAtlasCard:identifyCardV2;
-        const result=await identify(saved.input,{
+        const result=await identifyAtlasCard(saved.input,{
           readPhoto:async descriptor=>loaded.get(descriptor.ref),
           ocr:recovery?async(request,context)=>{
             const cached=recovery.ocr[context.side];
@@ -201,8 +198,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
             requireThat(row.won,409,'IDENTIFICATION_RETRY_REPLAY');
             return effect('model')(request,context);
           }:effect('model'),
-        },atlas?{engineVersion:saved.engineVersion,cleanViews:recovery
-          ?retainedIdentificationCleanViews(JSON.parse(recovery.model.requestJson)):cleanViews}:undefined);
+        },{engineVersion:saved.engineVersion});
         const stored=await asset(cardId,'IDENTIFICATION_RESULT',result,pair.sourceHash);
         try {await details.adopt(staff,cardId,pair.sourceHash,result);}
         catch(error){if(error?.status===409){await settle(staff,row,'STALE',stored);return {attemptId:row.id,state:'STALE'};}throw error;}
@@ -339,11 +335,11 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         return checkedResult(staff,cardId,pair.sourceHash,value);
       }
       if(!effects)return {state:'UNAVAILABLE'};
-      // Release the batch slot while upfront edits are queued. This is an AI
-      // dependency only; human review never waits on a generated image.
+      // Both OCR and Astra use the generated pair. A queued or failed cutout
+      // cannot silently switch identification back to the uploaded image.
       if(isCleanPhotoPrepared && !(await Promise.all(['FRONT','BACK'].map(side=>isCleanPhotoPrepared({
         cardId,uploadId:pair.sides[side].upload.uploadId,side})))).every(Boolean))return {state:'RETRY_WAIT',retryAfterMs:3000};
-      const cleanViews=await identificationCleanViews({pair,readCleanPhoto,signal:dispatchSignal});
+      requireThat(typeof readGradingPhoto==='function',503,'IDENTIFICATION_GENERATED_PHOTO_REQUIRED');
       const photos={},loaded=new Map();
       for(const [side,slot] of Object.entries(pair.sides)){
         // Keep full-resolution reads/decodes inside the native memory bound.
@@ -351,7 +347,9 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         // independent of CPU capacity. Queue admission rechecks shutdown.
         const {bytes,sha256,saved}=await limited(async()=>{
           dispatchSignal?.throwIfAborted();
-          const photo=slot.photo, found=await storage.readDecodedFrame({frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan});
+          const found=await readGradingPhoto({cardId,uploadId:slot.upload.uploadId,side,photo:slot.photo,signal:dispatchSignal});
+          const photo=found?.photo;
+          requireThat(photo?.workingFrame?.schemaVersion===3 && photo.workingFrame.generation && found.bytes instanceof Uint8Array,503,'IDENTIFICATION_GENERATED_PHOTO_REQUIRED');
           const bytes=await sharp(found.bytes,{limitInputPixels:52_000_000,failOn:'warning'}).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();
           requireThat(bytes.length<=3*1024*1024,422,'IDENTIFICATION_PHOTO_TOO_LARGE');
           const sha256=digest(bytes), saved=await asset(cardId,'IDENTIFICATION_IMAGE',{base64:bytes.toString('base64'),mime:'image/jpeg',workingFrame:photo.workingFrame,original:photo.original},pair.sourceHash);
@@ -370,7 +368,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         return {...row,won:count===1};
       },{edit:true,sourceHash:pair.sourceHash});
       if(!row.won)return checkedResult(staff,cardId,pair.sourceHash,await project(staff,row));
-      return execute(staff,row,loaded,null,dispatchSignal,cleanViews);
+      return execute(staff,row,loaded,null,dispatchSignal);
     },
   });
   return api;

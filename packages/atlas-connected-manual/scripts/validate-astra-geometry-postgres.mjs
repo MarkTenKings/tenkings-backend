@@ -1,6 +1,8 @@
 // Finite synthetic qualification. Creates and destroys its own PostgreSQL17
 // instance; never accepts a database URL and never calls an external model.
 import assert from 'node:assert/strict';
+import sharp from 'sharp';
+import {descriptorSha256,parseDecodedFrame} from '@atlas/photo-core';
 import {randomUUID} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -35,16 +37,24 @@ try{
  const processPhoto=createPhotoProcessor({storage,keyPrefix:'intake',decodeLimits:{maxInputBytes:1000000,maxPixels:1000000,maxRasterBytes:8000000,maxOutputBytes:1000000,timeoutMs:10000}});
  const intake=createManualIntake({repository,storage,artifacts:fixture.artifacts,processPhoto}),details=createDetailsStore({boundary,intakeRepository:repository});
  const store=createEarlyGeometryStore({boundary,intakeRepository:repository,receiptClient:manualClient});
- const engine={policy:'atlas-early-photo-geometry-v1',runtime:{identity:{sources:{},opencv:'synthetic-only'}},limits:{}},engineHash=digest(canonical(engine));
+ const engine={policy:'atlas-early-clean-geometry-v2',runtime:{identity:{sources:{},opencv:'synthetic-only'}},limits:{}},engineHash=digest(canonical(engine));
  async function newJob(){
   const createId=randomUUID(),cardId=(await intake.create(staff,{requestId:createId,label:'Disposable geometry journal proof'})).card.cardId;
   const bytes=rgb16Png(12,16),planned=await intake.plan(staff,cardId,{requestId:randomUUID(),side:'FRONT',expectedVersion:0,sha256:sha(bytes),byteCount:bytes.length});
   await storage.writeOriginal({uploadPlan:planned.upload.plan,bytes});await intake.complete(staff,cardId,planned.upload.uploadId);
-  const done=await intake.prepare(staff,cardId,planned.upload.uploadId),{photo}=await intake.readSource(staff,cardId,planned.upload.uploadId);
+  const done=await intake.prepare(staff,cardId,planned.upload.uploadId),{photo:uploaded}=await intake.readSource(staff,cardId,planned.upload.uploadId);
+  const raw=await storage.readDecodedFrame({frame:uploaded.workingFrame,original:uploaded.original,decodePlan:uploaded.decodePlan});
+  const cleanBytes=await sharp(raw.bytes).ensureAlpha().png().toBuffer();
+  const generated=parseDecodedFrame({schemaVersion:3,kind:'decoded-frame',id:`synthetic-clean:${planned.upload.uploadId}`,
+    originalDescriptorSha256:descriptorSha256(uploaded.original),decodePlanSha256:descriptorSha256(uploaded.decodePlan),
+    raster:{content:{mime:'image/png',sha256:digest(cleanBytes),byteCount:cleanBytes.length},dimensions:uploaded.workingFrame.raster.dimensions,
+      object:{key:`intake/derived/${cardId}/synthetic-clean.png`,versionId:null}},sourceToFrame:[1,0,0,0,1,0,0,0,1],
+    treatment:{decoder:'synthetic-image-fixture',version:'fixture-v1',policyVersion:'atlas-generated-grading-image-v1',channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'},
+    generation:{sourceFrame:uploaded.workingFrame,recipeHash:digest('synthetic-recipe'),model:'synthetic-image-fixture',promptVersion:'fixture-v1'}},uploaded.original,uploaded.decodePlan);
+  const photo={...uploaded,workingFrame:generated};
   const input=geometryCacheInput(done.upload,photo,(await details.read(staff,cardId)).details,engine);
   const saved=await store.ensure(staff,input),job=await store.claim(engineHash,randomUUID());assert.equal(job.key,saved.key);
-  const found=await storage.readDecodedFrame({frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan});
-  return{cardId,createId,input,job,source:{bytes:found.bytes,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan}};
+  return{cardId,createId,input,job,source:{bytes:cleanBytes,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan}};
  }
  async function tombstone(value){const request=randomUUID();await fixture.admin.$executeRawUnsafe(`INSERT INTO atlas_manual_intake.discard_request(owner_id,request_id,request,request_hash,receipt,receipt_hash) VALUES($1::uuid,$2::uuid,'{}',$3,'{}',$3)`,principal.id,request,digest('{}'));
   await fixture.admin.$executeRawUnsafe(`INSERT INTO atlas_manual_intake.discarded_card(owner_id,create_request_id,card_id,request_id) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid)`,principal.id,value.createId,value.cardId,request);}

@@ -21,14 +21,12 @@ test('failed geometry offers manual recovery and changed settings cannot retry t
  const pending=render({status,settingsChanged:true});assert.match(pending,/save these settings/);assert.doesNotMatch(pending,/Retry geometry/);
 });
 
-test('upfront clean image is shown separately from original-coordinate geometry',()=>{
- const props={src:'/original',cleanSrc:'/clean',side:'Front',status:{state:'READY',physical:[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]}};
+test('the supplied clean grading image is the sole geometry photograph',()=>{
+ const props={src:'/grading-clean',side:'Front',status:{state:'READY',physical:[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]}};
  const shown=renderToStaticMarkup(React.createElement(exports.default,props));
- assert.match(shown,/src="\/clean"/);assert.match(shown,/View original and geometry/);assert.doesNotMatch(shown,/<svg/);
- const original=renderToStaticMarkup(React.createElement(exports.default,{...props,cleanSrc:null}));
- assert.match(original,/src="\/original"/);assert.doesNotMatch(original,/View original and geometry/);
+ assert.match(shown,/src="\/grading-clean"/);assert.match(shown,/background-removed grading image/);
+ assert.doesNotMatch(shown,/View original|Clean presentation/);
 });
-
 
 test('historical geometry offers an explicit Astra refresh without claiming a new result',()=>{
  const shown=render({status:{state:'NEEDS_REVIEW',error:'GEOMETRY_REFRESH_AVAILABLE',canRetry:true}});
