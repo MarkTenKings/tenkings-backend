@@ -204,6 +204,9 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
         &&canonical(request)===canonical(reservation.request),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
       const catalog=validateVariantReviewSnapshot(reservation.catalog);
       const labels=projectVariantLabelResponse(response,catalog),literal=readVariantLabelResponse(response,catalog),choices=codexChoices(catalog);
+      // Hold the complete ordered lock set until this transaction commits.
+      // Reacquiring these same transaction locks per reading adds round trips
+      // without strengthening the journal's atomicity.
       for(const key of labels.readings.map(r=>codexReadingKey(request,r.sha256)).sort())await listingLock(tx,key);
       for(const key of [...new Set(labels.readings.filter(r=>r.canonicalPrintingKey).map(r=>codexLibraryKey(choices.find(c=>c.key===r.canonicalPrintingKey))))].sort())await listingLock(tx,key);
       const libraries=new Map();
@@ -211,10 +214,10 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
         const reading={sha256:r.sha256,candidateKey:r.canonicalPrintingKey,gradingCompany:r.gradingCompany,labelText:r.labelText,reason:r.reason,evidenceKind:r.evidenceKind};
         const record={schemaVersion:'atlas-codex-reading/v1',policy:VARIANT_LABEL_POLICY,choices:literal.request.choices,reading:literal.readings.find(v=>v.sha256===r.sha256),responseHash:digest(response.bodyText),requestKey:request.requestKey,
           ...(request.catalogContext ? {catalogContext:request.catalogContext} : {})};
-        const key=codexReadingKey(request,r.sha256);await listingLock(tx,key);
+        const key=codexReadingKey(request,r.sha256);
         const existing=await listingRead(tx,key);if(existing)requireThat(canonical(existing)===canonical(record),409,'VARIANT_CODEX_READING_CONFLICT');else await listingWrite(tx,key,canonical(record));
         if(!reading.candidateKey)continue;
-        const choice=choices.find(c=>c.key===reading.candidateKey),libraryKey=codexLibraryKey(choice);await listingLock(tx,libraryKey);
+        const choice=choices.find(c=>c.key===reading.candidateKey),libraryKey=codexLibraryKey(choice);
         if(!libraries.has(libraryKey)){
           const [prior]=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 ORDER BY created_at DESC LIMIT 1',libraryKey);
           const references=[];

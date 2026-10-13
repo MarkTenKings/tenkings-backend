@@ -11,15 +11,18 @@ import {labelCatalog,labelResponse} from './variant-label-fixture.mjs';
 import {variantIdentity} from './variant-fixture.mjs';
 
 test('old and context-bearing label batches recover into the shared library once, independent of the original card',async()=>{
- const catalog=labelCatalog({photos:16}),entries=new Map(),appends=[];
+ const catalog=labelCatalog({photos:16}),entries=new Map(),appends=[];let heldLocks=[];
  const put=(key,value)=>{const snapshot=canonical(value,{maxBytes:8388608});const rows=entries.get(key)??[];rows.push({snapshot,snapshot_hash:digest(snapshot)});entries.set(key,rows);};
  const tx={async $queryRawUnsafe(sql,key){
   if(sql.includes('variant_job'))return [{key:'new-physical-card-job'}];
+  if(heldLocks.length&&/^atlas-codex-(reading|library):/.test(key))assert(heldLocks.includes(`atlas-listing-source:${key}`),'Every reading/library read holds its preacquired transaction lock');
   assert.match(sql,/variant_catalog_cache/);const rows=entries.get(key)??[];return sql.includes('DESC')?rows.slice(-1):rows.slice(0,2);
  },async $executeRawUnsafe(sql,...args){
+  if(sql.includes('pg_advisory_xact_lock')){assert(!heldLocks.includes(args[0]),'No duplicate lock round trip inside a transaction');heldLocks.push(args[0]);}
+  if(sql.startsWith('INSERT INTO atlas_manual_connected.variant_catalog_cache'))assert(heldLocks.includes(`atlas-listing-source:${args[0]}`),'Every journal write holds its preacquired transaction lock');
   if(sql.startsWith('INSERT INTO atlas_manual_connected.variant_catalog_cache')){appends.push(args[0]);const rows=entries.get(args[0])??[];rows.push({snapshot:args[1],snapshot_hash:args[2]});entries.set(args[0],rows);}return 1;
  }};
- const store=createVariantJobStore({boundary:{machineTransaction:async(_,work)=>work({tx})}}),job={key:'new-physical-card-job',claim_id:'current'};
+ const store=createVariantJobStore({boundary:{machineTransaction:async(_,work)=>{heldLocks=[];const value=await work({tx});if(heldLocks.length){assert.equal(heldLocks.length,9,'Eight unique reading locks and one printing-library lock');assert.deepEqual(heldLocks.slice(0,8),heldLocks.slice(0,8).sort());}return value;}}}),job={key:'new-physical-card-job',claim_id:'current'};
  for(let offset=0;offset<16;offset+=8){
   const batch={...catalog,referencePhotos:catalog.referencePhotos.slice(offset,offset+8)};batch.snapshotHash=variantSnapshotHash(batch);
   const request=prepareVariantLabelRequest(batch,null,{includeCatalogContext:offset>0}),evidence={policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL,requestSha256:digest(`saved-request-${offset}`),request};
