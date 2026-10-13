@@ -43,7 +43,7 @@ async function fixture({photos=8,outcome='success'}={}){
    assert(!rows.has('variant-label-retry-next:v1:'+failedRequestKey));put('variant-label-retry:v1:'+requestId,receipt);put('variant-label-retry-next:v1:'+failedRequestKey,receipt);
    row.audit.push({event:'LABEL_RETRY_REQUESTED',requestId,failedRequestKey,failedResponseHash,attemptKey:receipt.attemptKey,catalogHash});row.state='QUEUED';row.code='VARIANT_LABEL_RETRY_REQUESTED';return [{receipt}];
   }
-  if(sql.includes('variant_catalog_cache')){if(sql.includes('ANY('))return args[0].flatMap(key=>rows.get(key)??[]);const values=rows.get(args[0])??[];return sql.includes('DESC')?values.slice(-1):values;}
+  if(sql.includes('variant_catalog_cache')){if(sql.includes('ANY('))return args[0].flatMap(key=>{const values=rows.get(key)??[];return sql.includes('DISTINCT ON')?values.slice(-1):values;});const values=rows.get(args[0])??[];return sql.includes('DESC')?values.slice(-1):values;}
   if(/^SELECT (?:\*|id) FROM atlas_manual.card /.test(sql))return [{id:card.cardId,owner_id:principal.id,editors:[],readers:[],approvers:[],revision:card.revision,content:canonical(card.draft),content_hash:digest(canonical(card.draft))}];
   if(sql.startsWith('SELECT * FROM atlas_manual_connected.variant_confirmation')||sql.startsWith('SELECT 1 FROM atlas_manual.approval'))return [];
   if(sql.includes('variant_job')){

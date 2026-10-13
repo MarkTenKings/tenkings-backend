@@ -77,6 +77,33 @@ export function validateVariantAction(action){
   requireThat((action.jobId===null&&action.resultHash===null)||/^[a-f0-9]{64}$/.test(action.jobId)&&/^[a-f0-9]{64}$/.test(action.resultHash),400,'VARIANT_CONFIRMATION_INVALID');
   requireThat(action.decision==='SELECTED'?/^[a-f0-9]{64}$/.test(action.jobId)&&/^[a-f0-9]{64}$/.test(action.resultHash)&&typeof action.candidateId==='string'&&action.candidateId.length<=240:action.candidateId===null,400,'VARIANT_CONFIRMATION_INVALID');
 }
+// Project committed readings inside the caller's authorized transaction. This
+// does not acquire a worker lease, write a result, or start provider work.
+export async function readRetainedVariantLabels(tx,catalog){
+  const request=prepareVariantLabelRequest(catalog),readings=new Map(),records=new Map();
+  const readingKeys=request.photos.map(p=>codexReadingKey(request,p.sha256));
+  const rows=readingKeys.length?await tx.$queryRawUnsafe('SELECT key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[])',readingKeys):[];
+  for(const row of rows){
+    requireThat(!records.has(row.key),503,'VARIANT_LISTING_JOURNAL_CONFLICT');
+    requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');records.set(row.key,JSON.parse(row.snapshot));
+  }
+  const choices=catalog.candidates.flatMap(candidate=>variantCodexAliases(candidate)).map(choice=>[codexLibraryKey(choice),choice]);
+  const libraries=request.photos.length&&choices.length?await tx.$queryRawUnsafe('SELECT DISTINCT ON (key) key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[]) ORDER BY key,created_at DESC',[...new Set(choices.map(([key])=>key))]):[];
+  const photoShas=new Set(request.photos.map(p=>p.sha256)),libraryRows=new Map(libraries.map(row=>[row.key,row]));
+  for(const [key,choice] of choices){
+    const row=libraryRows.get(key);if(!row)continue;
+    requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');
+    const library=validateCodexLibrary(JSON.parse(row.snapshot),choice);
+    for(const ref of library.references)if(photoShas.has(ref.image.sha256))readings.set(ref.image.sha256,projectCodexReading(ref.reading,catalog,[library.choice]));
+  }
+  for(const photo of request.photos)if(!readings.has(photo.sha256)){
+    const saved=records.get(codexReadingKey(request,photo.sha256));
+    if(saved){requireThat(saved.schemaVersion==='atlas-codex-reading/v1'&&saved.policy===VARIANT_LABEL_POLICY&&saved.reading.sha256===photo.sha256
+      &&Array.isArray(saved.choices)&&(saved.reading.candidateKey===null||saved.choices.some(c=>c.key===saved.reading.candidateKey)),503,'VARIANT_CODEX_READING_INVALID');
+      readings.set(photo.sha256,projectCodexReading(saved.reading,catalog,saved.choices,saved.catalogContext??[]));}
+  }
+  return {referenceLabels:validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',associationRevision:CODEX_ASSOCIATION_REVISION,catalogHash:catalog.snapshotHash,readings:[...readings.values()]},catalog),readingKeys:new Set(records.keys())};
+}
 export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=180000}){
   requireThat(typeof boundary.machineTransaction==='function'&&Number.isInteger(leaseMs)&&leaseMs>=1000&&leaseMs<=300000,500,'VARIANT_CONFIG_INVALID');
   const machine=work=>boundary.machineTransaction(null,work);
@@ -114,12 +141,13 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       previous={reservation,response,responseHash:record.hash};retry=next;attemptKey=next.attemptKey;
     }
   }
-  async function labelProblem(tx,job){
+  async function labelProblem(tx,job,readingKeys=null){
     if(!job?.catalog||job.result||job.catalog.problems.includes('REFERENCE_ACQUISITION_PENDING'))return null;
     const all=prepareVariantLabelRequest(job.catalog);if(!all.photos.length||!all.choices.length)return null;
-    const keys=all.photos.map(p=>codexReadingKey(all,p.sha256));
-    const rows=await tx.$queryRawUnsafe('SELECT key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[])',keys);
-    const read=new Set();for(const row of rows){requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');read.add(row.key);}
+    const read=readingKeys??new Set();if(!readingKeys){
+      const rows=await tx.$queryRawUnsafe('SELECT key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[])',all.photos.map(p=>codexReadingKey(all,p.sha256)));
+      for(const row of rows){requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');read.add(row.key);}
+    }
     const missing=all.photos.filter(p=>!read.has(codexReadingKey(all,p.sha256)));if(!missing.length)return null;
     const request=prepareVariantLabelRequest(job.catalog,missing.slice(0,8).map(p=>p.sha256));let attempt=await labelAttempt(tx,request);
     if(!attempt.reservation&&!attempt.retry)for(const photo of request.photos){
@@ -176,9 +204,10 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     async read(staff,cardId,{includeLabelStatus=true}={}){uuid(cardId);requireThat(typeof includeLabelStatus==='boolean',400,'VARIANT_READ_INVALID');const savedRead=await boundary.transaction(staff,async({tx,principal})=>{const card=await authorized(tx,principal,cardId);const b=variantBinding(card);const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);const saved=await confirmation(tx,card);let latest=row;if(!latest&&saved?.job_key){[latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,saved.job_key,cardId,b.sourceHash);}
       const [approved]=await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual.approval WHERE card_id=$1::uuid AND source_hash=$2 LIMIT 1',cardId,card.contentHash);
       let approvalReady=Boolean(approved),reason=null;try{if(!approved)await approvalCheck(tx,card);approvalReady=true;}catch(e){if(e.code!=='VARIANT_CONFIRMATION_REQUIRED')throw e;reason=e.code;}
-      const job=unpack(latest),problem=includeLabelStatus?await labelProblem(tx,job):null,{attempt,...labelFailure}=problem??{};
+      const job=unpack(latest),progress=includeLabelStatus&&job?.catalog&&!job.result?await readRetainedVariantLabels(tx,job.catalog):null;
+      const problem=includeLabelStatus?await labelProblem(tx,job,progress?.readingKeys):null,{attempt,...labelFailure}=problem??{};
       const labelRetryRequestId=job?.audit?.findLast(e=>e.event==='LABEL_RETRY_REQUESTED')?.requestId??null;
-      return {card,job,confirmation:saved,approvalReady,reason,legacyApproved:Boolean(approved),labelFailure:problem?labelFailure:null,labelRetryRequestId};});
+      return {card,job,confirmation:saved,approvalReady,reason,legacyApproved:Boolean(approved),labelFailure:problem?labelFailure:null,labelRetryRequestId,referenceLabels:progress?.referenceLabels??null};});
       return savedRead;},
     async retryLabels(staff,cardId,input){
       object(input,['requestId','sourceHash','identityRevision','identityHash','jobId','catalogManifestHash','labelRequestKey','labelResponseHash']);uuid(input.requestId);uuid(cardId);
@@ -236,19 +265,9 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     },
     async codexReadings(job){return machine(async({tx})=>{
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`,job.key,job.claim_id);
-      requireThat(live,409,'VARIANT_LEASE_LOST');const catalog=unpack(live).catalog,request=prepareVariantLabelRequest(catalog),readings=new Map();
+      requireThat(live,409,'VARIANT_LEASE_LOST');const catalog=unpack(live).catalog;
       await retainPhotoPool(tx,catalog);
-      for(const candidate of catalog.candidates)for(const choice of variantCodexAliases(candidate)){
-        const [row]=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 ORDER BY created_at DESC LIMIT 1',codexLibraryKey(choice));
-        if(row){requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');const library=validateCodexLibrary(JSON.parse(row.snapshot),choice);
-          for(const ref of library.references)if(request.photos.some(p=>p.sha256===ref.image.sha256))readings.set(ref.image.sha256,projectCodexReading(ref.reading,catalog,[library.choice]));}
-      }
-      for(const photo of request.photos)if(!readings.has(photo.sha256)){
-        const saved=await listingRead(tx,codexReadingKey(request,photo.sha256));
-        if(saved){requireThat(saved.schemaVersion==='atlas-codex-reading/v1'&&saved.policy===VARIANT_LABEL_POLICY&&saved.reading.sha256===photo.sha256
-          &&Array.isArray(saved.choices)&&(saved.reading.candidateKey===null||saved.choices.some(c=>c.key===saved.reading.candidateKey)),503,'VARIANT_CODEX_READING_INVALID');readings.set(photo.sha256,projectCodexReading(saved.reading,catalog,saved.choices,saved.catalogContext??[]));}
-      }
-      return validateVariantReferenceLabels({version:'atlas-slab-label-associations/v1',associationRevision:CODEX_ASSOCIATION_REVISION,catalogHash:catalog.snapshotHash,readings:[...readings.values()]},catalog);
+      return (await readRetainedVariantLabels(tx,catalog)).referenceLabels;
     });},
     async publishLabelSource(job,request,{attemptKey=null}={}){return machine(async({tx})=>{
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`,job.key,job.claim_id);requireThat(live,409,'VARIANT_LEASE_LOST');

@@ -1,9 +1,12 @@
 import {object,requireThat,digest,canonical} from '@atlas/manual-service/contract';
 import {variantBinding,variantRefreshable} from './variant-job-store.mjs';
-export function variantReviewStatus({card,job,confirmation,approvalReady,reason,legacyApproved=false,labelFailure=null,labelRetryRequestId=null}){
+export function variantReviewStatus({card,job,confirmation,approvalReady,reason,legacyApproved=false,labelFailure=null,labelRetryRequestId=null,referenceLabels=null}){
  const selected=confirmation?{actionId:confirmation.action_id,decision:confirmation.decision,candidateId:confirmation.candidate_id,selectedCandidateId:confirmation.candidate_id,sourceHash:confirmation.source_hash,identityRevision:confirmation.identity_revision,identityHash:confirmation.identity_hash,resultHash:confirmation.result_hash,catalogManifestHash:confirmation.catalog_hash,observedFeatures:confirmation.observed_features}:null;
  const failure=labelFailure?{code:labelFailure.code,retryable:labelFailure.retryable,labelRequestKey:labelFailure.labelRequestKey,labelResponseHash:labelFailure.labelResponseHash}:null;
- return {enabled:true,legacyApproved,...variantBinding(card),revision:card.revision,state:job?['RUNNING','REQUESTED'].includes(job.state)?'SEARCHING':job.state:'NOT_REQUESTED',jobId:job?.key??null,refreshable:!failure&&(!job||variantRefreshable(job)),refreshRequestId:job?.input?.generation??null,labelFailure:failure,labelRetryRequestId,resultHash:job?.result_hash??job?.catalog_hash??null,catalogManifestHash:job?.catalog_hash??null,result:job?.result??(job?.catalog?{catalog:job.catalog}:null),confirmation:selected,approvalReady,reason};
+ const result=job?.result??(job?.catalog?{catalog:job.catalog,...(referenceLabels?{referenceLabels}:{})}:null);
+ const total=result?.catalog.referencePhotos?.length??0,read=result?.referenceLabels?.readings.length??0;
+ const labelProcessing=result?.referenceLabels?{total,read,unread:total-read}:null;
+ return {enabled:true,legacyApproved,...variantBinding(card),revision:card.revision,state:job?['RUNNING','REQUESTED'].includes(job.state)?'SEARCHING':job.state:'NOT_REQUESTED',jobId:job?.key??null,refreshable:!failure&&(!job||variantRefreshable(job)),refreshRequestId:job?.input?.generation??null,labelFailure:failure,labelRetryRequestId,labelProcessing,resultHash:job?.result_hash??job?.catalog_hash??null,catalogManifestHash:job?.catalog_hash??null,result,confirmation:selected,approvalReady,reason};
 }
 const acknowledgement=(operation,input)=>({operation,requestId:operation==='CONFIRM'?input.actionId:input.requestId,sourceHash:input.sourceHash,identityRevision:input.identityRevision,identityHash:input.identityHash});
 export function createVariantReviewService({store,workflow,readReferenceImage=null}){return Object.freeze({enabled:true,

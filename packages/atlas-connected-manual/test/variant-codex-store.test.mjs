@@ -46,6 +46,7 @@ test('a second physical card discovers unmatched photos and exact new choices af
  const put=(key,value)=>{const snapshot=canonical(value,{maxBytes:8388608});const rows=entries.get(key)??[];rows.push({snapshot,snapshot_hash:digest(snapshot)});entries.set(key,rows);};
  const tx={async $queryRawUnsafe(sql,key){
   if(sql.includes('variant_job'))return jobs.has(key)?[jobs.get(key)]:[];
+  if(sql.includes('ANY('))return key.flatMap(k=>{const values=entries.get(k)??[];return (sql.includes('DISTINCT ON')?values.slice(-1):values).map(row=>({key:k,...row}));});
   assert.match(sql,/variant_catalog_cache/);const rows=entries.get(key)??[];return sql.includes('DESC')?rows.slice(-1):rows.slice(0,2);
  },async $executeRawUnsafe(sql,...args){
   if(sql.startsWith('INSERT INTO atlas_manual_connected.variant_catalog_cache')){appends.push(args[0]);const rows=entries.get(args[0])??[];rows.push({snapshot:args[1],snapshot_hash:args[2]});entries.set(args[0],rows);}
