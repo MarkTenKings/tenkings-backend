@@ -1,6 +1,6 @@
 # Clean native serving image
 
-`Dockerfile.manual` builds both stages directly from the checked-in official Node image digest. An old ATLAS runtime image is never a base or input. Main and variant processes use this same source-built artifact with separate runtime configuration and entrypoints; the image contains no credentials or database installation step.
+`Dockerfile.manual` builds both stages directly from the checked-in official Node 22.23.2 bookworm-slim image digest. The registry index `48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9` resolves on Linux amd64 to manifest `43aeff40f4afc22e83f7589a2f37e111cff5ca84529571f1c8415bcc5fcc21b2`; its image configuration declares `NODE_VERSION=22.23.2`. Both build and final verification require that exact Node version. An old ATLAS runtime image is never a base or input. Main and variant processes use this same source-built artifact with separate runtime configuration and entrypoints; the image contains no credentials or database installation step.
 
 Create a **new external directory** with `node frontend/atlas-app/scripts/package-manual-container.mjs OUTPUT VERIFIED_VENDOR_DIRECTORY`. The vendor directory must contain the upstream libheif 1.23.2 and libde265 1.1.1 archives matching the checked-in SHA-256 values. The packager verifies those bytes before writing anything and refuses an existing output directory.
 

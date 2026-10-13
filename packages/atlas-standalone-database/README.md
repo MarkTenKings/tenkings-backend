@@ -52,3 +52,47 @@ node scripts/qualify-local.mjs /absolute/pg17/bin /absolute/pg/lib/index.js /abs
 This creates a nonce-owned socket-only local cluster, refuses ambient DB settings, restores all empty tables, verifies the exact no-op and altered-ledger refusal, rejects an existing public function, installs all five role contracts, checks actual serving privilege validators, tests negative authority and account compatibility, and executes restricted customer authentication bootstrap. It stops/verifies/removes its owned cluster before writing success. No production or provider calls occur.
 
 The shared `frontend/atlas-app/scripts/disposable-postgres.mjs` now uses this same current baseline and refuses all historical upgrade hooks. Current manual-service, image, geometry, findings, variant, research, commerce and public-report qualifiers can therefore exercise the application against an independent schema. The staff `validate-postgres.mjs` entry point runs the real durable manual/auth flow plus the signed synthetic manual-public round trip. Historical workflow tests are retired with their removed implementations; their old counts are not represented as current qualification.
+
+## R16 selective retained-data copy
+
+`retained-copy.mjs` is offline planning plus an explicit-client executor. It discovers no credentials, connects to no database, and sends no provider requests. The operator supplies the exact source snapshot, new deployment bindings, target connection and reviewed plan hash. `retainedSourceSQL()` exports only the 33 reviewed account/commerce/control tables and counts all 108 current tables, in one UTC repeatable-read read-only transaction. Store the result privately (0600). Freeze every old writer before the final snapshot; a previous census is qualification evidence, not final cutover evidence.
+
+The first observed snapshot contained 29 rows: 21 unchanged account/financial/capacity rows and eight control rows. Both financial effects were SUCCEEDED, the payment PAID and the reservation CONSUMED. Nonterminal financial work, nonzero physical-card/learned data, unexpected export tables or changed dealer population refuse planning. Historical catalog/query/label/image cache, sessions, SMS reservations, browser/challenge secrets and audit rows are never exported. Financial receipt JSON remains financial history and never becomes card/lesson data.
+
+Build the reviewed plan without a database connection:
+
+```js
+const controlRows = disabledRetainedControls(snapshot, {
+  staff: freshStaffBinding,
+  publicReader: freshPublicBinding,
+  customer: freshCustomerBinding,
+  customerService: freshPrivateCustomerBinding,
+  commerce: freshCommerceBinding,
+  at: explicitCutoverTimestamp,
+});
+const { plan, sha256 } = prepareRetainedCopy(snapshot, {
+  controlRows,
+  geometryConcurrency: 12,
+  neutralReleaseId: freshReleaseId,
+  reason: explicitOwnerRequestedEmptyBaselineReason,
+});
+```
+
+Bindings must be the actual reviewed new release/configuration values. They remain disabled. The two SMS controls start disabled with no old pilot, provider binding, activation window or public-admission approval; later SMS admission needs its own current configuration. Exact account phone hashes remain usable only if the separately managed phone-hash key is retained. Do not print these values or put them in repository files.
+
+Before calling `executeRetainedCopy`, independently bind the verified-TLS connection to the newly provisioned ATLAS cluster/database and hold its writers disabled. The executor checks `expectedDatabase`, exact baseline ledger, all 108 empty target tables, all 161 enabled triggers, and the reviewed plan hash. It locks the target tables and imports in FK order. Four named target trigger exceptions apply only to nonempty import tables:
+
+| Table / trigger | Exact reason |
+| --- | --- |
+| CommerceOrder / dealer_order_paid | Do not reconstruct purged physical dealer card rows from a historical paid receipt. |
+| CommercePayment / CommercePayment_weekly_capacity | Preserve exact capacity records without deriving duplicate events. |
+| WeeklyCapacitySharedPolicy / WeeklyCapacitySharedPolicy_valid | Preserve a historical effective date that the new-policy guard correctly rejects today. |
+| SmsPilotControl / SmsPilotControl_no_replace | Insert the two new disabled policy rows into the empty target. |
+
+Every other trigger, ordinary check and foreign key stays active, including verified-email guards. Compare retained PostgreSQL canonical row text exactly; compare typed new control rows to their plan. Restore and compare every trigger definition/state before completing. The same transaction initializes geometry capacity12 and creates a new `EMPTY_BASELINE` release with `balanced-defect-v1`, version `atlas-learning-release-v1`, `evaluation:null`, and `publications:[]`. The ordinary activation trigger writes exactly one **new** history record with the supplied reason; no old release/history/membership is copied. Serving roles remain unable to promote lessons.
+
+The executor defaults to rollback. Its rehearsal performs SQL writes inside a transaction and may consume a PostgreSQL sequence value even after rollback; use the owned local qualifier for a mutation-free production dry run. An actual copy requires explicit `commit:true`, the exact reviewed hash and `expectedDatabase:'atlas_grading'`. A populated target always refuses a repeat attempt; reconcile uncertain commits before any new action. No automatic retry, application activation or schema change is performed.
+
+`node scripts/qualify-retained-copy.mjs <absolute-PG17-bin> <absolute-pg-module> <private-snapshot-json> <new-private-receipt-json>` creates a socket-only owned cluster, restores this baseline, exercises exact retained data with synthetic disabled bindings, proves rollback, then commits only in the disposable fixture and proves replay refusal, trigger restoration and empty learning. It stops/removes the fixture before writing success. `retained-copy-01.json` records 11 passing checks; package tests pass5/5. No production/target writes or provider calls were made. A final plan must be regenerated from the frozen source and the actual release bindings, not reused from the synthetic rehearsal.
+
+The older broad connected CPU fixture still assumes the pre-R15 absence of a generated grading image and fails `GRADING_IMAGE_NOT_CONFIGURED`; it is not a passing current-workflow proof. Current standalone manual/public, generated-image, Astra geometry, variant, research, human confirmation and transient-batch PostgreSQL qualifiers are separately recorded in the session log.

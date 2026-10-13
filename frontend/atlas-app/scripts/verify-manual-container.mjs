@@ -28,7 +28,7 @@ if(mode==='source'){
 }
 const result={status:'CLEAN_MANUAL_SOURCE_VERIFIED',sourceFiles:manifest.files.length,sourceManifestSha256:hash(await readFile(manifestPath)),node:process.version};
 if(mode==='native'){
-  assert.equal(process.versions.node.split('.')[0],'22');assert.equal(process.platform,'linux');
+  assert.equal(process.versions.node,'22.23.2');assert.equal(process.platform,'linux');
   const require=createRequire(import.meta.url),addon=require(resolve(root,'packages/atlas-photo-runtime/native/build/heif.node'));
   // Invalid bytes reach the pinned version/decoder checks before input rejection.
   assert.throws(()=>addon.probe(Buffer.from([0]),{maxInputBytes:1024,maxPixels:1024,maxRasterBytes:4096}),error=>error.code==='PHOTO_DECODE_INVALID');

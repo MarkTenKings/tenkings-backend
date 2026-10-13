@@ -1,7 +1,7 @@
 {
   "version": "atlas-standalone-retained-copy-policy-v1",
   "schemaSha256": "68afb04dff6bb81a4b42a9de1412fc8322c6b0696d94e833df03e3183dadde8f",
-  "mode": "REVIEW_ONLY_NO_COPY_IMPLEMENTATION",
+  "mode": "EXPLICIT_REVIEWED_PLAN_DEFAULT_ROLLBACK",
   "retainExact": {
     "commerceConfigurationAndFinancialReceipts": [
       "atlas_customer.CommerceEffect",
@@ -56,9 +56,6 @@
     "atlas_staff.StaffChallenge",
     "atlas_staff.StaffRateBucket",
     "atlas_staff.StaffSession"
-  ],
-  "cacheReviewOnly": [
-    "atlas_manual_connected.variant_catalog_cache"
   ],
   "learningMustBeginEmpty": [
     "atlas_manual.defect_memory_publication",
@@ -130,12 +127,12 @@
     "StaffOperationsGrant is preserved evidence only: its old control/deployment binding cannot authorize a new release; issue a new reviewed grant only if needed.",
     "CustomerIntakeDraft retains account/order header context; no CustomerIntakeCard/upload/identification/effect rows are copied. Financial receipt JSON is preserved, never interpreted as learning examples.",
     "No authentication sessions/challenges/browser secrets are copied; retained phoneHash/account IDs remain compatible when the existing phone hash key is retained securely.",
-    "Reference cache is optional and excluded by default: import only after proving new independent policy provenance and no human corrections, card images or Ten Kings dependency.",
-    "Assert every physical-card/derivative and learning membership/publication/history table is zero on source and destination; source neutral control/release rows may exist only with zero membership and are not copied; a nonzero source count blocks the copy plan rather than silently discarding unexpected records.",
-    "Neutral learning release/control is a new explicit zero-membership release binding created by the release operator after empty-schema validation; no old release/member/publication/history rows copied.",
+    "Historical variant_catalog_cache is explicitly excluded by owner direction: no past query, label-reading or image cache is transferred. Current independent manufacturer references and new permanent reference caching remain available.",
+    "Assert physical-card/derivative and historical learning membership/publication/history tables are zero on source. Destination begins entirely empty; create exactly one fresh neutral release/control and one new activation history record. Never import historical learning rows.",
+    "Neutral learning release/control uses new EMPTY_BASELINE, balanced-defect-v1, atlas-learning-release-v1, evaluation:null, publications:[]; the current activation trigger records the explicit baseline reason.",
     "No blanket trigger disabling. A table whose historical rows cannot satisfy immutable insertion triggers needs an exact scoped, separately reviewed import transaction with post-import FK/trigger restoration proof.",
     "Reconcile current financial/provider pending work before quiescence; immutable receipts are retained while actionable effects are not dispatched until explicit activation.",
-    "geometry_claim_capacity is global coordination, not card evidence: do not import its old lease/counter; initializeStandaloneCoordination must explicitly insert the reviewed concurrency1..12 before runtime readiness; no implicit runtime default exists."
+    "geometry_claim_capacity is global coordination, not card evidence. Fresh source read-only receipt confirms12; the R16 selective-copy plan inserts exactly12 in the same target transaction. No old row or lease is copied."
   ],
   "recreateEmptyCoordination": [
     "atlas_manual_connected.geometry_claim_capacity"
@@ -143,5 +140,8 @@
   "recreateNeutralLearningControl": [
     "atlas_manual.learning_control",
     "atlas_manual.learning_release"
+  ],
+  "excludeHistoricalReferenceCache": [
+    "atlas_manual_connected.variant_catalog_cache"
   ]
 }

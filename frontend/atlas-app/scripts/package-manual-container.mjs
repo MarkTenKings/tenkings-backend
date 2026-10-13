@@ -82,13 +82,13 @@ export async function packageManualContainer(outputDirectory,vendorDirectory){
   }
   const collected=await collectManualSource();
   const recipe=await readFile(join(root,'frontend/atlas-app/Dockerfile.manual'));
-  assert.equal((recipe.toString().match(/^FROM node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0/gm)||[]).length,2,'Both stages require the pinned official Node base');
-  assert(!/^ARG .*IMAGE|^FROM (?!node@sha256:)/m.test(recipe.toString()),'Runtime-image overrides are forbidden');
+  assert.equal((recipe.toString().match(/^FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9/gm)||[]).length,2,'Both stages require the pinned official Node base');
+  assert(!/^ARG .*IMAGE|^FROM (?!node:22\.23\.2-bookworm-slim@sha256:)/m.test(recipe.toString()),'Runtime-image overrides are forbidden');
   await mkdir(output,{recursive:false});
   for(const file of [...collected.files.map(file=>({...file,path:'source/'+file.path})),...vendorFiles,{path:'Dockerfile',bytes:recipe}]){
     await mkdir(dirname(join(output,file.path)),{recursive:true});await writeFile(join(output,file.path),file.bytes,{flag:'wx'});
   }
-  const manifest={version:'atlas-clean-manual-source-v1',officialNodeImage:'node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0',
+  const manifest={version:'atlas-clean-manual-source-v1',officialNodeImage:'node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9',
     packagerSha256:sha(await readFile(fileURLToPath(import.meta.url))),dockerfileSha256:sha(recipe),packages:collected.packages,cpuSources:CPU_SOURCES,
     files:collected.files.map(({bytes,...file})=>file),vendor:vendorFiles.map(({bytes,...file})=>file)};
   await writeFile(join(output,'source-manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx'});

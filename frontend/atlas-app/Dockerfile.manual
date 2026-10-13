@@ -1,7 +1,7 @@
 # Build from scripts/package-manual-container.mjs's explicit source closure.
 # Qualified separately from the old Vercel and grading-operator deployments.
-FROM node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build
-RUN node -e "if (process.versions.node.split('.')[0] !== '22') throw Error('Node22 required')"
+FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS build
+RUN node -e "if (process.versions.node !== '22.23.2') throw Error('Node22.23.2 required')"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv cmake g++ make pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY vendor /opt/vendor
@@ -32,7 +32,7 @@ RUN node frontend/atlas-app/scripts/verify-manual-container.mjs /opt/atlas-build
 
 # The serving image starts independently from the same official base. No old
 # ATLAS image, fixture photo, archive, database migration or build compiler is copied.
-FROM node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runtime
+FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/atlas-native /opt/atlas-native
