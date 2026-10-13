@@ -1,6 +1,16 @@
 # Set Ops Handoff (Living)
 
-## Current ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+## Current ATLAS production R16 — October 12, 2026, 11:23 p.m. Pacific
+
+Application **`14411f8611789f565587067f41b8a5f2b7c96b46`** is live across public/staff/customer, with both processing services on a clean current-only image and the dedicated PostgreSQL17 ATLAS cluster/database. All actual runtime database URLs point there. The exact29-row transfer retained account/financial/capacity/fresh-control facts only; no old physical cards, sessions, lessons or reference-cache rows were imported. The new active learning baseline is empty; activation tools are removed and future candidates stay inactive. All eight old ATLAS database accounts are disabled, with zero remaining sessions.
+
+Canonical pages/assets, normal browser staff sign-in, old report404 and native postactivation/restart-policy checks passed. This is deployment evidence; no fresh human card acceptance, printing/NFC or paid provider test was manufactured. Generated Front/Back images remain the sole grading/review frame. See [DEPLOY_RUNBOOK](runbooks/DEPLOY_RUNBOOK.md) for exact current identities and receipts.
+
+Old deployment/archive/schema retirement continues independently. Preserve Ten Kings-owned Speedster/AiGrader functions and routes; only ATLAS-owned shared schemas/roles are deletion scope. Five former grader PNG copies are gone; ten required dead image strings need the narrow missing-photo compatibility patch. Future ATLAS-only backups are allowed, but old mixed restore-point expiry is not yet proven. The current ATLAS native HTTPS path still uses a Ten Kings-host reverse proxy, a disclosed transport dependency. Do not claim every historical copy or infrastructure connection is already erased.
+
+## Historical ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+
+> R16 above supersedes these release/database identities, five-photo preservation, old reference-cache state and learning activation tooling. All historical mutation intents are consumed.
 
 **R15 is live; the all-card reset is complete.** Deployed application source is `8dc73ae21c64c2f12a80e4b804a186fe41b1cfc8`, staff schema 86 / public 121. Main and isolated worker are ready with zero restarts/OOM; canonical staff/public/customer routing passed. Independent postflight sealed at `2026-10-13T03:43:58Z`. Continue only in `/Users/markthomas/.codex/worktrees/atlas-automatic-comps/ten-kings-mystery-packs-clean`, branch `codex/atlas-visual-variant-review`; leave the original checkout alone. Later documentation/test-fixture commits are not a newer production application.
 

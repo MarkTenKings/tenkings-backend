@@ -1,6 +1,16 @@
 # Set Ops Runbook
 
-## Current ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+## Current ATLAS production R16 — October 12, 2026, 11:23 p.m. Pacific
+
+R16 is live from **`14411f8611789f565587067f41b8a5f2b7c96b46`** on dedicated PostgreSQL17 cluster `atlas-grading-pg17-20261013` / database `atlas_grading`. All three canonical web surfaces and both fresh native services are verified. Final selective transfer copied29 account/financial/capacity/control rows and no physical cards, old lessons or historical reference cache. The fresh learning baseline is empty; future samples remain inactive pending Mark's exact review/approval. All eight old ATLAS database accounts are disabled with no sessions. [DEPLOY_RUNBOOK](DEPLOY_RUNBOOK.md) records current identities and evidence.
+
+Old artifact/schema/archive retirement remains separate ongoing work. Ten Kings-owned AiGrader/Speedster tables and routes are preserved as unrelated product functionality; new ATLAS has no access to them. Only ATLAS-owned old schemas/roles are retirement targets. The five former grader PNG copies are deleted; ten required dead image strings await the compatible missing-photo repair. Future ATLAS-only backups are allowed; old mixed managed backup expiry must be observed. Existing native HTTPS transport still crosses a Ten Kings-host reverse proxy, which must not be confused with database/catalog access.
+
+New real-card grading acceptance remains pending normal staff sign-in. Generated Front/Back images are the sole grading/review authority; source14411 retains the R15 behavior below. No destructive Set Ops operation occurred. Historical mutation intents are consumed and must never be replayed against new cards.
+
+## Historical ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+
+> R16 above supersedes these release/database identities, shared-cache state, five-photo preservation and learning activation tooling.
 
 R15 is live from **`8dc73ae21c64c2f12a80e4b804a186fe41b1cfc8`**, staff schema **86** / public **121**. Canonical routing and both ready runtime services passed; independent postflight completed at `2026-10-13T03:43:58Z`. [DEPLOY_RUNBOOK](DEPLOY_RUNBOOK.md) records exact deployments and receipts; [MASTER_PRODUCT_CONTEXT](../context/MASTER_PRODUCT_CONTEXT.md) records the implemented repairs.
 

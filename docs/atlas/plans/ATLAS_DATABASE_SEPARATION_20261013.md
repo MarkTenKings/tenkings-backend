@@ -1,6 +1,6 @@
 # Independent ATLAS: extraction, cutover and retirement
 
-Owner direction: October 12 Pacific / October 13 UTC, 2026. Status: implementation underway; this document is not evidence of a completed cutover. R15 application `8dc73ae21c64c2f12a80e4b804a186fe41b1cfc8` remains the last verified production release.
+Owner direction: October 12 Pacific / October 13 UTC, 2026. **R16 cutover is complete:** application `14411f8611789f565587067f41b8a5f2b7c96b46` serves all three canonical surfaces using the dedicated ATLAS database. Historical artifact/schema retirement remains underway. Exact observed identities and receipts are in [DEPLOY_RUNBOOK](../../runbooks/DEPLOY_RUNBOOK.md); this plan does not turn unfinished retirement or human acceptance into a completion claim.
 
 Mark explicitly authorizes a dedicated ATLAS database, removal of every ATLAS connection to Ten Kings, deletion of obsolete ATLAS versions and historical card remnants, deletion of the five formerly retained inventory photographs, and removal of the offline learning activation tool. He clarified that old/shared backups must be retired; future backups containing only independent ATLAS data are allowed. Existing Ten Kings inventory, ownership, payments and other unrelated business records are not disposable ATLAS artifacts.
 
@@ -10,7 +10,7 @@ Extract the current grading product into independent infrastructure and build a 
 
 This is a new database **cluster**, not another schema or database on the old cluster. Use independent database users, passwords, connection pools, object storage credentials and deployment configuration. No dual writes, legacy reader, Ten Kings catalog fallback or old-cluster recovery setting is retained in the serving application.
 
-## What the shared database currently does
+## What the shared database did before R16
 
 | ATLAS function | Current owner/schema | Independent destination |
 | --- | --- | --- |
@@ -25,7 +25,16 @@ This is a new database **cluster**, not another schema or database on the old cl
 
 The old database is not itself an AI memory. Learned influence comes from explicitly selected example records and application retrieval. Infrastructure separation eliminates the unwanted access and recovery paths; the empty active learning release separately eliminates historical lesson influence.
 
-## Evidence driving the implementation
+## Observed R16 cutover
+
+- Dedicated PostgreSQL17.11 cluster `atlas-grading-pg17-20261013`, database `atlas_grading`, has a current-only baseline, five fresh application roles and no shared public AiGrader structures. Current source has no Ten Kings catalog client or legacy report-reader branch. Every live ATLAS database URL points to this cluster.
+- Final exact transfer copied29 account/financial/capacity/fresh-control rows. It imported no physical cards, lessons, sessions, old provider responses or historical reference cache. The624-source manufacturer bundle remains. The active learning baseline is fresh and empty; offline activation tools are deleted and future samples remain inactive.
+- Old writers were stopped/disconnected before transfer. New main/worker became ready, target controls activated, all three web surfaces promoted and verified, and restart policies sealed. The tested old report returns404. All eight old ATLAS database accounts now have login disabled, passwordNULL and no remaining sessions.
+- Five former grader PNG copies are deleted;35nullable image fields are clear, with10required dead strings awaiting a compatible missing-photo change. Old Vercel/native artifacts and held archives are being removed from exact inventories; old shared schemas and managed backup expiry remain separate work.
+- ATLAS storage uses a verified bucket-restricted existing credential; do not describe it as newly rotated. Native HTTPS ingress still traverses an existing Ten Kings-host reverse proxy. This is an explicit remaining transport dependency, not database/catalog coupling.
+- Canonical/public deployment verification and native/schema qualification passed. A fresh authenticated real-card workflow, physical printing/NFC and universal catalog/photo acceptance have not been established.
+
+## Historical evidence driving the implementation
 
 - Fresh DigitalOcean console inspection identifies the mixed cluster as `db-postgresql-nyc3-83816`, PostgreSQL 17, NYC3, 2 GB RAM / 1 vCPU / 30 GiB, primary only. Its displayed monthly rate is $30.45. This is the existing cluster's rate, not a promise of new infrastructure pricing.
 - The current three web applications and their workspace dependency closure contain 29 packages. Four reusable engines carry the Ten Kings namespace; algorithm reuse does not require database or network access to Ten Kings. The independent artifact must own their source and build inputs.
@@ -50,6 +59,8 @@ The old database is not itself an AI memory. Learned influence comes from explic
 7. **Cut over once.** Briefly stop old ATLAS admission/writers, make the final narrow business/configuration transfer, and switch staff/public/customer surfaces plus main/variant workers together. One active writer set; no shared-database fallback. Do not fabricate a staff session, finding approval or final card grade.
 8. **Remove old capabilities and artifacts.** Revoke old ATLAS database/storage/catalog credentials; remove old web deployments, stopped native artifacts, old ATLAS-owned schemas/functions/triggers, local card archives, restoration payloads and the five photographs. Use exact dependency inventories so Ten Kings business survives. Rebuild every remaining deployment that contains old database credentials. Check filesystem copies, container layers and any retained Git objects with historical card payloads rather than claiming a file deletion erases all copies.
 9. **Retire mixed backups.** Follow the provider-specific strategy below and record actual completion. No old restore endpoint may remain a valid destination for independent ATLAS.
+
+Retirement scope correction after full consumer review: the25 shared `public.AiGrader*` tables, their15 trigger functions/seven enums, `CollectibleCardV2` relation and Ten Kings `/ai-grader*`, `/c`, `/nfc`, `/card-maps` routes belong to the separately approved Ten Kings/Speedster product. Their current empty state is not authorization to delete that product. Preserve them independently; retire only the seven ATLAS-owned schemas, eight old ATLAS roles, their explicit residual grants and the three ATLAS-specific external identity-correction objects. Broad private retirement drafts01–03 are superseded and must not execute. ATLAS's new database and deployed source have no connection to the retained Ten Kings structures.
 
 ## Backup retirement
 

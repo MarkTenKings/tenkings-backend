@@ -1,6 +1,38 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+## Current ATLAS production R16 — October 12, 2026, 11:23 p.m. Pacific
+
+Live application source **`14411f8611789f565587067f41b8a5f2b7c96b46`**. Dedicated database: DigitalOcean cluster `319da142-ed77-400b-815c-445ae9e43e6f` / `atlas-grading-pg17-20261013`, database `atlas_grading`, PostgreSQL17.11. Its current-only baseline replaces the old migration chain. Do not run historical shared-database migration/recovery scripts against this database.
+
+| Component | Verified production identity |
+| --- | --- |
+| Staff | `dpl_CdGFGQA81WDtMLWERNs1Sz64ExkM` |
+| Customer | `dpl_QT8teHWkTaspohCtcCajuFginZx9` |
+| Public | `dpl_5o2ezx4UpCbUGSnHNSgQPTPjNaTo` |
+| Native image | `sha256:ea0f12a00da7e5260bbe7e9f647e2f9bdc7e15ef57861018e9d43f6ae54053dc` |
+| Main container | `bdc9af11b1840abf0a0f8f9a72d1f4f6ca4c63ecd5934c037127920e3dbdbb3e` |
+| Variant worker | `0205245f19b9a506abd0f2d7416f5f2eeeba9248949223685ad7c11113b0b00b` |
+
+Completed order: new schema/roles → qualified fresh native/web artifacts → disable old controls and stop/disconnect old writers → verify final source drain → selectively copy29 allowed rows into disabled target → start new services → activate target controls at `2026-10-13T06:18:33.450Z` → promote all three web candidates → verify canonical pages/assets and old report404 → seal new restart policies → revoke old eight-role login/password/CONNECT and terminate the sole remaining old session. Every completed mutation intent is consumed; never replay it. Both new services had zero restarts/OOM at postactivation and seal. Browser inspected at normal staff sign-in without manufacturing authentication.
+
+All runtime database URLs resolve to the dedicated ATLAS cluster; five fresh application roles have independent passwords. The new native image has no old ATLAS image ancestor. The ATLAS-only bucket credential was verified and retained, not rotated. Existing HTTPS ingress/reverse-proxy transport on the Ten Kings host remains an explicit infrastructure dependency; it contains no grading engine or database fallback and must not be removed solely because its path/name is old. Old artifact/schema retirement is separate ongoing work.
+
+Private evidence root `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`:
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `r16-isolation/target-copy-result.json` | `3f275a58c437bae1531b14bdbe43c8c4368e258ae1dedbb121cf37ea75b4fb0d` |
+| `release-r16/native-clean-linux-proof-14411f861178/acceptance.json` | `13a2b0b36bf4bd9e1dceb1a1b8e9f1edb1db209fa5375067e847c54d90b3b9c9` |
+| `r16-isolation/runtime/postactivation-01.json` | `96489c81c6a4971ecf39ffb22f75b66651914def925275abf74a8a49d2b63adf` |
+| `release-r16/web/canonical-result.json` | `fab339edc0391a1d6380e56333351df540faa09279fb38295b50799a977a5f63` |
+| `r16-isolation/runtime/seal-result.json` | `8e4f01fa7401fe8167cc77b7d88494fc304811fbaa7f0b675ac37b8c66e09ac5` |
+| `r16-isolation/old-role-fence-result-01.json` | `380a78a45a5a73133339c6cff7269ccce319f8e8929d7129b1ca85b70411b7f8` |
+
+`target-activation-result.json`, `web/publication-result.json` and the separate retirement receipts record actual operations. Software/schema qualification and deployment are established; a new authenticated human card workflow and physical printing/NFC are not yet accepted. Future ATLAS-only backups are allowed. Old mixed-cluster managed backups still require observed retention expiry or a separately completed Ten Kings migration; do not destroy the serving Ten Kings cluster.
+
+## Historical ATLAS production R15 — October 12, 2026, 8:44 p.m. Pacific
+
+> R16 above supersedes these deployment/database identities, five-photo preservation and activation tooling. Commands/intents below are historical and consumed.
 
 Live application source is **`8dc73ae21c64c2f12a80e4b804a186fe41b1cfc8`**; staff schema **86**, public **121**. Canonical web routing passed at `2026-10-13T03:35:11.772Z`; independent postflight sealed at `2026-10-13T03:43:58.639781Z`. Both runtimes are ready, with zero restarts/OOM and `unless-stopped` policies. Fresh authenticated card processing remains separate product acceptance.
 
