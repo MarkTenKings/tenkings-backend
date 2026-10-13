@@ -1,6 +1,27 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production R18 — October 13, 2026, 3:25 a.m. Pacific
+## Current ATLAS production R19 — October 13, 2026, 4:14 a.m. Pacific
+
+Live application source **`5fb8c1cc01ceeefe6439b469e337cab9755505cc`** repairs manufacturer catalog packaging. The former deployment omitted three required existing data files: manufacturer checklists, parallel families and product aliases. The running R19 service now resolves the actual saved Nick Kurtz identity (including its null year) to **28 source-backed 2025 Bowman Chrome choices** with network fetch denied. This is verified inside the live service; it does not yet prove Nick's normal saved reference refresh or listing photographs. No catalog import, identity rewrite or relaxed matching was needed.
+
+R19 preserves the R18 review repair and Astra-only visual path: the reachable old paired geometry screen and fabricated rectangle/inset guides are deleted; generated-image preparation ignores only invisible RGB at alpha zero. Actual retained Astra printed outlines are recovered before sequential review. All four sides of the current Nick and Mewtwo submissions were prepared through the authenticated interface. Both jobs were resumed once. Completed OpenAI requests/replies prove **Astra `xhigh`** identification, geometry and findings using only generated Front/Back photographs and their exact crops. Nick has 1 returned/saved/measured Back finding; Mewtwo has 7 and a proposed grade of 8. Findings remain unreviewed and no human confirmation/approval was created. Nick Back genuinely has no Astra printed-border proposal and still needs human placement; no fallback border is invented.
+
+All three canonical R19 web surfaces and both native services are verified. Native qualification passed **413 Node + 6 Python tests**, all 11 groups, zero failures/skips. The catalog lookup additionally passed at the actual worker budget of 1 GiB/1 CPU, peak RSS about 339 MiB. Seven controls are active on the independent ATLAS database. Two current cards and two completed defect runs remain, with zero approvals and zero active learning examples. Scoring remains **Corners 0.5× / Edges 1× / Surface 2×**. There was no schema migration or new grading inference during this packaging deployment.
+
+The R18 signed-in recovery is complete. The R19 release invalidated that staff session normally; the browser is at sign-in and Mark has been asked to sign in again for the single normal Nick reference refresh. Do not manufacture a session or approval. Nick's refreshed reference photos, full human approval/publication, physical label/NFC and sold-sales acceptance remain unverified. The three superseded R18 web deployments, two stopped native containers, 32 exclusively old image/build layers and two obsolete server roots (704 files/110 directories) are deleted and verified absent. Final health shows only the current pair and proxy, with automatic restart policies, zero restarts/OOM/errors, and preserved transport. Completed retirement intents are consumed; never replay them. Private evidence is `release-r19` and `r19-investigation` under `/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012`.
+
+| Component | Verified R19 identity |
+|---|---|
+| Staff | `dpl_747p1H8Rt81nVn5fqpKNpPvBXRpZ` |
+| Customer | `dpl_BxvDNDEp7bj9uut3xQWUhWN6Xe1e` |
+| Public | `dpl_GgrrcKePtWRaskeQ812GN4ypdWU5` |
+| Native image | `sha256:757c39fdf32f4417975b271dfe46390f52c67ad49f1f14272f2338c766e7c44a` |
+| Main | `d89f467408e68b3e3352151a9202dcdff594e92aa104097675c7173f1eeb7d45` |
+| Worker | `b739363957e2a88db6f6dc9e72ce6ce45d7f88e23697b72b13dbbd8cef37b022` |
+
+Native configuration: `/opt/atlas/r19-5fb8c1cc01ce`; build context: `/opt/atlas/review-r19-5fb8c1cc01ce`. Preserve the current transport/proxy even where their directory name contains R16. Native acceptance SHA `342b44865b807a359f9c7ae991c4d9dc60278149432d504cc7e9a3e9e1486dde`; canonical SHA `ecb9549de0c46be0df6c3a8aca5f2ae2829524c48976b966130c20328e8e524b`; direct live catalog SHA `440f59929a1040bc9fccd85d47b2989afce40514a5dc00c6b93fd95d26665cba`. Final native health at `2026-10-13T11:18:17Z` has SHA `70f9a0c4e20e5ef6905091a3e5c570a2e15f68be6fd68842bceda67097e3845f`; post-retirement canonical SHA `a4e561efa6f2aac443f848e60a004a0088406ae5da28d998ac05ce94c94d0936`. Completed build, stage, drain, start, control, publication, seal and retirement intents are consumed. Do not replay them.
+
+## Historical ATLAS production R18 — October 13, 2026, 3:25 a.m. Pacific
 
 Live application source **`2eafb6536e6dc984da81e4fa901fa8ae6cf425df`** repairs generated-image preparation and opens the current sequential review directly. The reachable paired Front/Back geometry screen and invented rectangle/inset guides are deleted. Native WebP validation now ignores only invisible RGB at alpha zero; visible RGB and all alpha values remain exact. Existing reviews prepare their saved physical outlines sequentially and recover the actual retained Astra printed proposals before the editor opens. This continuation creates no human confirmation or replacement model call.
 
