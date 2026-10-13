@@ -10,10 +10,10 @@ import {
 } from './scoring';
 
 /** New ATLAS awards use this version; historical Speedster/ATLAS reports keep their original rule. */
-export const ATLAS_RULE_VERSION = 'ATLAS_2026_09_30_DAMAGE_1_5_V1' as const;
-export const ATLAS_GLOBAL_DAMAGE_MULTIPLIER = 1.5 as const;
+export const ATLAS_RULE_VERSION = 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1' as const;
+export const ATLAS_CATEGORY_DAMAGE_MULTIPLIERS = Object.freeze({ CORNERS: 0.5, EDGES: 1, SURFACE: 2 } as const);
 
-/** Percentages are scoring percentages, after the global 1.5 multiplier. */
+/** Percentages are scoring percentages, after the category damage multiplier. */
 export const ATLAS_CONDITION_BANDS = [
   { score: 10, lowerPercent: 0, lowerInclusive: true, upperPercent: 0.01, upperInclusive: true, label: 'Up to 0.010% scoring damage' },
   { score: 9.5, lowerPercent: 0.01, lowerInclusive: false, upperPercent: 0.02, upperInclusive: true, label: 'More than 0.010%, up to 0.020%' },
@@ -28,12 +28,13 @@ export const ATLAS_CONDITION_BANDS = [
   { score: 1, lowerPercent: 0.1, lowerInclusive: false, upperPercent: null, upperInclusive: false, label: 'More than 0.100% scoring damage' },
 ] as const;
 
-export function calculateAtlasScoringDamagePercent(baseWeightedDamagePercent: number): number {
-  return Math.round(baseWeightedDamagePercent * ATLAS_GLOBAL_DAMAGE_MULTIPLIER * 1e12) / 1e12;
+export function calculateAtlasScoringDamagePercent(baseWeightedDamagePercent: number, zone: SpeedsterConditionZone): number {
+  if (!Object.hasOwn(ATLAS_CATEGORY_DAMAGE_MULTIPLIERS, zone)) throw new RangeError('ATLAS_DAMAGE_CATEGORY_INVALID');
+  return Math.round(baseWeightedDamagePercent * ATLAS_CATEGORY_DAMAGE_MULTIPLIERS[zone] * 1e12) / 1e12;
 }
 
-export function calculateAtlasConditionScore(baseWeightedDamagePercent: number): number {
-  const scoringPercent = calculateAtlasScoringDamagePercent(baseWeightedDamagePercent);
+export function calculateAtlasConditionScore(baseWeightedDamagePercent: number, zone: SpeedsterConditionZone): number {
+  const scoringPercent = calculateAtlasScoringDamagePercent(baseWeightedDamagePercent, zone);
   return ATLAS_CONDITION_BANDS.find(band => band.upperPercent === null || scoringPercent <= band.upperPercent)!.score;
 }
 
@@ -45,7 +46,7 @@ const key = (side: SpeedsterCardSide, zone: SpeedsterConditionZone) => `${side}:
 
 /** Reuse the historical measurement/review parser, then replace only ATLAS score decisions.
  * Persisted weightedDamagePercent remains the measured, type-weighted percentage;
- * the global factor is applied only when deciding the score and marginal effect.
+ * the category factor is applied only when deciding the score and marginal effect.
  */
 export function calculateAtlasReview(capture: Capture, defects: readonly SpeedsterReviewFinding[]) {
   const historical = calculateSpeedsterReview(capture, defects);
@@ -62,9 +63,9 @@ export function calculateAtlasReview(capture: Capture, defects: readonly Speedst
   const sideGrade = (side: SpeedsterCardSide) => {
     const previous = historical.grade[side === 'FRONT' ? 'front' : 'back'];
     return { ...previous,
-      corners: { ...previous.corners, score: calculateAtlasConditionScore(previous.corners.weightedDamagePercent) },
-      edges: { ...previous.edges, score: calculateAtlasConditionScore(previous.edges.weightedDamagePercent) },
-      surface: { ...previous.surface, score: calculateAtlasConditionScore(previous.surface.weightedDamagePercent) } };
+      corners: { ...previous.corners, score: calculateAtlasConditionScore(previous.corners.weightedDamagePercent, 'CORNERS') },
+      edges: { ...previous.edges, score: calculateAtlasConditionScore(previous.edges.weightedDamagePercent, 'EDGES') },
+      surface: { ...previous.surface, score: calculateAtlasConditionScore(previous.surface.weightedDamagePercent, 'SURFACE') } };
   };
   const front = sideGrade('FRONT'), back = sideGrade('BACK');
   const subgrades = {
@@ -80,7 +81,7 @@ export function calculateAtlasReview(capture: Capture, defects: readonly Speedst
     const eligibleAreaMm2 = measured ? measured.areaMm2 / (measured.zonePercent / 100) : 1;
     const withAll = grade[side === 'FRONT' ? 'front' : 'back'][zone.toLowerCase() as 'corners' | 'edges' | 'surface'].score;
     const withoutTarget = calculateAtlasConditionScore(calculateWeightedDamagePercent(eligibleAreaMm2,
-      entries.filter(entry => entry.findingIndex !== findingIndex || entry.regionIndex !== regionIndex).map(entry => entry.defect)));
+      entries.filter(entry => entry.findingIndex !== findingIndex || entry.regionIndex !== regionIndex).map(entry => entry.defect)), zone);
     return Math.max(0, (withoutTarget - withAll) * (side === 'FRONT' ? 0.7 : 0.3));
   };
   const reviewedDefects = historical.defects.map((finding, findingIndex) => {

@@ -1,5 +1,11 @@
 # Ten Kings Master Product Context
 
+## Owner-approved scoring calibration — October 13, 2026
+
+Mark explicitly approves category scoring-damage multipliers of **Corners 0.5, Edges 1.0, Surface 2.0**, replacing the previous uniform 1.5 multiplier for new ATLAS scoring. Rule version: `ATLAS_2026_10_13_CATEGORY_DAMAGE_V1`. Apply the category factor once to the existing type-weighted damage percentage; retain the measured areas, category-area denominator, defect-type multipliers, condition bands, centering, Front70%/Back30%, equal category averaging and direct raw-to-half-point final rounding. Explanations and finding-impact calculations must use the same category factor. Saved historical approvals/reports retain their original explicit rule; Ten Kings Speedster grading is outside this change.
+
+Implementation and automated qualification precede the new production release. Mark will test fresh sports and Pokémon cards after deployment; this direction does not itself establish production deployment or real-card acceptance. Future inactive learning, the independent database and generated-image-only grading authority remain unchanged.
+
 ## Owner-approved ATLAS separation — October 12 Pacific / October 13 UTC, 2026
 
 Mark now authorizes complete ATLAS separation from the shared Ten Kings database and all shared runtime/storage/catalog connections, deletion of obsolete ATLAS versions and card archives, and deletion of the five July grader photographs previously retained for Ten Kings inventory. Preserve unrelated Ten Kings inventory/ownership and actual transaction facts. He explicitly permits **future ATLAS-only backups**, while requiring retirement of old/shared backups. This supersedes the earlier discussion-only separation status and five-photo preservation instruction below.

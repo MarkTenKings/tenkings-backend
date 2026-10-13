@@ -1,3 +1,9 @@
+## Owner-approved scoring calibration — October 13, 2026
+
+Mark explicitly approves category scoring-damage multipliers of **Corners 0.5, Edges 1.0, Surface 2.0**, replacing the previous uniform 1.5 multiplier for new ATLAS scoring. Rule version: `ATLAS_2026_10_13_CATEGORY_DAMAGE_V1`. Apply the category factor once to the existing type-weighted damage percentage; retain the measured areas, category-area denominator, defect-type multipliers, condition bands, centering, Front70%/Back30%, equal category averaging and direct raw-to-half-point final rounding. Explanations and finding-impact calculations must use the same category factor. Saved historical approvals/reports retain their original explicit rule; Ten Kings Speedster grading is outside this change.
+
+Implementation and automated qualification precede the new production release. Mark will test fresh sports and Pokémon cards after deployment; this direction does not itself establish production deployment or real-card acceptance. Future inactive learning, the independent database and generated-image-only grading authority remain unchanged.
+
 ### October 12 Pacific / October 13 UTC, 2026 — observed R16 isolation and Ten Kings preservation
 
 ATLAS source `424fc79c4d1caff5fe097a72480461f9684bcbb9` now serves all three canonical surfaces from its dedicated PostgreSQL17 cluster. Current-only schema, fresh application roles and the exact29-row retained account/financial/capacity/control transfer replace the old shared connection; no old physical cards, lessons, sessions or historical cache were imported. The old seven ATLAS schemas and eight ATLAS roles were subsequently removed. Exact receipts/current status are in DEPLOY_RUNBOOK and SESSION_LOG; historical artifact cleanup and managed backup expiry are separate from cutover and real-card acceptance.

@@ -11,16 +11,16 @@ const compiled=buildSync({entryPoints:[file],write:false,bundle:true,platform:'n
 const loaded={exports:{}};new Function('exports','require','module',compiled)(loaded.exports,require,loaded);const exports=loaded.exports;
 const dir=new URL('../../../docs/atlas/design/first-look/reports/',import.meta.url);
 test('Alakazam uses the same viewer but cannot present illustrative data as certified',()=>{
- const e=JSON.parse(readFileSync(new URL('alakazam-demo.json',dir)));const{explainAtlasManualReport}=require('@atlas/grading-core/manual-report');const{ATLAS_RULE_VERSION}=require('@atlas/grading-core/atlas-policy');assert.equal(e.demo,true);assert.equal(e.report.ruleVersion,ATLAS_RULE_VERSION);assert.equal(e.report.grade.front.surface.score,9);assert.equal(e.report.grade.subgrades.surface,9.3);assert.equal(e.report.finalGrade,9);assert.equal(e.explanation.policy.globalDamageMultiplier,1.5);assert.deepEqual(explainAtlasManualReport(e.report),e.explanation);
+ const e=JSON.parse(readFileSync(new URL('alakazam-demo.json',dir)));const{explainAtlasManualReport}=require('@atlas/grading-core/manual-report');assert.equal(e.demo,true);assert.equal(e.report.ruleVersion,'ATLAS_2026_09_30_DAMAGE_1_5_V1');assert.equal(e.report.grade.front.surface.score,9);assert.equal(e.report.grade.subgrades.surface,9.3);assert.equal(e.report.finalGrade,9);assert.equal(e.explanation.policy.globalDamageMultiplier,1.5);assert.deepEqual(explainAtlasManualReport(e.report),e.explanation);
  const html=renderToStaticMarkup(React.createElement(exports.IllustrativeReportView,{report:e.report,explanation:e.explanation,geometry:e.geometry,images:{}}));assert.match(html,/ILLUSTRATIVE DEMO/);assert.match(html,/ILLUSTRATIVE GRADE/);assert(!html.includes('HUMAN-APPROVED REPORT'));assert(!html.includes('APPROVED GRADE'));assert(!html.includes('Approved ATLAS grading report'));assert(!html.includes('Your review, before approval'));assert.equal(e.report.cardProfile,'POKEMON');
 });
 
 const values=html=>[...html.matchAll(/<data value="([^"]+)"/g)].map(match=>Number(match[1]));
 const paragraphs=html=>[...html.matchAll(/<p(?:\s[^>]*)?>[\s\S]*?<\/p>/g)].map(match=>match[0]);
-test('embedded new report displays base and globally adjusted percentages with the correct allowance and threshold scale',async()=>{
+test('embedded new report displays base and category-adjusted percentages with the correct allowance and threshold scale',async()=>{
  const f=await publicationFixture(),{explainAtlasManualReport}=require('@atlas/grading-core/manual-report');
  const explanation=explainAtlasManualReport(f.full),before=JSON.stringify({report:f.full,explanation});
- assert.equal(explanation.policy.globalDamageMultiplier,1.5);
+ assert.deepEqual(explanation.policy.categoryDamageMultipliers,{CORNERS:.5,EDGES:1,SURFACE:2});
  const html=renderToStaticMarkup(React.createElement(exports.ApprovedReportView,{report:f.full,explanation,images:{},publication:{version:1,reportHash:'f'.repeat(64)}}));
  assert(!html.includes('review draft does not match'));
  assert.equal((html.match(/10 band: ≤0\.01%/g)||[]).length,6);
@@ -29,12 +29,12 @@ test('embedded new report displays base and globally adjusted percentages with t
  assert(html.includes('Scoring damage in a category'));
  const sides=['CORNERS','EDGES','SURFACE'].flatMap(category=>['FRONT','BACK'].map(side=>explanation.sides[side][category]));
  const adjusted=paragraphs(html).filter(p=>p.includes('Scoring damage:')).map(values);
- assert.deepEqual(adjusted,sides.map(value=>[value.weightedDamagePercent,1.5,value.scoringDamagePercent]));
+ assert.deepEqual(adjusted,sides.map((value,index)=>[value.weightedDamagePercent,[.5,1,2][Math.floor(index/2)],value.scoringDamagePercent]));
  const base=paragraphs(html).filter(p=>p.includes('Weighted damage:')&&p.includes('÷')).map(values);
  assert.deepEqual(base,sides.filter(value=>value.eligibleAreaMm2!==null).map(value=>[value.weightedAreaMm2,value.eligibleAreaMm2,value.weightedDamagePercent]));
  const allowance=paragraphs(html).filter(p=>p.includes('Grade-10 allowance:'));
  assert.equal(allowance.length,2);
- allowance.forEach((p,index)=>{assert(p.includes('before the global multiplier'));assert(Math.abs(values(p)[0]-sides.filter(value=>value.eligibleAreaMm2!==null)[index].eligibleAreaMm2*.01/100/1.5)<1e-12);});
+ allowance.forEach((p,index)=>{assert(p.includes('before the category multiplier'));assert(Math.abs(values(p)[0]-sides.filter(value=>value.eligibleAreaMm2!==null)[index].tenBandMaxWeightedAreaMm2)<1e-12);});
  const displayedDamage=[...html.matchAll(/<span>Scoring category damage<\/span><strong>([\s\S]*?)<\/strong>/g)].map(match=>values(match[1])[0]);
  assert.deepEqual(displayedDamage,sides.map(value=>value.scoringDamagePercent));
  assert.equal(JSON.stringify({report:f.full,explanation}),before);

@@ -36,10 +36,10 @@ test('a nonzero 42-pixel Back surface mark correctly explains an exact 10 and pr
   const value = explainAtlasManualReport(report), region = value.findings[0].regions[0];
   assert.equal(region.pixelCount, 42); assert.equal(region.areaMm2, .105); assert.equal(region.weightedAreaMm2, .105);
   close(region.eligibleAreaMm2, 5015.55); assert.equal(region.weightedDamagePercent, .002093489248);
-  assert.equal(region.scoringDamagePercent, .003140233872);
+  assert.equal(region.scoringDamagePercent, .004186978496);
   assert.equal(region.scoreWithFinding, 10); assert.equal(region.scoreWithoutFinding, 10);
   assert.equal(region.marginalSubgradeEffect, 0); assert.equal(region.marginalOverallEffect, 0);
-  close(value.sides.BACK.SURFACE.tenBandMaxWeightedAreaMm2, .33437);
+  close(value.sides.BACK.SURFACE.tenBandMaxWeightedAreaMm2, .2507775);
   assert.deepEqual(value.overall, { rawGrade: 10, displayGrade: 10, roundingDelta: 0, rawDeductionFromTen: 0, displayDeductionFromTen: 0,
     finalGrade: 10, finalGradePolicy: ATLAS_FINAL_GRADE_POLICY, finalRoundingDelta: 0 });
   assert.equal(value.policy.additionalCaps, null); assert.equal(value.policy.marginalEffectsAdditive, false);
@@ -50,9 +50,10 @@ test('a nonzero 42-pixel Back surface mark correctly explains an exact 10 and pr
   assert.equal(sha(previewAtlasManualReport(input)), hash);
 });
 
-test('condition descriptions match every new scoring-percent band and the 1.5 multiplier', () => {
+test('condition descriptions match every scoring-percent band and all category multipliers', () => {
   const bands = explain([]).policy.conditionBands;
-  assert.equal(explain([]).policy.globalDamageMultiplier, 1.5);
+  assert.deepEqual(explain([]).policy.categoryDamageMultipliers, { CORNERS: .5, EDGES: 1, SURFACE: 2 });
+  assert.equal(explain([]).policy.globalDamageMultiplier, undefined);
   for (const [damage, score] of [[0,10],[.01,10],[.010001,9.5],[.02,9.5],[.020001,9],[.03,9],
     [.030001,8],[.04,8],[.040001,7],[.05,7],[.050001,6],[.06,6],[.060001,5],[.07,5],
     [.070001,4],[.08,4],[.080001,3],[.09,3],[.090001,2],[.1,2],[.100001,1],[20,1]]) {
@@ -60,10 +61,14 @@ test('condition descriptions match every new scoring-percent band and the 1.5 mu
       && (b.upperPercent === null || (b.upperInclusive ? damage <= b.upperPercent : damage < b.upperPercent)));
     assert.equal(matches.length, 1); assert.equal(matches[0].score, score);
   }
-  for (const [base, score] of [[0,10],[.006,10],[.01,9.5],[.016,9],[.023,8],[.03,7],
-    [.037,6],[.043,5],[.05,4],[.057,3],[.063,2],[.067,1]]) {
-    assert.equal(calculateAtlasConditionScore(base), score);
-    close(calculateAtlasScoringDamagePercent(base), base * 1.5);
+  for (const [zone, multiplier] of [['CORNERS',.5],['EDGES',1],['SURFACE',2]]) {
+    assert.equal(calculateAtlasConditionScore(.02, zone), { CORNERS: 10, EDGES: 9.5, SURFACE: 8 }[zone]);
+    close(calculateAtlasScoringDamagePercent(.02, zone), .02 * multiplier);
+    const value = explain([finding({ zone, area: .02, denominator: 100 })]);
+    assert.equal(value.sides.BACK[zone].weightedDamagePercent, .02);
+    assert.equal(value.sides.BACK[zone].scoringDamagePercent, .02 * multiplier);
+    assert.equal(value.sides.BACK[zone].tenBandMaxWeightedAreaMm2, .01 / multiplier);
+    assert.equal(value.findings[0].regions[0].scoreWithFinding, value.sides.BACK[zone].score);
   }
   const justBelow = explain([finding({ area: 2 * .0025, denominator: 100 })]);
   const onePixelAbove = explain([finding({ area: 3 * .0025, denominator: 100 })]);
@@ -77,7 +82,7 @@ test('marginal effects are independently calculated and must not be summed as de
   const value = explain([finding({ id: 'one', side: 'FRONT', area: .004, denominator: 100 }),
     finding({ id: 'two', side: 'FRONT', area: .004, denominator: 100 })]);
   assert.equal(value.sides.FRONT.SURFACE.weightedDamagePercent, .008);
-  assert.equal(value.sides.FRONT.SURFACE.scoringDamagePercent, .012);
+  assert.equal(value.sides.FRONT.SURFACE.scoringDamagePercent, .016);
   assert.equal(value.categories.surface.subgrade, 9.65);
   for (const f of value.findings) {
     assert.equal(f.regions[0].scoreWithFinding, 9.5); assert.equal(f.regions[0].scoreWithoutFinding, 10);
@@ -240,4 +245,35 @@ test('uneven and threshold-adjacent printed quads preserve normalized centering 
   const report = previewAtlasManualReport(source([]));
   report.grade.front.centering.leftRightBalance = [55,44.999999999999];
   assert.equal(explainAtlasManualReport(report).sides.FRONT.centering.score, 10);
+});
+
+test('a synthetic prior ATLAS 1.5 report remains immutable and is explained under its recorded rule', () => {
+  // Authored synthetic values only: each side has .020% measured damage in all
+  // three categories. The retired uniform 1.5 policy scored each category 9.
+  const findings = ['FRONT','BACK'].flatMap(side => ['CORNERS','EDGES','SURFACE'].map(zone =>
+    finding({ id: `${side}-${zone}`, side, zone, area: .02, denominator: 100 })));
+  const current = previewAtlasManualReport(source(findings));
+  const historical = structuredClone(current);
+  historical.ruleVersion = 'ATLAS_2026_09_30_DAMAGE_1_5_V1';
+  for (const side of ['front','back']) for (const category of ['corners','edges','surface']) historical.grade[side][category].score = 9;
+  historical.grade.subgrades = { centering: 10, corners: 9, edges: 9, surface: 9 };
+  historical.grade.overall = { rawGrade: 9.25, displayGrade: 9.3 };
+  historical.finalGrade = 9.5;
+  for (const f of historical.findings) f.measurement.subgradeEffect = f.side === 'FRONT' ? .7 : .3;
+  const before = structuredClone(historical), hash = sha(historical), explanation = explainAtlasManualReport(historical);
+  assert.equal(explanation.policy.globalDamageMultiplier, 1.5);
+  assert.equal(explanation.policy.categoryDamageMultipliers, undefined);
+  assert.equal(explanation.policy.conditionFormula, '100 × sum(measured area × defect multiplier) ÷ eligible category area × 1.5');
+  for (const side of ['FRONT','BACK']) for (const zone of ['CORNERS','EDGES','SURFACE']) {
+    assert.equal(explanation.sides[side][zone].weightedDamagePercent, .02);
+    assert.equal(explanation.sides[side][zone].scoringDamagePercent, .03);
+    assert.equal(explanation.sides[side][zone].score, 9);
+    close(explanation.sides[side][zone].tenBandMaxWeightedAreaMm2, .01 / 1.5);
+  }
+  assert.equal(explanation.overall.finalGrade, 9.5);
+  assert.deepEqual(historical, before); assert.equal(sha(historical), hash);
+  assert.deepEqual(current.grade.subgrades, { centering: 10, corners: 10, edges: 9.5, surface: 8 });
+  assert.equal(current.ruleVersion, ATLAS_RULE_VERSION);
+  assert.throws(() => explainAtlasManualReport({ ...historical, ruleVersion: ATLAS_RULE_VERSION }), /EXPLANATION_GRADE_MISMATCH/);
+  assert.throws(() => explainAtlasManualReport({ ...current, ruleVersion: historical.ruleVersion }), /EXPLANATION_GRADE_MISMATCH/);
 });

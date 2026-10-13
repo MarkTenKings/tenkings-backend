@@ -44,14 +44,14 @@ test('machine draft uses measured contours and current deterministic score witho
   assert.deepEqual(f.state, before); assert.equal(JSON.stringify(report).includes('manualInspection'), false);
   assert.deepEqual(report.limitations, f.analysis.limitations);
 });
-test('machine report scores the measured weighted damage at 1.5× while retaining its base percentage', async () => {
+test('machine report scores the measured weighted damage at the Surface 2× factor while retaining its base percentage', async () => {
   const report = await buildMachineReport(fixture({ zonePercent: .04 }));
   assert.equal(report.ruleVersion, ATLAS_RULE_VERSION);
   assert.equal(report.grade.front.surface.weightedDamagePercent, .04);
   assert.equal(report.grade.back.surface.weightedDamagePercent, .04);
-  assert.equal(report.grade.front.surface.score, 6);
-  assert.equal(report.grade.back.surface.score, 6);
-  assert.equal(report.proposedGrade, 9);
+  assert.equal(report.grade.front.surface.score, 4);
+  assert.equal(report.grade.back.surface.score, 4);
+  assert.equal(report.proposedGrade, 8.5);
 });
 test('a clean machine proposal still remains uncertified and uninspected', async () => {
   const f = fixture(); f.analysis.proposals = []; const report = await buildMachineReport(f);

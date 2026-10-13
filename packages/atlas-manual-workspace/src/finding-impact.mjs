@@ -1,4 +1,4 @@
-import { calculateAtlasConditionScore, calculateAtlasScoringDamagePercent } from '@atlas/grading-core/atlas-policy';
+import { ATLAS_CATEGORY_DAMAGE_MULTIPLIERS, calculateAtlasConditionScore, calculateAtlasScoringDamagePercent } from '@atlas/grading-core/atlas-policy';
 const MULTIPLIERS = { FAINT_COLOR_VARIATION: .5, VISIBLE_WHITENING: 1, FRAYING: 1.25, CHIPPING_EXPOSED_STOCK: 1.5, LIFTING_DEFORMATION: 2,
   LIGHT_SCRATCH_SCUFF: 1, VISIBLE_SCRATCH_PRINT_COATING_LOSS: 1.25, DENT_MATERIAL_DAMAGE: 1.5, PEELING_HEAVY_DAMAGE: 2 };
 export function findingImpact(findings, id) {
@@ -6,8 +6,10 @@ export function findingImpact(findings, id) {
   return ['CORNERS','EDGES','SURFACE'].flatMap(zone=>{
     const entries=active.flatMap(f=>(f.measurementRegions??[{zone:f.zone,measurement:f.measurement}]).filter(r=>r.zone===zone).map(r=>({id:f.id,weighted:r.measurement.zonePercent*MULTIPLIERS[f.defectType]})));
     if(!entries.some(e=>e.id===id))return [];
-    const weighted=entries.reduce((sum,e)=>sum+e.weighted,0), without=entries.filter(e=>e.id!==id).reduce((sum,e)=>sum+e.weighted,0);
-    return [{zone,score:calculateAtlasConditionScore(weighted),withoutScore:calculateAtlasConditionScore(without),scoringPercent:calculateAtlasScoringDamagePercent(weighted)}];
+    // Match the server's type-weighted percentage normalization before scoring.
+    const weighted=Math.round(entries.reduce((sum,e)=>sum+e.weighted,0)*1e12)/1e12;
+    const without=Math.round(entries.filter(e=>e.id!==id).reduce((sum,e)=>sum+e.weighted,0)*1e12)/1e12;
+    return [{zone,damageMultiplier:ATLAS_CATEGORY_DAMAGE_MULTIPLIERS[zone],score:calculateAtlasConditionScore(weighted,zone),withoutScore:calculateAtlasConditionScore(without,zone),scoringPercent:calculateAtlasScoringDamagePercent(weighted,zone)}];
   });
 }
 function insidePolygon(x,y,points){let inside=false;for(let i=0,j=points.length-1;i<points.length;j=i++){

@@ -898,9 +898,9 @@ test('actual public grade animation restarts while playing, pauses, resumes and 
   assert.equal(reduced.control('A grade you can follow').props['data-motion'], 'complete'); assert.equal(reduced.pendingFrames(), 0);
 });
 
-test('new report calculations show the global factor, policy bands and base weighted-area allowance on screen and paper', () => {
+test('new report calculations show each category factor, policy bands and base weighted-area allowance on screen and paper', () => {
   const props = fixture(), before = structuredClone(props.preview), explanation = props.preview.review.explanation;
-  assert.equal(explanation.policy.globalDamageMultiplier, 1.5);
+  assert.deepEqual(explanation.policy.categoryDamageMultipliers, { CORNERS: .5, EDGES: 1, SURFACE: 2 });
   assert.equal(explanation.policy.conditionBands.find(band => band.score === 10).upperPercent, .01);
   const f = harness(props); f.ready();
   const values = node => all(node, item => item.type === 'data').map(item => item.props.value);
@@ -913,9 +913,9 @@ test('new report calculations show the global factor, policy bands and base weig
       const scale = all(threshold, node => node.props.className === 'rr-threshold-scale')[0];
       assert.equal(text(all(scale, node => node.type === 'span').at(-1)), '0.1%');
       assert.ok(Math.abs(parseFloat(all(threshold, node => node.props.className === 'rr-threshold-ten')[0].props.style.width) - 10) < 1e-12);
-      assert.ok(Math.abs(values(threshold)[0] - (index < 4 ? 0 : .025420940874)) < 1e-12, 'the scale shows adjusted scoring damage');
+      assert.ok(Math.abs(values(threshold)[0] - (index < 4 ? 0 : .033894587832)) < 1e-12, 'the scale shows adjusted scoring damage');
       assert.ok(Math.abs(parseFloat(all(threshold, node => node.props.className === 'rr-threshold-fill')[0].props.style.width)
-        - (index < 4 ? 0 : 25.420940874)) < 1e-9, 'the marker uses the adjusted percentage');
+        - (index < 4 ? 0 : 33.894587832)) < 1e-9, 'the marker uses the adjusted percentage');
     }
     const baseEquations = f.nodes(node => node.type === 'p' && text(node).startsWith('Weighted damage:') && text(node).includes('× 100'));
     assert.equal(baseEquations.length, 2);
@@ -924,13 +924,13 @@ test('new report calculations show the global factor, policy bands and base weig
     assert.equal(equations.length, 6);
     for (const [index, zone] of ['CORNERS', 'CORNERS', 'EDGES', 'EDGES', 'SURFACE', 'SURFACE'].entries()) {
       const value = explanation.sides[index % 2 ? 'BACK' : 'FRONT'][zone];
-      assert.deepEqual(values(equations[index]), [value.weightedDamagePercent, 1.5, value.scoringDamagePercent]);
+      assert.deepEqual(values(equations[index]), [value.weightedDamagePercent, explanation.policy.categoryDamageMultipliers[zone], value.scoringDamagePercent]);
     }
     const allowances = f.nodes(node => node.type === 'p' && text(node).startsWith('Grade-10 allowance:'));
     assert.equal(allowances.length, 2);
     for (const allowance of allowances) {
-      assert.ok(text(allowance).includes('before the global multiplier'));
-      assert.ok(Math.abs(values(allowance)[0] - .33437) < 1e-12);
+      assert.ok(text(allowance).includes('before the category multiplier'));
+      assert.ok(Math.abs(values(allowance)[0] - .2507775) < 1e-12);
     }
     const policy = f.nodes(node => node.props.className === 'rr-policy')[0];
     assert.ok(all(policy, node => node.type === 'td' && text(node) === '9.5').length === 1);
@@ -939,11 +939,11 @@ test('new report calculations show the global factor, policy bands and base weig
   const finding = f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Back 1 ·'))[0];
   finding.props.onClick(); f.render();
   const region = explanation.findings[1].regions[0];
-  const equation = all(f.control('Selected finding calculation'), node => node.type === 'p' && text(node).includes('Scoring damage after global multiplier'))[0];
-  assert.deepEqual(values(equation), [region.weightedDamagePercent, 1.5, region.scoringDamagePercent]);
+  const equation = all(f.control('Selected finding calculation'), node => node.type === 'p' && text(node).includes('Scoring damage after category multiplier'))[0];
+  assert.deepEqual(values(equation), [region.weightedDamagePercent, 2, region.scoringDamagePercent]);
   f.listeners.get('beforeprint')(); f.render(); verifyCategories();
   const printed = f.nodes(node => node.props.className === 'rr-print-findings')[0];
-  assert.equal(all(printed, node => node.type === 'p' && text(node).includes('Scoring damage after global multiplier')).length, 2);
+  assert.equal(all(printed, node => node.type === 'p' && text(node).includes('Scoring damage after category multiplier')).length, 2);
   f.listeners.get('afterprint')(); f.render();
   assert.deepEqual(props.preview, before); assert.equal(f.readyValues.at(-1), true);
 });
@@ -960,7 +960,7 @@ test('synthetic prior-rule reports keep their condition scale, arithmetic and al
     assert.equal(text(all(scale, node => node.type === 'span').at(-1)), '10%');
     assert.equal(all(threshold, node => node.props.className === 'rr-threshold-ten')[0].props.style.width, '2%');
   }
-  assert.equal(f.has('before the global multiplier'), false);
+  assert.equal(f.has('before the category multiplier'), false);
   const equations = f.nodes(node => node.type === 'p' && text(node).startsWith('Weighted damage:') && text(node).includes('× 100'));
   assert.equal(equations.length, 3);
   assert.ok(equations.every(node => !text(node).includes('× 100 × ')));

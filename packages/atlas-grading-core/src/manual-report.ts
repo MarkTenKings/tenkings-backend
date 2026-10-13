@@ -1,7 +1,7 @@
-import { SPEEDSTER_RULE_VERSION, type SpeedsterCardProfile } from './contracts';
+import { SPEEDSTER_RULE_VERSION, type SpeedsterCardProfile, type SpeedsterConditionZone } from './contracts';
 import { canonicalizeSpeedsterSessionIdentity } from './identity';
 import { parsePersistedSpeedsterReviewFindings, speedsterFindingRegions } from './review-findings';
-import { ATLAS_CONDITION_BANDS, ATLAS_GLOBAL_DAMAGE_MULTIPLIER, ATLAS_RULE_VERSION,
+import { ATLAS_CONDITION_BANDS, ATLAS_CATEGORY_DAMAGE_MULTIPLIERS, ATLAS_RULE_VERSION,
   calculateAtlasConditionScore, calculateAtlasReview, calculateAtlasScoringDamagePercent } from './atlas-policy';
 import { measureSpeedsterCenteringBorders, SPEEDSTER_DEFECT_MULTIPLIERS, calculateConditionScore,
   calculateWeightedDamagePercent, calculateDefectSubgradeEffect, combineFrontBackScore,
@@ -114,9 +114,12 @@ export function previewAtlasManualReport(source: AtlasManualReportSource) {
     finalGrade: calculateAtlasFinalGrade(report.grade.overall.rawGrade), finalGradePolicy: ATLAS_FINAL_GRADE_POLICY };
 }
 
-type AtlasManualReport = ReturnType<typeof buildAtlasManualReportV1> | ReturnType<typeof previewAtlasManualReport>;
+type AtlasManualReport = (Omit<ReturnType<typeof buildAtlasManualReportV1>, 'ruleVersion'>
+  | Omit<ReturnType<typeof previewAtlasManualReport>, 'ruleVersion'>) & { ruleVersion: string };
 
-// Historical descriptors remain exact for already approved reports.
+// Read-only historical descriptors remain exact for already approved reports.
+// New report creation cannot select this retired rule.
+const HISTORICAL_ATLAS_RULE_VERSION = 'ATLAS_2026_09_30_DAMAGE_1_5_V1';
 const LEGACY_CONDITION_BANDS = [
   { score: 10, lowerPercent: 0, lowerInclusive: true, upperPercent: 0.2, upperInclusive: true, label: 'Up to 0.2% weighted damage' },
   { score: 9, lowerPercent: 0.2, lowerInclusive: false, upperPercent: 1, upperInclusive: true, label: 'More than 0.2%, up to 1%' },
@@ -140,11 +143,17 @@ const REPORT_CATEGORIES = ['centering', 'corners', 'edges', 'surface'] as const;
  */
 export function explainAtlasManualReport(report: AtlasManualReport) {
   if (!record(report) || !['atlas-manual-draft-report-v1', 'atlas-manual-draft-report-v2'].includes(report.version)
-    || ![SPEEDSTER_RULE_VERSION, ATLAS_RULE_VERSION].includes(report.ruleVersion)) throw new Error('ATLAS_REPORT_EXPLANATION_INVALID');
-  const isNewPolicy = report.ruleVersion === ATLAS_RULE_VERSION;
-  const conditionScore = isNewPolicy ? calculateAtlasConditionScore : calculateConditionScore;
-  const conditionBands = isNewPolicy ? ATLAS_CONDITION_BANDS : LEGACY_CONDITION_BANDS;
-  const globalDamageMultiplier = isNewPolicy ? ATLAS_GLOBAL_DAMAGE_MULTIPLIER : 1;
+    || ![SPEEDSTER_RULE_VERSION, HISTORICAL_ATLAS_RULE_VERSION, ATLAS_RULE_VERSION].includes(report.ruleVersion)) throw new Error('ATLAS_REPORT_EXPLANATION_INVALID');
+  const isCategoryPolicy = report.ruleVersion === ATLAS_RULE_VERSION;
+  const isScaledPolicy = isCategoryPolicy || report.ruleVersion === HISTORICAL_ATLAS_RULE_VERSION;
+  const damageMultiplier = (zone: SpeedsterConditionZone) => isCategoryPolicy ? ATLAS_CATEGORY_DAMAGE_MULTIPLIERS[zone] : isScaledPolicy ? 1.5 : 1;
+  const scoringDamagePercent = (weighted: number, zone: SpeedsterConditionZone) => isCategoryPolicy
+    ? calculateAtlasScoringDamagePercent(weighted, zone) : Math.round(weighted * damageMultiplier(zone) * 1e12) / 1e12;
+  const conditionScore = (weighted: number, zone: SpeedsterConditionZone) => isCategoryPolicy
+    ? calculateAtlasConditionScore(weighted, zone) : isScaledPolicy
+      ? ATLAS_CONDITION_BANDS.find(band => band.upperPercent === null || scoringDamagePercent(weighted, zone) <= band.upperPercent)!.score
+      : calculateConditionScore(weighted);
+  const conditionBands = isScaledPolicy ? ATLAS_CONDITION_BANDS : LEGACY_CONDITION_BANDS;
   const isHalfPointReport = report.version === 'atlas-manual-draft-report-v2';
   if (isHalfPointReport ? report.finalGradePolicy !== ATLAS_FINAL_GRADE_POLICY
     : 'finalGrade' in report || 'finalGradePolicy' in report) throw new Error('ATLAS_REPORT_EXPLANATION_INVALID');
@@ -163,11 +172,11 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
     const eligibleAreaMm2 = measured ? measured.region.measurement.areaMm2 / (measured.region.measurement.zonePercent / 100) : null;
     const defects = entries.map(({ region, defectType }) => ({ areaMm2: region.measurement.areaMm2, defectType }));
     const weightedDamagePercent = calculateWeightedDamagePercent(eligibleAreaMm2 ?? 1, defects);
-    const score = conditionScore(weightedDamagePercent);
+    const score = conditionScore(weightedDamagePercent, zone);
     const persisted = report.grade[side === 'FRONT' ? 'front' : 'back'][zone.toLowerCase() as 'corners' | 'edges' | 'surface'];
     requireEqual(persisted.weightedDamagePercent, weightedDamagePercent); requireEqual(persisted.score, score);
     return { side, zone, entries, defects, eligibleAreaMm2, weightedDamagePercent, score,
-      ...(isNewPolicy ? { scoringDamagePercent: calculateAtlasScoringDamagePercent(weightedDamagePercent) } : {}) };
+      ...(isScaledPolicy ? { scoringDamagePercent: scoringDamagePercent(weightedDamagePercent, zone) } : {}) };
   }));
   const groupFor = (side: typeof REPORT_SIDES[number], zone: typeof REPORT_ZONES[number]) => groups.find(group => group.side === side && group.zone === zone)!;
   const sides = Object.fromEntries(REPORT_SIDES.map(side => {
@@ -187,10 +196,10 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
           rawAreaMm2: group.defects.reduce((sum, finding) => sum + finding.areaMm2, 0),
           weightedAreaMm2: group.defects.reduce((sum, finding) => sum + finding.areaMm2 * SPEEDSTER_DEFECT_MULTIPLIERS[finding.defectType], 0),
           weightedDamagePercent: group.weightedDamagePercent,
-          ...(isNewPolicy ? { scoringDamagePercent: group.scoringDamagePercent } : {}),
+          ...(isScaledPolicy ? { scoringDamagePercent: group.scoringDamagePercent } : {}),
           score: group.score, deductionFromTen: 10 - group.score,
           tenBandMaxWeightedAreaMm2: group.eligibleAreaMm2 === null ? null
-            : group.eligibleAreaMm2 * (isNewPolicy ? 0.01 / 100 / globalDamageMultiplier : 0.002),
+            : group.eligibleAreaMm2 * (isScaledPolicy ? 0.01 / 100 / damageMultiplier(zone) : 0.002),
           scoreBand: conditionBands.find(band => band.score === group.score)!,
         }];
       })),
@@ -212,10 +221,12 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
     ruleVersion: report.ruleVersion,
     policy: {
       conditionBands, defectMultipliers: SPEEDSTER_DEFECT_MULTIPLIERS,
-      ...(isNewPolicy ? { globalDamageMultiplier } : {}),
+      ...(isCategoryPolicy ? { categoryDamageMultipliers: ATLAS_CATEGORY_DAMAGE_MULTIPLIERS }
+        : isScaledPolicy ? { globalDamageMultiplier: 1.5 } : {}),
       frontWeight: 0.7, backWeight: 0.3, categoryWeight: 0.25,
-      conditionFormula: isNewPolicy
-        ? '100 × sum(measured area × defect multiplier) ÷ eligible category area × 1.5'
+      conditionFormula: isCategoryPolicy
+        ? '100 × sum(measured area × defect multiplier) ÷ eligible category area × category multiplier (Corners 0.5; Edges 1; Surface 2)'
+        : isScaledPolicy ? '100 × sum(measured area × defect multiplier) ÷ eligible category area × 1.5'
         : '100 × sum(measured area × defect multiplier) ÷ eligible category area',
       centeringFormula: 'Worse border percentage ≤55: 10; through 95: 10 − (percentage − 55) ÷ 5; above 95: 1',
       centering: { toleranceWorstPercent: 55, linearThroughPercent: 95, percentPerPoint: 5 },
@@ -240,8 +251,8 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
             ? region.measurement.areaMm2 / (region.measurement.zonePercent / 100) : null;
         const multiplier = SPEEDSTER_DEFECT_MULTIPLIERS[finding.defectType];
         const scoreWithoutFinding = included ? conditionScore(calculateWeightedDamagePercent(group.eligibleAreaMm2 ?? 1,
-          group.defects.filter((_, entryIndex) => entryIndex !== index))) : group.score;
-        const marginalSubgradeEffect = included ? isNewPolicy
+          group.defects.filter((_, entryIndex) => entryIndex !== index)), region.zone) : group.score;
+        const marginalSubgradeEffect = included ? isScaledPolicy
           ? Math.max(0, (scoreWithoutFinding - group.score) * (finding.side === 'FRONT' ? 0.7 : 0.3))
           : calculateDefectSubgradeEffect(finding.side, group.eligibleAreaMm2 ?? 1, group.defects, index) : 0;
         const weightedDamagePercent = included && denominator !== null
@@ -249,7 +260,7 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
         return { zone: region.zone, ...region.measurement, multiplier,
           weightedAreaMm2: region.measurement.areaMm2 * multiplier,
           weightedDamagePercent,
-          ...(isNewPolicy ? { scoringDamagePercent: calculateAtlasScoringDamagePercent(weightedDamagePercent) } : {}),
+          ...(isScaledPolicy ? { scoringDamagePercent: scoringDamagePercent(weightedDamagePercent, region.zone) } : {}),
           eligibleAreaMm2: denominator, scoreWithFinding: group.score, scoreWithoutFinding,
           subgradeEffect: marginalSubgradeEffect, marginalSubgradeEffect, marginalOverallEffect: marginalSubgradeEffect / 4 };
       }),
