@@ -180,9 +180,9 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
         const value = { binding, decodedBytes: source.shard.decodedBytes, rows: rowCatalog(data, 100000) };
         cache.set(key, value);
         cachedDecodedBytes += value.decodedBytes;
-        // Retain 4 MiB decoded payload, or one larger validated shard,
+        // Retain 8 MiB decoded payload, or one larger validated shard,
         // allowing small checklist shards to share that byte budget.
-        while (cache.size > 1 && cachedDecodedBytes > DECODED_BYTES / 2) {
+        while (cache.size > 1 && cachedDecodedBytes > DECODED_BYTES) {
           const oldest = cache.keys().next().value;
           cachedDecodedBytes -= cache.get(oldest).decodedBytes;
           cache.delete(oldest);
