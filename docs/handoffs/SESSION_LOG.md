@@ -44103,3 +44103,136 @@ The variant-admission repair excludes only QUEUED/PREPARE jobs with an exact cur
 Root integrated tests passed156/156 with zero skips/failures (r22-investigation/integrated-tests.tap). Independent actual-component UI qualification passed59/59 and backend/admission review found no remaining blocker. Owned PostgreSQL17 migration003 qualification passed8 groups, including exact preservation of generated Front, intake bindings, manual edits/actions and approvals; migration checksum550d947fb3dc00cd56358896a755f3e2825b48fe37b7fa3124e86f90e2cfa586. Restricted-role admission PostgreSQL qualification passed52 groups; receipt r22-investigation/admission/postgres-02/result.json SHA c445e2ae7eca80fbc0642730dea8873bef82363833f3e19c7e723f53389107fe. Owned disposable clusters were cleaned; there were no production writes or provider calls.
 
 Preparing an integrated R22 native main/worker plus staff/public web release, retaining the current customer application and all current cards. Additive standalone migration003 needs an explicit EXECUTE grant to the existing main role only; worker/staff/customer roles remain denied. The new public router must target the exact new staff deployment and retained customer deployment. Normal staff sign-in will be required after release binding changes. This entry qualifies source and records release preparation; individual mutation plans/results remain to be recorded before execution.
+
+
+### 2026-10-13 — Planned exact R22 image build, unpromoted web candidates and additive migration003
+
+Root froze and reviewed source44e0b10f7f7d8f4b84f06cbfe8ff6f5ef12ee99f. Three independent preparation actions are authorized once, preserving current serving routes, cards and approvals:
+
+- Native immutable build only: exact plan file SHA2a819c8a68fc51a857ca381590d6473aad9e9436a0f3aa41e2e2179017787107; source archive SHAb95f9c5a14148e8c2c7b2169120524d88cbac91ed5d9a319119a717c24d9a2af,15,065,817bytes. Build from pinned clean base and run13 network-isolated qualification groups. Fresh dry run verifies exact protected R21main/R20worker/proxy unchanged and sufficient space. No serving restart or provider call.
+- Web candidates only: exact plan file SHA56225c99e8f88bc9b027579f7474b882ce15e6d258147c5ce93413605e73e915. Upload707 frozen files, build unpromoted production staff/public candidates; public binds new staff plus retained R20customer dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB. No project-environment change, promotion, control change or customer build.
+- Additive standalone003 migration once: reviewed canonical plan f7984c701de1d55e5367a8d0007d960071ffa15f19dbda405e66f8cc4461e566 (file SHA5477d5a6f08865892f56ed67c6d9ae39f418e32050720947a1d3d3d35e9243e3). Apply exact SQL550d947fb3dc00cd56358896a755f3e2825b48fe37b7fa3124e86f90e2cfa586, add ledger row2→3, replace two lifetime attempt/audit constraints and image guard, create exact retry function, and grant EXECUTE only to existing main role. Fresh transactional before/after hashes must preserve all108 application tables. Independent review passed; owned PostgreSQL qualification includes baseline14checks,003eightgroups,002thirteengroups, and exact oldR21store compatibility fourgroups. Fresh02:03:26Z workload shows zero active provider calls/unfinished analyses. Complete read-only schema postflight before any later intentional control changes. No card retry or provider call is authorized by schema application alone.
+
+All three helpers use one-shot intent records; reconcile uncertain outcomes rather than replaying. Native cutover, control activation, domain promotion and actual Alakazam retry are separate later actions to be recorded after concrete candidate acceptance.
+
+
+### 2026-10-13 — R22 additive schema003 applied and independently verified
+
+Observed R22_IMAGE_RETRY_SCHEMA_APPLY_PASS, result SHAd378fef7d57f21409c839d7450c0239d657219c4d613d056034f3e45d6f384a8. Exact reviewed migration003 committed once; all108 application-table hashes matched before/after inside the transaction. Ledger3/functions189/triggers162; only existing main role received retry EXECUTE. Zero application-row changes, card approvals or provider calls. Read-only postflight SHAb9f64a869b3c22ed20863836f88829a8be1347162e385ca98e1fe33f71cbe456 confirms exact schema/grants and unchanged protected control/card/manual/action/approval/upload/image/learning evidence. Only the existing batch polling table advanced normally after commit. The migration intent is consumed; never replay.
+
+Independent live read-only comparison of the same02:05:11Z snapshot verifies current admission batch_busy=true, while the R22 predicate returns all busy flags false and admissionAllowed=true for the terminally blocked Alakazam pair. Receipt release-r22/runtime/admission-preview-01.json SHA903241425723ae1e2d4d1c1a12fb1b4bfdb7b443399c59ef0b01369664eb2d99. No job was claimed or provider request sent. Native build and unpromoted web candidate build continue; serving routes and controls remain unchanged.
+
+
+### 2026-10-13 — R22 unpromoted web candidates and clean native qualification passed
+
+Unpromoted staff candidate dpl_BveYKtEQ1dQ3GYByjCz3xHFtdZyB (atlas-grading-staff-mqzf696li-ten-kings.vercel.app) and public candidate dpl_479DKpFmgazm91SmrLYz8YpMJgWx (atlas-grading-public-p6777qhvm-ten-kings.vercel.app) are READY from frozen44e0. Candidate proof SHAfaecc4d0f46607a1b145323aba51a5d791c8cc0ad1cc6dd968bfa9665594fbfb; actual build artifact-boundary proof SHA448d68a57e4cf6d096431e32bcab2050d6caa8ef2a586b3e75b74e3139a7d0e3. Staff12traces/1,628files/25browserchunks and public13traces/637files/14chunks passed closure checks. All current project environment arrays and R20customer remain unchanged; no promotion or control mutation yet.
+
+Native build completed02:14:20Z with clean build, actual runtime binding and13group network-isolated qualification all exit0. Image sha256:9a58cd0efd8ac1c2b7508c4d9a9e552c7f68057c407fe9039d419c3c32b0e621; build result SHA62699655ae1acc14177c4e26282e8e20e6b5e7a37b290f03abc638716256cd3f. Protected serving containers are unchanged; collected acceptance and exact staged-runtime plan follow. Independent prestart review caught a helper reference to a nonexistent old control census and corrected it to actual schema postflight hashes before any serving operation.
+
+Mark started the separate catalog lead and explicitly pasted coordination instructions. Current lead retains R22 release/SESSION_LOG/current-context ownership until cutover completes. Catalog lead may edit catalog-specific files without committing/deploying; packager/verifier/shared-runtime edits wait for R22 acceptance. All current release artifacts remain pinned to44e0 and exclude concurrent dirty catalog files.
+
+
+### 2026-10-13 — Planned exact R22 private runtime staging
+
+Root reviewed and authorized stage packet SHA80c3a5d718033f18b24129f4140b4aaf2b55e1dc1314e522a3b8b461882e5fd4 once, bound to native acceptance SHA9db51d5561a89643a121d1703eaaef7ad5c9c5379a9a0666b6719670d1996bdf and runtime plan1050a4f64bed5721407528ff25f85621d0701e8f6d536628fde40086fafcb4cd. Accepted image9a58cd0efd8ac1c2b7508c4d9a9e552c7f68057c407fe9039d419c3c32b0e621 passed605 tests across13 isolated groups; merged environment proof502a566306e3bc93f6e01cbd0a8b4ce240c6c9bcf21bacdb3a5099ff0b3b8953 verifies only the two intended web binding fields change. Stage only private replay/env files under /opt/atlas/r22-44e0b10f7f7d. Zero container starts/stops, controls, provider calls or database mutations. Independent packet review passed. Later cutover phases remain separate.
+
+Catalog lead reports package-only provenance validation and secondary-source diagnostics pass73 tests, with primary candidate IDs preserved. Private shard qualification preserves all624 source order and1,144,344 row tuples and lookup results; preliminary cold lookup and memory measures support further isolated Linux qualification after R22 acceptance. New Fleer1992–93 private443 rows include Jordan273 and are explicitly secondary TCDB evidence. No catalog commit/deploy/database/provider writes; shared packaging files remain held.
+
+
+### 2026-10-13 — R22 staged; planned narrow control fence
+
+Observed R22_RUNTIME_STAGE_PASS at02:20:49Z, result SHA97b4e171cb43f95fe6b53b66c5063c0915a81aa58c927c40204df2e5e49ff497. Only private runtime files were staged; zero container actions/database/provider calls. Stage intent is consumed.
+
+Root authorizes the DISABLE phase of exact three-row control plan a11794b7889ce7efc545252beb5db268bd0dd916a6fbb2ddfdafaea046d1a5dc once, immediately bound to a fresh read-only workload receipt. Disable only current staff/public-reader/STAFF-SMS controls with exact preimage checks; preserve all customer/commerce/service/progress controls, cards, approvals, sessions and schema. Actual migration003 and postflight already passed; no provider dispatch or live claim may remain. Record observed revisions/result. Subsequent native graceful quiesce/start and control activation remain separately authorized.
+
+
+### 2026-10-13 — R22 controls fenced; planned exact graceful quiesce
+
+DISABLE completed02:22:30.833Z; receipt SHA5ae0abc06c552e4f23cc12f96e8f622ecbb311b96cefded6fc38b9430a9cdf52. Only staff119/public-reader79/STAFF-SMS87 are disabled; customer SMS34 and all remaining controls are unchanged. Fresh preceding workload SHAa3f246b00e2ec1cc19bcc5df0dd8e86a92405b892fcf8c58ac3572c3e60bfb41 was24seconds old. No provider/card/approval/learning writes.
+
+Root authorizes exact quiesce packet799c58fe7c793c76c00c21913a3926d87a82ad1c421b155facff9f48e9dc98a3 once, bound to02:22:45.516Z workload9b8fddfd133fda0ccd5ffad13e882ee222a4adbcf0ac6511ab570db1a8478bc0 with no active jobs/provider dispatches. Set only old R21main/R20worker restart=no, SIGTERM each once, require normal exit0 and detach only their stopped endpoints. No SIGKILL, replacement start, provider or database write; preserve proxy/transport and unrelated resources. New start follows separately after actual result and fresh prestart proof.
+
+
+### 2026-10-13 — R22 clean drain verified; planned exact new-service start
+
+Observed quiesce PASS02:23:41Z, SHA482b8017e3442c4f158ba06d90998bfdc8994079323115a7910c16d329360c7f. Both predecessor services exited0 normally and only their stopped endpoints were detached; no force kill, provider or database write. Fresh prestart proof SHAa659e04c3b7b1ef3c53c6d5f457b9143dd4f1b887e53bb3805d8b72b301dbe37 verifies exact target bindings, ledger3/functions189/triggers162, main-only retry grant and10protectedtablehashes including8cards/16uploads/16imagejobs/6manualcards/1approval.
+
+Root authorizes exact START packet1e043ddf094a855e1b85a19f4cbfd7514ddab21113ed67a1cb9388d3a367ba36 once. Start the two new services from accepted44e0/image9a58cd0e on released fixed IPs/current alias, unchanged transport/proxy and intended existing resources. Main retains125-second nonce replay fence. Require readiness and unsigned HTTP401; restart policy remains no until activation/canonical/native evidence is verified. No alternate source/model/database, data-copy or human approval.
+
+
+### 2026-10-13 — R22 native services started and ready
+
+Observed R22_RUNTIME_START_PASS02:27:04Z, SHA99c84653a226cb80036a72747151fa6a5e9804d6399f0ed455a53e5ba4d30595. Main a8da9d4a8591ff1d468e5919b4b6bda2035a3dd97574c7ee9ba0217df4d36a9b and worker a0591c1351ca7b13914d4649ee977ca86b173555bd5ca62a9e9a5691d8e528ae both run accepted44e0/image9a58cd0e. Main is listening after nonce fence; unsigned request returned401. Restart policies remain no pending verified activation. Exact environment hashes are recorded; no release-initiated provider/database writes. The start intent is consumed.
+
+
+### 2026-10-13 — Planned exact R22 control activation and canonical publication
+
+Root reviewed and authorized activation packet e6002d3e1435b6f9225bd85fd4e28c5cfd2e5eabeb1f1aef2e3e2adfc29d4226 once, with exact three-row plan a11794b7889ce7efc545252beb5db268bd0dd916a6fbb2ddfdafaea046d1a5dc and actual start receipt99c84653a226cb80036a72747151fa6a5e9804d6399f0ed455a53e5ba4d30595. Activate only Staff120/PublicReader80/STAFF-SMS88 on the accepted R22 bindings; all customer/commerce/service/progress controls remain exact. Backend independent database postactivation must run before normal user sign-in/retries.
+
+After actual activation succeeds and is verified, root authorizes exact publication plan file SHA bf8e4b78249417bbf0f3eed1f7e5476a37c8871e8cfa54bf10d3f0847b24f9ba once. Exactly three API operations: public project staff-origin points to new staff host; promote staff dpl_BveYKtEQ1dQ3GYByjCz3xHFtdZyB; promote public dpl_479DKpFmgazm91SmrLYz8YpMJgWx. Retain customer dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB and all other environment entries. Require actual schema/native/control proofs, exact provider preimage and canonical routing checks. Reconcile any partial outcome without replay. This does not authorize a card retry or human approval; root will use normal authenticated UI after acceptance.
+
+
+### 2026-10-13 — R22 activation, publication and database postflight passed
+
+Activation at02:28:45.743Z passed, SHA8825b0f3b89d293c791d4b924c028fca3a14cb90fa8d52dba959bf1dda8682c6. Staff120/PublicReader80/STAFF-SMS88 are active on exact R22 bindings; all customer controls remain unchanged. Exact three-operation publication passed, SHA48863593918d44e85327586fc88c48812001c34bbfe68cff6a412cf8b40495da, after actual prerequisite f9de0c5ee492466fc1db4c56dc84219a8945df145dbc7c3ecd8206a53cab0852. New staff/public are production; R20 customer is retained and only the public project staff-origin environment value changed. Canonical request verification follows separately. Activation/publication intents are consumed.
+
+Independent database postactivation at02:29:02.677Z passed, SHA3a9e54758009d56cd66031e2a51bfb8febcddce36934e02c92ad08cf117afc5a. Ledger3/functions189/triggers162 and ACLs exact;103/108 table hashes unchanged. Changes are the three intended control tables and ordinary batch/variant progress. Original uploads/generated Fronts/failed Back audit prefixes, manual/action/approval/session/learning rows and all customer control rows are preserved. No new sign-in or image retry preceded this comparison.
+
+
+### 2026-10-13 — R22 canonical routes verified; normal staff sign-in requested
+
+Canonical proof SHA18e59db83813f2bccbc3440ebe7226ac1486b8a06a285e07eae9f1241fa0157c passed exact homepage/staff/customer HTTP200 routes and deployment assets. Root reloaded the existing Chrome verification tab and observed normal staff sign-in after the release binding change; no session was manufactured. Mark was asked to sign in while seal/retirement preparation continues. Updated the four mandatory current-context/runbook headers with actual R22 source, schema, controls, evidence and explicit pending browser acceptance. No Alakazam retry or human approval has been submitted yet.
+
+
+### 2026-10-13 — Planned R22 seal and exact obsolete web retirement
+
+Root authorizes exact seal packet6a73fb2d55adf5a07e6eb5cc940e53f8e4f15449d2588863de43a23102a79ceb once, prerequisite81897f5dfac04f511bf18e9675d169f32aa5873faa0cb7bf431b9eb647205080 binding actual canonical/controls/database proof and native postactivation532388568b13af1c530b04ad28a5be268597e15a660951042201dda7a438f13f. Both services are running exact image/env with zero restarts/OOM/unexpected errors. Set only the two accepted new services restart=unless-stopped; do not restart them.
+
+Under Mark's standing removal of obsolete ATLAS versions, root reviewed helper and two-deployment dry run and authorizes exact plan file fd496c94912823aa2f5f53cc90b677aa5bec10a98f5753edd5a2caf8dbe93d2e once. Delete only unaliased superseded R20 staff dpl_7oNAsyKoXmkTUDLiFu9DdQoj2Lwf and public dpl_GCPVpB34wgMrZioMHrr8pdex93Q7. Independent peer review passed. Impact two deployments, zero projects/environment/aliases/customer/database rows. Preserve exact R22 staff/public and retained R20 customer. Fresh preimage checks and final404/current-preservation checks required; no broad deletion or replay.
+
+
+### 2026-10-13 — R22 sealed, obsolete web retired; normal Alakazam retries accepted
+
+Seal at02:32:38Z passed, SHAcb624bf0249e0700617d85caa0a4fce7fc6508b5f3e1df20a7f8ab983b624223. Only two restart policies changed, no restart. Sealed health02:32:44Z SHAaf452ae18b772c284223f180999de404abda64e7d50f1a04620a92db6d9ed0dc verifies both correct image/env, zero restarts/OOM/unexpected errors and unchanged transport. Two exact obsolete R20 web deployments were deleted and confirmed404; result SHAfa0f7f048887c77913652e562660b64cdf60bd43d4917ab87716c32036340e12. Protected customer and R22 deployments/environment/aliases unchanged; subsequent canonical check SHAa606a83d14478556ec3d228cd735af06604b2cc8af81d3c98d8f8222966a438d passed all three surfaces.
+
+Mark signed in normally. Root used Retry Back background removal once on Card9 b21d97b4-5fe8-43ba-a026-bb9b05e109f3 at approximately02:34Z, then once on Card10 1c268245-c4d4-49d9-9346-22f52cef8719 at approximately02:35Z. Each UI acknowledged preparation and preserved the visible ready Front. No original upload replacement, identity change, geometry confirmation or grade approval occurred. Screenshots are release-r22/browser/alakazam-card9-retry-accepted.png and alakazam-card10-retry-accepted.png. These are accepted retries, not successful output evidence; independent read-only provider/image observation is running.
+
+Catalog lead now owns the shared packager/verifier/tests and narrow structured source-season candidate/Codex consumer integration; broader photo-cache/key redesign remains separately reviewed. Commits remain held until exact obsolete native retirement helpers finish; R22 immutable artifacts exclude all concurrent catalog work.
+
+### 2026-10-13 — Planned exact stopped predecessor container retirement
+
+Root reviewed helper, fresh impact dbd778b007cf603f454ce6459f9dfd7a19945c1fe23e7ea6bc4c4093ad979e36 and independent3-case review PASS. Under standing obsolete-version removal, execute exact plan5afbca16cdf1ddac8d64bd094b37669d527d5c25517948a641ef78e22671c2e8 once: plain removal of the two cleanly stopped/disconnected predecessor main/worker containers only. Impact2containers, zero images/files/volumes/database data. Preserve current R22 pair/proxy, all image/root dependencies; retain retired logs. No force/prune/replay. Image/root cleanup requires a separate exact dependency-qualified plan.
+
+
+### 2026-10-13 — Catalog candidate coordination checkpoint (not deployed)
+
+Catalog lead reports assigned packager/verifier and narrow structured source-season edits underway; no commit/deploy permitted until R22 retirement helpers finish. Candidate index100a9ae0fb8501db71d30610cbb4b31528879aa047aee0df7e8b1fc9487eead1 contains1,845 evidence sources/7,437,588 rows, preserving exact624-source baseline metadata/order and1,144,344 row tuples. Includes all528 long multi-player catalog identities and9 Fleer TCDB secondary sources/569 rows, honestly identified as secondary. Counts are evidence rows, not unique printings. Complete index/shard/family/alias closure66,770,190bytes. Private normalization reproduction and open coverage gaps remain at sports-checklists-20261010/catalog-expansion-20261013/normalization; no new catalog coverage is live in R22. Fleer169 actual discovered releases (161 from1980 onward) remain mostly acquisition work.
+
+Mark accepted provisional cold250ms/warm50ms/catalog512MiB engineering targets. Catalog lead will measure actual Linux two-reader/full catalog and sustained all-source churn, reporting typical/p95 lookup, catalog and total worker/cgroup peak memory. Targets cannot be met by dropping cards/variants/photos/results or adding grading blockers/fallbacks. Root provided a one-container network-none/read-only1CPU/1GiB qualification route, no secrets/data mounts or serving-container changes, to begin only after exact R22 retirement cleanup finishes. Narrow season-only request identity and read-only retained literal-journal aliases are approved subject to independent source-identity/collision review; broad photo/body cache redesign is subsequent work.
+
+
+### 2026-10-13 — First Alakazam recovered; second has confirmed upstream moderation rejection
+
+Normal UI recovery proof recovery-01 SHA4c92284c69c63e84101ca9d1537b867edd94d9af1a05c4786b09cf4c589625f7 verifies Card9 Back attempt2 HTTP200,3,119,983-byte generated PNG SHA48c98bae41a5e84b2dd381bd3dde94e1c5a64933da006862b6f519468b03474b with hash/decode/alpha checks. Identification completed automatically and both geometry stages began. Original source/recipe, ready Fronts, old failure audit prefixes and prior human rows are preserved.
+
+Recovery-02 SHA5b36f9f6b3ccec81a344fce5172b5eb75bfb34ea500f47142ad48b41669ecb2a establishes Card10 attempt2 HTTP400 moderation_blocked/image_generation_user_error at02:36:12.157Z, request req_d1629a4bda8d43129d77bc1ea739b071. The exact saved input is a normal Pokemon card Back; the provider gives no specific triggering feature. Current rejection cause is established, but historical400 reasons remain unknown. No output or downstream grading was invented, no further retry or alternate-image/model path dispatched. Private unsent support evidence is r22-investigation/background/card10-provider-rejection-support.json SHAcd1b9efee79675e2f5cc00c40009149e0549ac20fe34ce650e6b44788fecd325.
+
+### 2026-10-13 — Obsolete containers retired; planned exact old image/root retirement
+
+Two stopped predecessors were removed normally, result SHA15f17a41ec7f47de4254cb7fb16b4f1d814b564e17e1387ab1b8998b1061d965; all three current containers unchanged, old images/roots remained. Root reviewed artifact helper and independent2-case review PASS, dependency proof488825fc9747903c3c5808b724600f33eef309708aebae1d04b2a2a07e4e07da and exact dry-run1538c9746024278aa688dfb816ade5d3e749923df42432acfea4a122fb5065ff. Under standing obsolete-version removal, authorize planf00d3520f7b2b9e7037c7991e116a0a8bf98566fc1db1464adef796de3f47755 once: two old single-tag images and four exact retired R20/R21 runtime/build roots,1,351regularfiles/42,564,190bytes. Full manifests must still match, no current container/process/systemd/cron/transport references, no symlinks/special files. Preserve current R22 image/roots/services, proxy/current transport and all data; no force or broad prune. Verify final absence and protected health. Catalog disposable Linux test waits until this exact inventory operation completes.
+
+
+### 2026-10-13 — R22 cleanup complete; verified polling defect and fresh-lead handoff
+
+Artifact retirement PASS SHAef3cec55f2d9d755550fa52cb9fd534bad809eda73c479333aea9f67f210946f removed exact two predecessor images and four roots; current services/image/config/proxy/transport unchanged. Final fresh health02:40:37Z SHAe05f782b655c255f6f5082fa4b8bc37727e7ffe0fdb908a36fc6c9cdfab265a8 passed. The earlier broad health REVIEW honestly retains Card10's known provider rejection. Remaining image inventory SHA cc1cfb36d1b16990b63d75d0aba565b10e76f6e684b01296c54c7b273497c288 and independent full-layer comparison d5d093fa16c9650c198e319f19d0b408df93725f8a041a70e1e58eed2fae8dd5 prove no retired full filesystem, old final application layer, ID/tag/source-labelled copy remains. Shared bases/cache were not broadly pruned. All retirement intents consumed.
+
+Final read-only Alakazam checkpoint02:43:05.451Z: Card9 generated BackREADYattempt2, identity COMPLETE, both geometryREADY, defect d2e9a7e1-7241-47d1-a6f9-b1a0eecb8e2c DISPATCHED/oneACCEPTED event/nooutcome or proposals, batchANALYZE/manualrevision1/zeroapprovals. Card10 remains BackFAILEDattempt2 moderation_blocked with no downstream calls. Exactly one explicit retry/two lifetime requests each. Observation recovery-05 SHA bf97246ddd9e1110a15b21f54a96f9491df76c81dae9211aa20f81b81303c2e9; counterproof4e499cbc3254d8a1aa152080445081dcad0069b5d181fa30a59c82c4c9ca2c62. Actual retained new identification/geometry/defect requests verify Astra/xhigh and generated-image hashes; completion remains unverified. Agent polling stopped for handoff, server work continues normally.
+
+A live Card10 page stayed Preparing after its actual server rejection. Independent actual-component reproduction proves R22 ManualCards polling excludes REQUESTED, although grading-photo-reader returns that durable state. QUEUED→REQUESTED disables the interval; later FAILED is never fetched. Equal revisions/noerrors/activity/uploads eliminate those as necessary causes; browser throttling is not needed. No code edit was made. Receipt37f02835e66fd1ea28f556e047e5f17d2a5365ed994cb76f5de7876f7e49f80c; reproduction30cd614d7868059039f3f61aee091d192fcbafbf975478baa75aaae4f5b70ddb under feedback-20261013/image-status-polling. Saved screenshot release-r22/browser/card10-stale-preparing-handoff.png and existing signed-in Chrome tab2132132548 preserve the observation; exact last live response body was not captured.
+
+Mark explicitly requested a fresh Astra Ultra lead handoff before additional work. Prompt created at /Users/markthomas/.codex/atlas-handoffs/atlas-followup-20261012/ATLAS_FRESH_LEAD_R22_2026-10-13.txt. It assigns the polling fix, accepted Card9 action reconciliation, honest Card10 moderation handling and release coordination. No further provider retry or production change is planned by this lead. Catalog chat01a13827-85c4-71a1-be92-3efd22f1cde3 retains its assigned catalog/packaging/narrowseason files; its isolated Linux qualification may now proceed. Root commits only the five owned context/runbook/log files, leaving all concurrent catalog edits intact, then releases its commit/log hold. Historical purge authorization remains consumed; current cards and real human approval preserved.
+
+
+### 2026-10-13 — Handoff clarification: Jordan reuse subjects
+
+Root verified Mark's direct reply in the Catalogue Lead Agent chat: Jordan #273 Cards12/13 are the same physical card submitted twice. They are genuine separate intakes, not different physical copies. This answers the physical-identity question; reuse of stored photos/readings with zero duplicate provider calls remains unverified. Catalog authority receipt is /Users/markthomas/.codex/atlas-handoffs/sports-checklists-20261010/catalog-expansion-20261013/second-submission-intake-authority.json. Updated the fresh-lead prompt accordingly; no additional card creation or paid request.
