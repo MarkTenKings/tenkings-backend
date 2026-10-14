@@ -45,6 +45,39 @@ test('API refuses malformed base64 and truncated success responses without anoth
   await assert.rejects(api(async () => Response.json({ data: [{ b64_json: '%%%' }] })).edit(apiArgs), { code: 'REPORT_IMAGE_RESPONSE_INVALID', disposition: 'FAILED' });
   await assert.rejects(api(async () => new Response('{')).edit(apiArgs), { code: 'REPORT_IMAGE_RESPONSE_UNKNOWN', disposition: 'UNKNOWN' });
 });
+test('rejected edits retain bounded sanitized diagnostics and exact body hash without authorizing automatic retry', async () => {
+  const raw = JSON.stringify({ error: { code: 'image_generation_failed', type: 'invalid_request_error', param: 'image[0]',
+    message: 'Provider rejected fixture-key-no-real-call\nBearer secret https://private.example/image?token=x sk-secret user@example.com' } });
+  let sends = 0;
+  await assert.rejects(api(async () => { sends++; return new Response(raw, { status: 400, headers: { 'x-request-id': 'req_rejected' } }); }).edit(apiArgs), error => {
+    assert.equal(error.code, 'REPORT_IMAGE_REQUEST_REJECTED'); assert.equal(error.disposition, 'FAILED');
+    const saved = error.receipt.providerError;
+    assert.equal(saved.bodyState, 'COMPLETE'); assert.equal(saved.bodySha256, digest(raw)); assert.equal(saved.bodyByteCount, Buffer.byteLength(raw));
+    assert.equal(saved.code, 'image_generation_failed'); assert.equal(saved.type, 'invalid_request_error'); assert.equal(saved.param, 'image[0]');
+    assert.doesNotMatch(saved.message, /fixture-key|secret|private\.example|user@example|\n/); assert.equal(error.receipt.providerRequestId, 'req_rejected');
+    assert.doesNotThrow(() => canonical(error.receipt, { maxBytes: 8192 }));
+    return true;
+  });
+  assert.equal(sends, 1);
+  for (const message of ['data:image/png;base64,invalid', 'DATA:private', 'https://private.example/?token=hidden', '\u0000data:private', 'x'.repeat(12000)]) {
+    let receipt;
+    await assert.rejects(api(async () => Response.json({ error: { message } }, { status: 400 })).edit(apiArgs), error => {
+      receipt = error.receipt; assert.doesNotThrow(() => canonical(receipt, { maxBytes: 8192 })); return true;
+    });
+    const store = createReportImageStore({ boundary: { machineTransaction: async (_, work) => work({ principal: { mode: 'LOCAL_FIXTURE' },
+      tx: { $executeRawUnsafe: async (_sql, _key, _requestId, serialized) => { assert.deepEqual(JSON.parse(serialized), receipt); return 1; } } }) } });
+    assert.equal(await store.recordReceipt({ key: digest('fixture'), claim_id: apiArgs.requestId }, receipt), true);
+  }
+  for (const [raw, state] of [['not JSON', 'COMPLETE'], ['x'.repeat(16 * 1024 + 1), 'TOO_LARGE']]) {
+    await assert.rejects(api(async () => new Response(raw, { status: 400 })).edit(apiArgs), error => {
+      assert.equal(error.disposition, 'FAILED'); assert.equal(error.receipt.providerError.bodyState, state); return true;
+    });
+  }
+  const interrupted = new ReadableStream({ start(controller) { controller.error(new Error('private interrupted body')); } });
+  await assert.rejects(api(async () => new Response(interrupted, { status: 400 })).edit(apiArgs), error => {
+    assert.equal(error.disposition, 'FAILED'); assert.deepEqual(error.receipt.providerError, { bodyState: 'UNAVAILABLE' }); return true;
+  });
+});
 test('provider handles a full 4 MiB output without recursive validation and retains paid receipts on malformed payloads', async () => {
   const large = Buffer.alloc(4 * 1024 * 1024, 173); let calls = 0;
   const result = await api(async () => { calls++; return Response.json({ data: [{ b64_json: large.toString('base64') }], usage: { output_tokens: 8 } }); }).edit(apiArgs);

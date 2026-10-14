@@ -524,6 +524,56 @@ const failedPhotos = () => {
  value.earlyGeometry=Object.fromEntries(['FRONT','BACK'].map(side=>[side,{uploadId:side,key:side,state:'NEEDS_REVIEW',machineUsable:false,canRetry:true}]));
  return value;
 };
+const rejectedBackImage = () => {
+ const card=failedPhotos();card.card.ready=false;
+ card.gradingImages.BACK={uploadId:'BACK',state:'FAILED',code:'REPORT_IMAGE_REQUEST_REJECTED',
+  rejection:{retryable:true,jobKey:'a'.repeat(64),failedRequestId:'failed-back-request'}};
+ card.previews={FRONT:{url:'/saved-front.png',sha256:'b'.repeat(64)}};
+ return card;
+};
+const imageRetryAck=body=>({state:'ACCEPTED',acknowledgedRequest:{...body,side:'BACK'}});
+test('explicit background retry retains the photo pair and unsaved details, then observes preparation without another dispatch',async()=>{
+ let card=rejectedBackImage(),reads=0;const posts=[],store=storage(null);
+ const f=harness(store,async(path,{body})=>{
+  posts.push({path,body:plain(body)});assert.equal(JSON.parse(store.getItem(key)).intent,'RETRY_GRADING_IMAGE');
+  card.gradingImages.BACK={uploadId:'BACK',state:'QUEUED'};return imageRetryAck(body);
+ },{readCard:()=>{reads++;return structuredClone(card);}});
+ f.render();await flush();f.render();assert.equal(posts.length,0);assert.match(f.sideText('Back'),/Image needs attention/);
+ assert.equal(f.has('Retry Back background removal'),true);assert.equal(f.has('Retry Front background removal'),false);
+ f.change('Name','My unsaved name');f.render();f.click('Retry Back background removal');await flush();f.render();
+ assert.equal(posts.length,1);assert.deepEqual(posts[0],{path:'/api/staff/manual-connected/cards/card/grading-images/BACK/retry',body:{
+  requestId:posts[0].body.requestId,uploadId:'BACK',jobKey:'a'.repeat(64),failedRequestId:'failed-back-request'}});
+ assert.match(posts[0].body.requestId,/^[0-9a-f-]{36}$/);assert.equal(store.getItem(key),null);
+ assert.equal(f.previewSrc('Front'),'/saved-front.png');assert.equal(f.field('Name').props.value,'My unsaved name');
+ const before=reads;await f.tick();assert.ok(reads>before);assert.equal(posts.length,1);
+ card.gradingImages.BACK={uploadId:'BACK',state:'FAILED',code:'REPORT_IMAGE_ALPHA_INVALID'};
+ await f.tick();const stopped=reads;await f.tick();assert.equal(reads,stopped);assert.equal(posts.length,1);f.dispose();
+});
+for(const uncertain of ['lost-response','wrong-ack'])test(`background retry ${uncertain} resumes the identical intent without buying another retry`,async()=>{
+ const card=rejectedBackImage(),store=storage(null),posts=[];
+ const f=harness(store,async(path,{body})=>{
+  posts.push({path,body:plain(body)});
+  if(posts.length===1){if(uncertain==='lost-response')throw {status:503};return imageRetryAck({...body,uploadId:'unrelated'});}
+  return imageRetryAck(body);
+ },{readCard:()=>card});
+ f.render();await flush();f.render();f.click('Retry Back background removal');await flush();f.render();
+ assert.equal(posts.length,1);assert.equal(f.has('Check saved retry'),true);assert.equal(f.disabled('Retry Back background removal'),true);
+ const retained=JSON.parse(store.getItem(key));assert.deepEqual(retained.body,posts[0].body);
+ f.click('Check saved retry');await flush();f.render();assert.deepEqual(posts[1],posts[0]);assert.equal(store.getItem(key),null);f.dispose();
+});
+for(const state of ['UNKNOWN','READY','FAILED-STALE'])test(`background retry does not authorize ${state} image work`,async()=>{
+ const card=rejectedBackImage();if(state==='FAILED-STALE')card.gradingImages.BACK.uploadId='old';else card.gradingImages.BACK.state=state;
+ const f=harness(storage(null),async()=>assert.fail('No automatic image dispatch'),{readCard:()=>card});
+ f.render();await flush();f.render();assert.equal(f.has('Retry Back background removal'),false);await f.tick();f.dispose();
+});
+test('image status refresh clears its own transient error and leaves current detail edits intact',async()=>{
+ const card=rejectedBackImage();card.gradingImages.BACK={uploadId:'BACK',state:'RUNNING'};let unavailable=false;
+ const f=harness(storage(null),async()=>assert.fail('Status polling cannot dispatch'),{readCard:()=>{if(unavailable)throw {code:'TEMPORARILY_UNAVAILABLE'};return structuredClone(card);}});
+ f.render();await flush();f.render();f.change('Name','Still editing');f.render();
+ unavailable=true;await f.tick();assert.match(f.text(),/grading image status could not be refreshed/);
+ unavailable=false;await f.tick();assert.doesNotMatch(f.text(),/grading image status could not be refreshed/);
+ assert.equal(f.field('Name').props.value,'Still editing');f.dispose();
+});
 for(const state of ['FAILED','NEEDS_REVIEW','READY','RUNNING'])test(`${state} automatic geometry enters the same sequential workspace without the retired paired review`,async()=>{
  let card=failedPhotos();for(const side of ['FRONT','BACK'])card.earlyGeometry[side].state=state;
  const posts=[],f=harness(storage(null),async(path,{body})=>{

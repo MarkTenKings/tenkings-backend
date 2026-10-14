@@ -33,7 +33,7 @@ try {
  }});
  const executor=createAnalysisExecutor({repository,provider,artifacts:fixture.artifacts});
  const other=createAnalysisExecutor({repository,provider:createAstraDefectProvider({apiKey:'sk-owned_main_background_fixture_only_123456',fetchImpl:forbidden}),artifacts:fixture.artifacts});
- const admission=createVariantAdmission({boundary:{machineTransaction:(_staff,work)=>client.$transaction(tx=>work({tx}))}});
+ const admission=createVariantAdmission({boundary:{machineTransaction:(_staff,work)=>client.$transaction(tx=>work({tx,principal:{mode:fixture.config.mode}}))}});
  const owner=fixture.identities.find(x=>x.role==='REVIEWER'),checks=[];
  async function seed(expired=false) {
   const input=contextInputFixture();input.cardId=randomUUID();input.analysisId=randomUUID();const draft=canonical({source:{sourceHash:input.binding.sourceHash},identityRevision:input.binding.identityRevision});

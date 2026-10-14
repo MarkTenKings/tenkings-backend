@@ -1,5 +1,6 @@
 import { digest, requireThat } from '@atlas/manual-service/contract';
 import { parseDecodedFrame } from '@atlas/photo-core';
+import { reportImageRejection } from './report-image-retry.mjs';
 
 /** Reading the saved grading image never constructs an image provider, starts
  * discovery or exposes a queue mutation. Both serving and isolated review use
@@ -13,7 +14,9 @@ export function createGradingPhotoReader({ photo: readPhoto, storage }) {
       requireThat(['QUEUED', 'RUNNING', 'REQUESTED', 'READY', 'FAILED', 'UNKNOWN'].includes(job.state), 503, 'REPORT_IMAGE_STORED_CONTENT_INVALID');
       if (job.state === 'READY' && job.result?.media?.frame?.schemaVersion !== 3)
         return { state: 'FAILED', code: 'GRADING_IMAGE_FRAME_INVALID' };
-      return { state: job.state, code: /^[A-Z][A-Z0-9_]{0,100}$/.test(job.code ?? '') ? job.code : null };
+      const rejection = reportImageRejection(job);
+      return { state: job.state, code: /^[A-Z][A-Z0-9_]{0,100}$/.test(job.code ?? '') ? job.code : null,
+        ...(rejection ? { rejection } : {}) };
     },
     async isPhotoPrepared({ cardId, uploadId, side }) {
       const job = await readPhoto(cardId, uploadId, side);

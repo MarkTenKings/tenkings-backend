@@ -29,6 +29,36 @@ function usageReceipt(value) {
   return Object.keys(result).length ? result : null;
 }
 
+// Rejections are useful evidence too. Retain only bounded, sanitized diagnostic
+// fields and the exact body hash, never an arbitrary provider body or credential.
+async function rejectionEvidence(response, signal, apiKey) {
+  const reader = response.body?.getReader();
+  if (!reader) return { bodyState: 'UNAVAILABLE' };
+  const chunks = []; let length = 0;
+  try {
+    while (true) {
+      signal.throwIfAborted(); const part = await reader.read(); if (part.done) break;
+      length += part.value.byteLength;
+      if (length > 16 * 1024) return { bodyState: 'TOO_LARGE' };
+      chunks.push(Buffer.from(part.value));
+    }
+    const bytes = Buffer.concat(chunks, length), evidence = { bodyState: 'COMPLETE', bodySha256: digest(bytes), bodyByteCount: bytes.length };
+    let payload; try { payload = JSON.parse(bytes.toString('utf8')); } catch { return evidence; }
+    const diagnostic = payload?.error;
+    if (!diagnostic || typeof diagnostic !== 'object' || Array.isArray(diagnostic)) return evidence;
+    const token = value => typeof value === 'string' && value !== apiKey && !/^sk-/i.test(value)
+      && /^[a-zA-Z0-9_.\[\]-]{1,100}$/.test(value) ? value : null;
+    for (const key of ['code', 'type', 'param']) { const value = token(diagnostic[key]); if (value) evidence[key] = value; }
+    if (typeof diagnostic.message === 'string') {
+      evidence.message = diagnostic.message.split(apiKey).join('[REDACTED]')
+        .replace(/\bBearer\s+\S+|\bsk-[a-zA-Z0-9_-]+|\bdata:[^\s"<>]*|(?:https?|postgres(?:ql)?):\/\/[^\s"<>]+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED]')
+        .replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 512);
+    }
+    return evidence;
+  } catch { return { bodyState: 'UNAVAILABLE' }; }
+  finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
 /** One explicit POST, no SDK retries. Never send a public/signed source URL or
  * log provider response bodies. A lost response is UNKNOWN, not permission to
  * purchase another edit. X-Client-Request-Id is audit correlation, not a claim
@@ -55,12 +85,13 @@ export function createReportImageProvider({ apiKey, fetchImpl = fetch, timeoutMs
       clientRequestId: requestId, providerRequestId: requestID(response.headers.get('x-request-id')),
       startedAt, finishedAt: new Date().toISOString(), status: response.status };
     if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
+      const providerError = await rejectionEvidence(response, active, apiKey);
       // 429 means the request was rejected. Network/5xx/408 may have accepted
       // work; preserve uncertainty instead of automatically duplicating cost.
       throw error(response.status === 429 ? 'REPORT_IMAGE_RATE_LIMITED' : response.status >= 500 || response.status === 408
         ? 'REPORT_IMAGE_RESPONSE_UNKNOWN' : 'REPORT_IMAGE_REQUEST_REJECTED', response.status === 429 ? 'RETRY'
-        : response.status >= 500 || response.status === 408 ? 'UNKNOWN' : 'FAILED', receipt);
+        : response.status >= 500 || response.status === 408 ? 'UNKNOWN' : 'FAILED',
+      { ...receipt, finishedAt: new Date().toISOString(), providerError });
     }
     let payload;
     try { payload = await boundedJSON(response, active); } catch (cause) { throw error(cause.code ?? 'REPORT_IMAGE_RESPONSE_UNKNOWN', cause.disposition ?? 'UNKNOWN', receipt); }

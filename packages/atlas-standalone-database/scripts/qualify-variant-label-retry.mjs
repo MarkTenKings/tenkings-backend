@@ -26,12 +26,12 @@ try {
  const before=(await admin.query(catalogSQL)).rows[0].value;
  const oldGuard=(await admin.query("SELECT pg_get_functiondef('atlas_manual_connected.variant_job_guard()'::regprocedure) value")).rows[0].value;
  const oldLedger=(await admin.query('SELECT * FROM atlas_staff._standalone_migrations')).rows;
- const upgraded=await applyStandaloneMigrations(admin);assert.equal(upgraded.status,'APPLIED');assert.equal(upgraded.applied.length,1);
+ const upgraded=await applyStandaloneMigrations(admin);assert.equal(upgraded.status,'APPLIED');assert.equal(upgraded.applied.length,2);
  const after=(await admin.query(catalogSQL)).rows[0].value;
- assert.deepEqual(after,{tables:before.tables,functions:before.functions+2,triggers:before.triggers+1});
+ assert.deepEqual(after,{tables:before.tables,functions:before.functions+3,triggers:before.triggers+1});
  assert.deepEqual((await admin.query('SELECT * FROM atlas_staff._standalone_migrations WHERE version=$1',[oldLedger[0].version])).rows,oldLedger);
  assert.equal((await applyStandaloneMigrations(admin)).status,'NO_OP');assert.equal((await applyStandaloneBaseline(admin)).status,'NO_OP');
- checks.push('registered baseline1→2 migration and repeated no-op preserve baseline receipt; exact +2 functions/+1 trigger/no table delta');
+ checks.push('registered baseline1→3 migrations and repeated no-op preserve baseline receipt; exact +3 functions/+1 trigger/no table delta');
  const roles={staff:'atlas_retry_staff',manual:'atlas_retry_main',variant:'atlas_retry_worker',customer:'atlas_retry_customer',customerPrivate:'atlas_retry_private'};
  await admin.query(standaloneRoleSQL(roles));
  const roleClients={};for(const role of Object.values(roles)){const password=randomBytes(24).toString('hex');await admin.query(`ALTER ROLE "${role}" LOGIN PASSWORD '${password}'`);roleClients[role]=await connect(cluster.url('atlas_label_retry_upgrade'),role,password);}

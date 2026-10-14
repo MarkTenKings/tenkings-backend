@@ -20,6 +20,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market(?:/(search|select))?$`);
   const variantImageRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants/images/([a-f0-9]{64})$`);
   const variantRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants(?:/(confirm|refresh|retry-labels))?$`);
+  const gradingImageRetryRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/grading-images/(FRONT|BACK)/retry$`);
   const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search)$`);
   const dealerRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/dealer-offers$`);
   const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image|thumbnail)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|clean|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
@@ -77,6 +78,16 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       }
       if(await intake(req,res))return true;
       if(await workflow(req,res))return true;
+      const gradingImageRetry=gradingImageRetryRoute.exec(url.pathname);
+      if(gradingImageRetry){
+        requireThat(!url.search&&req.method==='POST',405,'METHOD_NOT_ALLOWED');
+        requireThat(connected.retryGradingImage,503,'REPORT_IMAGE_RETRY_DISABLED');
+        requireThat(req.headers.origin===origin&&/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+          &&typeof req.headers['x-atlas-csrf']==='string'&&req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        const staff=await boundary.authenticate(req.headers.cookie??'',req.headers['x-atlas-csrf']);
+        const result=await connected.retryGradingImage(staff,gradingImageRetry[1],gradingImageRetry[2],req.body);
+        res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
+      }
       const variantImage=variantImageRoute.exec(url.pathname);
       if(variantImage){requireThat(!url.search&&req.method==='GET',405,'METHOD_NOT_ALLOWED');requireThat(connected.variantReview,503,'VARIANT_DISABLED');const staff=await boundary.authenticate(req.headers.cookie??'');const result=await connected.variantReview.image(staff,variantImage[1],variantImage[2]);res.setHeader('Cache-Control','private, no-store');res.setHeader('Content-Type',result.contentType);res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");res.status(200).send(result.bytes);return true;}
       const variantFound=variantRoute.exec(url.pathname);

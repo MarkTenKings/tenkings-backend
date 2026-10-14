@@ -5,6 +5,11 @@
       "version": "atlas-standalone-002-variant-label-retry",
       "file": "sql/002-variant-label-retry.sql",
       "sqlSha256": "dae816990ab42d99204bf07f2a009af4e4ca92ccaab154da213137492be84396"
+    },
+    {
+      "version": "atlas-standalone-003-report-image-retry",
+      "file": "sql/003-report-image-retry.sql",
+      "sqlSha256": "550d947fb3dc00cd56358896a755f3e2825b48fe37b7fa3124e86f90e2cfa586"
     }
   ]
 }

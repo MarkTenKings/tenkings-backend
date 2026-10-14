@@ -49,6 +49,7 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   useEffect(()=>{if(saved?.details?.sourceHash===saved?.card?.sourceHash&&saved?.details?.fields?.name)onNameChange?.(saved.details.fields.name);},[saved?.details?.sourceHash,saved?.card?.sourceHash,saved?.details?.fields?.name,onNameChange]);
   const [identifying,setIdentifying]=useState(false),[changes,setChanges]=useState({}),[localReady,setLocalReady]=useState(false);
   const [commandPending,setCommandPending]=useState(null);
+  const [imageStatusError,setImageStatusError]=useState('');
   const reviewEntry=useRef(null);
   const [workspaceBusy,setWorkspaceBusy]=useState(false);
   const workspaceBusyChanged=useCallback(value=>{setWorkspaceBusy(value);onBusyChange?.(value);},[onBusyChange]);
@@ -115,7 +116,7 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   useEffect(()=>{
     const started=++generation.current;let stopped=false,journal,batchJournal,ownedClient,cleanup;
     savedRef.current=null;changesRef.current={};uploadLocks.current={};activity.current=null;reads.current={next:0,applied:0};leavingDeleted.current=false;
-    setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setIdentifying(false);setCommandPending(null);reviewEntry.current=null;setPending([]);setScreen('intake');setLocalReady(false);
+    setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setImageStatusError('');setIdentifying(false);setCommandPending(null);reviewEntry.current=null;setPending([]);setScreen('intake');setLocalReady(false);
     (async()=>{
       const currentSession=await request('/api/staff/session');
       if(stopped)return;
@@ -188,7 +189,11 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
       if(localStorage.getItem(commandKey)===serialized)localStorage.removeItem(commandKey);
       updatePending();
     };
-    try{const result=await request(command.path,{method:'POST',body:command.body});clear();if(started===generation.current&&command.path.endsWith('/details'))acknowledgeDetails(command.body.changes);return result;}
+    try{const result=await request(command.path,{method:'POST',body:command.body});
+      if(command.intent==='RETRY_GRADING_IMAGE'&&(result?.state!=='ACCEPTED'
+        ||['requestId','uploadId','jobKey','failedRequestId'].some(key=>result.acknowledgedRequest?.[key]!==command.body[key])
+        ||result.acknowledgedRequest?.side!==command.path.split('/').at(-2)))throw {code:'REPORT_IMAGE_RETRY_ACK_INVALID',status:503};
+      clear();if(started===generation.current&&command.path.endsWith('/details'))acknowledgeDetails(command.body.changes);return result;}
     catch(error){if([400,403,404,409,413,422].includes(error.status)){clear();if(started===generation.current)await refresh();}throw error;}
   }
   async function saveDetails(value,changes){
@@ -203,6 +208,28 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
     await durable(`${prefix}/${cardId}/identify`,{actionId:crypto.randomUUID(),expectedAttemptId:saved.identification.attemptId,sourceHash:saved.card.sourceHash});
     if(started===generation.current)await refresh();
   }
+  async function retryGradingImage(side){
+    const started=generation.current,value=savedRef.current,upload=value?.card.sides[side]?.upload,image=value?.gradingImages?.[side];
+    if(Object.keys(uploadLocks.current).length||image?.state!=='FAILED'||image.uploadId!==upload?.uploadId||image.rejection?.retryable!==true)return;
+    await durable(`${prefix}/${cardId}/grading-images/${side}/retry`,{
+      requestId:crypto.randomUUID(),uploadId:upload.uploadId,jobKey:image.rejection.jobKey,failedRequestId:image.rejection.failedRequestId,
+    },'RETRY_GRADING_IMAGE');
+    if(started===generation.current)await refresh();
+  }
+  const preparingGradingImage=['FRONT','BACK'].some(side=>{
+    const image=saved?.gradingImages?.[side];
+    return image?.uploadId===saved?.card.sides[side]?.upload?.uploadId&&['QUEUED','RUNNING'].includes(image?.state);
+  });
+  useEffect(()=>{
+    if(!preparingGradingImage||!localReady||inWorkspace||deletePending)return;
+    let stopped=false,reading=false;
+    const timer=setInterval(async()=>{
+      if(stopped||reading||activity.current||Object.keys(uploadLocks.current).length)return;
+      reading=true;
+      try{await refresh();if(!stopped)setImageStatusError('');}catch(failure){if(!stopped)setImageStatusError(manualMessage(failure));}finally{reading=false;}
+    },2000);
+    return()=>{stopped=true;clearInterval(timer);};
+  },[cardId,preparingGradingImage,localReady,inWorkspace,deletePending]);
   async function initialize(){
     const started=generation.current,original=savedRef.current,edits={...changesRef.current};
     if(!original?.card.ready||Object.keys(uploadLocks.current).length||identifying)return;
@@ -260,7 +287,8 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
     {deletePending&&<section className="mc-notice"><p>A saved deletion is waiting for confirmation. Uploads are paused; originals stay on this device until ATLAS confirms.</p><button disabled={Boolean(busy)||uploading} onClick={()=>void removeCards()}>Finish saved deletion</button></section>}
     {error&&<div className="mc-notice error" role="alert">{error} <button onClick={()=>perform(()=>refresh(),'Loading saved card…')}>Reload saved state</button></div>}
     {busy&&<p role="status">{busy}</p>}
-    {!inWorkspace&&commandPending&&!busy&&<section className="mc-notice"><p>A saved request needs confirmation. Resume it before making another change.</p><button disabled={uploading} onClick={()=>perform(resumeCommand,'Checking the saved request…')}>Resume saved request</button></section>}
+    {!inWorkspace&&imageStatusError&&<p role="status">The grading image status could not be refreshed. {imageStatusError}</p>}
+    {!inWorkspace&&commandPending&&!busy&&<section className="mc-notice"><p>{commandPending.intent==='RETRY_GRADING_IMAGE'?'Checking whether your image retry was accepted. Your uploaded photograph is retained.':'A saved request needs confirmation. Resume it before making another change.'}</p><button disabled={uploading} onClick={()=>perform(resumeCommand,'Checking the saved request…')}>{commandPending.intent==='RETRY_GRADING_IMAGE'?'Check saved retry':'Resume saved request'}</button></section>}
     {!inWorkspace&&activePending.length>0&&<section className="mc-notice"><h2>Saved uploads</h2>{activePending.map(item=><div key={item.id}><span>{item.value.kind==='create'?'New card':`${item.value.input.side==='FRONT'?'Front':'Back'} photo`} · {olderUpload(item)?'Earlier upload; this is not the selected photo.':item.value.verified?'Original saved; working image needs preparation':'Upload saved on this device'}</span><button disabled={Boolean(busy)||Boolean(uploadState[item.value.input?.side]?.busy)} onClick={()=>{if(cardId&&item.value.kind==='upload')void uploadSide(item.value.input.side,owner=>owner.resume(item.id),'Resuming saved upload…');else perform(async()=>{const result=await client.current.resume(item.id);if(!cardId&&result.card)await router.push(`/manual/${result.card.cardId}`);else await refresh();},'Resuming saved upload…');}}>{olderUpload(item)?'Check earlier upload':'Resume'}</button>
       {item.value.verified&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.forgetVerified(item.id),'Keeping the verified original…')}>Clear device copy</button>}
       {!item.value.uploadId&&item.value.planRefusal&&item.value.planUncertain===false&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.discardUnplanned(item.id),'Clearing the refused upload…')}>Discard refused upload</button>}
@@ -284,12 +312,13 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
         const originalSaved=Boolean(slot.upload?.verification||recovery?.value.verified);
         const gradingImage=slot.upload?.uploadId&&saved.gradingImages?.[side]?.uploadId===slot.upload.uploadId?saved.gradingImages[side]:null;
         const imageStopped=['FAILED','UNKNOWN','UNAVAILABLE'].includes(gradingImage?.state);
+        const imageRetryable=gradingImage?.state==='FAILED'&&gradingImage.rejection?.retryable===true;
         const imageMessage=gradingImage?.state==='UNKNOWN'?'Background removal has no confirmed result.':gradingImage?.state==='FAILED'?'Background removal could not finish.':gradingImage?.state==='UNAVAILABLE'?'Background removal is unavailable.':gradingImage?.state==='READY'?'Loading the saved grading image.':'Preparing the background-removed grading image.';
-        const imageReason=gradingImage?.state==='UNKNOWN'?'The saved request needs review before another image request.':gradingImage?.code==='REPORT_IMAGE_RATE_LIMITED'?'The image service remained busy after retries.':gradingImage?.code==='REPORT_IMAGE_ALPHA_INVALID'||gradingImage?.code==='REPORT_IMAGE_OUTPUT_INVALID'?'The returned image could not be used for grading.':imageStopped?'Your uploaded photograph is retained.':null;
+        const imageReason=imageRetryable?'OpenAI rejected the image request. Retry background removal using your saved photograph.':gradingImage?.state==='UNKNOWN'?'The saved request needs review before another image request.':gradingImage?.code==='REPORT_IMAGE_RATE_LIMITED'?'The image service remained busy after retries.':gradingImage?.code==='REPORT_IMAGE_ALPHA_INVALID'||gradingImage?.code==='REPORT_IMAGE_OUTPUT_INVALID'?'The returned image could not be used for grading.':imageStopped?'Your uploaded photograph is retained.':null;
         const attention=photoAttention.find(issue=>issue.side===side);
-        return <article key={side} data-review-target={`photo-${side}`} data-review-attention={Boolean(attention)} tabIndex={-1}>{attention&&<p className="mc-review-reason">{attention.message}</p>}<div className="mc-photo-title"><h2>{sideName}</h2><span>{gradingImage?.state==='READY'?'Grading image ready':slot.upload?.source?'Preparing grading image':'Add photograph'}</span></div>
+        return <article key={side} data-review-target={`photo-${side}`} data-review-attention={Boolean(attention)} tabIndex={-1}>{attention&&<p className="mc-review-reason">{attention.message}</p>}<div className="mc-photo-title"><h2>{sideName}</h2><span>{gradingImage?.state==='READY'?'Grading image ready':imageStopped?'Image needs attention':slot.upload?.source?'Preparing grading image':'Add photograph'}</span></div>
         {saved.previews?.[side]?.url?<div className="mc-photo-preview"><img key={slot.version} alt={`${sideName} background-removed grading image`} src={reviewImagePreview(saved.previews?.[side],saved.previews?.[side]?.width?saved.previews[side]:null)?.url??saved.previews?.[side]?.url}/></div>:<div className="mc-photo-empty" role={imageStopped?'alert':undefined}><span aria-hidden="true" className="mc-photo-outline">{side==='FRONT'?'F':'B'}</span><strong>{slot.upload?.source?imageMessage:originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</strong><small>{imageReason??'Full resolution. Every detail.'}</small></div>}
-        {imageStopped&&<button type="button" disabled={Boolean(busy)||Boolean(uploadState[side]?.busy)} onClick={()=>perform(()=>refresh(),'Checking saved image status…')}>Check {sideName} image status</button>}
+        {imageRetryable?<button type="button" disabled={Boolean(busy)||uploading||Boolean(commandPending)||staff.role!=='REVIEWER'} onClick={()=>perform(()=>retryGradingImage(side),`Retrying ${sideName} background removal…`)}>Retry {sideName} background removal</button>:imageStopped&&<button type="button" disabled={Boolean(busy)||Boolean(uploadState[side]?.busy)} onClick={()=>perform(()=>refresh(),'Checking saved image status…')}>Check {sideName} image status</button>}
         <label className="mc-upload">{slot.upload?'Replace original photo':'Choose original photo'}<input aria-label={`${side} original photo`} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.HEIC,.heif,.HEIF" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'||activePending.some(item=>item.value.kind==='upload'&&item.value.input.side===side)} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void uploadSide(side,owner=>owner.upload(cardId,side,slot.version,file),`Saving ${side==='FRONT'?'Front':'Back'} original…`);}}/></label>
         {uploadState[side]?.busy&&<p role="status">{uploadState[side].label}</p>}{uploadState[side]?.error&&<p className="mc-field-error" role="alert">{uploadState[side].error}</p>}
         {uploadState[side]?.refreshError&&<p className="mc-field-error" role="alert">The saved photo status could not be refreshed. {uploadState[side].refreshError} <button type="button" disabled={Boolean(busy)||Boolean(uploadState[side]?.busy)} onClick={()=>void uploadSide(side,async()=>{},'Checking saved photo status…')}>Reload {sideName} photo status</button></p>}

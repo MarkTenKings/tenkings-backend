@@ -9,6 +9,8 @@ import { createMachineStaffBoundary } from '@atlas/manual-service/machine-auth';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { createVariantAdmission } from '../src/variant-admission.mjs';
 import { variantWorkerRoleSQL, variantWorkerGrantSQL } from '../src/variant-worker-grants.mjs';
+import { createStoredGradingPhotoReader } from '../src/grading-photo-reader.mjs';
+import { registeredMigrations } from '../../atlas-standalone-database/registered-migrations.mjs';
 
 const output = process.env.ATLAS_VARIANT_ADMISSION_EVIDENCE;
 assert(output && resolve(output) === output);
@@ -91,6 +93,10 @@ try {
       'receipts',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY analysis_id,kind),'[]'::jsonb) FROM atlas_defect_analysis.receipt r),
       'events',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY analysis_id,kind),'[]'::jsonb) FROM atlas_defect_analysis.provider_event r),
       'refusals',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY card_id,action_id),'[]'::jsonb) FROM atlas_defect_analysis.request_refusal r),
+      'batches',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY key),'[]'::jsonb) FROM atlas_manual_connected.batch_grading r),
+      'images',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY key),'[]'::jsonb) FROM atlas_manual_connected.report_image_job r),
+      'bindings',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY upload_id),'[]'::jsonb) FROM atlas_manual_connected.card_image_binding r),
+      'uploads',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY id),'[]'::jsonb) FROM atlas_manual_intake.upload r),
       'discards',(SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY card_id),'[]'::jsonb) FROM atlas_manual_intake.discarded_card r))::text AS value`);
     return row.value;
   }
@@ -156,14 +162,92 @@ try {
   await expect('current-owner RUNNING batch blocks', false);
   await discard(batchCard); await expect('discarded batch is excluded by unchanged owner/discard predicate', true);
 
+  // Exact persisted upload bindings, observed by the real restricted worker role.
+  // No provider, state reset, automatic retry or direct image-table read is used.
+  const photoReader = createStoredGradingPhotoReader({ boundary: machine,
+    storage: { readDecodedFrame: async () => assert.fail('terminal photo must not be read') } });
+  async function photoBatch(front, back, { state = 'QUEUED', stage = 'PREPARE', reserved = false,
+    staleFront = false, wrongOriginal = false, mode = principal.mode, accessVersion = principal.accessVersion } = {}) {
+    const target = await card(), uploads = {}, sourceHash = digest(randomUUID()), key = digest(randomUUID());
+    for (const [side, imageState] of [['FRONT', front], ['BACK', back]]) {
+      const uploadId = randomUUID(), originalHash = digest(uploadId), plan = canonical({ expected: { sha256: originalHash } });
+      uploads[side] = uploadId;
+      await db.$executeRawUnsafe(`INSERT INTO atlas_manual_intake.upload
+        (id,card_id,request_id,actor_id,request,request_hash,side,version,plan,plan_hash,verification,verification_hash,source,source_hash)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'{}',$5,$6,1,$7,$8,'{}',$5,'{}',$5)`,
+      uploadId,target.id,randomUUID(),principal.id,digest('{}'),side,plan,digest(plan));
+      await db.$executeRawUnsafe('INSERT INTO atlas_manual_connected.card_image_intent(upload_id,card_id,mode) VALUES($1::uuid,$2::uuid,$3)',
+        uploadId,target.id,mode);
+      if (imageState === null) continue;
+      const imageKey = digest(randomUUID()), source = canonical({ descriptor: { raster: { content: { sha256: sourceHash } } } });
+      const active = ['RUNNING','REQUESTED'].includes(imageState), ready = imageState === 'READY';
+      await db.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.report_image_job
+        (key,source_hash,recipe_hash,recipe,mode,source_card_id,source_media,source_media_hash,state,claim_id,lease_until,result,result_hash)
+        VALUES($1,$2,$3,'{}',$4,$5::uuid,$6,$7,$8,$9::uuid,$10::timestamptz,$11,$12)`,
+      imageKey,sourceHash,digest('{}'),mode,target.id,source,digest(source),imageState,
+      active ? randomUUID() : null,active ? new Date(Date.now()+120000) : null,ready ? '{}' : null,ready ? digest('{}') : null);
+      await db.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.card_image_binding(upload_id,card_id,side,original_sha256,job_key)
+        VALUES($1::uuid,$2::uuid,$3,$4,$5)`,uploadId,target.id,side,wrongOriginal && side === 'FRONT' ? digest('wrong original') : originalHash,imageKey);
+    }
+    await db.$executeRawUnsafe(`UPDATE atlas_manual_intake.card SET revision=revision+1,front_upload_id=$2::uuid,front_version=1,
+      back_upload_id=$3::uuid,back_version=1 WHERE id=$1::uuid`,target.id,uploads.FRONT,uploads.BACK);
+    if (staleFront) {
+      const replacement = randomUUID();
+      await db.$executeRawUnsafe(`INSERT INTO atlas_manual_intake.upload
+        (id,card_id,request_id,actor_id,request,request_hash,side,version,plan,plan_hash)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'{}',$5,'FRONT',2,'{}',$5)`,replacement,target.id,randomUUID(),principal.id,digest('{}'));
+      await db.$executeRawUnsafe(`UPDATE atlas_manual_intake.card SET revision=revision+1,front_upload_id=$2::uuid,front_version=2
+        WHERE id=$1::uuid`,target.id,replacement);
+    }
+    const input = canonical({ uploads });
+    await db.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.batch_grading
+      (key,card_id,source_hash,actor_id,access_version,analysis_action_id,input,input_hash,state,stage,analysis_reserved,claim_id,lease_until)
+      VALUES($1,$2::uuid,$3,$4::uuid,$5,$6::uuid,$7,$8,$9,$10,$11,$12::uuid,$13::timestamptz)`,
+    key,target.id,sourceHash,principal.id,accessVersion,randomUUID(),input,digest(input),state,stage,reserved,
+    state === 'RUNNING' ? randomUUID() : null,state === 'RUNNING' ? new Date(Date.now()+120000) : null);
+    return { target, uploads };
+  }
+  for (const [front, back] of [['FAILED','READY'],['READY','FAILED'],['UNKNOWN','READY'],['READY','UNKNOWN'],['FAILED','UNKNOWN']]) {
+    const { target, uploads } = await photoBatch(front,back);
+    await expect(`settled exact ${front}/${back} PREPARE releases unrelated variants`,true);
+    const side = front === 'READY' ? 'BACK' : 'FRONT';
+    await assert.rejects(photoReader.readGradingPhoto({cardId:target.id,uploadId:uploads[side],side,photo:{}}),{code:'GRADING_IMAGE_PENDING'});
+    await discard(target);
+  }
+  for (const [label,front,back,options] of [
+    ['ready photos remain runnable','READY','READY',{}],
+    ['undiscovered opposite photo retains priority','FAILED',null,{}],
+    ['queued opposite photo retains priority','FAILED','QUEUED',{}],
+    ['running opposite photo retains priority','FAILED','RUNNING',{}],
+    ['requested opposite photo retains priority','FAILED','REQUESTED',{}],
+    ['live batch retains priority','FAILED','READY',{state:'RUNNING'}],
+    ['analysis reservation retains priority','FAILED','READY',{reserved:true}],
+    ['later grading stage retains priority','FAILED','READY',{stage:'ANALYZE'}],
+    ['historical failed upload cannot release current priority','FAILED','READY',{staleFront:true}],
+    ['mismatched original cannot release priority','FAILED','READY',{wrongOriginal:true}],
+    ['wrong runtime mode cannot release priority','FAILED','READY',{mode:'PRODUCTION'}],
+  ]) {
+    const { target } = await photoBatch(front,back,options);
+    await expect(label,false);await discard(target);
+  }
+  const inactiveOwner = await photoBatch('READY','READY',{accessVersion:principal.accessVersion+1});
+  await expect('inactive owner remains excluded by existing predicate',true);await discard(inactiveOwner.target);
+
   const [privilege] = await workerClient.$queryRawUnsafe("SELECT current_user AS role,has_table_privilege(current_user,'atlas_defect_analysis.provider_event','SELECT') AS accepted_read");
   assert.equal(privilege.role, role); assert.equal(privilege.accepted_read, true);
+  const [photoPrivileges] = await workerClient.$queryRawUnsafe(`SELECT
+    has_function_privilege(current_user,'atlas_manual_connected.read_grading_photo(uuid,uuid,text,text)','EXECUTE') AS photo_read,
+    has_table_privilege(current_user,'atlas_manual_connected.report_image_job','SELECT') AS image_table_read,
+    has_table_privilege(current_user,'atlas_manual_connected.report_image_job','UPDATE') AS image_table_update`);
+  assert.deepEqual(photoPrivileges,{photo_read:true,image_table_read:false,image_table_update:false});
   const [roleState] = await workerClient.$queryRawUnsafe('SELECT rolconnlimit,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user');
   assert.equal(roleState.rolconnlimit, 1);
   assert(Object.entries(roleState).filter(([key]) => key !== 'rolconnlimit').every(([, value]) => value === false));
-  const [ledger] = await db.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_staff._prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL');
-  assert.equal(ledger.n, 79);
-  result = { status: 'PASS', checks, groups: checks.length, staffMigrations: ledger.n,
+  const baseline = JSON.parse(await readFile(new URL('../../atlas-standalone-database/baseline.manifest.json',import.meta.url),'utf8'));
+  const registered = await registeredMigrations();
+  const ledger = await db.$queryRawUnsafe('SELECT version,checksum FROM atlas_staff._standalone_migrations ORDER BY version');
+  assert.deepEqual(ledger,[{version:baseline.version,checksum:baseline.sqlSha256},...registered.map(m=>({version:m.version,checksum:m.sqlSha256}))].sort((a,b)=>a.version.localeCompare(b.version)));
+  result = { status: 'PASS', checks, groups: checks.length, standaloneLedger: ledger,
     restrictedRole: true, workerRole: role, workerConnectionLimit: roleState.rolconnlimit,
     workerUnsafeAttributes: false, existingGrantsUnchanged: true, providerCalls: 0, productionCalls: 0,
     everyObservationPreservedHistory: true, fixtureDirectory: fixture.cluster.directory };

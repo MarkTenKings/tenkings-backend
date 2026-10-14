@@ -161,6 +161,50 @@ test('preparation persists machine identification capacity backoff without requi
   assert.deepEqual(result, { kind: 'WAIT', retryAfterMs: 30000 }); assert.equal(machineCalls, 1);
 });
 
+test('parked image preparation continues through identification, geometry and defects after saved Back becomes READY without browser resume', async () => {
+  const f = fixture(), staff = { id: 'synthetic-machine-owner', actorKind: 'MACHINE' }, uploads = { FRONT: 'front', BACK: 'back' };
+  const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage: 'PREPARE', analysisActionId: 'same-analysis' };
+  let imageReady = false, identified = false, initialized = false, analyzed = false, available = true;
+  const effects = [], outcomes = [], reports = [], timers = { setInterval: () => null, clearInterval() {} };
+  const connected = { async machineBatchSnapshot() { return { card: { ready: true, sourceHash: job.sourceHash,
+    sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) },
+    revision: 1, manual: initialized ? {} : null, identification: { state: identified ? 'COMPLETE' : 'NOT_STARTED' },
+    details: { fields: { name: 'Synthetic player', category: 'Sports cards', manufacturer: 'Fixture', year: '2026', card_number: '1',
+      set_name: 'Evidence test', variant: '', card_type: '' }, profile: 'SPORTS', layoutType: null, cornerShape: 'SQUARE', matColor: 'BLACK',
+    parallel: '', insert: '', touched: [], sourceHash: job.sourceHash } }; },
+    async open() { assert.fail('continuation must not require a browser read'); },
+    identification: { async runMachine() { if (!imageReady) return { state: 'RETRY_WAIT', retryAfterMs: 3000 };
+      effects.push('identification'); identified = true; return { state: 'COMPLETE' }; } },
+    earlyGeometry: { async ensure() { assert(imageReady); effects.push('geometry'); return { earlyGeometry: {
+      FRONT: { state: 'READY' }, BACK: { state: 'READY' } } }; } },
+    async initialize() { effects.push('initialize'); initialized = true; },
+    workflow: { service: { read: async () => f.card }, hydrate: async () => f.state },
+    assistance: { async status() { return analyzed ? { state: 'READY', astra: f.analysis } : { state: 'NOT_FOUND' }; },
+      async analyzeMachine() { assert(imageReady); effects.push('defects'); analyzed = true; return { state: 'READY', astra: f.analysis }; } },
+  };
+  let finished;
+  const review = new Promise(resolve => { finished = resolve; });
+  const worker = createBatchWorker({ concurrency: 1, timers, autoStart: false,
+    prepare: createBatchPreparation({ connected, measure: f.measure, artifacts: { async write(report) { reports.push(report); return { key: 'retained-report' }; } } }),
+    repository: { discoverOwners: async () => [staff], async claim() { if (!available) return null; available = false; return structuredClone(job); },
+      async renew() { return true; }, async finish(_staff, _claimed, outcome) {
+        outcomes.push(outcome); if (outcome.kind === 'CONTINUE') { job.stage = job.stage === 'PREPARE' ? 'ANALYZE' : 'REPORT';
+          job.evidence = { ...job.evidence, ...outcome.evidence }; available = true; }
+        if (outcome.kind === 'REVIEW') finished(); return true;
+      } } });
+  try {
+    worker.start();
+    while (outcomes.length === 0 || worker.status().active) await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(outcomes, [{ kind: 'WAIT', retryAfterMs: 3000 }]); assert.deepEqual(effects, []);
+    // A saved READY image and normal server poll are the only continuation.
+    imageReady = true; available = true; await worker.tick(); await review;
+    assert.deepEqual(effects, ['identification', 'geometry', 'initialize', 'defects']);
+    assert.deepEqual(outcomes.map(result => result.kind), ['WAIT', 'CONTINUE', 'CONTINUE', 'REVIEW']);
+    assert.equal(reports.length, 1); assert.equal(reports[0].certification, null);
+    assert.equal(reports[0].authority, 'MACHINE_PROPOSAL');
+  } finally { await worker.stop(); }
+});
+
 for (const cacheState of ['READY', 'NEEDS_REVIEW']) for (const unknownMetadata of [false,true]) test(`PREPARE admits ${cacheState} physical/prepared evidence with missing printed borders and ${unknownMetadata?'unknown':'known'} year/manufacturer`, async () => {
   const f = fixture(), uploads = { FRONT: 'front', BACK: 'back' }, calls = [];
   f.state.geometry.sides.BACK.printed = null;

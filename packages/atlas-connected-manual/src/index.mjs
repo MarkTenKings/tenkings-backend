@@ -4,6 +4,7 @@ import { createMarketJobStore, recordApprovalMarket } from './market-job-store.m
 import { createMarketWorker } from './market-worker.mjs';
 import { createReportImageStore } from './report-image-store.mjs';
 import { createReportImages } from './report-images.mjs';
+import { createReportImageRetry } from './report-image-retry.mjs';
 import { createStoredGradingPhotoReader } from './grading-photo-reader.mjs';
 import { recordCardImageIntent } from './card-image-store.mjs';
 import { createThumbnailReader } from './thumbnails.mjs';
@@ -80,6 +81,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
         actionId:batchActionId(card.sourceHash,'ENQUEUE'),cards:[{cardId,sourceHash:card.sourceHash}]});}
     }});
   const reportImages=reportImageProvider?createReportImages({store:createReportImageStore({boundary,client:receiptClient}),storage,artifacts,provider:reportImageProvider,keyPrefix,concurrency:reportImageConcurrency,onError:onWorkerError}):null;
+  const retryGradingImage=reportImages?createReportImageRetry({boundary,intakeRepository,recipe:reportImageProvider.recipe,wake:()=>reportImages.wake()}):null;
   const gradingPhotos=reportImages??(readOnlyGradingImages?createStoredGradingPhotoReader({boundary,storage}):null);
   const readGradingPhoto=async input=>{
     requireThat(gradingPhotos,503,'GRADING_IMAGE_NOT_CONFIGURED');
@@ -225,7 +227,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,learningEnabled,provider:defectProvider,receiptClient,onWorkerError});
   variantReview=variantJobs?createVariantReviewService({store:variantJobs,workflow,readReferenceImage:variantReadReferenceImage}):null;
-  const connected={variantReview,variantJobs,dealerOperations,orderDesk,orderDeskInbox,marketWorker,marketJobs,reportImages,readGradingPhoto,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  const connected={variantReview,variantJobs,dealerOperations,orderDesk,orderDeskInbox,marketWorker,marketJobs,reportImages,retryGradingImage,readGradingPhoto,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status,savedDetails]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
         details.read(input.staff,input.card.cardId)]);
