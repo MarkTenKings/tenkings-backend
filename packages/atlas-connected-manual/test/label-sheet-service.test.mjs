@@ -5,6 +5,7 @@ import { digest } from '@atlas/manual-service/contract';
 import { createLabelService, LABEL_EXPORT_PROFILES } from '../src/label-sheet-service.mjs';
 import { createManualFinishing } from '../src/finishing.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
+import { LABEL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
 
 async function fixture({ cardProfile = 'SPORTS' } = {}) {
   const identity = cardProfile === 'SPORTS' ? { playerName:'Nick Smith Jr',year:'2023',manufacturer:'Panini',productSet:'Prizm',cardNumber:'1' } : { cardName:'Mewtwo',year:'1999',manufacturer:'Wizards',productSet:'Base Set',cardNumber:'10/102' };
@@ -17,7 +18,7 @@ async function fixture({ cardProfile = 'SPORTS' } = {}) {
   const boundary={machineOwner:({ownerId,accessVersion})=>({id:ownerId,accessVersion})};
   const storage={write(){assert.fail('no export needed');},download(){assert.fail('no download needed');}};
   const service=createLabelService({repository,finishing,boundary,storage});
-  return{f,item,repository,boundary,service,saved,get failed(){return failed;}};
+  return{f,item,repository,boundary,service,storage,saved,get failed(){return failed;}};
 }
 
 test('durable pending work renders only an exact authoritative PUBLISHED packet and keeps approved grade',async()=>{
@@ -59,4 +60,31 @@ test('equal approved grades select configured Sports gold and Pokemon holo indep
   assert.equal(sports.saved[0].snapshot.grade,pokemon.saved[0].snapshot.grade);
   assert.equal(sports.saved[0].materialProfileId,'atlas-v4-gold-v1');assert.equal(sports.saved[0].snapshot.previewMaterial,'gold');
   assert.equal(pokemon.saved[0].materialProfileId,'atlas-v4-holo-v1');assert.equal(pokemon.saved[0].snapshot.previewMaterial,'holo');
+});
+
+test('queued current-profile sheet export reaches the real renderer and saves that same profile',async()=>{
+  const f=await fixture();assert.equal(await f.service.runPending(),1);
+  const artwork=f.saved[0],sheetId=randomUUID(),exportId=randomUUID();let queued=null,finished=null,failures=0,writes=0;
+  f.repository.prepareExport=async(_staff,{kind,id,input})=>{
+    assert.equal(kind,'SHEET');assert.equal(id,sheetId);assert.equal(input.exportProfileId,LABEL_EXPORT_PROFILE_V1.id);
+    queued={id:exportId,kind,profile_id:input.exportProfileId,manifest_hash:digest('manifest'),sheet_id:sheetId,state:'QUEUED'};
+    return{exportId,sheetId,state:'QUEUED'};
+  };
+  f.repository.pendingCandidates=async()=>queued&&!finished?[{id:exportId,actor_id:f.item.actor_id,access_version:1,kind:'EXPORT'}]:[];
+  f.repository.claimExport=async()=>({row:queued,items:[{slot:1,print_svg:artwork.printSvg,artwork_hash:artwork.artworkHash}]});
+  f.repository.export=async()=>({row:queued});
+  f.repository.finishExport=async(_staff,_claim,result)=>{finished=result;};
+  f.repository.failExport=async()=>{failures++;};
+  f.storage.write=async(binding,bytes,{sha256,contentType})=>{
+    writes++;assert.equal(binding.exportId,exportId);assert.equal(digest(bytes),sha256);assert.equal(contentType,'image/png');
+    return{sha256,byteCount:bytes.length};
+  };
+  assert.equal(LABEL_EXPORT_PROFILES.SHEET,'atlas-v4-sheet-800ppi-diagnostic-v2');
+  await f.service.prepareSheetExport({},sheetId,{requestId:randomUUID(),expectedSheetRevision:1,exportProfileId:LABEL_EXPORT_PROFILES.SHEET});
+  assert.equal(await f.service.runPending(),1);assert.equal(failures,0);assert.equal(writes,1);
+  assert.equal(finished.mapping.exportProfileId,queued.profile_id);
+  assert.equal(finished.mapping.renderProfileHash,LABEL_EXPORT_PROFILE_V1.hash);
+  assert.equal(finished.mapping.rasterReceipt.rasterizer,LABEL_EXPORT_PROFILE_V1.rasterizer);
+  assert.equal(await f.service.runPending(),0);
+  assert.throws(()=>f.service.prepareSheetExport({},sheetId,{requestId:randomUUID(),expectedSheetRevision:1,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v1'}),{code:'LABEL_PROFILE_INVALID'});
 });

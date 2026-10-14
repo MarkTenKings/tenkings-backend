@@ -14,7 +14,9 @@ const profile = { id: 'atlas-v4-sheet-800ppi-diagnostic-v1', version: 1, widthMm
   pixelWidth: 9764, pixelHeight: 12598, contentType: 'image/png', alphaPolicy: 'straight-rgba-alpha-threshold-128-v1',
   qualification: 'DIAGNOSTIC_PHYSICAL_IMPORT_UNQUALIFIED', rasterizer: 'sharp-0.33.5-strip-png-v1',
   stripRows: 256, maxPngBytes: 64 * 1024 * 1024, transparentMarginsVerified: false };
-export const LABEL_EXPORT_PROFILE_V1 = Object.freeze({ ...profile, hash: hash(stable(profile)) });
+const sheet = { ...profile, id: 'atlas-v4-sheet-800ppi-diagnostic-v2', version: 2,
+  rasterizer: 'sharp-0.33.5-clipped-strip-png-v2', tileHaloPixels: 1, maxTileWidth: 640 };
+export const LABEL_EXPORT_PROFILE_V1 = Object.freeze({ ...sheet, hash: hash(stable(sheet)) });
 const individual = { ...profile, id: 'atlas-v4-individual-2400ppi-v1', widthMm: 68.342, heightMm: 20.082,
   ppi: 2400, pixelWidth: 6458, pixelHeight: 1898, maxPngBytes: 32 * 1024 * 1024 };
 export const LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 = Object.freeze({ ...individual, hash: hash(stable(individual)) });
@@ -63,8 +65,8 @@ function mappingFor(exportProfile, calibrationProfile) {
 
 let pending = 0, previous = Promise.resolve();
 async function raster(svg, exportProfile) {
-  // At most one bounded native child exists. It rasterizes small vector strips
-  // directly at final scale and streams PNG scanlines; no full-plate RGBA buffer.
+  // At most one bounded native child exists. Sheet strips use small, clipped
+  // label tiles at final scale; individual strips and streamed PNG stay intact.
   if (pending >= 4) throw new Error('LABEL_RENDER_BUSY');
   pending += 1;
   const run = previous.then(async () => {

@@ -71,7 +71,7 @@ try {
   assert(!(await repo.list(staff)).sheets.some(s=>s.sheetId===full.sheetId));
   await admin.query('UPDATE atlas_manual.card SET approvers=$2,revision=revision+1 WHERE id=$1',[detail.items[0].cardId,[actor]]);
   checks.push('cross-scope/observer refusal and all-member reauthorization hide an entire revoked sheet');
-  const exportInput={requestId:randomUUID(),expectedSheetRevision:partial.revision,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v1'};
+  const exportInput={requestId:randomUUID(),expectedSheetRevision:partial.revision,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v2'};
   const request={kind:'SHEET',id:partial.sheetId,input:exportInput};const exportRace=await Promise.all([repo.prepareExport(staff,request),repo.prepareExport(staff,request)]);assert.deepEqual(exportRace[0],exportRace[1]);
   assert.equal((await repo.sheet(staff,partial.sheetId)).state,'SEALED');
   await assert.rejects(repo.prepareExport(staff,{...request,input:{...exportInput,expectedSheetRevision:999}}),{code:'LABEL_REQUEST_CONFLICT'});

@@ -5,6 +5,7 @@ import { open } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createDeflate } from 'node:zlib';
 import { once } from 'node:events';
+import { LABEL_JIG_V1, labelSlotTransform } from './label-sheet-geometry.mjs';
 sharp.cache(false);
 sharp.concurrency(1);
 
@@ -20,8 +21,11 @@ for await (const bytes of process.stdin) { input += bytes; if (input.length > 54
 const { svg, exportProfile: p, outputPath } = JSON.parse(input); input = '';
 if (!Number.isInteger(p.pixelWidth) || !Number.isInteger(p.pixelHeight) || p.pixelWidth > 12800 || p.pixelHeight > 12800
     || ![800, 2400].includes(p.ppi) || p.stripRows !== 256) throw new Error('LABEL_RASTER_PROFILE_INVALID');
+const tiled = p.rasterizer === 'sharp-0.33.5-clipped-strip-png-v2';
+if (tiled && (p.pixelWidth !== 9764 || p.pixelHeight !== 12598 || p.widthMm !== 310 || p.heightMm !== 400
+    || p.ppi !== 800 || p.tileHaloPixels !== 1 || p.maxTileWidth !== 640)) throw new Error('LABEL_RASTER_PROFILE_INVALID');
 const started = performance.now(), output = await open(outputPath, 'wx', 0o600), sha = createHash('sha256');
-let byteCount = 0, peakRssBytes = process.memoryUsage().rss;
+let byteCount = 0, peakRssBytes = process.memoryUsage().rss, rasterizedTiles = 0, maxRasterTileBytes = 0;
 async function write(bytes) {
   byteCount += bytes.length; if (byteCount > p.maxPngBytes) throw new Error('LABEL_RASTER_OUTPUT_TOO_LARGE');
   sha.update(bytes);
@@ -45,17 +49,47 @@ try {
     if (remainder.length) await write(chunk('IDAT', remainder));
   })();
   const content = svg.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
-  // Top-level sheet groups have a fixed native label height after rotation.
-  // Exclude entire off-strip rows before handing vectors to librsvg. This is
-  // visibility culling only; every retained vector uses the same canvas scale.
-  const matches = [...content.matchAll(/<g data-slot="\d+" transform="translate\([^,]+,([^)]+)\) rotate\(90\)">/g)];
-  const groups = matches.map((match, i) => ({ topMm: Number(match[1]), svg: content.slice(match.index, matches[i + 1]?.index ?? content.length) }));
+  const matches = [...content.matchAll(/<g data-slot="(\d+)" transform="translate\(([^,]+),([^)]+)\) rotate\(90\)">/g)];
+  if (tiled && (matches.length < 1 || matches.length > 50 || matches[0].index !== 0)) throw new Error('LABEL_RASTER_SHEET_INVALID');
+  const seen = new Set();
+  const groups = matches.map((match, i) => {
+    const slot = Number(match[1]), frame = LABEL_JIG_V1.slots.find(value => value.slot === slot);
+    if (!tiled || !frame || seen.has(slot) || match[0] !== `<g data-slot="${slot}" transform="${labelSlotTransform(slot)}">`) throw new Error('LABEL_RASTER_SHEET_INVALID');
+    seen.add(slot);
+    const left = Math.floor(frame.xMm * p.pixelWidth / p.widthMm) - p.tileHaloPixels;
+    const right = Math.ceil((frame.xMm + frame.widthMm) * p.pixelWidth / p.widthMm) + p.tileHaloPixels;
+    if (left < 0 || right > p.pixelWidth || right - left > p.maxTileWidth) throw new Error('LABEL_RASTER_TILE_BOUNDS_INVALID');
+    return { topMm: frame.yMm, heightMm: frame.heightMm, left, width: right - left,
+      top: Math.floor(frame.yMm * p.pixelHeight / p.heightMm) - p.tileHaloPixels,
+      bottom: Math.ceil((frame.yMm + frame.heightMm) * p.pixelHeight / p.heightMm) + p.tileHaloPixels,
+      svg: content.slice(match.index, matches[i + 1]?.index ?? content.length) };
+  });
   for (let y = 0; y < p.pixelHeight; y += p.stripRows) {
     const height = Math.min(p.stripRows, p.pixelHeight - y);
     const topMm = y * p.heightMm / p.pixelHeight, heightMm = height * p.heightMm / p.pixelHeight;
-    const visible = groups.length ? groups.filter(group => group.topMm < topMm + heightMm && group.topMm + 68.342 > topMm).map(group => group.svg).join('') : content;
-    const stripSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${p.pixelWidth}" height="${height}" viewBox="0 ${topMm} ${p.widthMm} ${heightMm}" preserveAspectRatio="none">${visible}</svg>`;
-    const { data, info } = await sharp(Buffer.from(stripSvg), { limitInputPixels: p.pixelWidth * p.stripRows, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    let data, info;
+    if (tiled) {
+      data = Buffer.alloc(p.pixelWidth * height * 4); info = { width: p.pixelWidth, height, channels: 4 };
+      for (const group of groups.filter(value => value.topMm < topMm + heightMm && value.topMm + value.heightMm > topMm)) {
+        // Preserve the original strip's viewport/scale. An integer-pixel offset
+        // clips only empty horizontal margins; it never rescales a label. Keep
+        // a one-pixel halo for edge antialiasing. Only this small tile is live,
+        // so a strip crossing two jig rows cannot retain twenty full labels.
+        const tileSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${group.width}" height="${height}"><svg x="${-group.left}" width="${p.pixelWidth}" height="${height}" viewBox="0 ${topMm} ${p.widthMm} ${heightMm}" preserveAspectRatio="none">${group.svg}</svg></svg>`;
+        const tile = await sharp(Buffer.from(tileSvg), { limitInputPixels: p.maxTileWidth * p.stripRows, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        if (tile.info.width !== group.width || tile.info.height !== height || tile.info.channels !== 4) throw new Error('LABEL_TILE_DIMENSION_MISMATCH');
+        rasterizedTiles += 1; maxRasterTileBytes = Math.max(maxRasterTileBytes, tile.data.length);
+        // A strip can cross two jig rows. Copy only this label's vertical
+        // frame so a later tile's transparent margin cannot erase earlier ink.
+        const firstRow = Math.max(0, group.top - y), lastRow = Math.min(height, group.bottom - y);
+        for (let row = firstRow; row < lastRow; row += 1) {
+          tile.data.copy(data, (row * p.pixelWidth + group.left) * 4, row * group.width * 4, (row + 1) * group.width * 4);
+        }
+      }
+    } else {
+      const stripSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${p.pixelWidth}" height="${height}" viewBox="0 ${topMm} ${p.widthMm} ${heightMm}" preserveAspectRatio="none">${content}</svg>`;
+      ({ data, info } = await sharp(Buffer.from(stripSvg), { limitInputPixels: p.pixelWidth * p.stripRows, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true }));
+    }
     if (info.width !== p.pixelWidth || info.height !== height || info.channels !== 4) throw new Error('LABEL_STRIP_DIMENSION_MISMATCH');
     const stride = p.pixelWidth * 4, scanlines = Buffer.allocUnsafe(height * (stride + 1));
     for (let row = 0; row < height; row += 1) {
@@ -72,5 +106,6 @@ try {
   compressed.end(); await consumer; await write(chunk('IEND', Buffer.alloc(0)));
   await output.sync();
   process.stdout.write(JSON.stringify({ sha256: sha.digest('hex'), byteCount, pixelWidth: p.pixelWidth, pixelHeight: p.pixelHeight,
-    peakRssBytes, elapsedMs: Math.round(performance.now() - started), sharpVersions: sharp.versions, alphaBinary: true, stripRows: p.stripRows }));
+    peakRssBytes, elapsedMs: Math.round(performance.now() - started), sharpVersions: sharp.versions, alphaBinary: true, stripRows: p.stripRows,
+    rasterizer: p.rasterizer, rasterizedTiles, maxRasterTileBytes }));
 } finally { await output.close(); }

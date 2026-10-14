@@ -3,7 +3,7 @@ import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 export const LABEL_SHEETS_PATH = '/api/staff/manual-connected/label-sheets';
 export const LABEL_ITEMS_PATH = '/api/staff/manual-connected/labels';
 export const LABEL_INDIVIDUAL_PROFILE = 'atlas-v4-individual-2400ppi-v1';
-export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v1';
+export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v2';
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const fail = code => Object.assign(new Error(code), { code });

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { LABEL_JIG_V1 } from '../../../packages/atlas-finishing/src/label-sheet-geometry.mjs';
-import { createLabelSheetsClient, labelArtworkHref, LABEL_SHEETS_PATH } from '../lib/label-sheets-client.mjs';
+import { LABEL_EXPORT_PROFILE_V1 } from '../../../packages/atlas-finishing/src/label-sheet.mjs';
+import { createLabelSheetsClient, labelArtworkHref, LABEL_SHEETS_PATH, LABEL_EXPORT_PROFILE } from '../lib/label-sheets-client.mjs';
 const sheetId = randomUUID(), itemId = randomUUID(), exportId = randomUUID(), staffId = randomUUID();
 const hash = 'a'.repeat(64), sheet = { sheetId, revision: 8, jigHash: LABEL_JIG_V1.jigHash, items: [{ itemId, slot: 1 }] }, output = { exportId, sheetId, state: 'READY', sha256: hash, manifestHash: 'b'.repeat(64) };
 const item = { itemId, state: 'READY', labelHash: hash };
@@ -15,6 +16,8 @@ test('partial export binds current sheet revision and preserves the same request
   const f = fixture(async () => { throw Object.assign(Error('lost'), { status: 503 }); });
   await assert.rejects(f.client.exportSheet(sheet));
   const original = f.client.pending(); assert.equal(original.kind, 'export'); assert.equal(original.body.expectedSheetRevision, 8);
+  assert.equal(LABEL_EXPORT_PROFILE, LABEL_EXPORT_PROFILE_V1.id);
+  assert.equal(original.body.exportProfileId, LABEL_EXPORT_PROFILE_V1.id);
   assert.equal(f.calls[0].csrf, 'actual-csrf');
   await assert.rejects(f.client.recordPrint(sheet, output, [1]), { code: 'LABEL_REQUEST_PENDING' });
   const next = createLabelSheetsClient({ ...f.options, request: async (path, options) => { assert.equal(path, f.calls[0].path); assert.deepEqual(options.body, original.body); return output; } });

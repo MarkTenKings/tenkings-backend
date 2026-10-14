@@ -1,10 +1,10 @@
 import { canonical, digest, object, requireThat, uuid, revision } from '@atlas/manual-service/contract';
 import { renderLabelV4, renderLabelV4Png } from '@atlas/finishing/label-v4';
-import { renderLabelSheetPng } from '@atlas/finishing/label-sheet';
+import { renderLabelSheetPng, LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 const jigHash = LABEL_JIG_V1.jigHash;
 
-export const LABEL_EXPORT_PROFILES = Object.freeze({ SHEET: 'atlas-v4-sheet-800ppi-diagnostic-v1', SINGLE: 'atlas-v4-individual-2400ppi-v1' });
+export const LABEL_EXPORT_PROFILES = Object.freeze({ SHEET: LABEL_EXPORT_PROFILE_V1.id, SINGLE: LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id });
 const hash = value => requireThat(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value), 400, 'LABEL_HASH_INVALID');
 const exact = (input, required, optional = []) => {
   requireThat(input && Object.getPrototypeOf(input) === Object.prototype && required.every(k => Object.hasOwn(input,k))

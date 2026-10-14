@@ -320,7 +320,7 @@ test('V4 SVG and export requests cross the signed private host with independent 
  const read={method:'GET',url:artwork,headers:{cookie:'label-cookie'}};
  let res=response();await proxy(read,res);assert.equal(res.statusCode,200);assert.deepEqual(res.bytes,svg);assert.match(res.headers['content-security-policy'],/sandbox/);
  res=response();await proxy({...read,headers:{cookie:'wrong'}},res);assert.equal(res.statusCode,401);
- const body={requestId:card,expectedSheetRevision:2,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v1'};
+ const body={requestId:card,expectedSheetRevision:2,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v2'};
  res=response();await proxy({method:'POST',url:exportPath,body,headers:{cookie:'label-cookie',origin,'content-type':'application/json','x-atlas-csrf':'label-csrf'}},res);
  assert.equal(res.statusCode,200);assert.deepEqual(calls,[{id:card,body},'wake']);
  const direct=await fetch(local+artwork,{headers:{cookie:'label-cookie'}});assert.equal(direct.status,401);
