@@ -12,7 +12,9 @@ export function createMachineStaffBoundary({ boundary, auth, manualClient }) {
   const expected = JSON.stringify({ mode, origin, deploymentId, releaseSha, configHash });
   const phones = [...auth.config.phoneByHash.keys()];
 
-  async function machineTransaction(staff, work) {
+  async function machineTransaction(staff, work, { timeoutMs = 5000 } = {}) {
+    requireThat(Number.isSafeInteger(timeoutMs) && timeoutMs >= 5000 && timeoutMs <= 15000,
+      500, 'MANUAL_MACHINE_TIMEOUT_INVALID');
     const handle = staff === null ? null : handles.get(staff);
     requireThat(staff === null || handle, 403, 'MANUAL_MACHINE_AUTH_REQUIRED');
     return manualClient.$transaction(async tx => {
@@ -40,7 +42,7 @@ export function createMachineStaffBoundary({ boundary, auth, manualClient }) {
       await refresh();
       await tx.$executeRawUnsafe('SET CONSTRAINTS ALL IMMEDIATE');
       return result;
-    }, { maxWait: 3000, timeout: 5000 });
+    }, { maxWait: 3000, timeout: timeoutMs });
   }
 
   return Object.freeze({

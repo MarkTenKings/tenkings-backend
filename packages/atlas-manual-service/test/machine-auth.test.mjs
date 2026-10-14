@@ -5,7 +5,7 @@ import { createMachineStaffBoundary } from '../src/machine-auth.mjs';
 const ownerId='10000000-0000-4000-8000-000000000001';
 function fixture(){
   let enabled=true, version=7, unsafe=false, humanCalls=0;
-  const calls=[];
+  const calls=[],transactionOptions=[];
   const config={mode:'TEST',origin:'https://atlas.example',deploymentId:'deployment',releaseSha:'release',configHash:'config',phoneByHash:new Map([['phone-hash','not-exposed']])};
   const tx={async $executeRawUnsafe(sql){calls.push(sql);return 1;},async $queryRawUnsafe(sql,...args){
     calls.push(sql);
@@ -16,9 +16,9 @@ function fixture(){
     if(!enabled || args[0]!==null && (args[0]!==ownerId || args[1]!==version))return[];
     return[{id:args[0],name:'Owner',role:args[0]?'REVIEWER':'WORKER',access_version:args[0]?version:null,now_at:new Date()}];
   }};
-  const boundary=createMachineStaffBoundary({auth:{config},manualClient:{$transaction:async work=>work(tx)},
+  const boundary=createMachineStaffBoundary({auth:{config},manualClient:{$transaction:async(work,options)=>{transactionOptions.push(options);return work(tx);}},
     boundary:{transaction:async(staff,work)=>{humanCalls++;assert.equal(staff,'human');return work({principal:{id:'human'}});}}});
-  return{boundary,calls,get humanCalls(){return humanCalls;},disable(){enabled=false;},revoke(){version++;},unsafe(){unsafe=true;}};
+  return{boundary,calls,transactionOptions,get humanCalls(){return humanCalls;},disable(){enabled=false;},revoke(){version++;},unsafe(){unsafe=true;}};
 }
 test('saved owner authority survives a new process without a browser session and cannot certify',async()=>{
   for(let process=0;process<2;process++){
@@ -45,4 +45,18 @@ test('unsafe DB role refused before work and final authorization rechecked',asyn
   const f=fixture(),staff=f.boundary.machineOwner({ownerId,accessVersion:7});
   await assert.rejects(f.boundary.transaction(staff,()=>{f.disable();}),{code:'MANUAL_MACHINE_ACCESS_REVOKED'});
   const g=fixture();g.unsafe();await assert.rejects(g.boundary.machineTransaction(null,()=>assert.fail()),{code:'MANUAL_DATABASE_ROLE_INVALID'});
+});
+test('catalog timeout remains bounded without changing default, SQL limits, or authorization',async()=>{
+  const f=fixture();
+  await f.boundary.machineTransaction(null,()=>{});
+  assert.deepEqual(f.transactionOptions,[{maxWait:3000,timeout:5000}]);
+  const staff=f.boundary.machineOwner({ownerId,accessVersion:7});
+  await f.boundary.machineTransaction(staff,()=>{}, {timeoutMs:15000});
+  assert.deepEqual(f.transactionOptions.at(-1),{maxWait:3000,timeout:15000});
+  assert.equal(f.calls.filter(sql=>sql==="SET LOCAL lock_timeout = '1500ms'").length,2);
+  assert.equal(f.calls.filter(sql=>sql==="SET LOCAL statement_timeout = '3000ms'").length,2);
+  for(const timeoutMs of [4999,15001,Infinity,NaN,7500.5,'15000'])
+    await assert.rejects(f.boundary.machineTransaction(staff,()=>assert.fail(),{timeoutMs}),{code:'MANUAL_MACHINE_TIMEOUT_INVALID'});
+  assert.equal(f.transactionOptions.length,2,'Invalid budgets cannot open a transaction');
+  await assert.rejects(f.boundary.machineTransaction(staff,()=>f.revoke(),{timeoutMs:15000}),{code:'MANUAL_MACHINE_ACCESS_REVOKED'});
 });

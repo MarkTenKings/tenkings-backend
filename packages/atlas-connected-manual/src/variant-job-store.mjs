@@ -117,7 +117,7 @@ export async function readRetainedVariantLabels(tx,catalog){
 }
 export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=180000}){
   requireThat(typeof boundary.machineTransaction==='function'&&Number.isInteger(leaseMs)&&leaseMs>=1000&&leaseMs<=300000,500,'VARIANT_CONFIG_INVALID');
-  const machine=work=>boundary.machineTransaction(null,work);
+  const machine=(work,options)=>boundary.machineTransaction(null,work,options);
   const checklist=createManufacturerChecklistVariantProvider();
   async function preparationLock(tx,cardId){await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1,721931))',`atlas-variant-preparation:${cardId}`);}
   // The retained cache is append-only. A transaction-scoped lock and a strict
@@ -274,12 +274,14 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_confirmation(card_id,action_id,actor_id,source_hash,identity_revision,identity_hash,job_key,result_hash,catalog_hash,candidate_id,decision,reprocess_required) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,false)`,cardId,input.actionId,principal.id,input.action.sourceHash,revision,variantIdentityHash(identity),job?.key??null,input.action.resultHash,job?.catalog_hash??null,input.action.candidateId,input.action.decision);
 
     },
+    // Retained catalog projection can exceed five seconds on a one-CPU worker.
+    // Keep SQL/lock limits and authorization checks; extend only this operation.
     async codexReadings(job){return machine(async({tx})=>{
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');const catalog=unpack(live).catalog;
       await retainPhotoPool(tx,catalog);
       return (await readRetainedVariantLabels(tx,catalog)).referenceLabels;
-    });},
+    },{timeoutMs:15000});},
     async publishLabelSource(job,request,{attemptKey=null}={}){return machine(async({tx})=>{
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`,job.key,job.claim_id);requireThat(live,409,'VARIANT_LEASE_LOST');
       const selected=await labelAttempt(tx,request),{response,reservation}=selected;requireThat(response,503,'VARIANT_RESPONSE_NOT_SAVED');
