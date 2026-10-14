@@ -49,6 +49,14 @@ async function rejectionEvidence(response, signal, apiKey) {
     const token = value => typeof value === 'string' && value !== apiKey && !/^sk-/i.test(value)
       && /^[a-zA-Z0-9_.\[\]-]{1,100}$/.test(value) ? value : null;
     for (const key of ['code', 'type', 'param']) { const value = token(diagnostic[key]); if (value) evidence[key] = value; }
+    const moderation = diagnostic.moderation_details;
+    if (diagnostic.code === 'moderation_blocked' && moderation && typeof moderation === 'object' && !Array.isArray(moderation)
+      && ['input', 'output', 'unknown'].includes(moderation.moderation_stage)
+      && Array.isArray(moderation.categories) && moderation.categories.length <= 16
+      && moderation.categories.every(category => typeof category === 'string' && category !== apiKey
+        && !/^sk-/i.test(category) && /^[a-zA-Z0-9_.\[\]/-]{1,100}$/.test(category))) {
+      evidence.moderationDetails = { stage: moderation.moderation_stage, categories: [...new Set(moderation.categories)] };
+    }
     if (typeof diagnostic.message === 'string') {
       evidence.message = diagnostic.message.split(apiKey).join('[REDACTED]')
         .replace(/\bBearer\s+\S+|\bsk-[a-zA-Z0-9_-]+|\bdata:[^\s"<>]*|(?:https?|postgres(?:ql)?):\/\/[^\s"<>]+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED]')

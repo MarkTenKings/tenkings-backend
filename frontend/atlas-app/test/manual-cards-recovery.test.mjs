@@ -85,7 +85,8 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   return { render, submit,navigations,event(name,value){listeners.get(name)?.(value);},async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
     workspaceProps:()=>find(tree,node=>node.type?.name==='ManualWorkspace')?.props,
     directShell:()=>find(tree,node=>node.type==='DirectCardReviewShell')?.props,
-    previewSrc:side=>find(tree,node=>node.type==='img'&&node.props.alt===`${side} background-removed grading image`)?.props.src,
+    previewSrc:side=>find(tree,node=>node.type==='img'&&[`${side} background-removed grading image`,`${side} original grading photo`].includes(node.props.alt))?.props.src,
+    previewAlt:side=>find(tree,node=>node.type==='img'&&String(node.props.alt).startsWith(`${side} `))?.props.alt,
     attention:key=>find(tree,node=>node.props?.['data-review-target']===key)?.props?.['data-review-attention'],reviewIssues:()=>find(tree,node=>node.type==='ReviewAttention')?.props?.issues??[],has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
@@ -532,6 +533,27 @@ const rejectedBackImage = () => {
  return card;
 };
 const imageRetryAck=body=>({state:'ACCEPTED',acknowledgedRequest:{...body,side:'BACK'}});
+for(const failure of ['FAILED','UNKNOWN'])test(`terminal ${failure} uses the saved original beside a generated image without an edit retry`,async()=>{
+ const card=failedPhotos();card.identification={state:'RUNNING'};
+ card.gradingImages.FRONT={uploadId:'FRONT',state:'READY',source:'ORIGINAL',backgroundRemoval:{state:failure,code:failure==='FAILED'?'REPORT_IMAGE_REQUEST_REJECTED':'REPORT_IMAGE_RESPONSE_UNKNOWN'}};
+ card.gradingImages.BACK={uploadId:'BACK',state:'READY',source:'GENERATED'};
+ card.previews={FRONT:{url:'/original-front.png',sha256:'a'.repeat(64)},BACK:{url:'/generated-back.png',sha256:'b'.repeat(64)}};
+ const f=harness(storage(null),async()=>assert.fail('Fallback display must not retry background removal'),{readCard:()=>card});
+ try{
+  f.render();await flush();f.render();
+  assert.equal(f.previewSrc('Front'),'/original-front.png');assert.equal(f.previewAlt('Front'),'Front original grading photo');
+  assert.equal(f.previewSrc('Back'),'/generated-back.png');assert.equal(f.previewAlt('Back'),'Back background-removed grading image');
+  assert.match(f.sideText('Front'),/Grading image ready/);assert.match(f.sideText('Front'),/Grading continues with your original photo/);
+  assert.doesNotMatch(f.text(),/Image needs attention/);assert.equal(f.has('Retry Front background removal'),false);
+ }finally{f.dispose();}
+});
+test('mixed original and generated grading images enter ordinary review after identification',async()=>{
+ let card=failedPhotos();card.gradingImages.FRONT={uploadId:'FRONT',state:'READY',source:'ORIGINAL',backgroundRemoval:{state:'FAILED',code:'REPORT_IMAGE_REQUEST_REJECTED'}};
+ card.gradingImages.BACK.source='GENERATED';const posts=[];
+ const f=harness(storage(null),async(path,{body})=>{posts.push(path);assert.ok(path.endsWith('/initialize'));card={...card,manual:{current:true,revision:1}};return {};},{readCard:()=>card,fromBatch:true});
+ try{f.render();await flush();f.render();await flush();f.render();assert.equal(f.workspace(),true);assert.equal(posts.length,1);}
+ finally{f.dispose();}
+});
 for(const side of ['FRONT','BACK'])for(const terminal of ['READY','FAILED','UNKNOWN'])test(`${side} image polling observes QUEUED to REQUESTED to ${terminal} with equal revisions and unsaved details`,async()=>{
  const card=failedPhotos(),store=storage(null),sideName=side==='FRONT'?'Front':'Back',other=side==='FRONT'?'BACK':'FRONT',otherName=other==='FRONT'?'Front':'Back';
  card.card.ready=false;card.gradingImages[side]={uploadId:side,state:'QUEUED'};

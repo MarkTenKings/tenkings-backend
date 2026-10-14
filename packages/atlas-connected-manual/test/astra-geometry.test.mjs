@@ -41,9 +41,17 @@ test('retained Astra printed coordinates survive native re-preparation without r
  applyAstraGeometryToPreparation({visual:absent,source,result,includePhysicalContour:false});
  assert.equal(result.proposal.outcome,'ABSTAIN');assert.equal(result.proposal.proposal,null);
 });
-test('an uploaded working photograph cannot enter clean-only Astra geometry',async()=>{
+test('original fallback geometry uses lossless original pixels, explicit provenance and the same xhigh coordinate contract',async()=>{
  const source=await fixture();source.frame.schemaVersion=2;delete source.frame.generation;
- await assert.rejects(prepareAstraGeometryRequest({source,side:'FRONT'}),{code:'GEOMETRY_GRADING_PHOTO_REQUIRED'});
+ const {request,evidence}=await prepareAstraGeometryRequest({source,side:'FRONT'});
+ assert.match(request.instructions,/saved original photograph/);assert.doesNotMatch(request.instructions,/generated photograph|CLEAN/);
+ assert.equal(request.model,'gpt-6-astra');assert.equal(request.reasoning.effort,'xhigh');
+ assert.equal(evidence.gradingSha256,digest(source.bytes));assert(evidence.images.every(image=>image.kind.startsWith('ORIGINAL')));
+ assert.equal(evidence.promptHash,digest(request.instructions));
+ const image=request.input[0].content.find(item=>item.type==='input_image');
+ assert.deepEqual(await sharp(Buffer.from(image.image_url.split(',')[1],'base64')).raw().toBuffer(),await sharp(source.bytes).raw().toBuffer());
+ const result=projectAstraGeometryResponse({status:200,bodyText:response(visual),evidence},evidence);
+ assert.deepEqual(result.printed.quad,visual.printed.quad);
 });
 test('durable one-dispatch journal reprojects retained raw response without another model call or changed grading request',async()=>{
  const source=await fixture(),job={key:'j',claimId:'c',input:{side:'FRONT',cardId:'card'}};let saved=null,calls=0;const artifacts=new Map();

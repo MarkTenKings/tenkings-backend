@@ -23,7 +23,7 @@ test('only exact definite400 Images rejection exposes explicit same-image recove
   assert.deepEqual(failure, { code: 'REPORT_IMAGE_REQUEST_REJECTED', retryable: true, jobKey: job.key, failedRequestId: job.audit.at(-1).requestId });
   job.attempts = 30; assert.deepEqual(reportImageRejection(job), failure, 'explicit retry has no arbitrary lifetime cap');
   const reader = createGradingPhotoReader({ photo: async () => job, storage: { readDecodedFrame: () => assert.fail('status cannot read or generate pixels') } });
-  assert.deepEqual(await reader.photoStatus({}), { state: 'FAILED', code: 'REPORT_IMAGE_REQUEST_REJECTED', rejection: failure });
+  assert.deepEqual(await reader.photoStatus({}), { state:'READY',code:null,source:'ORIGINAL',backgroundRemoval:{state:'FAILED',code:'REPORT_IMAGE_REQUEST_REJECTED'} });
 });
 
 test('accepted, uncertain, local-output failures, changed recipes and corrupt audit never authorize another paid edit', () => {
@@ -48,18 +48,20 @@ test('bounded worker attempts restart from explicit immutable retry base without
   for (const attemptBase of [-1, 1.2, '30', 36]) { job.audit.at(-1).attemptBase = attemptBase; assert.equal(reportImageAttemptBase(job), 0); }
 });
 
-test('retry service authenticates current owner, passes exact source intent and acknowledges independently of worker wake', async () => {
+test('retry service reconciles only existing intents; a new retry cannot replace fallback coordinates', async () => {
   const cardId = randomUUID(), principal = { id: randomUUID(), accessVersion: 7 }, side = 'BACK';
   const input = { requestId: randomUUID(), uploadId: randomUUID(), jobKey: digest('job'), failedRequestId: randomUUID() };
-  let calls = 0, wakes = 0;
+  let calls = 0, wakes = 0, acknowledged=true;
   const retry = createReportImageRetry({ recipe: REPORT_IMAGE_RECIPE, wake: () => { wakes++; throw Error('Temporary wake failure'); },
     intakeRepository: { authorizeInTransaction: async (_tx, p, card, options) => { assert.equal(p, principal); assert.equal(card, cardId); assert.deepEqual(options, { edit: true, lock: 'UPDATE' }); } },
     boundary: { transaction: async (_staff, work) => work({ principal, refresh: async () => ({ principal }), tx: { $queryRawUnsafe: async (_sql, ...args) => {
+      if(_sql.startsWith('SELECT EXISTS')){assert.deepEqual(args,[input.jobKey,input.requestId]);return[{acknowledged}];}
       calls++; assert.deepEqual(args, [principal.id, 7, input.requestId, cardId, input.uploadId, side, input.jobKey, input.failedRequestId, reportImageRecipeHash(REPORT_IMAGE_RECIPE)]);
       return [{ receipt: { ...input, side } }];
     } } }) } });
   assert.deepEqual(await retry({}, cardId, side, input), { state: 'ACCEPTED', acknowledgedRequest: { ...input, side } });
   assert.equal(calls, 1); assert.equal(wakes, 1);
+  acknowledged=false;await assert.rejects(retry({},cardId,side,input),{code:'REPORT_IMAGE_RETRY_UNAVAILABLE'});assert.equal(calls,1);assert.equal(wakes,1);
   await assert.rejects(retry({}, cardId, side, { ...input, changed: true })); assert.equal(calls, 1);
 });
 

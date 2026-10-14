@@ -13,13 +13,6 @@ export function createVariantAdmission({ boundary }) {
         EXISTS(SELECT 1 FROM atlas_manual_connected.batch_grading j
           WHERE (j.state IN ('QUEUED','RUNNING') OR j.analysis_reserved)
           AND atlas_manual_connected.display_owner_current(j.actor_id,j.access_version)
-          AND NOT (j.state='QUEUED' AND j.stage='PREPARE' AND NOT j.analysis_reserved
-            AND j.claim_id IS NULL AND j.lease_until IS NULL
-            AND EXISTS(SELECT 1 FROM (VALUES ('FRONT'),('BACK')) s(side)
-              CROSS JOIN LATERAL atlas_manual_connected.read_grading_photo(
-                j.card_id,(j.input::jsonb->'uploads'->>s.side)::uuid,s.side,$2) p
-              HAVING count(*)=2 AND bool_and(p.state IN ('READY','FAILED','UNKNOWN'))
-                AND bool_or(p.state IN ('FAILED','UNKNOWN'))))
           AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id)) AS batch_busy,
         EXISTS(SELECT 1 FROM atlas_manual_connected.identification i
           WHERE i.state='RUNNING'
@@ -33,11 +26,10 @@ export function createVariantAdmission({ boundary }) {
             OR EXISTS(SELECT 1 FROM atlas_defect_analysis.provider_event e WHERE e.analysis_id=r.id AND e.kind='ACCEPTED')
             OR (NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=r.card_id)
               AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.run successor
-                WHERE successor.card_id=r.card_id AND successor.replaces_analysis_id=r.id)))) AS analysis_busy`, actionId, principal.mode);
+                WHERE successor.card_id=r.card_id AND successor.replaces_analysis_id=r.id)))) AS analysis_busy`, actionId);
       requireThat(row && ['batch_busy','identification_busy','analysis_busy'].every(key => typeof row[key] === 'boolean'), 503, 'VARIANT_ADMISSION_UNAVAILABLE');
-      // Only settled, exact current photo bindings can release a queued PREPARE
-      // item. Missing/inflight photos, a running batch or an analysis reservation
-      // still take priority. This observation never retries or bypasses photos.
+      // A terminal cutout now permits original-frame grading, so its PREPARE
+      // batch remains real grading work and keeps priority over reference reads.
       // A current UNKNOWN never ages out. Explicitly discarded/replaced history
       // stops occupying priority only after expiry and without provider acceptance;
       // accepted work can still be collected even after discard or replacement.

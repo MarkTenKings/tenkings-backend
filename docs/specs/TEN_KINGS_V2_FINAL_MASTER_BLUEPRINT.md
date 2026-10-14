@@ -1,3 +1,11 @@
+## Owner-approved ATLAS original-photo fallback — October 14, 2026
+
+Mark authorizes background removal as a best-effort first step. If an attempted side finishes with failure, rejection, or no confirmed usable result, continue identification, Astra/xhigh geometry and defect analysis using that side’s saved decoded original. A generated Front and original Back, or original Front and generated Back, are valid pairs. Pending image work still gets its normal opportunity to finish. This supersedes R15’s generated-only/no-original-fallback rule for new grading work, without changing saved approvals or numerical grading policy.
+
+Each side must retain its actual image descriptor, hash and coordinate frame throughout identification, geometry, findings, human review and report preparation. Do not describe an original as an OpenAI-generated cutout or transfer coordinates between different images. Keep the failed provider receipt; do not automatically repeat a rejected or uncertain image request. Once a terminal fallback is selected, the same upload must not silently switch to a later generated image. A replacement photo follows the normal new-source workflow. Final report approval remains a separate human action.
+
+This records the owner-authorized fix and production rollout. Implementation, qualification and actual deployment evidence are recorded separately in SESSION_LOG.
+
 ## Owner-approved scoring calibration — October 13, 2026
 
 Mark explicitly approves category scoring-damage multipliers of **Corners 0.5, Edges 1.0, Surface 2.0**, replacing the previous uniform 1.5 multiplier for new ATLAS scoring. Rule version: `ATLAS_2026_10_13_CATEGORY_DAMAGE_V1`. Apply the category factor once to the existing type-weighted damage percentage; retain the measured areas, category-area denominator, defect-type multipliers, condition bands, centering, Front70%/Back30%, equal category averaging and direct raw-to-half-point final rounding. Explanations and finding-impact calculations must use the same category factor. Saved historical approvals/reports retain their original explicit rule; Ten Kings Speedster grading is outside this change.

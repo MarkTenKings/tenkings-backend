@@ -38,6 +38,13 @@ export function createReportImageRetry({ boundary, intakeRepository, recipe, wak
     const receipt = await boundary.transaction(staff, async ({ tx, principal, refresh }) => {
       await intakeRepository.authorizeInTransaction(tx, principal, cardId, { edit: true, lock: 'UPDATE' });
       principal = (await refresh()).principal;
+      // Terminal edits now select the original frame for the lifetime of this
+      // upload. A new retry could change pixels underneath retained geometry.
+      // Reconcile an already committed retry intent, but never create one here.
+      const [prior] = await tx.$queryRawUnsafe(`SELECT EXISTS(SELECT 1 FROM atlas_manual_connected.report_image_job j,
+        LATERAL jsonb_array_elements(j.audit) e(value) WHERE j.key=$1 AND e.value->>'event'='RETRY_REQUESTED'
+        AND e.value->>'requestId'=$2) AS acknowledged`, input.jobKey, input.requestId);
+      requireThat(prior?.acknowledged === true, 409, 'REPORT_IMAGE_RETRY_UNAVAILABLE');
       const [saved] = await tx.$queryRawUnsafe(`SELECT atlas_manual_connected.retry_report_image(
         $1::uuid,$2::integer,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8::uuid,$9) AS receipt`,
       principal.id, principal.accessVersion, input.requestId, cardId, input.uploadId, side, input.jobKey, input.failedRequestId, recipeHash);

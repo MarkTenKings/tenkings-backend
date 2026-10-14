@@ -307,13 +307,14 @@ test('upfront preparation readiness defers only live image work and never starts
  const f=fixture(),input={cardId:'synthetic-card',uploadId:'synthetic-upload',side:'FRONT'};
  f.store.photoIntent=async()=>true;f.store.photo=async()=>f.jobs[0];
  for(const state of ['QUEUED','RUNNING','REQUESTED']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),false);}
- for(const state of ['READY','FAILED','UNKNOWN']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),false);}
+ f.jobs[0].state='READY';assert.equal(await f.service.isPhotoPrepared(input),false);
+ for(const state of ['FAILED','UNKNOWN']){f.jobs[0].state=state;assert.equal(await f.service.isPhotoPrepared(input),true);}
  f.jobs[0].state='READY';f.jobs[0].result={media:{frame:{schemaVersion:3}}};assert.equal(await f.service.isPhotoPrepared(input),true);
  f.store.photo=async()=>null;assert.equal(await f.service.isPhotoPrepared(input),false);assert.equal(f.generations,0);
 });
 
 
-test('generated grading source owns its exact pixels and coordinates with no failed-image fallback',async()=>{
+test('generated grading source owns its exact pixels and coordinates; contradictory failed-with-result evidence is refused',async()=>{
  const f=fixture(),job=f.jobs[0];job.sourceMedia.descriptor=job.sourceMedia.frame;
  job.bound_original_sha256=photo.original.content.sha256;f.store.photo=async()=>job;
  const input={cardId:'synthetic-card',uploadId:'synthetic-upload',side:'FRONT',photo};
@@ -329,4 +330,19 @@ test('generated grading source owns its exact pixels and coordinates with no fai
  await assert.rejects(f.service.readGradingPhoto({...input,photo:changed}),{code:'GRADING_IMAGE_SOURCE_MISMATCH'});
  job.state='FAILED';await assert.rejects(f.service.readGradingPhoto(input),{code:'GRADING_IMAGE_PENDING'});
  assert.equal(f.generations,1);
+});
+
+
+test('moderation details retain only bounded public stage/category diagnostics when supplied',async()=>{
+ const samples=[{moderation_stage:'input',categories:['violence']},{moderation_stage:'output',categories:['sexual/minors','sexual/minors']},{moderation_stage:'unknown',categories:[]}];
+ for(const moderation_details of samples){let calls=0;
+  await assert.rejects(api(async()=>{calls++;return Response.json({error:{code:'moderation_blocked',moderation_details}},{status:400});}).edit(apiArgs),error=>{
+   assert.deepEqual(error.receipt.providerError.moderationDetails,{stage:moderation_details.moderation_stage,categories:[...new Set(moderation_details.categories)]});return true;
+  });assert.equal(calls,1);
+ }
+ for(const moderation_details of [null,[],{moderation_stage:'input',categories:[null]},{moderation_stage:'private',categories:[]},{moderation_stage:'input',categories:['fixture-key-no-real-call']},{moderation_stage:'input',categories:['sk-secret']},{moderation_stage:'input',categories:Array(17).fill('violence')},{moderation_stage:'input',categories:['https://private.example']}]){
+  await assert.rejects(api(async()=>Response.json({error:{code:'moderation_blocked',moderation_details}},{status:400})).edit(apiArgs),error=>{
+   assert.equal(error.receipt.providerError.moderationDetails,undefined);return true;
+  });
+ }
 });

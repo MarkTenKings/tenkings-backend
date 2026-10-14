@@ -335,8 +335,8 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         return checkedResult(staff,cardId,pair.sourceHash,value);
       }
       if(!effects)return {state:'UNAVAILABLE'};
-      // Both OCR and Astra use the generated pair. A queued or failed cutout
-      // cannot silently switch identification back to the uploaded image.
+      // Both OCR and Astra use the same per-side grading selection. Inflight
+      // cutouts wait; terminal failures use the verified saved original frame.
       if(isCleanPhotoPrepared && !(await Promise.all(['FRONT','BACK'].map(side=>isCleanPhotoPrepared({
         cardId,uploadId:pair.sides[side].upload.uploadId,side})))).every(Boolean))return {state:'RETRY_WAIT',retryAfterMs:3000};
       requireThat(typeof readGradingPhoto==='function',503,'IDENTIFICATION_GENERATED_PHOTO_REQUIRED');
@@ -349,7 +349,9 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
           dispatchSignal?.throwIfAborted();
           const found=await readGradingPhoto({cardId,uploadId:slot.upload.uploadId,side,photo:slot.photo,signal:dispatchSignal});
           const photo=found?.photo;
-          requireThat(photo?.workingFrame?.schemaVersion===3 && photo.workingFrame.generation && found.bytes instanceof Uint8Array,503,'IDENTIFICATION_GENERATED_PHOTO_REQUIRED');
+          requireThat(([1,2].includes(photo?.workingFrame?.schemaVersion)
+            || photo?.workingFrame?.schemaVersion===3 && photo.workingFrame.generation)
+            && found.bytes instanceof Uint8Array,503,'IDENTIFICATION_GENERATED_PHOTO_REQUIRED');
           const bytes=await sharp(found.bytes,{limitInputPixels:52_000_000,failOn:'warning'}).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();
           requireThat(bytes.length<=3*1024*1024,422,'IDENTIFICATION_PHOTO_TOO_LARGE');
           const sha256=digest(bytes), saved=await asset(cardId,'IDENTIFICATION_IMAGE',{base64:bytes.toString('base64'),mime:'image/jpeg',workingFrame:photo.workingFrame,original:photo.original},pair.sourceHash);

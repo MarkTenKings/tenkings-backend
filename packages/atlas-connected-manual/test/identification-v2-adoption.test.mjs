@@ -1056,3 +1056,22 @@ test('queued upfront cutouts defer new identification without occupying a model 
  ready=true;assert.equal((await f.identification.run(f.staff,f.cardId)).state,'COMPLETE');
  assert.equal(f.calls.http.length,3);
 });
+
+
+test('mixed original Front and generated Back identify with exact selected pixels and honest saved frame provenance',async()=>{
+ const bytes=Object.fromEntries(await Promise.all(['FRONT','BACK'].map(async(side,i)=>[side,await sharp({create:{width:24,height:32,channels:3,background:i?'#123456':'#789abc'}}).png().toBuffer()])));
+ const frames={},f=await fixture({readGradingPhoto:async({side,photo})=>{
+  const frame={schemaVersion:side==='FRONT'?2:3,raster:{content:{sha256:digest(bytes[side])}},...(side==='BACK'?{generation:{sourceFrame:photo.workingFrame}}:{})};
+  frames[side]=frame;return{photo:{...photo,workingFrame:frame},bytes:bytes[side]};}});
+ assert.equal((await f.identification.run(f.staff,f.cardId)).state,'COMPLETE');
+ const saved=f.artifactsOf('IDENTIFICATION_IMAGE');assert.equal(saved.length,2);
+ for(const frame of Object.values(frames))assert(saved.some(image=>canonical(image.workingFrame)===canonical(frame)));
+ const model=f.calls.http.find(call=>call.url.hostname==='api.openai.com');assert.equal(model.body.reasoning.effort,'xhigh');
+ const images=model.body.input.flatMap(item=>item.content??[]).filter(item=>item.type==='input_image');
+ for(const [i,side] of ['FRONT','BACK'].entries()){
+  const jpeg=await sharp(bytes[side]).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();
+  assert.equal(images[i].image_url,`data:image/jpeg;base64,${jpeg.toString('base64')}`);
+ }
+ assert.equal((await f.restart().run(f.staff,f.cardId)).state,'COMPLETE');
+ assert.equal(f.calls.http.filter(call=>call.url.hostname==='api.openai.com').length,1,'saved completion cannot dispatch again');
+});

@@ -1,8 +1,8 @@
 import { requireThat } from '@atlas/manual-service/contract';
 
-/** Lightweight navigation evidence. No hydration, full-image grant, decode,
- * preparation, publication, or model work is reachable from this reader. */
-export function createThumbnailReader({ intake, workflow, readManifest, imageReadUrl, readCleanDescriptor = null }) {
+/** Saved navigation evidence. No hydration, preparation, publication or model
+ * work is reachable. Original fallbacks use the same verified frame as grading. */
+export function createThumbnailReader({ intake, workflow, readManifest, imageReadUrl, readCleanDescriptor = null, readGradingPhoto, gradingPhotoStatus }) {
   return async function thumbnails(staff,cardId) {
     const {card}=await intake.read(staff,cardId);
     let manual=null;
@@ -13,6 +13,13 @@ export function createThumbnailReader({ intake, workflow, readManifest, imageRea
       if(readCleanDescriptor){
         const clean=await readCleanDescriptor({cardId,uploadId:upload.uploadId,side,photo});
         if(clean)return[side,{state:'READY',preview:clean}];
+      }
+      const status=await gradingPhotoStatus?.({cardId,uploadId:upload.uploadId,side});
+      if(status?.state==='READY' && status.source==='ORIGINAL' && imageReadUrl && readGradingPhoto){
+        const selected=await readGradingPhoto({cardId,uploadId:upload.uploadId,side,photo});
+        const preview=await imageReadUrl({kind:'original',descriptor:selected.photo.workingFrame,photo:selected.photo,
+          photoSource:upload.source,contextOnly:true});
+        return[side,{state:'READY',source:'ORIGINAL',preview}];
       }
       return[side,{state:'PENDING'}];
     })));

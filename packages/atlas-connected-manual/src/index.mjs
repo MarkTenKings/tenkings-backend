@@ -246,7 +246,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
         details.read(input.staff,input.card.cardId)]);
       return {...extras,savedIdentification:{fields:savedDetails.details.fields,sourceHash:savedDetails.details.sourceHash},...(variantReview?{variantVerification:await variantReview.status(input.staff,input.card.cardId)}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),marketAutomaticEnabled:Boolean(marketJobs),researchEnabled:Boolean(research)};
     },
-    thumbnails:createThumbnailReader({intake,workflow,readManifest:manifest,imageReadUrl,readCleanDescriptor,readGradingPhoto}),
+    thumbnails:createThumbnailReader({intake,workflow,readManifest:manifest,imageReadUrl,readCleanDescriptor,readGradingPhoto,gradingPhotoStatus:gradingPhotos?.photoStatus}),
     open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl,readGradingPhoto,gradingPhotoStatus:gradingPhotos?.photoStatus}),
     machineBatchSnapshot:createMachineBatchSnapshot({intakeRepository,workflow,details,identification}),
     async initialize(staff,cardId,input){

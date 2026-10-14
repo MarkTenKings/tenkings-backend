@@ -15,6 +15,8 @@ import { adoptEarlyGeometry, createEarlyGeometry, geometryCacheInput } from '../
 import { MACHINE_GEOMETRY_POLICY } from '../src/machine-geometry.mjs';
 import { ASTRA_GEOMETRY_POLICY, prepareAstraGeometryRequest } from '../src/astra-geometry.mjs';
 import { geometrySideSettings } from '../src/details.mjs';
+import { createGradingPhotoReader } from '../src/grading-photo-reader.mjs';
+import { savedGradingPhoto } from './grading-photo-fixture.mjs';
 
 const settings = { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', profile: null, fields: { name: '' } };
 const identity = { identity: { opencv: 'fixture', numpy: 'fixture', physicalProposalPolicy: 'fixture', sources: {} }, native: { fixture: 'a'.repeat(64) } };
@@ -429,5 +431,32 @@ test('historical engine discovery advances past saved photos without purchasing 
   await until(()=>reads>=1);assert.equal(f.calls,0);assert.equal(f.jobs.size,0);
   await service.ensure(f.staff,f.cardId,{side:'FRONT',expectedKey:(await service.status(f.staff,f.cardId)).FRONT.key});
   await until(()=>f.calls===1);assert.equal(f.jobs.size,1);
+ }finally{await service.stop();}
+});
+
+
+test('ordinary discovery releases failed Front using its original while generated Back retains its own frame and cache',async()=>{
+ const f=await fixture(),front=await f.upload('FRONT'),back=await f.upload('BACK');
+ const frontPhoto=f.photos.get(front.uploadId),backPhoto=f.photos.get(back.uploadId),saved=await savedGradingPhoto(backPhoto);
+ const failed={key:digest('failed-front'),state:'FAILED',result:null,code:'REPORT_IMAGE_REQUEST_REJECTED',source_hash:frontPhoto.workingFrame.raster.content.sha256,bound_original_sha256:frontPhoto.original.content.sha256};
+ const ready={...saved.row,result:saved.result},before=canonical(failed),observed={};
+ const reader=createGradingPhotoReader({photo:async(_card,_upload,side)=>side==='FRONT'?failed:ready,
+  storage:{readDecodedFrame:input=>input.frame.schemaVersion===3?Promise.resolve({bytes:saved.bytes}):f.storage.readDecodedFrame(input)}});
+ const service=f.build({isCleanPhotoPrepared:reader.isPhotoPrepared,readGradingPhoto:reader.readGradingPhoto,runVisual:async input=>{
+  observed[input.job.input.side]=input.source;
+  const {request,evidence}=await prepareAstraGeometryRequest({source:input.source,side:input.job.input.side});
+  assert.equal(request.reasoning.effort,'xhigh');
+  return{responseHash:digest(input.job.input.side),evidence,physical:{quad:null,contour:[],uncertainty:'HIGH',observation:'No fixture outline.'},printed:{quad:null,uncertainty:'HIGH',observation:'No fixture frame.'}};
+ }});
+ try{
+  f.intents.add(front.uploadId);f.intents.add(back.uploadId);service.start();
+  await until(()=>f.jobs.size===2&&[...f.jobs.values()].every(j=>j.state==='NEEDS_REVIEW'));
+  for(const [side,upload,photo,frame] of [['FRONT',front,frontPhoto,frontPhoto.workingFrame],['BACK',back,backPhoto,saved.frame]]){
+   const found=await service.consume(f.staff,f.cardId,side,upload,photo,settings);
+   assert.equal(found.input.frameDescriptorSha256,descriptorSha256(frame));assert.deepEqual(found.packet.photoFrame,frame);
+   assert.deepEqual(observed[side].frame,frame);assert.equal(digest(observed[side].bytes),frame.raster.content.sha256);
+  }
+  assert.equal(observed.FRONT.frame.generation,undefined);assert.equal(observed.BACK.frame.schemaVersion,3);
+  assert.equal(canonical(failed),before);assert.equal(f.jobs.size,2);
  }finally{await service.stop();}
 });

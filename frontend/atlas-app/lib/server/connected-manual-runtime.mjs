@@ -135,7 +135,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     const key=`${kind}:${contextOnly}:${descriptorSha256(descriptor)}`,cached=reads.get(key);
     if(cached&&cached.expires>Date.now())return cached.value;
     let value;
-    if(kind==='original')requireThat(descriptor.schemaVersion===3,503,'GRADING_IMAGE_REQUIRED');
+    if(kind==='original')requireThat([1,2,3].includes(descriptor.schemaVersion),503,'GRADING_IMAGE_REQUIRED');
     value=kind==='original'?await storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300})
       :await storage.createImmutableDerivativeRead({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300});
     for(const grant of [value,value.preview,value.display,value.display?.preview])if(grant?.url)

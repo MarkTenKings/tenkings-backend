@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createStoredGradingPhotoReader } from '../src/grading-photo-reader.mjs';
 import { createConnectedManual } from '../src/index.mjs';
 import { variantJobGrantSQL } from '../src/variant-job-store.mjs';
-import { photo } from './photo-fixture.mjs';
+import { photo, working } from './photo-fixture.mjs';
 import { savedGradingPhoto } from './grading-photo-fixture.mjs';
 
 test('provider-disabled connected variant composition reads only a saved generated frame', async () => {
@@ -42,9 +42,34 @@ test('saved image status exposes only bounded state and code without raster or p
  const reader=createStoredGradingPhotoReader({boundary:{machineTransaction:async(_staff,work)=>work({principal:{mode:'LOCAL_FIXTURE'},tx:{$queryRawUnsafe:async()=>[row]}})},
    storage:{readDecodedFrame(){throw Error('Status must not read pixels');}}});
  const input={cardId:photo.original.binding.cardId,uploadId:photo.original.uploadId,side:'FRONT'};
- assert.deepEqual(await reader.photoStatus(input),{state:'UNKNOWN',code:'REPORT_IMAGE_RESPONSE_UNKNOWN'});
+ assert.deepEqual(await reader.photoStatus(input),{state:'READY',code:null,source:'ORIGINAL',backgroundRemoval:{state:'UNKNOWN',code:'REPORT_IMAGE_RESPONSE_UNKNOWN'}});
  row={...row,state:'FAILED',code:'private diagnostic\nwith secret'};
- assert.deepEqual(await reader.photoStatus(input),{state:'FAILED',code:null});
+ assert.deepEqual(await reader.photoStatus(input),{state:'READY',code:null,source:'ORIGINAL',backgroundRemoval:{state:'FAILED',code:null}});
+});
+
+for (const state of ['FAILED','UNKNOWN']) test(`${state} uses exact saved original pixels and coordinates with unchanged terminal evidence`, async () => {
+ const saved=await savedGradingPhoto(photo), row={...saved.row,state,result:null,result_hash:null};
+ const before=structuredClone(row); let reads=0;
+ const reader=createStoredGradingPhotoReader({boundary:{machineTransaction:async(_staff,work)=>work({principal:{mode:'LOCAL_FIXTURE'},tx:{$queryRawUnsafe:async()=>[row]}})},
+  storage:{async readDecodedFrame({frame}){reads++;assert.deepEqual(frame,photo.workingFrame);return {bytes:working.png};}}});
+ const input={cardId:photo.original.binding.cardId,uploadId:photo.original.uploadId,side:'FRONT',photo};
+ assert.equal(await reader.isPhotoPrepared(input),true);
+ const found=await reader.readGradingPhoto(input);
+ assert.deepEqual(found.photo,photo);assert.deepEqual(found.bytes,working.png);assert.equal(found.photo.workingFrame.generation,undefined);
+ assert.deepEqual(row,before);assert.equal(reads,1);
+ for(const patch of [{source_hash:'f'.repeat(64)},{bound_original_sha256:'f'.repeat(64)}]){
+  Object.assign(row,before,patch);await assert.rejects(reader.readGradingPhoto(input),{code:'GRADING_IMAGE_SOURCE_MISMATCH'});
+ }
+});
+
+test('pending edits never select originals; fallback refuses wrong bytes or a changed selection',async()=>{
+ const saved=await savedGradingPhoto(photo);let row={...saved.row,state:'QUEUED',result:null,result_hash:null},corrupt=false,change=false;
+ const reader=createStoredGradingPhotoReader({boundary:{machineTransaction:async(_staff,work)=>work({principal:{mode:'LOCAL_FIXTURE'},tx:{$queryRawUnsafe:async()=>[row]}})},
+  storage:{async readDecodedFrame(){if(change)row={...saved.row};return {bytes:corrupt?Buffer.from('wrong'):working.png};}}});
+ const input={cardId:photo.original.binding.cardId,uploadId:photo.original.uploadId,side:'FRONT',photo};
+ for(const state of ['QUEUED','RUNNING','REQUESTED']){row.state=state;assert.equal(await reader.isPhotoPrepared(input),false);await assert.rejects(reader.readGradingPhoto(input),{code:'GRADING_IMAGE_PENDING'});}
+ row.state='FAILED';corrupt=true;await assert.rejects(reader.readGradingPhoto(input),{code:'REPORT_IMAGE_OUTPUT_INVALID'});
+ corrupt=false;change=true;await assert.rejects(reader.readGradingPhoto(input),{code:'REPORT_IMAGE_SOURCE_CHANGED'});
 });
 
 test('isolated variant grants add saved-image projection without image queue capability', () => {

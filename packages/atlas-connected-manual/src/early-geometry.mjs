@@ -107,7 +107,8 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
   }
   const cleanPrepared = input => !isCleanPhotoPrepared || isCleanPhotoPrepared({ cardId: input.cardId, uploadId: input.uploadId, side: input.side });
   async function retained(staff, cardId, side, uploadId, photoFrame, { responseHash = null, input = null } = {}) {
-    requireThat(photoFrame?.schemaVersion === 3 && photoFrame.generation, 409, 'GEOMETRY_GRADING_PHOTO_REQUIRED');
+    requireThat([1, 2].includes(photoFrame?.schemaVersion) || photoFrame?.schemaVersion === 3 && photoFrame.generation,
+      409, 'GEOMETRY_GRADING_PHOTO_REQUIRED');
     const frameHash = descriptorSha256(photoFrame);
     const jobs = await store.retainedForPhoto(staff, cardId, side, uploadId, frameHash);
     for (const job of jobs) {

@@ -1,6 +1,9 @@
 import { digest, requireThat } from '@atlas/manual-service/contract';
 import { parseDecodedFrame } from '@atlas/photo-core';
-import { reportImageRejection } from './report-image-retry.mjs';
+
+const terminalFallback = job => ['FAILED', 'UNKNOWN'].includes(job?.state) && job.result == null;
+const safeCode = job => /^[A-Z][A-Z0-9_]{0,100}$/.test(job?.code ?? '') ? job.code : null;
+const prepared = job => terminalFallback(job) || job?.state === 'READY' && job.result?.media?.frame?.schemaVersion === 3;
 
 /** Reading the saved grading image never constructs an image provider, starts
  * discovery or exposes a queue mutation. Both serving and isolated review use
@@ -14,25 +17,32 @@ export function createGradingPhotoReader({ photo: readPhoto, storage }) {
       requireThat(['QUEUED', 'RUNNING', 'REQUESTED', 'READY', 'FAILED', 'UNKNOWN'].includes(job.state), 503, 'REPORT_IMAGE_STORED_CONTENT_INVALID');
       if (job.state === 'READY' && job.result?.media?.frame?.schemaVersion !== 3)
         return { state: 'FAILED', code: 'GRADING_IMAGE_FRAME_INVALID' };
-      const rejection = reportImageRejection(job);
-      return { state: job.state, code: /^[A-Z][A-Z0-9_]{0,100}$/.test(job.code ?? '') ? job.code : null,
-        ...(rejection ? { rejection } : {}) };
+      if (prepared(job)) return { state: 'READY', code: null, source: terminalFallback(job) ? 'ORIGINAL' : 'GENERATED',
+        backgroundRemoval: { state: job.state, code: safeCode(job) } };
+      return { state: job.state, code: safeCode(job) };
     },
     async isPhotoPrepared({ cardId, uploadId, side }) {
       const job = await readPhoto(cardId, uploadId, side);
-      return job?.state === 'READY' && job.result?.media?.frame?.schemaVersion === 3;
+      return prepared(job);
     },
     async readGradingPhoto({ cardId, uploadId, side, photo, signal }) {
       const job = await readPhoto(cardId, uploadId, side);
-      requireThat(job?.state === 'READY', 409, 'GRADING_IMAGE_PENDING');
-      const frame = job.result?.media?.frame;
-      requireThat(frame?.schemaVersion === 3 && job.bound_original_sha256 === photo.original.content.sha256
-        && frame.generation?.sourceFrame?.raster?.content?.sha256 === (photo.workingFrame.generation?.sourceFrame ?? photo.workingFrame).raster.content.sha256,
+      requireThat(prepared(job), 409, 'GRADING_IMAGE_PENDING');
+      const originalFrame = photo.workingFrame.generation?.sourceFrame ?? photo.workingFrame;
+      const fallback = terminalFallback(job), frame = fallback ? originalFrame : job.result?.media?.frame;
+      requireThat(photo.original.binding.cardId === cardId && photo.original.uploadId === uploadId && photo.original.binding.side === side
+        && job.bound_original_sha256 === photo.original.content.sha256
+        && job.source_hash === originalFrame.raster.content.sha256
+        && (fallback ? [1, 2].includes(frame.schemaVersion) : frame?.schemaVersion === 3
+          && frame.generation?.sourceFrame?.raster?.content?.sha256 === originalFrame.raster.content.sha256),
       409, 'GRADING_IMAGE_SOURCE_MISMATCH');
       parseDecodedFrame(frame, photo.original, photo.decodePlan);
       const found = await storage.readDecodedFrame({ frame, original: photo.original, decodePlan: photo.decodePlan, signal });
-      requireThat(digest(found.bytes) === job.result.output.sha256, 503, 'REPORT_IMAGE_OUTPUT_INVALID');
-      requireThat((await readPhoto(cardId, uploadId, side))?.key === job.key, 409, 'REPORT_IMAGE_SOURCE_CHANGED');
+      requireThat(digest(found.bytes) === frame.raster.content.sha256
+        && (fallback || digest(found.bytes) === job.result.output.sha256), 503, 'REPORT_IMAGE_OUTPUT_INVALID');
+      const current = await readPhoto(cardId, uploadId, side);
+      requireThat(current?.key === job.key && current.state === job.state && current.source_hash === job.source_hash
+        && current.bound_original_sha256 === job.bound_original_sha256, 409, 'REPORT_IMAGE_SOURCE_CHANGED');
       return { photo: { ...photo, workingFrame: frame }, bytes: found.bytes };
     },
   });

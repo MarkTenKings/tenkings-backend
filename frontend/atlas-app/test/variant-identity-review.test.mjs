@@ -393,8 +393,8 @@ test('catalog choice can be confirmed during reference processing without loaded
 });
 test('variant selection and detailed comparison share only the clean grading image',async()=>{
  const f=fixture();f.props.geometry=null;f.props.images={FRONT:{original:{url:'grading-clean'}},BACK:{original:{url:'back-grading-clean'}}};await flush();f.render();
- assert.equal(f.button('Clean'),undefined);assert.equal(f.button('Original'),undefined);assert.match(f.text(),/Background-removed grading image/);
- const image=f.find(node=>node.type==='img'&&String(node.props.alt).includes('background-removed grading image'))[0];assert.equal(image.props.src,'blob:verified');
+ assert.equal(f.button('Clean'),undefined);assert.equal(f.button('Original'),undefined);assert.match(f.text(),/Grading image/);
+ const image=f.find(node=>node.type==='img'&&String(node.props.alt).includes('grading image'))[0];assert.equal(image.props.src,'blob:verified');
  f.find(node=>node.type==='button'&&node.props['aria-label']==='Enlarge your grading image')[0].props.onClick({currentTarget:{}});f.render();
  assert.equal(f.find(node=>node.type===f.exports.Comparison)[0].props.photo,'blob:verified');f.dispose();
 });
@@ -439,7 +439,7 @@ test('comparison distinguishes saved seller source from actual visible-label tex
   const reference=listingImage({labelReading:{text:labelText},associationStatus:'UNASSIGNED'}),f=fixture({component:'Comparison',props:{photo:'blob:generated-grading',reference,side:'FRONT',onClose(){}}});
   assert.equal(f.text().includes('Visible card / label text'),Boolean(labelText));assert.ok(f.text().includes(reference.listing.title));
   assert.equal(f.find(node=>node.type==='a'&&text(node)===reference.listing.title)[0].props.href,reference.listing.url);
-  const photo=f.find(node=>node.type==='img')[0];assert.equal(photo.props.alt,'front background-removed grading image');assert.equal(photo.props.src,'blob:generated-grading');
+  const photo=f.find(node=>node.type==='img')[0];assert.equal(photo.props.alt,'front grading image');assert.equal(photo.props.src,'blob:generated-grading');
   assert.doesNotMatch(f.text(),/unchanged uploaded photograph|Your saved photograph/);f.dispose();
  }
 });

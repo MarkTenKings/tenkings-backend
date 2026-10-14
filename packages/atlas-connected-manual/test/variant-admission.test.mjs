@@ -9,7 +9,8 @@ const catalog=labelCatalog({photos:1});
 test('priority observation fails closed and carries only the exact current recheck exclusion',async()=>{
  let row={batch_busy:false,identification_busy:false,analysis_busy:false},seen;
  const admission=createVariantAdmission({boundary:{machineTransaction:async(_staff,fn)=>fn({principal:{mode:'LOCAL_FIXTURE'},tx:{$queryRawUnsafe:async(sql,actionId,mode)=>{seen={sql,actionId,mode};return[row];}}})}});
- assert.equal(await admission(),true);assert.equal(seen.actionId,null);assert.equal(seen.mode,'LOCAL_FIXTURE');
+ assert.equal(await admission(),true);assert.equal(seen.actionId,null);
+ assert.doesNotMatch(seen.sql,/read_grading_photo|p\.state IN/,'terminal photo failures no longer exempt active grading batches');
  for(const key of Object.keys(row)){row[key]=true;assert.equal(await admission(),false);row[key]=false;}
  const actionId='11111111-1111-4111-8111-111111111111';await admission({actionId});assert.equal(seen.actionId,actionId);
  row={};await assert.rejects(admission(),{code:'VARIANT_ADMISSION_UNAVAILABLE'});

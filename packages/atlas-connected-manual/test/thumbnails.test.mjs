@@ -28,3 +28,14 @@ test('ready upfront cutout is used for navigation without image generation or ge
  const f=fixture();f.dependencies.readCleanDescriptor=async({side})=>({url:'https://saved.invalid/'+side,sha256:'b'.repeat(64),byteCount:1200,width:40,height:56,generative:true});
  const r=await f.run();assert.equal(r.images.FRONT.preview.generative,true);assert.equal(r.images.BACK.state,'READY');assert.equal(f.grants.length,0);assert.equal(f.reads,2);
 });
+
+test('terminal original fallback supplies a verified navigation preview without generating or changing its frame',async()=>{
+ const f=fixture();let reads=0;
+ f.dependencies.readCleanDescriptor=async()=>null;
+ f.dependencies.gradingPhotoStatus=async({side})=>side==='FRONT'?{state:'READY',source:'ORIGINAL'}:{state:'REQUESTED'};
+ f.dependencies.readGradingPhoto=async({photo,side})=>{reads++;assert.equal(side,'FRONT');return{photo,bytes:Buffer.from('verified fixture')};};
+ f.dependencies.imageReadUrl=async input=>{assert.equal(input.kind,'original');assert.equal(input.contextOnly,true);assert.equal(input.descriptor,input.photo.workingFrame);return{url:'https://original.invalid/front'};};
+ const r=await f.run();assert.deepEqual(r.images.FRONT,{state:'READY',source:'ORIGINAL',preview:{url:'https://original.invalid/front'}});assert.equal(r.images.BACK.state,'PENDING');assert.equal(reads,1);
+ f.dependencies.readGradingPhoto=async()=>{throw fail('GRADING_IMAGE_SOURCE_MISMATCH');};
+ await assert.rejects(f.run(),{code:'GRADING_IMAGE_SOURCE_MISMATCH'});
+});
