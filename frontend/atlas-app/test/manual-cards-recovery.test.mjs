@@ -68,7 +68,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === '../lib/manual-defect-analysis-client.mjs') return defectAnalysisClient;
       if (name === '../lib/manual-client.mjs') return { manualMessage: message, manualRequest: async (path, options = {}) => {
         if (options.method === 'POST') return post(path, options);
-        return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : readCard ? readCard(path) : card;
+        return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : readCard ? readCard(path, options) : card;
       } };
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     },
@@ -532,6 +532,66 @@ const rejectedBackImage = () => {
  return card;
 };
 const imageRetryAck=body=>({state:'ACCEPTED',acknowledgedRequest:{...body,side:'BACK'}});
+for(const side of ['FRONT','BACK'])for(const terminal of ['READY','FAILED','UNKNOWN'])test(`${side} image polling observes QUEUED to REQUESTED to ${terminal} with equal revisions and unsaved details`,async()=>{
+ const card=failedPhotos(),store=storage(null),sideName=side==='FRONT'?'Front':'Back',other=side==='FRONT'?'BACK':'FRONT',otherName=other==='FRONT'?'Front':'Back';
+ card.card.ready=false;card.gradingImages[side]={uploadId:side,state:'QUEUED'};
+ card.previews={[other]:{url:'/saved-opposite.png',sha256:'b'.repeat(64)}};
+ const originalPair=plain(card.card.sides),revisions=[card.card.revision,card.revision];let reads=0;
+ const f=harness(store,async()=>assert.fail('Image polling must not dispatch a command'),{readCard:(path,options)=>{
+  assert.equal(path,'/api/staff/manual-connected/cards/card');assert.equal(options.method??'GET','GET');
+  reads++;return structuredClone(card);
+ }});
+ try{
+  f.render();await flush();f.render();f.change('Name','Unsaved name');f.change('Year','2022-23');f.render();
+  const initialReads=reads;card.gradingImages[side]={uploadId:side,state:'REQUESTED'};
+  await f.tick();assert.equal(reads,initialReads+1);assert.match(f.sideText(sideName),/Preparing grading image/);
+  await f.tick();assert.equal(reads,initialReads+2,'accepted image work remains observed while REQUESTED');
+  card.gradingImages[side]={uploadId:side,state:terminal,...(terminal==='FAILED'?{
+   code:'REPORT_IMAGE_REQUEST_REJECTED',rejection:{retryable:true,jobKey:'a'.repeat(64),failedRequestId:'terminal-request'},
+  }:terminal==='UNKNOWN'?{code:'REPORT_IMAGE_RESPONSE_UNKNOWN'}:{})};
+  if(terminal==='READY'){card.card.ready=true;card.previews[side]={url:'/new-generated.png',sha256:'c'.repeat(64)};}
+  await f.tick();assert.equal(reads,initialReads+3,'terminal state is read without a revision bump');
+  assert.doesNotMatch(f.sideText(sideName),/Preparing grading image/);
+  if(terminal==='READY'){
+   assert.match(f.sideText(sideName),/Grading image ready/);assert.equal(f.previewSrc(sideName),'/new-generated.png');
+  }else{
+   assert.match(f.sideText(sideName),/Image needs attention/);assert.equal(f.previewSrc(sideName),undefined);
+   assert.match(f.sideText(sideName),terminal==='FAILED'?/OpenAI rejected the image request/:/saved request needs review before another image request/);
+   assert.equal(f.has(`Retry ${sideName} background removal`),terminal==='FAILED');
+   assert.equal(f.has(`Check ${sideName} image status`),terminal==='UNKNOWN');
+  }
+  assert.equal(f.previewSrc(otherName),'/saved-opposite.png');
+  assert.equal(f.field('Name').props.value,'Unsaved name');assert.equal(f.field('Year').props.value,'2022-23');
+  assert.deepEqual(plain(card.card.sides),originalPair);assert.deepEqual([card.card.revision,card.revision],revisions);
+  assert.equal(store.getItem(key),null,'polling creates no retry or detail-save intent');
+  const stopped=reads;await f.tick();await f.tick();assert.equal(reads,stopped,'terminal status removes the polling interval');
+ }finally{f.dispose();}
+});
+test('opening REQUESTED image work observes failure without consuming or replaying an uncertain retry intent',async()=>{
+ const card=rejectedBackImage(),savedRetry={path:'/api/staff/manual-connected/cards/card/grading-images/BACK/retry',intent:'RETRY_GRADING_IMAGE',
+  body:{requestId:'saved-retry',uploadId:'BACK',jobKey:'a'.repeat(64),failedRequestId:'original-failed-request'}},store=storage(savedRetry);
+ card.gradingImages.BACK={uploadId:'BACK',state:'REQUESTED'};let reads=0;
+ const f=harness(store,async()=>assert.fail('Only explicit saved-retry reconciliation may POST'),{readCard:()=>{reads++;return structuredClone(card);}});
+ try{
+  f.render();await flush();f.render();assert.equal(f.has('Check saved retry'),true);
+  const initialReads=reads;await f.tick();assert.equal(reads,initialReads+1,'REQUESTED starts polling on initial load');
+  card.gradingImages.BACK={uploadId:'BACK',state:'FAILED',code:'REPORT_IMAGE_REQUEST_REJECTED',
+   rejection:{retryable:true,jobKey:'a'.repeat(64),failedRequestId:'new-failed-request'}};
+  await f.tick();assert.equal(reads,initialReads+2);assert.match(f.sideText('Back'),/Image needs attention/);
+  assert.equal(f.disabled('Retry Back background removal'),true);assert.equal(f.has('Check saved retry'),true);
+  assert.equal(store.getItem(key),JSON.stringify(savedRetry),'status cannot replace the exact uncertain retry with a newer failure');
+  const stopped=reads;await f.tick();assert.equal(reads,stopped);
+ }finally{f.dispose();}
+});
+for(const binding of ['old-upload','missing-upload'])test(`REQUESTED image polling requires the current upload binding: ${binding}`,async()=>{
+ const card=rejectedBackImage();card.gradingImages.BACK={state:'REQUESTED',...(binding==='old-upload'?{uploadId:'old-back'}:{})};
+ if(binding==='missing-upload')delete card.card.sides.BACK.upload.uploadId;
+ let reads=0;const f=harness(storage(null),async()=>assert.fail('No image command'),{readCard:()=>{reads++;return structuredClone(card);}});
+ try{
+  f.render();await flush();f.render();const initialReads=reads;await f.tick();await f.tick();assert.equal(reads,initialReads);
+  assert.equal(f.has('Retry Back background removal'),false);assert.equal(f.previewSrc('Front'),'/saved-front.png');
+ }finally{f.dispose();}
+});
 test('explicit background retry retains the photo pair and unsaved details, then observes preparation without another dispatch',async()=>{
  let card=rejectedBackImage(),reads=0;const posts=[],store=storage(null);
  const f=harness(store,async(path,{body})=>{
@@ -545,9 +605,11 @@ test('explicit background retry retains the photo pair and unsaved details, then
   requestId:posts[0].body.requestId,uploadId:'BACK',jobKey:'a'.repeat(64),failedRequestId:'failed-back-request'}});
  assert.match(posts[0].body.requestId,/^[0-9a-f-]{36}$/);assert.equal(store.getItem(key),null);
  assert.equal(f.previewSrc('Front'),'/saved-front.png');assert.equal(f.field('Name').props.value,'My unsaved name');
- const before=reads;await f.tick();assert.ok(reads>before);assert.equal(posts.length,1);
+ card.gradingImages.BACK={uploadId:'BACK',state:'REQUESTED'};
+ const before=reads;await f.tick();assert.equal(reads,before+1);await f.tick();assert.equal(reads,before+2);assert.equal(posts.length,1);
  card.gradingImages.BACK={uploadId:'BACK',state:'FAILED',code:'REPORT_IMAGE_ALPHA_INVALID'};
- await f.tick();const stopped=reads;await f.tick();assert.equal(reads,stopped);assert.equal(posts.length,1);f.dispose();
+ await f.tick();assert.equal(reads,before+3);assert.match(f.sideText('Back'),/returned image could not be used for grading/);
+ const stopped=reads;await f.tick();assert.equal(reads,stopped);assert.equal(posts.length,1);f.dispose();
 });
 for(const uncertain of ['lost-response','wrong-ack'])test(`background retry ${uncertain} resumes the identical intent without buying another retry`,async()=>{
  const card=rejectedBackImage(),store=storage(null),posts=[];

@@ -218,7 +218,8 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   }
   const preparingGradingImage=['FRONT','BACK'].some(side=>{
     const image=saved?.gradingImages?.[side];
-    return image?.uploadId===saved?.card.sides[side]?.upload?.uploadId&&['QUEUED','RUNNING'].includes(image?.state);
+    // The reader returns REQUESTED while an image request awaits its saved outcome.
+    return Boolean(image?.uploadId)&&image.uploadId===saved?.card.sides[side]?.upload?.uploadId&&['QUEUED','RUNNING','REQUESTED'].includes(image.state);
   });
   useEffect(()=>{
     if(!preparingGradingImage||!localReady||inWorkspace||deletePending)return;
