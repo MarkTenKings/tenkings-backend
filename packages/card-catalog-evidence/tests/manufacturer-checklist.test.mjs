@@ -83,11 +83,11 @@ test('exact-year records win over a starting-season fallback',async()=>{
  const r=await createManufacturerChecklistVariantProvider({catalog:data}).prepare(lameloIdentity);
  assert.deepEqual(r.candidates.map(c=>c.label),['BALL OF DUTY EXACT YEAR']);assert.deepEqual(r.candidates[0].diagnostics,[]);
 });
-test('ambiguous season product aliases fail closed while duplicate same-product evidence is allowed',async()=>{
+test('exact source title takes precedence over a conflicting season product alias while duplicate evidence is allowed',async()=>{
  const second={...lameloSource,setName:'2025-26 Topps Chrome Basketball Special Edition',aliases:['Topps Chrome'],sha256:'b'.repeat(64)};
  const data={...lameloCatalog,sources:[lameloSource,second],rows:[...lameloCatalog.rows,[1,'BALL OF DUTY','BD-13','LaMelo Ball','row:1']]};
  const r=await createManufacturerChecklistVariantProvider({catalog:data}).prepare(lameloIdentity);
- assert.deepEqual(r.candidates,[]);assert.deepEqual(r.problems,['PROVIDER_NOT_SUPPORTED']);
+ assert.deepEqual(r.candidates.map(c=>c.source.release.setName),[lameloSource.setName]);assert.deepEqual(r.problems,[]);
  assert.doesNotThrow(()=>createVariantReviewSnapshot({identity:lameloIdentity,...r,capturedAt:'2026-10-10T00:00:00.000Z'}));
  const duplicate={...data,sources:[lameloSource,{...lameloSource,sha256:'b'.repeat(64)}]};
  assert.equal((await createManufacturerChecklistVariantProvider({catalog:duplicate}).prepare(lameloIdentity)).candidates.length,1);
@@ -176,7 +176,7 @@ test('abbreviated season never chooses a century from the player or current date
  for(const options of [{catalog:data},shardsFor(data)]){
   const p=createManufacturerChecklistVariantProvider(options);
   const query={...identity,name:'Michael Jordan',year:'92-93',setName:'Fleer',cardNumber:'273',manufacturer:'Fleer'};
-  assert.deepEqual((await p.prepare(query)).problems,['PROVIDER_NOT_SUPPORTED']);
+  assert.deepEqual((await p.prepare(query)).problems,['CHECKLIST_SEASON_AMBIGUOUS']);
   assert.equal((await p.prepare({...query,year:'1992-1993'})).candidates.length,1);
  }
 });
@@ -212,7 +212,7 @@ test('v2 keeps composite and season rules, tries fallback only after no exact ma
  assert.deepEqual((await createManufacturerChecklistVariantProvider({catalog:e.catalog,loadShard:async d=>{exactReads.push(d.path);return e.loadShard(d);}}).prepare(lameloIdentity)).candidates.map(c=>c.label),['BALL OF DUTY EXACT']);
  assert.equal(exactReads.length,1);
  const ambiguous={...lameloCatalog,sources:[lameloSource,{...lameloSource,setName:'Special Edition',aliases:['Topps Chrome'],sha256:'d'.repeat(64)}],rows:[...lameloCatalog.rows,[1,...lameloCatalog.rows[0].slice(1)]]};
- assert.deepEqual((await createManufacturerChecklistVariantProvider(shardsFor(ambiguous)).prepare(lameloIdentity)).problems,['PROVIDER_NOT_SUPPORTED']);
+ assert.deepEqual((await createManufacturerChecklistVariantProvider(shardsFor(ambiguous)).prepare(lameloIdentity)).candidates.map(c=>c.source.release.setName),[lameloSource.setName]);
 });
 test('v2 coalesces concurrent reads, serializes products and reuses small product shards',async()=>{
  const f=shardsFor(productsFixture()), reads=[];let active=0, peak=0;

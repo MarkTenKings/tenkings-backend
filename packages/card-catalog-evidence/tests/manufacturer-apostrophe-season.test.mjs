@@ -17,5 +17,5 @@ test('retained Card14 literal apostrophe season finds the same Ultra Jam Session
 test('quoted abbreviated seasons remain ambiguous across retained centuries and never receive a date pivot',async()=>{
  const source={manufacturer:'Fleer',sport:'basketball',year:'1992-93',setName:'Fleer Ultra',aliases:[],url:'https://example.com/1992',sha256:'a'.repeat(64)};
  const catalog={schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[source,{...source,year:'2092-93',url:'https://example.com/2092',sha256:'b'.repeat(64)}],rows:[[0,'Jam Session','216','Michael Jordan','row:1'],[1,'Jam Session','216','Michael Jordan','row:1']]};
- const result=await createManufacturerChecklistVariantProvider({catalog}).prepare(identity);assert.equal(result.candidates.length,0);assert.deepEqual(result.problems,['PROVIDER_NOT_SUPPORTED']);
+ const result=await createManufacturerChecklistVariantProvider({catalog}).prepare(identity);assert.equal(result.candidates.length,0);assert.deepEqual(result.problems,['CHECKLIST_SEASON_AMBIGUOUS']);
 });

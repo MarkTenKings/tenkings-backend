@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {createManufacturerChecklistVariantProvider} from '../../card-catalog-evidence/src/manufacturer-checklist.mjs';
 import {variantChecklistListingIdentity,prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
 import {createVariantJobStore} from '../src/variant-job-store.mjs';
-const identity={category:'SPORTS',manufacturer:'Panini',year:null,setName:'2009 Panini Elite Basketball',name:'Ray Allen',cardNumber:'1',language:null};
+const identity={category:'SPORTS',manufacturer:'Panini',year:null,setName:'Panini Elite Basketball',name:'Ray Allen',cardNumber:'1',language:null};
 test('real retained exact-year release survives discovery of a different season without broadening season aliases',async()=>{
- const result=await createManufacturerChecklistVariantProvider().prepare(identity);
+ const provider=createManufacturerChecklistVariantProvider(),result=await provider.prepare(identity);
+ const embedded=await provider.prepare({...identity,setName:'2009 Panini Elite Basketball'});assert(embedded.candidates.length>0);assert(embedded.candidates.every(c=>c.source.release.year==='2009'));
  const exact=result.candidates.find(c=>c.identity.year==='2009');
  const seasonal=result.candidates.find(c=>c.identity.year==='2013-14');
  assert(exact&&!exact.source.season&&seasonal?.source.season);

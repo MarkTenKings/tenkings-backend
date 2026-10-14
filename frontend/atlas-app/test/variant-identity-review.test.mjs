@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as client from '../lib/variant-review-client.mjs';
 import * as routes from '../lib/routes.mjs';
 import * as referencePhotos from '../lib/variant-reference-photos.mjs';
+import * as referenceStatus from '../lib/variant-reference-status.mjs';
 import * as sourceSeason from '../../../packages/card-catalog-evidence/src/variant-season.mjs';
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const code = babel.transformSync(readFileSync(new URL('../components/VariantIdentityReview.jsx', import.meta.url), 'utf8'), {
@@ -37,6 +38,7 @@ function fixture({ component = 'default', props, beforeEffects } = {}) {
     if(name==='@atlas/manual-workspace/report-review')return{useVerifiedImage:descriptor=>({url:f.images&&descriptor?(descriptor.generative?'blob:clean':'blob:verified'):null})};
     if(name.endsWith('variant-review-client.mjs'))return client;
     if(name.endsWith('variant-reference-photos.mjs'))return referencePhotos;
+    if(name.endsWith('variant-reference-status.mjs'))return referenceStatus;
     if(name.endsWith('variant-season.mjs'))return sourceSeason;
     if(name.endsWith('manual-client.mjs'))return{manualRequest:async(path,options)=>{if(!options.method){f.reads++;return f.read?f.read():structuredClone(f.status);}f.writes.push(options.body);if(f.save)return f.save(options.body);const input=options.body;f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:input.decision!=='UNRESOLVED'};return structuredClone(f.status);}};
     if(name.endsWith('.css'))return new Proxy({},{get:(_,key)=>key});return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);
@@ -449,4 +451,22 @@ test('structured secondary source season groups both year entry directions witho
  const submitted={playerName:'Michael Jordan',productSet:'Fleer',cardNumber:'273',year:'1992'};
  assert.equal(group({...base,source:{...base.source,season:{year:'1992-93',startingYearAlias:false}}},submitted),'other');
  assert.equal(group(base,{...submitted,year:'1993'}),'other');f.dispose();
+});
+
+
+test('reference outcomes are visible without changing grading gates, choices or starting requests',async()=>{
+ const f=fixture();f.status.result.catalog.problems=['PROVIDER_UNAVAILABLE','LISTING_SOURCE_OUTCOME_UNKNOWN','CHECKLIST_CARD_NOT_FOUND'];
+ await flush();f.render();const section=f.find(node=>node.props['aria-label']==='Saved reference status')[0];
+ assert.match(text(section),/catalog source could not be read/);assert.match(text(section),/unknown saved outcome/);assert.match(text(section),/retained checklist scope has no matching/);
+ assert.equal(f.writes.length,0);assert.equal(f.gates.at(-1),false);assert(f.radios().every(node=>!node.props.checked));
+ assert.equal(f.button('Confirm selected identity').props.disabled,true);f.dispose();
+});
+test('identical labels from explicit different source scopes remain independently reviewable',async()=>{
+ const f=fixture();f.status.result.suggestion=null;
+ const template=f.status.result.catalog.candidates[0];
+ f.status.result.catalog.candidates=['baseball','football'].map(sport=>({...template,candidateId:sport,label:'Base',parallel:'Base',source:{provider:'manufacturer_checklist',release:{manufacturer:'Leaf',sports:[sport],year:'2018',setName:`2018 Leaf ${sport}`}}}));
+ const before=structuredClone(f.status.result.catalog.candidates);await flush();f.render();
+ assert.match(f.text(),/2018 Leaf baseball/);assert.match(f.text(),/2018 Leaf football/);assert.equal(f.radios().length,2);
+ assert(f.radios().every(node=>!node.props.checked));assert.equal(f.gates.at(-1),false);assert.equal(f.writes.length,0);
+ assert.deepEqual(f.status.result.catalog.candidates,before);f.dispose();
 });

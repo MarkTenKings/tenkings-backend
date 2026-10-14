@@ -108,7 +108,7 @@ export type VariantImage = { imageId: string; url: string | null;
 export type VariantCandidate = { candidateId: string; authority: 'reviewed_catalog' | 'provider_candidate'; label: string;
   identity: VariantIdentity; parallel: string | null; canonical: { publication: PublicationPin; cardId: string; printingId: string } | null;
   applicability: 'supported' | 'unknown'; diagnostics: { id: string; description: string }[]; images: VariantImage[];
-  source: { provider: string; recordId: string; url: string | null; sha256: string; references: { url: string | null; sha256: string }[]; season?: { year: string; startingYearAlias: boolean } }; warnings: string[] };
+  source: { provider: string; recordId: string; url: string | null; sha256: string; references: { url: string | null; sha256: string }[]; season?: { year: string; startingYearAlias: boolean }; release?: { manufacturer: string; sports: ('baseball' | 'basketball' | 'football' | 'hockey' | 'golf')[]; year: string; setName: string } }; warnings: string[] };
 export type VariantReferencePhoto = Omit<Extract<VariantImage, { relationship: 'listing_photo' }>, 'listing'> & {
   listing: { id: string | null; title: string | null; url: string | null } };
 export type VariantReferenceLabels = { version: 'atlas-slab-label-associations/v1'; catalogHash: string;

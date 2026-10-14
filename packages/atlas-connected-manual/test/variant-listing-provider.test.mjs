@@ -251,3 +251,17 @@ test('changed source bytes and retired request schemas cannot execute or project
  const p=provider({apiKey:'synthetic-credential',fetchImpl:noNetwork});
  await assert.rejects(p.fetchSource({...request,revision:'graded-reference-photos-v2'}),/REQUEST_CHANGED/);
 });
+
+
+test('retained empty listing results and missing images project separate diagnostics without changing choices',async()=>{
+ const catalog=labelCatalog({photos:0});
+ for(const [listings,warnings,expected] of [[[],[],'LISTING_NO_RESULTS'],[[{image:null}],['LISTING_IMAGES_INCOMPLETE'],'LISTING_IMAGES_INCOMPLETE']]){
+  let dispatches=0;
+  const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:catalog.candidates,problems:[],truncated:false})}],
+   now:()=>Date.parse(capturedAt),listingProvider:{acquireImages:async()=>({listings,warnings,referencePhotos:[]})}});
+  const snapshot=await service.prepare({identity:variantIdentity,localOnly:true,reuseJobKey:null},
+   {executeListingSource:async(_request,_dispatch,{retainedOnly}={})=>{assert.equal(retainedOnly,true);dispatches++;return {state:'REUSED',source:{sha256:sha('saved empty or missing image source')}};}});
+  assert(snapshot.problems.includes(expected));assert(!snapshot.problems.includes(expected==='LISTING_NO_RESULTS'?'LISTING_IMAGES_INCOMPLETE':'LISTING_NO_RESULTS'));
+  assert.deepEqual(snapshot.candidates,catalog.candidates);assert.deepEqual(snapshot.referencePhotos,[]);assert(dispatches>0);
+ }
+});

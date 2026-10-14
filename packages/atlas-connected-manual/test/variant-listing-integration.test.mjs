@@ -122,7 +122,7 @@ test('unknown-year photos and literal Codex readings retain source-year printing
  };
  const service=createVariantCatalogService({listingProvider:provider,cache,now}),first=await service.prepare({identity},{executeListingSource});
  assert.equal(first.referencePhotos.length,1);const image=first.referencePhotos[0],choice=codexChoices(first).find(c=>c.parallel==='ball of duty');assert.equal(choice.identity.year,'2025-26');
- const reading={sha256:image.sha256,candidateKey:null,gradingCompany:'PSA',labelText:'2025-26\nTopps Chrome\nLaMelo Ball\nBD-13\nBALL OF DUTY',reason:'Retained literal slab label'};
+ const reading={sha256:image.sha256,candidateKey:null,gradingCompany:'PSA',labelText:'2025-26\nTopps Chrome Basketball\nLaMelo Ball\nBD-13\nBALL OF DUTY',reason:'Retained literal slab label'};
  const matched=reassociateCodexReading(reading,first,[]);assert.equal(matched.candidateKey,choice.key);
  const base=first.candidates.find(c=>c.parallel==='BALL OF DUTY');
  const projected=projectCodexReading(reading,first,[]);assert.equal(projected.candidateId,base.candidateId);

@@ -2,14 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {canonical,digest} from '@atlas/manual-service/contract';
-import {createVariantJobStore,variantBinding,VARIANT_POLICY} from '../src/variant-job-store.mjs';
+import {createVariantJobStore,variantBinding,VARIANT_POLICY,SPORTS_CATALOG_DISCOVERY_REVISION} from '../src/variant-job-store.mjs';
 import {variantReviewStatus} from '../src/variant-service.mjs';
 
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
-function fixture({confirmed=true,approved=true}={}){
+function fixture({confirmed=true,approved=true,pokemon=false}={}){
  const principal={id:randomUUID(),role:'REVIEWER',accessVersion:1},card={cardId:randomUUID(),revision:14,draft:{
   source:{sourceHash:digest('saved photos')},identityRevision:2,identity:{playerName:'Jaxson Dart',year:'2025',manufacturer:'Panini',productSet:'Donruss Optic Football — Donruss Threads',cardNumber:'DTBH-JDT',parallel:'Base',insert:null},
   geometry:{sourceHash:digest('human geometry')},defects:{sourceHash:digest('human findings')}}};
+ if(pokemon){delete card.draft.identity.playerName;card.draft.identity.cardName='Mewtwo';card.draft.identity.productSet='151';}
  card.contentHash=digest(canonical(card.draft));const binding=variantBinding(card);
  const confirmation=confirmed?{action_id:randomUUID(),decision:'MANUAL',source_hash:binding.sourceHash,identity_revision:binding.identityRevision,identity_hash:binding.identityHash,job_key:null}:null;
  const jobs=[],writes=[],order=[],hooks={};let tail=Promise.resolve();
@@ -83,4 +84,8 @@ test('initial reference preparation refuses source or identity drift and remains
  }
  const f=fixture();const outcomes=await Promise.allSettled([f.store.refresh({},f.card.cardId,f.request),f.store.refresh({},f.card.cardId,{...f.request,requestId:randomUUID()})]);
  assert.equal(outcomes.filter(v=>v.status==='fulfilled').length,1);assert.equal(outcomes.find(v=>v.status==='rejected').reason.code,'VARIANT_REFRESH_UNAVAILABLE');assert.equal(f.jobs.length,1);
+});
+
+test('explicit refresh binds the selected catalog revision without changing the OCR association policy',async()=>{
+ for(const pokemon of [false,true]){const f=fixture({pokemon});await f.store.refresh({},f.card.cardId,f.request);const input=JSON.parse(f.jobs[0].input);assert.equal(input.catalogRevision,pokemon?'atlas-reference-association-v2':SPORTS_CATALOG_DISCOVERY_REVISION);assert.equal(input.identity.category,pokemon?'POKEMON':'SPORTS');}
 });

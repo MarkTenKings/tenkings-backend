@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createManufacturerChecklistVariantProvider,createVariantReviewSnapshot} from '@tenkings/card-catalog-evidence';
-import {variantCodexChoice,variantCodexAliases,projectCodexReading,codexChoices,codexLibraryKey} from '../src/variant-codex.mjs';
+import {variantCodexChoice,variantCodexAliases,projectCodexReading,codexCatalogContext,codexChoices,codexLibraryKey} from '../src/variant-codex.mjs';
 import {createVariantCatalogService} from '../src/variant-catalog.mjs';
 import {prepareVariantLabelRequest,projectVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL} from '../src/variant-photo-provider.mjs';
 import {labelHash,labelResponse} from './variant-label-fixture.mjs';
@@ -22,7 +22,7 @@ test('saved LaMelo two-photo library crosses only the manufacturer-sourced 2025/
  const service=createVariantCatalogService({cache:{getRetained:async key=>key===codexLibraryKey(previous)?library:null},listingProvider:{fetchSource:()=>assert.fail('No provider acquisition'),acquireImages:()=>assert.fail('No image acquisition')}});
  const result=await service.prepare({identity,localOnly:true},{executeListingSource:async(_r,_d,{retainedOnly})=>{assert(retainedOnly);return {state:'MISSING'};}});
  assert.equal(result.referencePhotos.length,2);assert.equal(result.candidates.length,16);
- for(const r of old.referenceLabels.readings){const projected=projectCodexReading(reading(r),result,[previous]);assert.equal(projected.canonicalPrintingKey,current.key);assert.equal(projected.labelText,r.labelText);}
+ for(const r of old.referenceLabels.readings){const projected=projectCodexReading(reading(r),result,[previous],codexCatalogContext(old.catalog,{literalIdentity:true}));assert.equal(projected.canonicalPrintingKey,current.key);assert.equal(projected.labelText,r.labelText);}
  assert.equal(JSON.stringify(old),before);
  const unrelated={...found.candidates[0],identity:{...found.candidates[0].identity,year:'2024'}};
  assert(!variantCodexAliases(unrelated).some(c=>c.key===previous.key));
@@ -35,7 +35,9 @@ test('official Ball of Duty printings produce distinct concise searches and lite
  const queries=found.candidates.map(c=>prepareVariantListingRequest(c.identity,{name:c.parallel,language:c.identity.language}).query);
  assert.equal(new Set(queries).size,16);assert(queries.includes('lamelo ball bd-13 ball of duty blue refractor'));
  const r={...reading(old.referenceLabels.readings[0]),candidateKey:null,labelText:'2025 TOPPS CHROME LaMelo Ball BALL OF DUTY #BD-13 BLUE REFRACTOR'};
- const projected=projectCodexReading(r,catalog,[]);
+ assert.equal(projectCodexReading(r,catalog,[]).candidateId,null,'Saved text without source sport remains visible and unassociated');
+ const scoped={...r,labelText:r.labelText+' BASKETBALL'};
+ const projected=projectCodexReading(scoped,catalog,[]);
  assert.equal(catalog.candidates.find(c=>c.candidateId===projected.candidateId)?.parallel,'BALL OF DUTY Blue Refractor');
  assert.equal(projectCodexReading({...r,labelText:r.labelText+' GOLD REFRACTOR'},catalog,[]).candidateId,null);
  assert.equal(projectCodexReading({...r,labelText:r.labelText.replace('BD-13','BD-14')},catalog,[]).candidateId,null);

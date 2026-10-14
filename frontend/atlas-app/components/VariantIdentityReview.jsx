@@ -5,6 +5,7 @@ import { manualRequest } from '../lib/manual-client.mjs';
 import { staffApiPath } from '../lib/routes.mjs';
 import { createVariantReviewClient, variantBindingKey, variantApprovalReady, variantConfirmationCurrent, variantError } from '../lib/variant-review-client.mjs';
 import { unmatchedVariantReferences } from '../lib/variant-reference-photos.mjs';
+import { variantReferenceNotices, variantSourceReleaseDetails } from '../lib/variant-reference-status.mjs';
 import styles from './VariantIdentityReview.module.css';
 import { resolveVariantSourceSeasonYear } from '../../../packages/card-catalog-evidence/src/variant-season.mjs';
 
@@ -261,6 +262,8 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
   const preview = candidates.find(candidate => candidate.candidateId === previewId) ?? selected ?? primaryChoices.find(candidate => variantReference(candidate, cardId, { artwork: false, result: status?.result })) ?? primaryChoices[0] ?? null;
   const previewPhoto = preview ? variantReference(preview, cardId, { artwork: false, result: status?.result }) : null;
   const unassignedPhotos = unmatchedVariantReferences(status?.result);
+  const referenceNotices = variantReferenceNotices(status);
+  const releaseDetails = variantSourceReleaseDetails(candidates);
   const manualComplete = manual?.parallel.trim();
   const needsChoice = !unresolved && (manual ? !manualComplete : !selected?.parallel?.trim());
   const focusChoices = () => {
@@ -286,7 +289,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
           return <label className={styles.tileChoice} data-selected={chosen} key={candidate.candidateId}>
             <input type="radio" name={`variant-${cardId}`} checked={chosen} disabled={unavailable || !candidate.parallel?.trim()}
               onChange={() => { setPreviewId(candidate.candidateId); if (!previewOnly) choose(candidate.candidateId); }}/>
-            <span><strong>{candidate.label}</strong>{!identity?.year && candidate.identity.year && <small>{candidate.identity.year}</small>}{group.key === 'language' && <small>{candidate.identity.language}</small>}</span>
+            <span><strong>{candidate.label}</strong>{!identity?.year && candidate.identity.year && <small>{candidate.identity.year}</small>}{group.key === 'language' && <small>{candidate.identity.language}</small>}{releaseDetails.has(candidate.candidateId) && <small>{releaseDetails.get(candidate.candidateId)}</small>}</span>
           </label>;
         })}</div>;
         return group.key === 'same' ? <fieldset className={styles.group} key={group.key}><legend>Variants for this card <span>{entries.length}</span></legend>{entries.length > 8 && <label className={styles.variantSearch}>Find a variant<input type="search" value={variantFilter} onChange={event=>setVariantFilter(event.target.value)} placeholder="Search variant names"/></label>}{contents}{!visibleEntries.length && <p>No variant names match this search.</p>}</fieldset>
@@ -304,6 +307,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
       {status && !current && <p role="status">The saved choices belong to an earlier identity. Reload the current review.</p>}
       {suggested?.candidateId && candidates.some(candidate => candidate.candidateId === suggested.candidateId) && <p className={styles.suggestion}><strong>AI suggestion · not a confirmation</strong></p>}
       {status?.state === 'READY' && !candidates.length && <p>The reference library has no usable variant matches for this card. Your saved identification and grading work are retained. Verify the variant from the physical card if you can, or keep it unresolved.</p>}
+      {referenceNotices.length > 0 && <div aria-label="Saved reference status">{referenceNotices.map(notice => <p key={notice.code} role="status" className={styles.notice}>{notice.text}</p>)}</div>}
 
     <p className={styles.photoHelp}>Scroll or pinch on either photo to zoom. Drag to pan. <button type="button" onClick={() => setCamera(fitCamera())}>Fit both photos</button></p>
     <div className={styles.layout}><div className={styles.original}>
@@ -318,6 +322,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
       </div>
       {preview && <article className={styles.referenceFocus} aria-label="Variant reference preview">
         <div className={styles.referenceHeading}><h3>{preview.label}</h3><span>{preview.identity.language || ''}</span></div>
+        {releaseDetails.has(preview.candidateId) && <p className={styles.photoHelp}>{releaseDetails.get(preview.candidateId)}</p>}
         {previewPhoto ? <><VariantPhotoPane camera={camera} setCamera={setCamera} label="Reference photograph zoom"><button type="button" className={styles.focusPhoto} onClick={event => compare(preview, event)} disabled={!photograph.url} aria-label={`Enlarge ${preview.label} reference`}>
           <ReferencePhoto image={previewPhoto} label={`${preview.label} reference`} enlarged/>
         </button>

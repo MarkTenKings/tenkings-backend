@@ -8,6 +8,9 @@ import {CODEX_ASSOCIATION_REVISION,variantCodexAliases,codexChoices,codexLibrary
 import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL,VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
 
 export const VARIANT_POLICY='atlas-independent-variant-v2';
+// Catalog discovery advances independently of immutable paid OCR requests.
+export const SPORTS_CATALOG_DISCOVERY_REVISION='atlas-sports-source-release-v1';
+const catalogDiscoveryRevision=identity=>'playerName'in identity?SPORTS_CATALOG_DISCOVERY_REVISION:CODEX_ASSOCIATION_REVISION;
 const table='atlas_manual_connected.variant_job';
 const listingDispatchKey=key=>`variant-listing-dispatch:v1:${key}`;
 const listingResponseKey=key=>`variant-listing-response:v1:${key}`;
@@ -81,6 +84,7 @@ export function validateVariantAction(action){
 // does not acquire a worker lease, write a result, or start provider work.
 export async function readRetainedVariantLabels(tx,catalog){
   const request=prepareVariantLabelRequest(catalog),readings=new Map(),records=new Map();
+  const scoped=catalog.candidates.some(c=>c.source.release),libraryConflicts=new Set();
   const readingKeys=request.photos.map(p=>codexReadingKey(request,p.sha256));
   const rows=readingKeys.length?await tx.$queryRawUnsafe('SELECT key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[])',readingKeys):[];
   for(const row of rows){
@@ -94,9 +98,16 @@ export async function readRetainedVariantLabels(tx,catalog){
     const row=libraryRows.get(key);if(!row)continue;
     requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');
     const library=validateCodexLibrary(JSON.parse(row.snapshot),choice);
-    for(const ref of library.references)if(photoShas.has(ref.image.sha256))readings.set(ref.image.sha256,projectCodexReading(ref.reading,catalog,[library.choice]));
+    for(const ref of library.references)if(photoShas.has(ref.image.sha256)){
+      let projected=projectCodexReading(ref.reading,catalog,[library.choice]),previous=readings.get(ref.image.sha256);
+      if(scoped&&previous?.candidateId&&projected.candidateId===null)continue;
+      if(scoped&&previous?.candidateId&&projected.candidateId&&previous.candidateId!==projected.candidateId)libraryConflicts.add(ref.image.sha256);
+      if(libraryConflicts.has(ref.image.sha256))projected={...projected,candidateId:null,canonicalCardKey:null,canonicalPrintingKey:null,
+        reason:'Conflicting retained library associations; the literal reading remains available.'};
+      readings.set(ref.image.sha256,projected);
+    }
   }
-  for(const photo of request.photos)if(!readings.has(photo.sha256)){
+  for(const photo of request.photos)if(!readings.has(photo.sha256)||scoped){
     const saved=records.get(codexReadingKey(request,photo.sha256));
     if(saved){requireThat(saved.schemaVersion==='atlas-codex-reading/v1'&&saved.policy===VARIANT_LABEL_POLICY&&saved.reading.sha256===photo.sha256
       &&Array.isArray(saved.choices)&&(saved.reading.candidateKey===null||saved.choices.some(c=>c.key===saved.reading.candidateKey)),503,'VARIANT_CODEX_READING_INVALID');
@@ -192,12 +203,12 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
        AND (previous.key IS NOT NULL OR (NOT EXISTS(SELECT 1 FROM atlas_manual.approval a WHERE a.card_id=c.id AND a.source_hash=c.content_hash)
         AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.source_hash=c.content::jsonb->'source'->>'sourceHash' AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int AND v.decision IN('SELECTED','MANUAL'))))
        AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND j.identity_revision=(c.content::jsonb->>'identityRevision')::int AND j.state IN('QUEUED','RUNNING','REQUESTED'))
-       AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND (j.identity_revision=(c.content::jsonb->>'identityRevision')::int OR EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.job_key=j.key AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int)) AND j.policy=$1 AND j.input::jsonb->>'catalogRevision'=$3)
-       ORDER BY c.id LIMIT $2`,VARIANT_POLICY,limit,CODEX_ASSOCIATION_REVISION);
-      let count=0;for(const row of rows){const d=JSON.parse(row.content),input={...variantBinding({cardId:row.id,draft:d}),identity:variantCatalogIdentity('playerName'in d.identity?'SPORTS':'POKEMON',d.identity),catalogRevision:CODEX_ASSOCIATION_REVISION,
+       AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND (j.identity_revision=(c.content::jsonb->>'identityRevision')::int OR EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.job_key=j.key AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int)) AND j.policy=$1 AND j.input::jsonb->>'catalogRevision'=CASE WHEN c.content::jsonb->'identity' ? 'playerName' THEN $4 ELSE $3 END)
+       ORDER BY c.id LIMIT $2`,VARIANT_POLICY,limit,CODEX_ASSOCIATION_REVISION,SPORTS_CATALOG_DISCOVERY_REVISION);
+      let count=0;for(const row of rows){const d=JSON.parse(row.content),input={...variantBinding({cardId:row.id,draft:d}),identity:variantCatalogIdentity('playerName'in d.identity?'SPORTS':'POKEMON',d.identity),catalogRevision:catalogDiscoveryRevision(d.identity),
         ...(row.previous_key?{reuseJobKey:row.previous_key,localOnly:true,generation:randomUUID()}:{})};const value=canonical(input);
        await preparationLock(tx,row.id);
-       const [existing]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND policy=$4 AND (input::jsonb->>'catalogRevision'=$5 OR state IN('QUEUED','RUNNING','REQUESTED')) LIMIT 1`,row.id,input.sourceHash,input.identityRevision,VARIANT_POLICY,CODEX_ASSOCIATION_REVISION);
+       const [existing]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND policy=$4 AND (input::jsonb->>'catalogRevision'=$5 OR state IN('QUEUED','RUNNING','REQUESTED')) LIMIT 1`,row.id,input.sourceHash,input.identityRevision,VARIANT_POLICY,input.catalogRevision);
        if(existing)continue;
        count+=await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,source_hash,identity_revision,identity_hash,input,input_hash,generation) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid) ON CONFLICT DO NOTHING`,variantJobKey(input),row.id,row.owner_id,row.access_version,VARIANT_POLICY,input.sourceHash,input.identityRevision,input.identityHash,value,digest(value),input.generation??'00000000-0000-0000-0000-000000000000');}return count;});},
     async priorCatalog(job){if(!job.input.reuseJobKey)return null;return machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,job.input.reuseJobKey,job.card_id,job.source_hash);return unpack(row)?.catalog??null;});},
@@ -244,7 +255,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const [historic]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND generation=$2::uuid`,cardId,input.requestId);
       if(historic){const saved=unpack(historic);requireThat(saved.input.sourceHash===input.sourceHash&&saved.input.identityRevision===input.identityRevision&&saved.input.identityHash===input.identityHash&&saved.input.reuseJobKey===input.jobId,409,'VARIANT_REFRESH_CONFLICT');return saved.key;}
       requireThat(b.sourceHash===input.sourceHash,409,'VARIANT_SOURCE_STALE');requireThat(b.identityRevision===input.identityRevision&&b.identityHash===input.identityHash,409,'VARIANT_IDENTITY_STALE');
-      const nextInput={...b,catalogRevision:CODEX_ASSOCIATION_REVISION,identity:variantCatalogIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',card.draft.identity),generation:input.requestId,reuseJobKey:input.jobId},key=variantJobKey(nextInput);
+      const nextInput={...b,catalogRevision:catalogDiscoveryRevision(card.draft.identity),identity:variantCatalogIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',card.draft.identity),generation:input.requestId,reuseJobKey:input.jobId},key=variantJobKey(nextInput);
       const [existing]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1`,key);
       if(existing){requireThat(canonical(unpack(existing).input)===canonical(nextInput),409,'VARIANT_REFRESH_CONFLICT');return key;}
       let [latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);
