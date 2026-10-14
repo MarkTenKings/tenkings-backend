@@ -100,7 +100,7 @@ test('unknown year prepares manufacturer-backed reference searches before confir
  };
  const first=await service.prepare({identity:target},{executeListingSource});
  assert.equal(target.year,null);assert.equal(first.candidates.length,16);assert.equal(first.candidates[0].identity.year,'2025-26');
- assert.equal(calls.length,32);assert.equal(journal.size,16);assert.equal(calls[0].request.identity.year,'2025-26');
+ assert.equal(calls.length,48,'Two read-only season/bare probes precede each of sixteen canonical dispatches');assert.equal(calls.filter(c=>c.retainedOnly).length,32);assert.equal(journal.size,16);assert.equal(calls[0].request.identity.year,'2025-26');
  const known={...target,year:'2025-26'},ordinary=prepareVariantListingRequest(known,{name:'BALL OF DUTY',language:null});
  assert.equal(calls.find(c=>c.request.printing.name==='ball of duty').request.requestKey,ordinary.requestKey);assert.deepEqual(target,original);
  await service.prepare({identity:known,generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});

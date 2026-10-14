@@ -4,6 +4,7 @@ import {resolve,relative,join,dirname} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {manufacturerRuntimeFiles} from '../../../packages/card-catalog-evidence/src/manufacturer-runtime-files.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -13,15 +14,7 @@ export const VENDOR_SOURCES=Object.freeze({
   'libde265-1.1.1.tar.gz':'5b4fac677018e6074196e8f9889f3e4a5310e46afbf22a893f620d4e24d3510e',
   'libheif-1.23.2.tar.gz':'1405ed070421459b569ff49deab109b7f1a30a447e72a9b20a4154f774634a44',
 });
-// These retained manufacturer inputs are runtime dependencies of the catalog
-// reader. Keep the list explicit; acquisition evidence and other data stay out.
-export const MANUFACTURER_CATALOG_SOURCES=Object.freeze([
-  'packages/card-catalog-evidence/data/manufacturer-checklists.json.gz',
-  'packages/card-catalog-evidence/data/manufacturer-parallel-families.json',
-  'packages/card-catalog-evidence/data/manufacturer-product-aliases.json',
-]);
-const required=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json',
-  ...MANUFACTURER_CATALOG_SOURCES,
+const staticRequired=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json',
   'frontend/atlas-shared/RapidCardCamera.jsx','frontend/atlas-shared/RapidCardCamera.module.css','frontend/atlas-shared/rapid-camera.mjs',
   'frontend/atlas-app/next.config.mjs','frontend/atlas-app/.eslintrc.json','frontend/atlas-app/prisma/schema.prisma',
   'packages/atlas-site-router/routes.mjs','packages/atlas-site-router/proof.mjs','packages/atlas-site-router/server.mjs',
@@ -38,6 +31,7 @@ const excluded=/(?:^|\/)(?:node_modules|dist|\.next|\.generated|\.git|\.vercel|_
 
 /** Only current source and explicit build/runtime inputs; no old image or generated checkout files. */
 export async function collectManualSource(workspace=root){
+  const required=new Set([...staticRequired,...await manufacturerRuntimeFiles(workspace)]);
   const tracked=[...new Set(execFileSync('git',['ls-files','-co','--exclude-standard','-z'],{cwd:workspace,encoding:'utf8'}).split('\0').filter(Boolean))].sort();
   const existing=[];
   for(const file of tracked){

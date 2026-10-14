@@ -28,6 +28,9 @@ if(mode==='source'){
 }
 const result={status:'CLEAN_MANUAL_SOURCE_VERIFIED',sourceFiles:manifest.files.length,sourceManifestSha256:hash(await readFile(manifestPath)),node:process.version};
 if(manifest.packages?.includes('packages/card-catalog-evidence')){
+  const {manufacturerRuntimeFiles}=await import(new URL('../../../packages/card-catalog-evidence/src/manufacturer-runtime-files.mjs',import.meta.url));
+  const catalogFiles=await manufacturerRuntimeFiles(root);
+  assert.deepEqual(manifest.files.filter(file=>file.path.startsWith('packages/card-catalog-evidence/data/')).map(file=>file.path).sort(),catalogFiles,'Catalog data closure mismatch');
   // Exercise the packaged reader and its supplemental data before a release
   // can pass on source hashes alone. This is an offline catalog lookup only.
   const fetch=globalThis.fetch;
@@ -35,7 +38,8 @@ if(manifest.packages?.includes('packages/card-catalog-evidence')){
   try{
     const {createManufacturerChecklistVariantProvider}=await import(new URL('../../../packages/card-catalog-evidence/src/manufacturer-checklist.mjs',import.meta.url));
     const identity={category:'SPORTS',name:'Nick Kurtz',manufacturer:'Topps',setName:'Bowman Chrome',cardNumber:'93',year:null,language:null};
-    const catalog=await createManufacturerChecklistVariantProvider().prepare(identity);
+    const provider=createManufacturerChecklistVariantProvider();
+    const catalog=await provider.prepare(identity);
     assert.deepEqual(catalog.problems,[]);assert.equal(catalog.truncated,false);assert.equal(identity.year,null);
     const checklistSha256='3ee770b295a63bc8482899b50fb651bcc6cdb55796d53e3bf4b1bd1efc5cc55f';
     for(const label of ['BASE CARDS','BASE CARDS CHROME ROOKIE RED RC VARIATION','Refractor']){
@@ -45,7 +49,19 @@ if(manifest.packages?.includes('packages/card-catalog-evidence')){
       assert.equal(candidate.applicability,'unknown');
       assert([candidate.source,...candidate.source.references].some(source=>source.sha256===checklistSha256),'Packaged choice is not bound to the retained official checklist');
     }
-    result.manufacturerCatalog={identity,candidates:catalog.candidates.length,checklistSha256,providerCalls:0};
+    const jordanIdentity={category:'SPORTS',name:'Michael Jordan',manufacturer:'Fleer',setName:'Fleer',cardNumber:'273',year:'1992-93',language:null};
+    const jordan=await provider.prepare(jordanIdentity);
+    const jordanChoice=jordan.candidates.find(candidate=>candidate.parallel==='Slam Dunk');
+    assert(jordanChoice,'Packaged 1992–93 Fleer Jordan #273 missing');
+    assert.equal(jordanChoice.source.sha256,'c67d4647c0002ddb8ab22d83a748e8952e86f21fcb64f981b80e543182890b90');
+    assert(jordanChoice.diagnostics.some(d=>d.description.includes('Secondary checklist evidence from Trading Card Database')),'Secondary authority disclosure missing');
+    const lameloIdentity={category:'SPORTS',name:'LaMelo Ball',manufacturer:'Topps',setName:'Topps Chrome — Ball of Duty',cardNumber:'BD-13',year:'2025',language:null};
+    const lamelo=await provider.prepare(lameloIdentity);
+    assert(lamelo.candidates.length>=16,'Packaged retained LaMelo choices missing');
+    for(const lookup of [jordan,lamelo]){assert.deepEqual(lookup.problems,[]);assert.equal(lookup.truncated,false);}
+    assert.equal(jordanIdentity.year,'1992-93');assert.equal(lameloIdentity.cardNumber,'BD-13');
+    result.manufacturerCatalog={identity,candidates:catalog.candidates.length,checklistSha256,dataFiles:catalogFiles.length,providerCalls:0,
+      jordan:{identity:jordanIdentity,candidates:jordan.candidates.length,secondaryDisclosure:true},lamelo:{identity:lameloIdentity,candidates:lamelo.candidates.length}};
   }finally{globalThis.fetch=fetch;}
 }
 if(mode==='native'){

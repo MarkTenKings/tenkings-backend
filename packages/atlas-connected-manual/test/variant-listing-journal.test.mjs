@@ -4,15 +4,16 @@ import {canonical,digest} from '@atlas/manual-service/contract';
 import {createVariantJobStore,variantJobKey} from '../src/variant-job-store.mjs';
 import {prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
 import {variantIdentity} from './variant-fixture.mjs';
+import {createVariantCatalogService} from '../src/variant-catalog.mjs';
 
-function fixture({historical=null,generation=null,identity=variantIdentity,storedIdentity=identity,initial=false,printing={name:'Base',language:null},historicalPhotoPool=false}={}){
+function fixture({historical=null,generation=null,identity=variantIdentity,storedIdentity=identity,initial=false,printing={name:'Base',language:null},historicalPhotoPool=false,historicalIdentity=identity}={}){
  const listingGeneration=initial?null:generation;
  const input={cardId:'04c3c3e1-4a66-4912-93cc-26dc534f6cb2',identity:storedIdentity,sourceHash:digest('source'),identityHash:digest('identity'),identityRevision:1,...(generation?{generation}:{}),...(initial?{reuseJobKey:null}:{})};
  const text=canonical(input),job={key:variantJobKey(input),card_id:input.cardId,source_hash:input.sourceHash,identity_hash:input.identityHash,identity_revision:1,
   generation:generation??'00000000-0000-0000-0000-000000000000',input:text,input_hash:digest(text),claim_id:'claim',state:'RUNNING'};
  const rows=new Map(),writes=[];
  const put=(key,value)=>{const snapshot=canonical(value);rows.set(key,{snapshot,snapshot_hash:digest(snapshot)});};
- const old=prepareVariantListingRequest(identity,printing,{generation:listingGeneration});
+ const old=prepareVariantListingRequest(historicalIdentity,printing,{generation:listingGeneration});
  const reservation={schemaVersion:'variant-listing-dispatch/v1',request:old,dispatchId:'old-dispatch',jobKey:'deleted-original-card-job',claimId:'old-claim',reservedAt:'2026-10-10T00:00:00.000Z'};
  if(historical){put(`variant-listing-dispatch:v1:${old.requestKey}`,reservation);
   if(historical==='saved')put(`variant-listing-response:v1:${old.requestKey}`,{schemaVersion:'variant-listing-source-journal/v1',sourceSchemaVersion:'variant-listing-response/v1',dispatchId:reservation.dispatchId,
@@ -73,4 +74,54 @@ test('initial reference preparation keeps ordinary source keys despite its durab
  assert.equal(f.request.generation,undefined);assert.equal((await f.store.reserveListingSource(f.job,f.request)).state,'REUSED');
  assert(!f.writes.some(w=>w.sql.startsWith('INSERT')));
  await assert.rejects(f.store.reserveListingSource(f.job,prepareVariantListingRequest(variantIdentity,{name:'Base',language:null},{graded:true,generation})),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+});
+
+const jordan={category:'SPORTS',name:'Michael Jordan',year:'1992-93',setName:'Fleer',cardNumber:'273',manufacturer:'Fleer',language:null};
+test('source-season journals replay exact historical bare/full requests in either submission direction, preserving raw bytes (fixture SQL only)',async()=>{
+ for(const [storedYear,oldYear] of [['1992-93','1992'],['1992','1992-93']]){
+  const f=fixture({identity:jordan,storedIdentity:{...jordan,year:storedYear},historicalIdentity:{...jordan,year:oldYear},printing:{name:'Slam Dunk',language:null},historical:'saved'}),before=JSON.stringify([...f.rows]),replayed=[];
+  const catalog=createVariantCatalogService({cache:f.store.cache,listingProvider:{fetchSource:()=>assert.fail('No paid HTTP'),acquireImages:async({request,source},{retainedOnly})=>{assert(retainedOnly);assert.deepEqual(request,f.old);assert.equal(source.requestKey,f.old.requestKey);assert.equal(source.bodyText,'{}');replayed.push(request.requestKey);return {referencePhotos:[]};}}});
+  const snapshot=await catalog.prepare(f.job.input,{executeListingSource:async(request,_dispatch,{retainedOnly}={})=>{assert(retainedOnly,'No new source reservation');return f.store.reserveListingSource(f.job,request,{retainedOnly});}});
+  assert.equal(replayed.length,1);assert.equal(snapshot.candidates.length,1);assert.equal(JSON.stringify([...f.rows]),before);assert(f.writes.every(w=>w.sql.startsWith('SELECT pg_advisory_xact_lock')));
+ }
+});
+test('old bare-year UNKNOWN remains unknown under the canonical season and cannot cause another paid dispatch',async()=>{
+ const f=fixture({identity:jordan,historicalIdentity:{...jordan,year:'1992'},printing:{name:'Slam Dunk',language:null},historical:'unknown'}),before=JSON.stringify([...f.rows]);
+ const catalog=createVariantCatalogService({cache:f.store.cache,listingProvider:{fetchSource:()=>assert.fail('No paid HTTP'),acquireImages:()=>assert.fail('No response exists')}});
+ const snapshot=await catalog.prepare(f.job.input,{executeListingSource:async(request,_dispatch,{retainedOnly}={})=>{assert(retainedOnly,'An unknown old transport cannot be bypassed');return f.store.reserveListingSource(f.job,request,{retainedOnly});}});
+ assert(snapshot.problems.includes('LISTING_SOURCE_OUTCOME_UNKNOWN'));assert.equal(JSON.stringify([...f.rows]),before);assert(!f.writes.some(w=>w.sql.startsWith('INSERT')));
+});
+test('corrupt retained season response surfaces unavailability and cannot silently become MISSING',async()=>{
+ const f=fixture({identity:jordan,historicalIdentity:{...jordan,year:'1992'},printing:{name:'Slam Dunk',language:null},historical:'saved'});
+ const row=f.rows.get(`variant-listing-response:v1:${f.old.requestKey}`);row.snapshot_hash='f'.repeat(64);
+ const catalog=createVariantCatalogService({cache:f.store.cache,listingProvider:{fetchSource:()=>assert.fail('No replacement paid request'),acquireImages:()=>assert.fail('Corrupt journal cannot be replayed')}});
+ const snapshot=await catalog.prepare(f.job.input,{executeListingSource:async(request,_dispatch,{retainedOnly}={})=>{assert(retainedOnly);return f.store.reserveListingSource(f.job,request,{retainedOnly});}});
+ assert(snapshot.problems.includes('LISTING_SOURCE_UNAVAILABLE'));assert(!f.writes.some(w=>w.sql.startsWith('INSERT')));
+});
+test('new requests use resolved season; historical bare-year spelling is admitted for read-only probes only',async()=>{
+ const f=fixture({identity:jordan,storedIdentity:{...jordan,year:'1992'},printing:{name:'Slam Dunk',language:null}});
+ const canonical=await f.store.reserveListingSource(f.job,f.request);assert.equal(canonical.state,'RESERVED');assert.equal(canonical.reservation.request.identity.year,'1992-93');assert.equal(canonical.reservation.identityEvidence.length,1);
+ const literal=prepareVariantListingRequest({...jordan,year:'1992'},{name:'Slam Dunk',language:null});
+ assert.equal((await f.store.reserveListingSource(f.job,literal,{retainedOnly:true})).state,'MISSING');
+ await assert.rejects(f.store.reserveListingSource(f.job,literal),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+ assert.equal(f.writes.filter(w=>w.sql.startsWith('INSERT')).length,1);
+});
+test('a source-declared exact-year collision never probes a bare-year journal, and refresh generation remains explicit',async()=>{
+ const {createManufacturerChecklistVariantProvider}=await import('../../card-catalog-evidence/src/manufacturer-checklist.mjs');
+ const source={manufacturer:'Fleer',sport:'basketball',year:'1992-93',setName:'Fleer',aliases:[],url:'https://example.com/retained',sha256:'a'.repeat(64)};
+ const rows={schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[source,{...source,year:'1992',sha256:'b'.repeat(64)}],rows:[[0,'Slam Dunk','273','Michael Jordan','row:1'],[1,'Other Release','273','Michael Jordan','row:2']]};
+ const provider=createManufacturerChecklistVariantProvider({catalog:rows}),calls=[];
+ const service=createVariantCatalogService({providers:[provider],listingProvider:{acquireImages:async()=>({referencePhotos:[]})}});
+ const generation='7b109de3-c117-49d8-81aa-1221b735b8cb';
+ await service.prepare({identity:jordan,generation},{executeListingSource:async(request,_dispatch,{retainedOnly}={})=>{calls.push({request,retainedOnly});return retainedOnly?{state:'MISSING'}:{state:'SAVED',source:{sha256:'c'.repeat(64)}};}});
+ assert.equal(calls.length,2);assert(calls.every(c=>c.request.identity.year==='1992-93'));
+ assert.equal(calls[0].request.generation,undefined);assert.equal(calls[1].request.generation,generation);
+});
+test('retained HTTP failure is replayed as failure and cannot become a missing-source purchase',async()=>{
+ const f=fixture({identity:jordan,historicalIdentity:{...jordan,year:'1992'},printing:{name:'Slam Dunk',language:null},historical:'saved'});
+ const key=`variant-listing-response:v1:${f.old.requestKey}`,row=f.rows.get(key),body=JSON.parse(row.snapshot);body.httpStatus=429;row.snapshot=canonical(body);row.snapshot_hash=digest(row.snapshot);
+ const before=JSON.stringify([...f.rows]);
+ const catalog=createVariantCatalogService({cache:f.store.cache,listingProvider:{fetchSource:()=>assert.fail('No paid replacement'),acquireImages:async({source})=>{assert.equal(source.httpStatus,429);throw Object.assign(Error('retained failure'),{code:'VARIANT_LISTING_LIMITED'});}}});
+ const snapshot=await catalog.prepare(f.job.input,{executeListingSource:async(request,_dispatch,{retainedOnly}={})=>{assert(retainedOnly);return f.store.reserveListingSource(f.job,request,{retainedOnly});}});
+ assert(snapshot.problems.includes('LISTING_SOURCE_UNAVAILABLE'));assert.equal(JSON.stringify([...f.rows]),before);assert(!f.writes.some(w=>w.sql.startsWith('INSERT')));
 });

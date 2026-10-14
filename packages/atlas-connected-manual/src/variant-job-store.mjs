@@ -364,13 +364,15 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     async reserveListingSource(job,request,{retainedOnly=false}={}){
       // Only immutable local manufacturer evidence may fill a missing year
       // for a reference request. Never trust a supplied catalog or request year.
-      const discovered=job.input.identity.year?null:await checklist.prepare(job.input.identity);
-      const resolvedIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year):job.input.identity;
+      const discovered=job.input.identity.category==='SPORTS'?await checklist.prepare(job.input.identity):null;
+      const resolvedIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year,{retainedOnly}):job.input.identity;
       requireThat(compareVariantCardNumber(resolvedIdentity.cardNumber,request.identity?.cardNumber)==='match',409,'VARIANT_LISTING_REQUEST_CHANGED');
       const listingIdentity={...resolvedIdentity,cardNumber:request.identity.cardNumber};
-      const identityEvidence=discovered?discovered.candidates.filter(c=>c.identity.year===listingIdentity.year
-        &&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,{name:c.label,language:c.identity.language},{...(request.generation?{generation:request.generation}:{})})))
-        .map(c=>({candidateId:c.candidateId,source:c.source})):null;
+      const identityEvidence=discovered&&(!job.input.identity.year||discovered.candidates.some(c=>c.source.season))?discovered.candidates.filter(c=>{
+        try{return canonical(request)===canonical(prepareVariantListingRequest(
+          {...variantChecklistListingIdentity(job.input.identity,[c],listingIdentity.year,{retainedOnly}),cardNumber:request.identity.cardNumber},
+          {name:c.label,language:c.identity.language},{...(request.generation?{generation:request.generation}:{})}));}catch{return false;}
+      }).map(c=>({candidateId:c.candidateId,source:c.source})):null;
       requireThat(!identityEvidence||identityEvidence.length>0,409,'VARIANT_LISTING_REQUEST_CHANGED');
       requireThat(typeof retainedOnly==='boolean'&&request.revision===VARIANT_LISTING_REVISION&&(!request.generation||job.input.reuseJobKey!==null&&request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,request.printing??null,{...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
       await listingLock(tx,request.requestKey);

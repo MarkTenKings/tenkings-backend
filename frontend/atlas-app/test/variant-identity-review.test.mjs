@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as client from '../lib/variant-review-client.mjs';
 import * as routes from '../lib/routes.mjs';
 import * as referencePhotos from '../lib/variant-reference-photos.mjs';
+import * as sourceSeason from '../../../packages/card-catalog-evidence/src/variant-season.mjs';
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const code = babel.transformSync(readFileSync(new URL('../components/VariantIdentityReview.jsx', import.meta.url), 'utf8'), {
   filename: 'VariantIdentityReview.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false,
@@ -36,6 +37,7 @@ function fixture({ component = 'default', props, beforeEffects } = {}) {
     if(name==='@atlas/manual-workspace/report-review')return{useVerifiedImage:descriptor=>({url:f.images&&descriptor?(descriptor.generative?'blob:clean':'blob:verified'):null})};
     if(name.endsWith('variant-review-client.mjs'))return client;
     if(name.endsWith('variant-reference-photos.mjs'))return referencePhotos;
+    if(name.endsWith('variant-season.mjs'))return sourceSeason;
     if(name.endsWith('manual-client.mjs'))return{manualRequest:async(path,options)=>{if(!options.method){f.reads++;return f.read?f.read():structuredClone(f.status);}f.writes.push(options.body);if(f.save)return f.save(options.body);const input=options.body;f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:input.decision!=='UNRESOLVED'};return structuredClone(f.status);}};
     if(name.endsWith('.css'))return new Proxy({},{get:(_,key)=>key});return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);
   }});
@@ -438,4 +440,13 @@ test('comparison distinguishes saved seller source from actual visible-label tex
   const photo=f.find(node=>node.type==='img')[0];assert.equal(photo.props.alt,'front background-removed grading image');assert.equal(photo.props.src,'blob:generated-grading');
   assert.doesNotMatch(f.text(),/unchanged uploaded photograph|Your saved photograph/);f.dispose();
  }
+});
+
+
+test('structured secondary source season groups both year entry directions without diagnostic prose',()=>{
+ const f=fixture(),group=f.exports.variantCandidateGroup,base={source:{provider:'manufacturer_checklist',season:{year:'1992-93',startingYearAlias:true}},identity:{name:'Michael Jordan',setName:'Fleer',cardNumber:'273',year:'1992-93'},diagnostics:[]};
+ for(const [requested,candidateYear] of [['1992','1992-93'],['1992-93','1992'],['92-93','1992-93'],['1992-1993','1992']])assert.equal(group({...base,identity:{...base.identity,year:candidateYear}},{playerName:'Michael Jordan',productSet:'Fleer',cardNumber:'273',year:requested}),'same');
+ const submitted={playerName:'Michael Jordan',productSet:'Fleer',cardNumber:'273',year:'1992'};
+ assert.equal(group({...base,source:{...base.source,season:{year:'1992-93',startingYearAlias:false}}},submitted),'other');
+ assert.equal(group(base,{...submitted,year:'1993'}),'other');f.dispose();
 });

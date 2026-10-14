@@ -128,7 +128,10 @@ test('frozen Fleer supplement serves six official sports sources with literal la
  const missing=await provider.prepare({category:'SPORTS',year:'2026',setName:'Fleer Ultra Golf',name:'Matthieu Pavon',cardNumber:'FLAIR-1',manufacturer:'Fleer',language:'en'});
  assert.equal(missing.candidates.length,0,'a blank printed subset is not filled from another row');
  const jordan=await provider.prepare({category:'SPORTS',year:'92-93',setName:'Fleer',name:'Michael Jordan',cardNumber:'273',manufacturer:'Fleer',language:'en'});
- assert.equal(jordan.candidates.length,0,'unacquired historical Fleer remains an explicit gap');
+ assert.equal(jordan.candidates.length,1,'the retained historical Fleer row is now available');
+ assert.equal(jordan.candidates[0].label,'Slam Dunk');
+ assert.ok(jordan.candidates[0].diagnostics.some(d=>d.id==='manufacturer-checklist-provenance'&&d.description.includes('Trading Card Database')));
+ assert.ok(jordan.candidates[0].diagnostics.every(d=>!d.description.includes('Official checklist')));
 });
 
 const hashBytes = value => createHash('sha256').update(value).digest('hex');

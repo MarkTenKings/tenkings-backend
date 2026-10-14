@@ -4,6 +4,7 @@ import { isStaffInventoryResearchImageUrl } from '@tenkings/card-research-core/c
 import { researchImageOptions } from '../../card-research-core/src/evidence.mjs';
 import { boundedProviderOperation, readBoundedProviderBody } from '../../card-catalog-evidence/src/provider-media.mjs';
 import { validVariantReferenceListing } from '../../card-catalog-evidence/src/variant-review.mjs';
+import { resolveVariantSourceSeasonYear } from '../../card-catalog-evidence/src/variant-season.mjs';
 
 export const VARIANT_LISTING_REVISION = 'variant-reference-photos-v3';
 export const VARIANT_LISTING_LIMITS = Object.freeze({results:240,responseResults:240,sourceBytes:1024*1024,
@@ -20,10 +21,32 @@ const same=(a,b)=>canonicalJson(a)===canonicalJson(b);
 const date=v=>typeof v==='string'&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v;
 const normalize=v=>v.normalize('NFC').trim().replace(/\s+/gu,' ');
 const languageNames={en:'english',ja:'japanese',fr:'french',de:'german',es:'spanish',it:'italian',pt:'portuguese',ko:'korean',zh:'chinese'};
-export function variantChecklistListingIdentity(input,candidates,year){
- const identity=normalizeVariantIdentity(input);if(identity.year)return identity;
- check(identity.category==='SPORTS'&&typeof year==='string'&&candidates.some(c=>c.source.provider==='manufacturer_checklist'&&c.identity.year===year&&same({...c.identity,year:null},identity)),'VARIANT_LISTING_REQUEST_CHANGED');
+export function variantChecklistListingIdentity(input,candidates,year,{retainedOnly=false}={}){
+ const identity=normalizeVariantIdentity(input);
+ const matching=candidates.filter(c=>c.source.provider==='manufacturer_checklist'
+  && same({...c.identity,year:null},{...identity,year:null}));
+ const sourced=matching.filter(c=>c.source.season
+  && resolveVariantSourceSeasonYear(c.identity.year,c.source.season)!==null
+  && (!identity.year||resolveVariantSourceSeasonYear(identity.year,c.source.season)!==null));
+ if(sourced.length){
+  check(typeof year==='string'&&sourced.some(c=>year===c.source.season.year
+   || retainedOnly && (year===identity.year || c.source.season.startingYearAlias&&year===c.source.season.year.slice(0,4))), 'VARIANT_LISTING_REQUEST_CHANGED');
+  return {...identity,year};
+ }
+ if(identity.year)return identity;
+ check(identity.category==='SPORTS'&&typeof year==='string'&&matching.some(c=>c.identity.year===year),'VARIANT_LISTING_REQUEST_CHANGED');
  return {...identity,year};
+}
+/** Only retained journals use these source-proven year aliases. No alias is a
+ * fallback search or a new acquisition key. Unrelated exact-year rows cannot
+ * grant a bare-year alias because the reader sets startingYearAlias:false. */
+export function variantChecklistListingYears(input,candidate){
+ const season=candidate.source.provider==='manufacturer_checklist'?candidate.source.season:null;
+ if(!season)return [candidate.identity.year];
+ const years=[season.year];
+ if(input.year&&resolveVariantSourceSeasonYear(input.year,season))years.push(input.year);
+ if(season.startingYearAlias)years.push(season.year.slice(0,4));
+ return [...new Set(years)];
 }
 /** A single concise search per printing. Search wording is discovery, never
  * proof of printing, grade or authenticity. Raw cards remain eligible. */

@@ -6,6 +6,7 @@ import { staffApiPath } from '../lib/routes.mjs';
 import { createVariantReviewClient, variantBindingKey, variantApprovalReady, variantConfirmationCurrent, variantError } from '../lib/variant-review-client.mjs';
 import { unmatchedVariantReferences } from '../lib/variant-reference-photos.mjs';
 import styles from './VariantIdentityReview.module.css';
+import { resolveVariantSourceSeasonYear } from '../../../packages/card-catalog-evidence/src/variant-season.mjs';
 
 const normalize = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 const groups = [{ key: 'same', label: 'This card’s printings' }, { key: 'language', label: 'Other languages' }, { key: 'other', label: 'Other card matches' }, { key: 'reference', label: 'Other saved reference photos' }];
@@ -27,10 +28,14 @@ export function variantCandidateGroup(candidate, identity) {
   const expected = { name: identity?.cardName ?? identity?.playerName ?? identity?.name, setName: identity?.productSet ?? identity?.setName };
   if (Object.entries(expected).some(([field, value]) => value && normalize(value) !== normalize(candidate.identity[field])
     && !(field === 'setName' && candidate.source?.provider === 'scrydex' && !candidate.warnings?.includes('SET_NAME_REQUIRES_REVIEW')))) return 'other';
-  const seasonAlias = candidate.source?.provider === 'manufacturer_checklist' && /^\d{4}-\d{2}$/.test(candidate.identity.year ?? '')
-    && String(identity?.year) === candidate.identity.year.slice(0,4) && candidate.diagnostics?.some(diagnostic =>
-      ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(diagnostic.id)
-      && diagnostic.description === `Official checklist ${diagnostic.id.endsWith('season') ? 'season' : 'year'}: ${candidate.identity.year}.`);
+  const season = candidate.source?.provider === 'manufacturer_checklist' ? candidate.source.season : null;
+  const seasonAlias = season
+    ? resolveVariantSourceSeasonYear(String(identity?.year), season) !== null
+      && resolveVariantSourceSeasonYear(String(identity?.year), season) === resolveVariantSourceSeasonYear(candidate.identity.year, season)
+    : candidate.source?.provider === 'manufacturer_checklist' && /^\d{4}-\d{2}$/.test(candidate.identity.year ?? '')
+      && String(identity?.year) === candidate.identity.year.slice(0,4) && candidate.diagnostics?.some(diagnostic =>
+        ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(diagnostic.id)
+        && diagnostic.description.startsWith(`Official checklist ${diagnostic.id.endsWith('season') ? 'season' : 'year'}: ${candidate.identity.year}.`));
   if (identity?.year && candidate.identity.year && String(identity.year) !== String(candidate.identity.year) && !seasonAlias) return 'other';
   if (variantCardNumberComparison(identity?.cardNumber, candidate.identity.cardNumber) === 'conflict') return 'other';
   return identity?.language && candidate.identity.language && normalize(identity.language) !== normalize(candidate.identity.language) ? 'language' : 'same';

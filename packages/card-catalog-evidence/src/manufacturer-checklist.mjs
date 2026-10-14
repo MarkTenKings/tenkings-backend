@@ -57,16 +57,18 @@ async function boundedFile(url, maximum) {
   } finally { await file.close(); }
 }
 async function bundledCatalog() {
-  try { return JSON.parse(await boundedFile(new URL('../data/manufacturer-checklists.index.json', import.meta.url), INDEX_BYTES)); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  // Retain the v1 bundle/fixture reader while older qualified releases exist.
-  return JSON.parse(gunzipSync(await boundedFile(new URL('../data/manufacturer-checklists.json.gz', import.meta.url), 16 * 1024 * 1024), { maxOutputLength: 96 * 1024 * 1024 }));
+  // The serving release binds one index and its complete shard closure. A
+  // missing index is unavailable evidence, never permission to read old rows.
+  return JSON.parse(await boundedFile(new URL('../data/manufacturer-checklists.index.json', import.meta.url), INDEX_BYTES));
 }
 function sourceMetadata(source) {
   check(source && string(source.manufacturer) && string(source.year) && string(source.setName) && string(source.sport)
     && ['baseball','basketball','football','hockey','golf'].includes(source.sport) && string(source.url, 2048) && HASH.test(source.sha256)
     && Array.isArray(source.aliases) && source.aliases.length <= 12 && source.aliases.every(v => string(v))
     && (source.manufacturerAliases === undefined || Array.isArray(source.manufacturerAliases) && source.manufacturerAliases.length <= 8 && source.manufacturerAliases.every(v => string(v))), 'source');
+  check(source.evidenceAuthority === undefined || ['primary', 'secondary'].includes(source.evidenceAuthority), 'source authority');
+  check(source.sourcePublisher === undefined || string(source.sourcePublisher, 160), 'source publisher');
+  check(source.evidenceAuthority !== 'secondary' || string(source.sourcePublisher, 160), 'secondary source publisher');
   const url = new URL(source.url);
   check(url.protocol === 'https:' && !url.username && !url.password && !url.hash, 'source URL');
   return { ...source, products: new Set([source.setName, ...source.aliases].map(v => productName(v, source.manufacturer))) };
@@ -75,14 +77,19 @@ function rowCatalog(data, rowLimit = 1500000) {
   check(data?.schemaVersion === MANUFACTURER_CHECKLIST_REVISION && data.complete === false, 'version/coverage');
   check(Array.isArray(data.sources) && data.sources.length <= 20000 && Array.isArray(data.rows) && data.rows.length <= rowLimit, 'bounds');
   const strings = data.strings ?? null;
-  check(strings === null || Array.isArray(strings) && strings.length <= 1500000 && strings.every(v => string(v,160)), 'strings');
+  check(strings === null || Array.isArray(strings) && strings.length <= 1500000 && strings.every(v => string(v,512)), 'strings');
   const cell = (row, column) => strings ? strings[row[column]] : row[column];
   const sources = data.sources.map(sourceMetadata), index = new Map();
+  // Temporary interning avoids repeating the same normalization for every
+  // printing row. Neither this map nor new cache state survives construction.
+  const athleteKeys = sources.map(() => new Map()), years = sources.map(source => checklistYear(source.year));
   for (const row of data.rows) {
     check(Array.isArray(row) && row.length === 5 && Number.isSafeInteger(row[0]) && sources[row[0]]
       && (!strings || row.slice(1).every(v => Number.isSafeInteger(v) && v >= 0 && v < strings.length))
-      && string(cell(row,1),120) && string(cell(row,2),120) && string(cell(row,3),120) && string(cell(row,4),160), 'row');
-    const key = `${checklistYear(sources[row[0]].year)}|${athleteName(cell(row,3))}`;
+      && string(cell(row,1),120) && string(cell(row,2),120) && string(cell(row,3),512) && string(cell(row,4),160), 'row');
+    const athlete = cell(row,3), keys = athleteKeys[row[0]];
+    let key = keys.get(athlete);
+    if (key === undefined) { key = `${years[row[0]]}|${athleteName(athlete)}`; keys.set(athlete, key); }
     if (!index.has(key)) index.set(key, []);
     index.get(key).push(row);
   }
@@ -280,9 +287,22 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
         if (scopes.size > 1) return { ...empty, problems: ['PROVIDER_NOT_SUPPORTED'] };
         seasonFallback = rows.length > 0;
       }
+      // The source's explicit season is reusable catalog context, separate
+      // from the submitted identity. An exact bare-year row takes precedence
+      // on every entry path, including an explicit-season lookup.
+      const sourceSeasons = new Map();
+      for (const row of rows) {
+        const source = sources[row[0]], year = checklistYear(source.year);
+        if (!/^\d{4}-\d{2}$/.test(year) || sourceSeasons.has(row[0])) continue;
+        const startingYearAlias = source.sport === 'basketball'
+          && (seasonFallback || (await matchingRows(year.slice(0, 4))).length === 0);
+        sourceSeasons.set(row[0], { year, startingYearAlias });
+      }
       const candidates = [], seen = new Set();
       for (const row of rows) {
         const source = sources[row[0]];
+        const secondary = source.evidenceAuthority === 'secondary';
+        const checklistLabel = secondary ? 'Secondary checklist' : 'Official checklist';
         const parallel = cell(row,1), key = identity.year ? norm(parallel)
           : canonical([checklistYear(source.year), productName(source.setName, source.manufacturer), norm(parallel)]);
         const numberDiffers = compareVariantCardNumber(identity.cardNumber, cell(row,2)) !== 'match';
@@ -290,13 +310,14 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
         seen.add(key);
         const candidate = { authority: 'provider_candidate', label: parallel, identity: identity.year ? identity : { ...identity, year: source.year },
           parallel, canonical: null, applicability: 'unknown',
-          diagnostics: [...(!identity.year ? [{ id: 'manufacturer-checklist-year',
-            description: `Official checklist year: ${source.year}. The saved year is unknown; confirm this source-backed identity. Source locator: ${cell(row,4)}.` }] : []), ...(seasonFallback ? [{ id: 'manufacturer-checklist-season',
-            description: `Official checklist season: ${source.year}. Requested starting year: ${identity.year}. Source locator: ${cell(row,4)}.` }] : []),
+          diagnostics: [...(secondary ? [{ id: 'manufacturer-checklist-provenance',
+            description: `Secondary checklist evidence from ${source.sourcePublisher}; not manufacturer authority. Source locator: ${cell(row,4)}.` }] : []), ...(!identity.year ? [{ id: 'manufacturer-checklist-year',
+            description: `${checklistLabel} year: ${source.year}. The saved year is unknown; confirm this source-backed identity. Source locator: ${cell(row,4)}.` }] : []), ...(seasonFallback ? [{ id: 'manufacturer-checklist-season',
+            description: `${checklistLabel} season: ${source.year}. Requested starting year: ${identity.year}. Source locator: ${cell(row,4)}.` }] : []),
             ...(numberDiffers ? [{ id: 'manufacturer-checklist-number',
-              description: `Manufacturer checklist number: ${cell(row,2)}. Photographed card number: ${identity.cardNumber}. Same set, player and insert; confirm the physical printing. Source locator: ${cell(row,4)}.` }] : [])], images: [],
+              description: `${secondary ? 'Secondary' : 'Manufacturer'} checklist number: ${cell(row,2)}. Photographed card number: ${identity.cardNumber}. Same set, player and insert; confirm the physical printing. Source locator: ${cell(row,4)}.` }] : [])], images: [],
           source: { provider: 'manufacturer_checklist', recordId: `manufacturer-row:v1:${digest([source.sha256, row.slice(1).map((_,i) => cell(row,i+1))])}`,
-            url: source.url, sha256: source.sha256, references: [] },
+            url: source.url, sha256: source.sha256, references: [], ...(sourceSeasons.has(row[0]) ? { season: sourceSeasons.get(row[0]) } : {}) },
           warnings: ['APPLICABILITY_UNCONFIRMED', 'REFERENCE_IMAGE_MISSING', ...(numberDiffers || !identity.year ? ['SCOPE_UNCONFIRMED'] : [])] };
         candidates.push(validateVariantCandidate({ ...candidate, candidateId: variantCandidateId(candidate) }));
         for (const family of families.filter(f => f.checklistSha256 === source.sha256 && f.subset === parallel
@@ -309,7 +330,7 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
               diagnostics: [...candidate.diagnostics, { id: 'manufacturer-parallel-family',
                 description: `Official product odds list ${printing.sourceName}. Odds locator: ${printing.locator}. Player checklist locator: ${cell(row,4)}. Serial numbering is not established by these odds.` }],
               source: { provider: 'manufacturer_checklist', recordId: `manufacturer-family:v1:${digest([source.sha256,row.slice(1).map((_,i)=>cell(row,i+1)),family.source.sha256,printing])}`,
-                url: family.source.url, sha256: family.source.sha256, references: [{url:source.url,sha256:source.sha256}] } };
+                url: family.source.url, sha256: family.source.sha256, references: [{url:source.url,sha256:source.sha256}], ...(candidate.source.season ? { season: candidate.source.season } : {}) } };
             candidates.push(validateVariantCandidate({ ...expanded, candidateId: variantCandidateId(expanded) }));
           }
         }

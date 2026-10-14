@@ -1,13 +1,29 @@
 {
-  "schemaVersion": "manufacturer-checklist/v1",
-  "capturedAt": "2026-10-12T05:32:18.078Z",
+  "schemaVersion": "manufacturer-checklist-index/v2",
+  "capturedAt": "2026-10-14T02:36:49.257968+00:00",
   "complete": false,
-  "sources": 624,
-  "explicitRows": 1144344,
-  "gzipBytes": 6149333,
-  "jsonBytes": 38903926,
-  "sha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f",
-  "decodedSha256": "175c20c6129fcabb84c8c29c61f00958f2bd1980bef5787f71078ea6f9a16f4a",
-  "sourceManifestSha256": "c57a798b59b76377e7240e2c66c913608ed80bdc64b0bb72606b31f0d885951c",
-  "sourceManifestFile": "manufacturer-checklists.fleer-import.json"
+  "sources": 1851,
+  "explicitRows": 7438732,
+  "indexFile": "manufacturer-checklists.index.json",
+  "indexBytes": 1250279,
+  "sha256": "4f06512c7051a8fd56ce16a61105ead64fdb690da8486f2fdad701cf3eddac6e",
+  "compressedShardBytes": 65537916,
+  "decodedShardBytes": 263767987,
+  "runtimeDataBytes": 66804777,
+  "sourceManifestFile": "manufacturer-checklists.coverage.json",
+  "sourceManifestSha256": "7af4eb8ef67fe8b148ea612c3ff93796430528ad72b76fb1505d4b29a12c31a8",
+  "baseline": {
+    "sources": 624,
+    "explicitRows": 1144344,
+    "gzipSha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f",
+    "logicalRowsAndMetadataPreserved": true
+  },
+  "secondaryEvidence": {
+    "publisher": "Trading Card Database",
+    "sources": 15,
+    "explicitRows": 1713
+  },
+  "repeatedIdentityRowsRetained": 22033,
+  "deploymentStatus": "candidate_not_deployed",
+  "qualificationFile": "manufacturer-checklists.import-qualification.json"
 }

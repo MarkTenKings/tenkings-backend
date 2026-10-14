@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, normalizeVariantIdentity, validateVariantReferencePhoto } from '@tenkings/card-catalog-evidence';
 import { requireThat } from '@atlas/manual-service/contract';
+import { resolveVariantSourceSeasonYear } from '../../card-catalog-evidence/src/variant-season.mjs';
 
 export const CODEX_LABEL_MODEL = 'gpt-6-astra';
 export const CODEX_LABEL_POLICY = 'atlas-slab-label-association-v1';
@@ -15,11 +16,16 @@ export function variantCodexChoice(candidate, { literalIdentity = false } = {}) 
   // Only a retained manufacturer source may establish a season alias. A bare
   // year on a submission does not globally alias the following sports season.
   if (!literalIdentity && candidate.source.provider === 'manufacturer_checklist') {
-    const years = new Set(candidate.diagnostics.filter(d => ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(d.id))
-      .flatMap(d => d.description.match(/^Official checklist (?:year|season): (\d{4}-\d{2})\./)?.slice(1) ?? []));
-    if (years.size === 1) {
-      const season = [...years][0];
-      if (identity.year === season || identity.year === season.slice(0,4)) identity.year = season;
+    if (candidate.source.season) identity.year = resolveVariantSourceSeasonYear(identity.year, candidate.source.season) ?? identity.year;
+    else {
+      // Read compatibility for already-retained snapshots before structured
+      // source seasons existed. New candidates never depend on this prose.
+      const years = new Set(candidate.diagnostics.filter(d => ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(d.id))
+        .flatMap(d => d.description.match(/^Official checklist (?:year|season): (\d{4}-\d{2})\./)?.slice(1) ?? []));
+      if (years.size === 1) {
+        const season = [...years][0];
+        if (identity.year === season || identity.year === season.slice(0,4)) identity.year = season;
+      }
     }
   }
   let card, printing;
@@ -43,12 +49,18 @@ export function variantCodexChoice(candidate, { literalIdentity = false } = {}) 
  * never issue an old search or change the photographed submission. */
 export function variantCodexAliases(candidate) {
   const choice = variantCodexChoice(candidate), aliases = [choice];
-  if (candidate.source.provider === 'manufacturer_checklist' && /^\d{4}-\d{2}$/.test(choice.identity.year ?? '')
+  if (candidate.source.provider === 'manufacturer_checklist' && candidate.source.season) {
+    if (resolveVariantSourceSeasonYear(candidate.identity.year, candidate.source.season) === null) return aliases;
+    // Both entry directions see the same historical bare/full-season library.
+    // Also preserve a literal key previously written for this submitted alias.
+    aliases.push(variantCodexChoice(candidate, { literalIdentity: true }));
+    if (candidate.source.season.startingYearAlias) aliases.push(variantCodexChoice({ ...candidate,
+      identity: { ...candidate.identity, year: candidate.source.season.year.slice(0, 4) } }, { literalIdentity: true }));
+  } else if (candidate.source.provider === 'manufacturer_checklist' && /^\d{4}-\d{2}$/.test(choice.identity.year ?? '')
     && candidate.diagnostics.some(d => ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(d.id))) {
-    const historic = variantCodexChoice({...candidate, identity: {...candidate.identity,year:choice.identity.year.slice(0,4)}},{literalIdentity:true});
-    if (historic.key !== choice.key) aliases.push(historic);
+    aliases.push(variantCodexChoice({...candidate, identity: {...candidate.identity,year:choice.identity.year.slice(0,4)}},{literalIdentity:true}));
   }
-  return aliases;
+  return [...new Map(aliases.map(alias => [alias.key, alias])).values()];
 }
 export const codexLibraryKey = choice => `atlas-codex-library:v1:${choice.key}`;
 export const codexPhotoPoolKey = choice => `atlas-codex-photo-pool:v1:${choice.cardKey}`;
@@ -102,7 +114,7 @@ export function validateVariantReferenceLabels(value,catalog) {
   for (const r of value.readings) {
     const image=catalog.referencePhotos?.find(i=>i.sha256===r.sha256 && i.imageId===r.imageId);
     const candidate=catalog.candidates.find(c=>c.candidateId===r.candidateId);
-    const accepted = candidate ? [variantCodexChoice(candidate),variantCodexChoice(candidate,{literalIdentity:true})]
+    const accepted = candidate ? variantCodexAliases(candidate)
       .find(choice=>choice.key===r.canonicalPrintingKey&&choice.cardKey===r.canonicalCardKey) : null;
     requireThat(image && (r.candidateId===null || candidate && accepted)
       && (r.candidateId===null ? r.canonicalPrintingKey===null && r.canonicalCardKey===null
