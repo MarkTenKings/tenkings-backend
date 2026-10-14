@@ -80226,6 +80226,389 @@
         }
       ],
       "sourceSportLabel": "Soccer"
+    },
+    {
+      "id": "5fedf8dbfb9afb4f6f513ca5ade7f29519ab18db315f028169edf268168a3b3a",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra",
+      "sourceSha256": "74e27b8c8dd7e23db78b9752ba2b5c53014947f6759152161f5d65a483a72e23",
+      "sourceUrl": "https://www.tcdb.com/PrintChecklist.cfm?Part=1&columns=4&fontsize=1&SetID=2118&BasicID=&MultiID=",
+      "discovered": true,
+      "downloaded": true,
+      "parsedRows": 375,
+      "importedBaselineRows": 0,
+      "candidateRows": 375,
+      "deployedRows": null,
+      "deploymentStatus": "candidate_only_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Historical primary manufacturer checklist not found; explicit TCDB secondary evidence",
+        "Other release inserts, promos and physical applicability remain incomplete",
+        "One NNO Top 5 Jammers promo and separate Scottie Pippen #31 logo-left promo remain outside the main numbered checklist"
+      ],
+      "provenance": [
+        {
+          "origin": "reviewed_additional_bundle",
+          "normalizationEvidence": "candidate-v4/source-audit.json",
+          "sourceMetadataSha256": "027c43c6593de7ab153d769dcf2dbcefd75e7a425743b4c3c88a102ae9b730a4",
+          "logicalRowsSha256": "9c7083ac13cf650edf7709723bbcc5a7673bf8548007c6b48bc260cb2d42728a"
+        }
+      ],
+      "evidenceAuthority": "secondary",
+      "sourcePublisher": "Trading Card Database",
+      "preservedExcludedEntries": 2
+    },
+    {
+      "id": "66c9426aed2d9d156dfe27cb68ebd2abefb9dc352b820a15698818db5c8618a8",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra",
+      "sourceSha256": "af144ecc52c2d6e97f3d688137e1c09f3fd2f6d4fb8499d5c897337c3f6d4da3",
+      "sourceUrl": "https://www.tcdb.com/PrintChecklist.cfm?Part=1&columns=4&fontsize=1&SetID=2119&BasicID=&MultiID=",
+      "discovered": true,
+      "downloaded": true,
+      "parsedRows": 15,
+      "importedBaselineRows": 0,
+      "candidateRows": 15,
+      "deployedRows": null,
+      "deploymentStatus": "candidate_only_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Historical primary manufacturer checklist not found; explicit TCDB secondary evidence",
+        "Other release inserts, promos and physical applicability remain incomplete"
+      ],
+      "provenance": [
+        {
+          "origin": "reviewed_additional_bundle",
+          "normalizationEvidence": "candidate-v4/source-audit.json",
+          "sourceMetadataSha256": "864e9db068fd066fb68b04dd50d436f76d5006f471fccdfe97f27d177c8ce234",
+          "logicalRowsSha256": "1e0e73c8091257a4d6d3aa1f80f7518a0f8b01972276f57c12783cad9306bf02"
+        }
+      ],
+      "evidenceAuthority": "secondary",
+      "sourcePublisher": "Trading Card Database"
+    },
+    {
+      "id": "0370ec4c36b8334b27fe9955134bc83e7cb07fa66a8688ce5cb5708b256efd5e",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra",
+      "sourceSha256": "7f49f56bd5d034096b8c2798e83963775df764dd9f7afb53c011310b217221d9",
+      "sourceUrl": "https://www.tcdb.com/PrintChecklist.cfm?Part=1&columns=4&fontsize=1&SetID=2121&BasicID=&MultiID=",
+      "discovered": true,
+      "downloaded": true,
+      "parsedRows": 5,
+      "importedBaselineRows": 0,
+      "candidateRows": 5,
+      "deployedRows": null,
+      "deploymentStatus": "candidate_only_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Historical primary manufacturer checklist not found; explicit TCDB secondary evidence",
+        "Other release inserts, promos and physical applicability remain incomplete"
+      ],
+      "provenance": [
+        {
+          "origin": "reviewed_additional_bundle",
+          "normalizationEvidence": "candidate-v4/source-audit.json",
+          "sourceMetadataSha256": "8b69fae6cc3169a1d0f0ce76659e15a9a763fc1d6840b9f616058384b5a63abf",
+          "logicalRowsSha256": "fc75c6e47740adac0bcee651657a646df28a26d1766edcb1e444210471b435ff"
+        }
+      ],
+      "evidenceAuthority": "secondary",
+      "sourcePublisher": "Trading Card Database"
+    },
+    {
+      "id": "93ab296b885e14abd890b884ed49a35989a4d46d1b248138fa419118e49c2f39",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 Jam Session Autographs",
+      "sourceSha256": "64c735f3532f7321ad11822de53c13ce2e546e3b262d0719b049614038b5f4e8",
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/266950/1992-93-Ultra-Jam-Session-Autographs",
+      "discovered": true,
+      "downloaded": true,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Related checklist captured and inspected; no normalized rows admitted in this slice",
+        "Only Pervis Ellison #207, Duane Causwell #212 and Stacey Augmon #215 are listed; no Jordan autograph inferred"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/related-checklist-evidence.json",
+          "capture": {
+            "url": "https://www.tcdb.com/Checklist.cfm/sid/266950/1992-93-Ultra-Jam-Session-Autographs",
+            "retrievedAt": "2026-10-14T03:19:58.050Z",
+            "sha256": "64c735f3532f7321ad11822de53c13ce2e546e3b262d0719b049614038b5f4e8",
+            "bytes": 14982,
+            "path": "raw/64c735f3532f7321ad11822de53c13ce2e546e3b262d0719b049614038b5f4e8.json",
+            "representation": "public_browser_related_checklist_dom_capture_v1",
+            "sourcePublisher": "Trading Card Database",
+            "evidenceAuthority": "secondary",
+            "release": "1992-93 Ultra",
+            "subset": "Jam Session Autographs"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b97a131cb2ec23a75fa86dece036451b865cca3024cbfe2dae10006be352491a",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 Jam Session Exchange",
+      "sourceSha256": "a482a8391e4d288db1cedecbc0c17b45e38e085ae2a7b92940b1779c804f955b",
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/266949/1992-93-Ultra-Jam-Session-Exchange",
+      "discovered": true,
+      "downloaded": true,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Related checklist captured and inspected; no normalized rows admitted in this slice",
+        "Two NNO multi-player exchange entries remain unimported; no individual Jordan number inferred"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/related-checklist-evidence.json",
+          "capture": {
+            "url": "https://www.tcdb.com/Checklist.cfm/sid/266949/1992-93-Ultra-Jam-Session-Exchange",
+            "retrievedAt": "2026-10-14T03:19:58.437Z",
+            "sha256": "a482a8391e4d288db1cedecbc0c17b45e38e085ae2a7b92940b1779c804f955b",
+            "bytes": 15230,
+            "path": "raw/a482a8391e4d288db1cedecbc0c17b45e38e085ae2a7b92940b1779c804f955b.json",
+            "representation": "public_browser_related_checklist_dom_capture_v1",
+            "sourcePublisher": "Trading Card Database",
+            "evidenceAuthority": "secondary",
+            "release": "1992-93 Ultra",
+            "subset": "Jam Session Exchange"
+          }
+        }
+      ],
+      "preservedExcludedEntries": 2
+    },
+    {
+      "id": "4e3c4f1973a717acba6c7db13a553390c6b8fae36d54479f44cc0c95b0538ea2",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 9-card Perforated Panel",
+      "sourceSha256": "0942eef1cb42a48f76996f0b6a28d37e0412c41cab65c0937dd7454adcbc0701",
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/519932/1992-93-Ultra-9-card-Perforated-Panel",
+      "discovered": true,
+      "downloaded": true,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Related checklist captured and inspected; no normalized rows admitted in this slice",
+        "Inspected panel checklist contains no Jordan; no standalone numbered identity inferred"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/related-checklist-evidence.json",
+          "capture": {
+            "url": "https://www.tcdb.com/Checklist.cfm/sid/519932/1992-93-Ultra-9-card-Perforated-Panel",
+            "retrievedAt": "2026-10-14T03:19:59.338Z",
+            "sha256": "0942eef1cb42a48f76996f0b6a28d37e0412c41cab65c0937dd7454adcbc0701",
+            "bytes": 12008,
+            "path": "raw/0942eef1cb42a48f76996f0b6a28d37e0412c41cab65c0937dd7454adcbc0701.json",
+            "representation": "public_browser_related_checklist_dom_capture_v1",
+            "sourcePublisher": "Trading Card Database",
+            "evidenceAuthority": "secondary",
+            "release": "1992-93 Ultra",
+            "subset": "9-card Perforated Panel"
+          }
+        }
+      ]
+    },
+    {
+      "id": "1b588988fbbfcdbe06648df3b52b3c51db5837224fc298f78d24c5560353cdc3",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 Perforated Panel Singles",
+      "sourceSha256": "35e8ab6212536cfee7c64b05b6d6c8bab3d8d2560c060d633dfc46b9901e6e99",
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/199810/1992-93-Ultra-Perforated-Panel-Singles",
+      "discovered": true,
+      "downloaded": true,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Related checklist captured and inspected; no normalized rows admitted in this slice",
+        "Inspected panel checklist contains no Jordan; no standalone numbered identity inferred"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/related-checklist-evidence.json",
+          "capture": {
+            "url": "https://www.tcdb.com/Checklist.cfm/sid/199810/1992-93-Ultra-Perforated-Panel-Singles",
+            "retrievedAt": "2026-10-14T03:19:59.783Z",
+            "sha256": "35e8ab6212536cfee7c64b05b6d6c8bab3d8d2560c060d633dfc46b9901e6e99",
+            "bytes": 28981,
+            "path": "raw/35e8ab6212536cfee7c64b05b6d6c8bab3d8d2560c060d633dfc46b9901e6e99.json",
+            "representation": "public_browser_related_checklist_dom_capture_v1",
+            "sourcePublisher": "Trading Card Database",
+            "evidenceAuthority": "secondary",
+            "release": "1992-93 Ultra",
+            "subset": "Perforated Panel Singles"
+          }
+        }
+      ]
+    },
+    {
+      "id": "78794893983ba9af3d84e475bf3944738108ad48f7e0d7983d4a2214f647bb4c",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 All-Rookie Series",
+      "sourceSha256": null,
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/2120/1992-93-Ultra-All-Rookie-Series",
+      "discovered": true,
+      "downloaded": false,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Actual related checklist URL discovered; checklist not acquired or normalized"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/raw/50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271.json",
+          "sha256": "50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271",
+          "linkText": "All-Rookie Series"
+        }
+      ]
+    },
+    {
+      "id": "df16791a9f055be30d6026fe80d4bbb8da3d67cd3df97d1f9cfb3257d39fdce3",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 Playmakers",
+      "sourceSha256": null,
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/2122/1992-93-Ultra-Playmakers",
+      "discovered": true,
+      "downloaded": false,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Actual related checklist URL discovered; checklist not acquired or normalized"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/raw/50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271.json",
+          "sha256": "50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271",
+          "linkText": "Playmakers"
+        }
+      ]
+    },
+    {
+      "id": "717d29334f6b19fd3143321ff989b2a2f44b6f1e1f7b1e93cc78a35e305c133f",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 Rejectors",
+      "sourceSha256": null,
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/2123/1992-93-Ultra-Rejectors",
+      "discovered": true,
+      "downloaded": false,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Actual related checklist URL discovered; checklist not acquired or normalized"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/raw/50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271.json",
+          "sha256": "50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271",
+          "linkText": "Rejectors"
+        }
+      ]
+    },
+    {
+      "id": "e3c23362700bf49f907dae76ccab48460956958b8dfdfb4f41295f1754b08245",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 Scottie Pippen Career Highlights",
+      "sourceSha256": null,
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/2124/1992-93-Ultra-Scottie-Pippen-Career-Highlights",
+      "discovered": true,
+      "downloaded": false,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Actual related checklist URL discovered; checklist not acquired or normalized"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/raw/50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271.json",
+          "sha256": "50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271",
+          "linkText": "Scottie Pippen Career Highlights"
+        }
+      ]
+    },
+    {
+      "id": "99afcddeb3095c39fb6434488274abcef33df0d73951d41fd46f1ffebd4ada8a",
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "year": "1992-93",
+      "product": "Ultra \u2014 Scottie Pippen Career Highlights Autographs",
+      "sourceSha256": null,
+      "sourceUrl": "https://www.tcdb.com/Checklist.cfm/sid/266948/1992-93-Ultra-Scottie-Pippen-Career-Highlights-Autographs",
+      "discovered": true,
+      "downloaded": false,
+      "parsedRows": 0,
+      "importedBaselineRows": 0,
+      "candidateRows": 0,
+      "deployedRows": null,
+      "deploymentStatus": "not_imported_not_deployed",
+      "coverageComplete": false,
+      "gaps": [
+        "Actual related checklist URL discovered; checklist not acquired or normalized"
+      ],
+      "provenance": [
+        {
+          "origin": "fleer/ultra-next-slice/raw/50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271.json",
+          "sha256": "50b250cdd5d4c19da2bffa86790cbab3859b585bbf2569edaf8c6fa050a29271",
+          "linkText": "Scottie Pippen Career Highlights Autographs"
+        }
+      ]
     }
   ],
   "rollups": [
@@ -81129,14 +81512,14 @@
       "manufacturer": "Fleer",
       "sport": "basketball",
       "year": "1992-93",
-      "sourceEntries": 9,
-      "discovered": 9,
-      "downloaded": 9,
-      "parsedSourceEntries": 9,
-      "parsedRows": 569,
+      "sourceEntries": 21,
+      "discovered": 21,
+      "downloaded": 16,
+      "parsedSourceEntries": 12,
+      "parsedRows": 964,
       "importedBaselineRows": 0,
-      "candidateRows": 569,
-      "sourceEntriesWithRecordedGaps": 1,
+      "candidateRows": 964,
+      "sourceEntriesWithRecordedGaps": 13,
       "deployedRows": null
     },
     {
@@ -104792,28 +105175,31 @@
   "statusSummary": {
     "complete": false,
     "notUniversalCoverage": true,
-    "discoveredSourceEntries": 2789,
-    "downloadedSourceEntries": 1956,
-    "parsedSourceEntries": 1851,
+    "discoveredSourceEntries": 2801,
+    "downloadedSourceEntries": 1963,
+    "parsedSourceEntries": 1854,
     "importedBaselineSources": 624,
     "importedBaselineRows": 1144344,
-    "candidateSources": 1851,
-    "candidateParsedRows": 7438732,
-    "candidateRows": 7438732,
-    "candidateIndexSha256": "4f06512c7051a8fd56ce16a61105ead64fdb690da8486f2fdad701cf3eddac6e",
+    "candidateSources": 1854,
+    "candidateParsedRows": 7439127,
+    "candidateRows": 7439127,
+    "candidateIndexSha256": "4c6f9759e6d339351f58a7320d8523b5a15a433984afa53c10a521faf1523d74",
     "baselineBundleSha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f",
     "baselineMetadataOrderAndRowsPreserved": true,
     "alreadyParsedRowsDropped": 0,
     "paniniOriginalMissingIdentityRows": 623,
-    "fleerPreservedAmbiguousOrNnoEntries": 91,
+    "fleerPreservedAmbiguousOrNnoEntries": 94,
     "fleerExclusionBreakdown": {
       "1992-93": 5,
-      "1986-87_through_1991-92": 86
+      "1986-87_through_1991-92": 86,
+      "1992-93_Ultra": 4
     },
     "sameSourceRepeatedIdentityTuplesRetained": 22033,
     "deployedSources": null,
     "deployedRows": null,
-    "countsNote": "Evidence source entries and rows are not unique products or physical printings; Fleer and Wild Card release discoveries are counted separately from normalized checklist source lists."
+    "countsNote": "Evidence source entries and rows are not unique products or physical printings; Fleer and Wild Card release discoveries are counted separately from normalized checklist source lists.",
+    "fleerPreservedExcludedEntries": 95,
+    "fleerPreservedSeparatePromoEntries": 1
   },
   "fleerActualReleaseInventory": {
     "evidence": "catalog-expansion-20261013/fleer/actual-release-inventory.json",
@@ -113767,5 +114153,72 @@
       "Inserts/stickers for these six releases remain unacquired. Other Fleer brands/sports/releases remain incomplete.",
       "The prior169releaseinventory does not cover Ultra and supplies no verified1992-93FleerUltra#216 productURL."
     ]
+  },
+  "fleerUltraExpansion": {
+    "complete": false,
+    "actualReleases": 1,
+    "release": "1992-93 Ultra basketball",
+    "additionalNormalizedSources": 3,
+    "additionalRows": 395,
+    "otherRelatedListsCapturedNotNormalized": 4,
+    "relatedListsDiscoveredNotAcquired": 5,
+    "excludedPreservedEntries": 4,
+    "integrationReceipt": "catalog-expansion-20261013/fleer/ultra-next-slice/integration-receipt.json",
+    "integrationReceiptSha256": "27f11db2ca279aa20b962dba078cbf9e3540ccb3c2aafcde41a5905449cad047",
+    "originalSourceLookupProof": {
+      "proof": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/sports-checklists-20261010/catalog-expansion-20261013/fleer/ultra-next-slice/lookup-proof.json",
+        "bytes": 128342,
+        "sha256": "7f630ad3a28b28f081e3ac2c1c0ece3a36bbf405bd3da7c6cbba79aa06a52e9f"
+      },
+      "script": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/sports-checklists-20261010/catalog-expansion-20261013/fleer/ultra-next-slice/lookup-proof.mjs",
+        "bytes": 4486,
+        "sha256": "806959190429eab49f84802fce796af15fe9e5c5083fe3cf0cadc5385f549569"
+      },
+      "positivePassed": 48,
+      "positiveAttempted": 56,
+      "negativePassed": 9,
+      "negativeAttempted": 9,
+      "realCards": [
+        {
+          "label": "Card 11",
+          "literalYear": "92-93",
+          "pass": true,
+          "candidateCount": 1
+        },
+        {
+          "label": "Card 14",
+          "literalYear": "'92-93",
+          "pass": false,
+          "candidateCount": 0
+        }
+      ],
+      "knownGap": "Leading ASCII apostrophe in saved year '92-93 is not accepted by current reader; all eight alias fixtures and Card 14 fail with zero candidates. Card 11 literal 92-93 passes. Inputs not rewritten.",
+      "networkCalls": 0,
+      "inputsAndReaderUnchanged": true
+    },
+    "lookupNote": "Historical acquisition proof only. It records Card 11 passing and Card 14 apostrophe year failing; no reader or physical identity change is performed by this import.",
+    "historicalInventoryRelation": "The original 169-release Fleer/Flair inventory is preserved unchanged. Ultra was explicitly outside those families; this is one additional observed release, not three releases.",
+    "combinedFleerSecondaryCandidate": {
+      "releases": 8,
+      "sourceLists": 18,
+      "rows": 2108
+    },
+    "remainingGaps": [
+      "Other actual Ultra releases",
+      "Five related lists not acquired: All-Rookie Series, Playmakers, Rejectors, Scottie Pippen Career Highlights, and Scottie Pippen Career Highlights Autographs",
+      "Physical applicability of the selected printing to each real card",
+      "Complete manufacturer historical source authority"
+    ]
+  },
+  "candidateLineage": {
+    "frozenV3IndexSha256": "4f06512c7051a8fd56ce16a61105ead64fdb690da8486f2fdad701cf3eddac6e",
+    "frozenV3InventorySha256": "7af4eb8ef67fe8b148ea612c3ff93796430528ad72b76fb1505d4b29a12c31a8",
+    "allPriorSourceEntriesAndStatesExactlyPreserved": true,
+    "addedNormalizedSources": 3,
+    "addedRows": 395,
+    "addedCoverageEntries": 12,
+    "proof": "candidate-v4-additive-proof.json"
   }
 }

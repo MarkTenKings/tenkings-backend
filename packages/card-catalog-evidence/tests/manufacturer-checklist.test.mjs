@@ -214,13 +214,13 @@ test('v2 keeps composite and season rules, tries fallback only after no exact ma
  const ambiguous={...lameloCatalog,sources:[lameloSource,{...lameloSource,setName:'Special Edition',aliases:['Topps Chrome'],sha256:'d'.repeat(64)}],rows:[...lameloCatalog.rows,[1,...lameloCatalog.rows[0].slice(1)]]};
  assert.deepEqual((await createManufacturerChecklistVariantProvider(shardsFor(ambiguous)).prepare(lameloIdentity)).problems,['PROVIDER_NOT_SUPPORTED']);
 });
-test('v2 coalesces concurrent reads, serializes different products and evicts the least recently used of two shards',async()=>{
+test('v2 coalesces concurrent reads, serializes products and reuses small product shards',async()=>{
  const f=shardsFor(productsFixture()), reads=[];let active=0, peak=0;
  const p=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{reads.push(d.path);active++;peak=Math.max(peak,active);await new Promise(resolve=>setImmediate(resolve));active--;return f.loadShard(d);}});
  await Promise.all([p.prepare(identity),p.prepare(identity)]);assert.equal(reads.length,1);
  await p.prepare({...identity,setName:'Prizm'});await p.prepare(identity);await p.prepare({...identity,setName:'Select'});
  await p.prepare(identity);assert.equal(reads.length,3);
- await p.prepare({...identity,setName:'Prizm'});assert.equal(reads.length,4);assert.equal(reads[3],f.catalog.sources[1].shard.path);
+ await p.prepare({...identity,setName:'Prizm'});assert.equal(reads.length,3);
  const fresh=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setImmediate(resolve));active--;return f.loadShard(d);}});
  await Promise.all(['Donruss Optic','Prizm','Select'].map(setName=>fresh.prepare({...identity,setName})));
  assert.equal(peak,1);

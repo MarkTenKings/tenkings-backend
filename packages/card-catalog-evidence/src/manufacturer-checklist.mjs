@@ -19,7 +19,7 @@ function checklistYear(value) {
   return `${season[1]}-${String(end).slice(-2)}`;
 }
 function shortSeason(value) {
-  const season = /^(\d{2})\s*[-\u2010-\u2015/]\s*(\d{2})$/.exec(String(value ?? '').trim());
+  const season = /^'?(\d{2})\s*[-\u2010-\u2015/]\s*(\d{2})$/.exec(String(value ?? '').trim());
   return season && Number(season[2]) === (Number(season[1]) + 1) % 100 ? `${season[1]}-${season[2]}` : null;
 }
 function productName(value, manufacturer) {
@@ -150,6 +150,7 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
   check(loadShard === null || typeof loadShard === 'function', 'shard reader');
   let loaded, families, productAliases, loading = Promise.resolve();
   const cache = new Map(), inFlight = new Map();
+  let cachedDecodedBytes = 0;
   async function load() {
     if (!loaded) loaded = (async () => {
       const data = catalog ?? await (loadCatalog ?? bundledCatalog)();
@@ -166,7 +167,7 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       return bound(value);
     }
     if (!inFlight.has(key)) {
-      // At most one uncached decode at a time and two retained shards. Do not
+      // At most one uncached decode at a time. Cache byte limits are below. Do not
       // cancel a shared read when just one of its callers leaves the card.
       const work = loading.then(async () => {
         const bytes = await (loadShard ?? (descriptor => boundedFile(new URL(`../data/${descriptor.path}`, import.meta.url), SHARD_BYTES)))(source.shard);
@@ -176,9 +177,16 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
         const data = JSON.parse(decoded);
         check(Array.isArray(data.sources) && data.sources.length === 1 && canonical(data.sources[0]) === canonical(source.metadata)
           && Array.isArray(data.rows) && data.rows.length === source.shard.rowCount, 'shard source/row count');
-        const value = { binding, rows: rowCatalog(data, 100000) };
+        const value = { binding, decodedBytes: source.shard.decodedBytes, rows: rowCatalog(data, 100000) };
         cache.set(key, value);
-        while (cache.size > 2) cache.delete(cache.keys().next().value);
+        cachedDecodedBytes += value.decodedBytes;
+        // Retain 4 MiB decoded payload, or one larger validated shard,
+        // allowing small checklist shards to share that byte budget.
+        while (cache.size > 1 && cachedDecodedBytes > DECODED_BYTES / 2) {
+          const oldest = cache.keys().next().value;
+          cachedDecodedBytes -= cache.get(oldest).decodedBytes;
+          cache.delete(oldest);
+        }
         return value;
       });
       inFlight.set(key, work);

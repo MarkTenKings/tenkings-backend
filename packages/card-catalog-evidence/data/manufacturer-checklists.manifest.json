@@ -1,17 +1,17 @@
 {
   "schemaVersion": "manufacturer-checklist-index/v2",
-  "capturedAt": "2026-10-14T02:36:49.257968+00:00",
+  "capturedAt": "2026-10-14T03:26:25.559707+00:00",
   "complete": false,
-  "sources": 1851,
-  "explicitRows": 7438732,
+  "sources": 1854,
+  "explicitRows": 7439127,
   "indexFile": "manufacturer-checklists.index.json",
-  "indexBytes": 1250279,
-  "sha256": "4f06512c7051a8fd56ce16a61105ead64fdb690da8486f2fdad701cf3eddac6e",
-  "compressedShardBytes": 65537916,
-  "decodedShardBytes": 263767987,
-  "runtimeDataBytes": 66804777,
+  "indexBytes": 1254485,
+  "sha256": "4c6f9759e6d339351f58a7320d8523b5a15a433984afa53c10a521faf1523d74",
+  "compressedShardBytes": 65547716,
+  "decodedShardBytes": 263793046,
+  "runtimeDataBytes": 66818783,
   "sourceManifestFile": "manufacturer-checklists.coverage.json",
-  "sourceManifestSha256": "7af4eb8ef67fe8b148ea612c3ff93796430528ad72b76fb1505d4b29a12c31a8",
+  "sourceManifestSha256": "d3b5a9af2b7de9b8b2e56af35bb9c17717cbb286dbb5db5e16e51db0257fd42e",
   "baseline": {
     "sources": 624,
     "explicitRows": 1144344,
@@ -20,8 +20,8 @@
   },
   "secondaryEvidence": {
     "publisher": "Trading Card Database",
-    "sources": 15,
-    "explicitRows": 1713
+    "sources": 18,
+    "explicitRows": 2108
   },
   "repeatedIdentityRowsRetained": 22033,
   "deploymentStatus": "candidate_not_deployed",

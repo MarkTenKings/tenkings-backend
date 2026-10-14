@@ -10,7 +10,10 @@ export function validVariantSourceSeason(value) {
 export function resolveVariantSourceSeasonYear(value, season) {
   if (!validVariantSourceSeason(season) || typeof value !== 'string') return null;
   if (value === season.year || season.startingYearAlias && value === season.year.slice(0, 4)) return season.year;
-  const match = /^(\d{2}|\d{4})\s*[-\u2010-\u2015/]\s*(\d{2}|\d{4})$/.exec(value);
+  // A leading ASCII apostrophe abbreviates a two-digit printed season. The
+  // explicit retained season still supplies the century and both year ends.
+  const text = /^'\d{2}\s*[-\u2010-\u2015/]\s*\d{2}$/.test(value) ? value.slice(1) : value;
+  const match = /^(\d{2}|\d{4})\s*[-\u2010-\u2015/]\s*(\d{2}|\d{4})$/.exec(text);
   if (!match) return null;
   const start = season.year.slice(0, 4), end = String(Number(start) + 1);
   return match[1] === (match[1].length === 2 ? start.slice(-2) : start)

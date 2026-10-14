@@ -7,15 +7,15 @@
   "deployed": false,
   "baselineSources": 624,
   "baselineRows": 1144344,
-  "sources": 1851,
-  "rows": 7438732,
-  "addedSources": 1227,
-  "addedRows": 6294388,
-  "inputRows": 7438732,
+  "sources": 1854,
+  "rows": 7439127,
+  "addedSources": 1230,
+  "addedRows": 6294783,
+  "inputRows": 7439127,
   "rejectedRows": 0,
   "repeatedIdentityRowsRetained": 22033,
-  "compressedShardBytes": 65537916,
-  "decodedShardBytes": 263767987,
+  "compressedShardBytes": 65547716,
+  "decodedShardBytes": 263793046,
   "maximumShard": {
     "path": "manufacturer-checklists/3de94a04413d915d2d06dd9da5317330ade06b2fc5c3b860cdc516fb030f9777.json.gz",
     "sha256": "3de94a04413d915d2d06dd9da5317330ade06b2fc5c3b860cdc516fb030f9777",
@@ -24,8 +24,8 @@
     "decodedBytes": 2142815,
     "rowCount": 78072
   },
-  "indexSha256": "4f06512c7051a8fd56ce16a61105ead64fdb690da8486f2fdad701cf3eddac6e",
-  "indexBytes": 1250279,
+  "indexSha256": "4c6f9759e6d339351f58a7320d8523b5a15a433984afa53c10a521faf1523d74",
+  "indexBytes": 1254485,
   "baselineLogicalRowsPreserved": true,
   "baselineMetadataAndOrderingPreserved": true,
   "familyAliasBytesPreserved": true,
@@ -98,8 +98,8 @@
       "sport": "basketball",
       "baselineSources": 0,
       "baselineRows": 0,
-      "addedSources": 15,
-      "addedRows": 1713
+      "addedSources": 18,
+      "addedRows": 2108
     },
     {
       "manufacturer": "Fleer",
@@ -265,38 +265,38 @@
   "stages": [
     {
       "stage": "baseline_preserved",
-      "elapsedSeconds": 7.729381500001182,
-      "peakRssBytes": 581844992
+      "elapsedSeconds": 7.120791416004067,
+      "peakRssBytes": 580337664
     },
     {
       "stage": "panini_selected_products",
-      "elapsedSeconds": 86.58159329199407,
-      "peakRssBytes": 581844992
+      "elapsedSeconds": 84.35872483300045,
+      "peakRssBytes": 580337664
     },
     {
       "stage": "leaf_verified_reparse",
-      "elapsedSeconds": 92.17368620900379,
-      "peakRssBytes": 854114304
+      "elapsedSeconds": 90.17063837499882,
+      "peakRssBytes": 896106496
     },
     {
       "stage": "upperdeck_verified_reparse",
-      "elapsedSeconds": 93.12832562500262,
-      "peakRssBytes": 854114304
+      "elapsedSeconds": 91.14744741600589,
+      "peakRssBytes": 896106496
     },
     {
       "stage": "topps_verified_reparse",
-      "elapsedSeconds": 116.43419741699472,
-      "peakRssBytes": 854114304
+      "elapsedSeconds": 115.08018479100429,
+      "peakRssBytes": 896106496
     },
     {
       "stage": "additional_reviewed_bundles",
-      "elapsedSeconds": 116.45287883399578,
-      "peakRssBytes": 854114304
+      "elapsedSeconds": 115.10775683299289,
+      "peakRssBytes": 896106496
     }
   ],
-  "elapsedSeconds": 116.47094587500033,
-  "peakRssBytes": 854114304,
-  "freeDiskBytes": 37849460736,
+  "elapsedSeconds": 115.12671054099337,
+  "peakRssBytes": 896106496,
+  "freeDiskBytes": 37548834816,
   "athleteLimit": 512,
   "importerSha256": "f56d824243564c42490d23d132871912a917a54986b7f2bc754071a3bc2a7b57",
   "parserSha256": {

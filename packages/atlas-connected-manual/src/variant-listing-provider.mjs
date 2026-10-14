@@ -25,6 +25,10 @@ export function variantChecklistListingIdentity(input,candidates,year,{retainedO
  const identity=normalizeVariantIdentity(input);
  const matching=candidates.filter(c=>c.source.provider==='manufacturer_checklist'
   && same({...c.identity,year:null},{...identity,year:null}));
+ // A separate retained exact-year release remains eligible when discovery
+ // also returns other seasons. It supplies its own year, not a season alias.
+ if(!identity.year&&identity.category==='SPORTS'&&typeof year==='string'
+  && matching.some(c=>!c.source.season&&c.identity.year===year))return {...identity,year};
  const sourced=matching.filter(c=>c.source.season
   && resolveVariantSourceSeasonYear(c.identity.year,c.source.season)!==null
   && (!identity.year||resolveVariantSourceSeasonYear(identity.year,c.source.season)!==null));
@@ -95,6 +99,7 @@ const listingOperation=(_request,signal,_timeoutMs,work)=>work(signal??new Abort
 function catalogListingImage(image,source){validateImageDescriptor(image);check(image.sourceResponseSha256===source.sha256,'VARIANT_LISTING_IMAGE_SOURCE');return {...image,publication:null,provenance:{provider:'ebay_sold_comps_v2',sourceUrl:source.url,sourceSha256:source.sha256,usage:'provider_reference'},visibleDiagnosticIds:[]};}
 const imageKey = url => `variant-listing-image:v1:${hash(url)}`;
 const retainedImageKey = (url, sha256) => `variant-listing-image-evidence:v1:${hash(url)}:${sha256}`;
+export const retainedListingImageBodyKey = sha256 => `variant-listing-image-body:v1:${sha256}`;
 const referenceKey = image => `variant-listing-reference:v1:${hash(canonicalJson(image))}`;
 function validMetadata(v) {
   return ['image/jpeg', 'image/png', 'image/webp'].includes(v?.mimeType) && Number.isSafeInteger(v.width)
@@ -111,6 +116,31 @@ function verifyImage(entry, url) {
   check(bytes.length > 0 && bytes.length <= VARIANT_LISTING_LIMITS.imageBytes && bytes.toString('base64') === entry.body
     && hash(bytes) === entry.sha256, 'VARIANT_LISTING_IMAGE_CACHE_INVALID');
   return { bytes, sha256: entry.sha256, mimeType: entry.mimeType, width: entry.width, height: entry.height };
+}
+/** A content body has no URL or capture timestamp: identical bytes have one
+ * immutable serialization across listings and independent acquisition paths. */
+export function validateRetainedListingImageBody(entry) {
+  check(keys(entry, ['schemaVersion', 'body', 'sha256', 'mimeType', 'width', 'height'])
+    && entry.schemaVersion === 'variant-provider-image-body/v1' && validMetadata(entry)
+    && typeof entry.body === 'string' && entry.body.length <= Math.ceil(VARIANT_LISTING_LIMITS.imageBytes / 3) * 4
+    && HASH.test(entry.sha256), 'VARIANT_LISTING_IMAGE_CACHE_INVALID');
+  const bytes = Buffer.from(entry.body, 'base64');
+  check(bytes.length > 0 && bytes.length <= VARIANT_LISTING_LIMITS.imageBytes && bytes.toString('base64') === entry.body
+    && hash(bytes) === entry.sha256, 'VARIANT_LISTING_IMAGE_CACHE_INVALID');
+  return { bytes, sha256: entry.sha256, mimeType: entry.mimeType, width: entry.width, height: entry.height };
+}
+async function readImageEntry(entry, url, cache) {
+  // Old inline evidence stays readable without a rewrite, migration or fetch.
+  if (entry?.schemaVersion === 'variant-provider-image/v1') return verifyImage(entry, url);
+  check(keys(entry, ['schemaVersion', 'url', 'bodyKey', 'sha256', 'mimeType', 'width', 'height', 'capturedAt', 'expiresAt'])
+    && entry.schemaVersion === 'variant-provider-image/v2' && entry.url === url && validMetadata(entry)
+    && HASH.test(entry.sha256) && entry.bodyKey === retainedListingImageBodyKey(entry.sha256)
+    && date(entry.capturedAt) && date(entry.expiresAt)
+    && Date.parse(entry.expiresAt) - Date.parse(entry.capturedAt) === VARIANT_LISTING_LIMITS.ttlMs,
+  'VARIANT_LISTING_IMAGE_CACHE_INVALID');
+  const media = validateRetainedListingImageBody(await cache.getRetained(entry.bodyKey));
+  check(['sha256', 'mimeType', 'width', 'height'].every(k => media[k] === entry[k]), 'VARIANT_LISTING_IMAGE_CACHE_INVALID');
+  return media;
 }
 function validateImageDescriptor(image) {
   check(keys(image, ['imageId', 'relationship', 'url', 'sha256', 'mimeType', 'width', 'height', 'sourceResponseSha256', 'listing'])
@@ -131,7 +161,7 @@ async function decodeImage(bytes) {
 /** Serving uses exact retained bytes only; it cannot initiate an image fetch. */
 export async function readSavedListingPhoto(url, sha256, { cache } = {}) {
   check(cache?.getRetained && isStaffInventoryResearchImageUrl(url) && HASH.test(sha256), 'VARIANT_LISTING_IMAGE_URL');
-  const media = verifyImage(await cache.getRetained(retainedImageKey(url, sha256)), url);
+  const media = await readImageEntry(await cache.getRetained(retainedImageKey(url, sha256)), url, cache);
   check(media.sha256 === sha256, 'VARIANT_LISTING_REFERENCE_CHANGED');
   return media;
 }
@@ -141,7 +171,7 @@ export async function readRetainedListingPhoto(url, { cache, fetchImpl = globalT
   now = () => Date.now(), signal, timeoutMs = VARIANT_LISTING_LIMITS.imageTimeoutMs, beforeFetch = () => {}, admitBytes = () => {} } = {}) {
   check(cache?.getRetained && cache?.put && isStaffInventoryResearchImageUrl(url), 'VARIANT_LISTING_IMAGE_URL');
   const saved = await cache.getRetained(imageKey(url));
-  if (saved && Date.parse(saved.capturedAt) <= now()) return verifyImage(saved, url);
+  if (saved && Date.parse(saved.capturedAt) <= now()) return readImageEntry(saved, url, cache);
   beforeFetch();
   return boundedProviderOperation(signal, timeoutMs, async active => {
     const response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: active,
@@ -150,10 +180,15 @@ export async function readRetainedListingPhoto(url, { cache, fetchImpl = globalT
     const bytes = await readBoundedProviderBody(response, active, VARIANT_LISTING_LIMITS.imageBytes);
     const metadata = await inspectImage(bytes), captured = now(); active.throwIfAborted();
     check(validMetadata(metadata) && (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase() === metadata.mimeType, 'VARIANT_LISTING_IMAGE_INVALID');
-    const entry = { schemaVersion: 'variant-provider-image/v1', url, body: bytes.toString('base64'), sha256: hash(bytes),
-      mimeType: metadata.mimeType, width: metadata.width, height: metadata.height,
+    const body = { schemaVersion: 'variant-provider-image-body/v1', body: bytes.toString('base64'), sha256: hash(bytes),
+      mimeType: metadata.mimeType, width: metadata.width, height: metadata.height };
+    const entry = { schemaVersion: 'variant-provider-image/v2', url, bodyKey: retainedListingImageBodyKey(body.sha256), sha256: body.sha256,
+      mimeType: body.mimeType, width: body.width, height: body.height,
       capturedAt: new Date(captured).toISOString(), expiresAt: new Date(captured + VARIANT_LISTING_LIMITS.ttlMs).toISOString() };
-    const verified = verifyImage(entry, url); admitBytes(bytes, entry.sha256); active.throwIfAborted();
+    const verified = validateRetainedListingImageBody(body); admitBytes(bytes, entry.sha256); active.throwIfAborted();
+    // Body first: an interrupted pointer write can leave unused evidence but
+    // cannot publish a binding before its body has committed.
+    await cache.put(entry.bodyKey, body); active.throwIfAborted();
     await cache.put(retainedImageKey(url, entry.sha256), entry); active.throwIfAborted();
     await cache.put(imageKey(url), entry); return verified;
   });
@@ -195,18 +230,17 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
       let requests = 0, totalBytes = 0, images = 0;
       return listingOperation(request, signal, timeoutMs, async active => {
         for (const listing of result.listings) {
-          if (images >= imageLimit) break;
           const options = [...new Set([listing.imageOptions.full_resolution_url, listing.imageOptions.thumbnail_url].filter(Boolean))];
           for (const url of options) {
             active.throwIfAborted();
             if (!byUrl.has(url)) {
               let media = null;
               try {
-                if (retainedOnly) {
+                if (retainedOnly || images >= imageLimit) {
                   // Historical discovery can recover saved bytes, never buy
                   // another download or decode from an old raw result page.
                   const saved = await cache.getRetained(imageKey(url));
-                  if (saved && Date.parse(saved.capturedAt) <= now()) media = verifyImage(saved, url);
+                  if (saved && Date.parse(saved.capturedAt) <= now()) media = await readImageEntry(saved, url, cache);
                 } else media = await readRetainedListingPhoto(url, { cache, fetchImpl, inspectImage, now, signal: active,
                   timeoutMs: Math.min(timeoutMs, VARIANT_LISTING_LIMITS.imageTimeoutMs),
                   beforeFetch: () => { requests++; } });
@@ -220,18 +254,23 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
             const media = byUrl.get(url); if (!media) continue;
             // Already-read bytes still belong in this catalog. The Codex
             // reuses their literal reading and can revisit its association.
-            if (byHash.has(media.sha256)) continue;
-            byHash.add(media.sha256); totalBytes += media.byteLength;
             const image = { imageId: `listing-image:${hash(canonicalJson({ listing: listing.listing, sha256: media.sha256, sourceResponseSha256: source.sha256 }))}`,
               relationship: 'listing_photo', url, sha256: media.sha256, mimeType: media.mimeType, width: media.width, height: media.height,
               sourceResponseSha256: source.sha256, listing: listing.listing };
             validateImageDescriptor(image); active.throwIfAborted();
             if (!retainedOnly) await cache.put(referenceKey(image), { schemaVersion: 'variant-listing-reference/v1', image,
               sourceUrl: source.url, capturedAt: source.capturedAt, expiresAt: new Date(Date.parse(source.capturedAt) + VARIANT_LISTING_LIMITS.ttlMs).toISOString() });
-            listing.image = image; images++; break;
+            // Every distinct listing/source/URL descriptor is permanent even
+            // when its bytes were already admitted for display or model input.
+            listing.image = image;
+            if (!byHash.has(media.sha256) && images < imageLimit) { byHash.add(media.sha256); totalBytes += media.byteLength; images++; }
+            break;
           }
         }
-        return { ...result, referencePhotos: result.listings.filter(v => v.image).map(v => catalogListingImage(v.image, result.source)), acquisition: { requests, images, uniqueImages: byHash.size, bytes: totalBytes },
+        const displayPhotos = new Map();
+        for (const listing of result.listings) if (listing.image && byHash.has(listing.image.sha256) && !displayPhotos.has(listing.image.sha256))
+          displayPhotos.set(listing.image.sha256, catalogListingImage(listing.image, result.source));
+        return { ...result, referencePhotos: [...displayPhotos.values()], acquisition: { requests, images, uniqueImages: byHash.size, bytes: totalBytes },
           warnings: [...result.warnings, ...(result.listings.some(v => !v.image) ? ['LISTING_IMAGES_INCOMPLETE'] : [])] };
       });
     },
@@ -251,7 +290,7 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
       check(reference?.schemaVersion === 'variant-listing-reference/v1' && same(reference.image, image)
         && (sourceUrl === undefined || sourceUrl === reference.sourceUrl), 'VARIANT_LISTING_REFERENCE_UNAVAILABLE');
       const entry = await cache.getRetained(retainedImageKey(image.url, image.sha256));
-      const media = verifyImage(entry, image.url); signal?.throwIfAborted();
+      const media = await readImageEntry(entry, image.url, cache); signal?.throwIfAborted();
       check(['sha256', 'mimeType', 'width', 'height'].every(k => media[k] === image[k]), 'VARIANT_LISTING_REFERENCE_CHANGED');
       return media;
     },

@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
-import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION,retainedListingImageBodyKey,validateRetainedListingImageBody} from './variant-listing-provider.mjs';
 import {CODEX_ASSOCIATION_REVISION,variantCodexAliases,codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
 import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL,VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
 
@@ -423,8 +423,27 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     }),
     cache:{
       get:key=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1',key);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
-      getRetained:(key,sha256=null)=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe("SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND ($2::text IS NULL OR snapshot::jsonb->>'sha256'=$2) ORDER BY created_at DESC LIMIT 1",key,sha256);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
-      put:(key,snapshot)=>machine(async({tx})=>{requireThat(!listingJournalKey(key),400,'VARIANT_LISTING_JOURNAL_RESERVED');const image=snapshot?.schemaVersion==='variant-provider-image/v1',value=evidenceText(snapshot,'body',image?Math.ceil(4194304/3)*4:1048576);if(image){const bytes=Buffer.from(snapshot.body,'base64');requireThat(bytes.length>0&&bytes.length<=4194304&&bytes.toString('base64')===snapshot.body&&digest(bytes)===snapshot.sha256,400,'VARIANT_IMAGE_CACHE_INVALID');}await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz) ON CONFLICT DO NOTHING`,key,value,digest(value),snapshot.expiresAt);})},
+      getRetained:(key,sha256=null)=>machine(async({tx})=>{
+        if(key.startsWith('variant-listing-image-body:v1:')){const saved=await listingRead(tx,key);return saved&&(sha256===null||saved.sha256===sha256)?saved:null;}
+        const [row]=await tx.$queryRawUnsafe("SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND ($2::text IS NULL OR snapshot::jsonb->>'sha256'=$2) ORDER BY created_at DESC LIMIT 1",key,sha256);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);
+      }),
+      put:(key,snapshot)=>machine(async({tx})=>{
+        requireThat(!listingJournalKey(key),400,'VARIANT_LISTING_JOURNAL_RESERVED');
+        const bodyImage=key.startsWith('variant-listing-image-body:v1:')||snapshot?.schemaVersion==='variant-provider-image-body/v1';
+        const image=snapshot?.schemaVersion==='variant-provider-image/v1';
+        const value=evidenceText(snapshot,'body',bodyImage?Math.ceil(2097152/3)*4:image?Math.ceil(4194304/3)*4:1048576);
+        if(bodyImage){
+          validateRetainedListingImageBody(snapshot);
+          requireThat(key===retainedListingImageBodyKey(snapshot.sha256),400,'VARIANT_IMAGE_CACHE_INVALID');
+          // Same lock namespace as the market writer: the cache PK is
+          // (key,snapshot_hash), so ON CONFLICT alone cannot enforce one body.
+          await listingLock(tx,key);const saved=await listingRecord(tx,key);
+          requireThat(!saved||saved.hash===digest(value),503,'VARIANT_IMAGE_BODY_CONFLICT');
+          if(!saved)await listingWrite(tx,key,value);return;
+        }
+        if(image){const bytes=Buffer.from(snapshot.body,'base64');requireThat(bytes.length>0&&bytes.length<=4194304&&bytes.toString('base64')===snapshot.body&&digest(bytes)===snapshot.sha256,400,'VARIANT_IMAGE_CACHE_INVALID');}
+        await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz) ON CONFLICT DO NOTHING`,key,value,digest(value),snapshot.expiresAt);
+      })},
 
   });
 }
