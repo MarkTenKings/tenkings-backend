@@ -3,25 +3,29 @@ import {digest} from '@atlas/manual-service/contract';
 import {EBAY_SOLD_COMPS_V2_ENGINE_VERSION} from '@tenkings/ebay-sold-comps-v2';
 import {createPresentationMarket,publishedMarketQuery} from '../src/presentation-market.mjs';
 import {createMarketSlabLabeler,MARKET_SLAB_POLICY} from '../src/market-slab-labels.mjs';
-import {readSavedListingPhoto} from '../src/variant-listing-provider.mjs';
+import {readSavedListingPhoto,readRetainedListingPhoto,retainedListingImageBodyKey} from '../src/variant-listing-provider.mjs';
+import {photoCacheDatabase} from './variant-photo-retention-fixture.mjs';
 import {publicationFixture} from './publication-fixture.mjs';
 import {labelCatalog,labelPhoto} from './variant-label-fixture.mjs';
 import {CODEX_LABEL_POLICY,CODEX_LABEL_MODEL,codexReadingKey,variantCodexChoice} from '../src/variant-codex.mjs';
-async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,priorReferenceGrade,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false,responseMode=null,failBatches=[],unreadGrade=false,failImage=false}={}){
+async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,priorReferenceGrade,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false,responseMode=null,failBatches=[],unreadGrade=false,failImage=false,cacheDatabase=null,imageGate=null}={}){
  const f=await publicationFixture();await f.publication.publish({},f.cardId,f.actionId);const manifest=JSON.parse(f.row.manifest),packet=await f.artifacts.read(manifest.packet.ref,{cardId:f.cardId,kind:'PUBLIC_REPORT',sourceHash:manifest.packet.sourceHash});
  packet.report.cardProfile='POKEMON';packet.report.identity={cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:'Base'};
  packet.report.finalGrade=8.5;packet.report.grade.overall={rawGrade:8.5,displayGrade:8.5};
- const source={packet,publicHash:digest(JSON.stringify(packet))},catalog=labelCatalog(),rows=new Map(),calls={images:0,model:0},requests=[];let tail=Promise.resolve(),drop=failPublication,loseAck=loseResponseAcknowledgement;
+ const source={packet,publicHash:digest(JSON.stringify(packet))},catalog=labelCatalog(),rows=cacheDatabase?.rows??new Map(),calls={images:0,model:0},requests=[];let tail=Promise.resolve(),drop=failPublication,loseAck=loseResponseAcknowledgement;
  const tx={async $queryRawUnsafe(sql,key){if(sql.includes('SELECT v.decision')){assert(sql.includes("{card,draft,source,sourceHash}"));assert(sql.includes("{receipt,approval,sourceHash}"));return [{approved_identity:packet.report.identity,identity_hash:digest(JSON.stringify(packet.report.identity,Object.keys(packet.report.identity).sort())),decision:'SELECTED',candidate_id:catalog.candidates[0].candidateId,catalog:JSON.stringify(catalog),catalog_hash:catalog.snapshotHash}];}
   if(sql.includes('SELECT request_id'))return failSend?[]:[{request_id:'running'}];
   if(sql.includes('variant_catalog_cache')){const values=rows.get(key)??[];return (sql.includes('DESC')?[...values].reverse():values).slice(0,sql.includes('LIMIT 1')?1:2);}assert.fail(sql);},
   async $executeRawUnsafe(sql,...args){if(sql.includes('pg_advisory'))return 1;if(sql.includes('INSERT INTO')){const [key,snapshot,snapshot_hash]=args;
    if(drop&&key.startsWith('atlas-codex-market-reading:')&&!key.endsWith(':reservation')){drop=false;throw Error('simulated post-response publication interruption');}
    const list=rows.get(key)??[];list.push({snapshot,snapshot_hash});rows.set(key,list);if(loseAck&&key.endsWith(':response')){loseAck=false;throw Error('response acknowledgement lost');}return 1;}assert.fail(sql);}};
- const boundary={machineTransaction(_scope,fn){const next=tail.then(()=>fn({tx}));tail=next.catch(()=>{});return next;}};
+ const boundary=cacheDatabase?{machineTransaction(scope,fn){return cacheDatabase.boundary.machineTransaction(scope,({tx:cacheTx})=>fn({tx:{
+  $queryRawUnsafe:(sql,...args)=>sql.includes('variant_catalog_cache')?cacheTx.$queryRawUnsafe(sql,...args):tx.$queryRawUnsafe(sql,...args),
+  $executeRawUnsafe:(sql,...args)=>sql.includes('variant_catalog_cache')||sql.includes('pg_advisory')?cacheTx.$executeRawUnsafe(sql,...args):tx.$executeRawUnsafe(sql,...args),
+ }}));}}:{machineTransaction(_scope,fn){const next=tail.then(()=>fn({tx}));tail=next.catch(()=>{});return next;}};
  const imageUrl=i=>`https://i.ebayimg.com/images/g/market${i}/s-l1600.jpg`;
  if(priorReference){const image=labelPhoto(0).media,key=codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},image.sha256),value={schemaVersion:'atlas-codex-reading/v1',policy:CODEX_LABEL_POLICY,reading:{sha256:image.sha256,candidateKey:variantCodexChoice(catalog.candidates[0]).key,gradingCompany:'PSA',labelText:'2020 POKEMON\nMAGIKARP\nAUTOGRAPH GEM MT 10\nMINT 9',...(priorReferenceGrade===undefined?{}:{numericGrade:priorReferenceGrade}),reason:'Matching base label'},responseHash:digest('prior response'),requestKey:'prior'};const snapshot=JSON.stringify(value);rows.set(key,[{snapshot,snapshot_hash:digest(snapshot)}]);}
- const fetchImpl=async(url,options)=>{if(url.startsWith('https://i.ebayimg.com/')){calls.images++;assert.equal(options.redirect,'error');if(failImage)throw Error('Image transport unavailable');const i=Number(/market(\d+)/.exec(url)[1]);return new Response(labelPhoto(i).media.bytes,{headers:{'content-type':'image/png'}});}
+ const fetchImpl=async(url,options)=>{if(url.startsWith('https://i.ebayimg.com/')){calls.images++;assert.equal(options.redirect,'error');if(failImage)throw Error('Image transport unavailable');if(imageGate)await imageGate();const i=Number(/market(\d+)/.exec(url)[1]);return new Response(labelPhoto(i).media.bytes,{headers:{'content-type':'image/png'}});}
   assert.equal(url,'https://api.openai.com/v1/responses');calls.model++;requests.push(JSON.parse(options.body));onModel();if(modelGate)await modelGate;if(failSend||failBatches.includes(calls.model))throw Error('unknown network outcome');
   if(responseMode==='http')return Response.json({error:'synthetic rejected request'},{status:503});
   if(responseMode==='json')return new Response('malformed response');
@@ -71,6 +75,23 @@ test('saved market photo serving verifies exact retained bytes and cannot fetch 
  const cache={getRetained:async key=>{const row=f.rows.get(key)?.at(-1);return row?JSON.parse(row.snapshot):null;},put:()=>assert.fail('read only')};
  const photo=await readSavedListingPhoto(reading.imageUrl,reading.sha256,{cache});assert.equal(photo.sha256,reading.sha256);assert(photo.bytes.equals(labelPhoto(0).media.bytes));
  await assert.rejects(readSavedListingPhoto(reading.imageUrl,'f'.repeat(64),{cache}));assert.deepEqual(f.calls,{images:1,model:1});
+});
+
+test('concurrent variant and market acquisition share one body lock and serialization across alternate URLs',async()=>{
+ const cacheDatabase=photoCacheDatabase(),media=labelPhoto(0).media;let entered=0,release;
+ const ready=new Promise(resolve=>{release=resolve;});const imageGate=async()=>{if(++entered===2)release();await ready;};
+ const f=await fixture({photos:1,cacheDatabase,imageGate,priorReference:true,priorReferenceGrade:9});
+ const variantUrl='https://i.ebayimg.com/images/g/variant-alternate/s-l1600.jpg';
+ const variant=readRetainedListingPhoto(variantUrl,{cache:cacheDatabase.store.cache,
+  inspectImage:async()=>({mimeType:'image/png',width:1,height:1}),fetchImpl:async()=>{await imageGate();return new Response(media.bytes,{headers:{'content-type':'image/png'}});}});
+ const [saved,market]=await Promise.all([variant,f.label(f)]);assert.equal(saved.sha256,media.sha256);
+ assert.equal(market.imageMatch.readings[0].sha256,media.sha256);assert.equal(f.calls.model,0,'An existing reading is reused; no injected model dispatch is needed');
+ const key=retainedListingImageBodyKey(media.sha256);assert.equal(cacheDatabase.rows.get(key).length,1);
+ assert.equal(cacheDatabase.values().filter(v=>v.schemaVersion==='variant-provider-image-body/v1').length,1);
+ assert.equal(cacheDatabase.lockNames.filter(v=>v.name===`atlas-listing-source:${key}`).length,2);
+ for(const imageUrl of [variantUrl,'https://i.ebayimg.com/images/g/market0/s-l1600.jpg']){
+  assert((await readSavedListingPhoto(imageUrl,media.sha256,{cache:cacheDatabase.store.cache})).bytes.equals(media.bytes));
+ }
 });
 
 test('unread company and literal outer whitespace are preserved; malformed per-photo data keeps valid peers without repeat billing',async()=>{

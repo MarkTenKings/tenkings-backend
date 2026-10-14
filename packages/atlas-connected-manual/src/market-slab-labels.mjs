@@ -2,7 +2,7 @@ import { validateVariantReviewSnapshot } from '@tenkings/card-catalog-evidence';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { digest, requireThat } from '@atlas/manual-service/contract';
 import { readBoundedProviderBody } from '../../card-catalog-evidence/src/provider-media.mjs';
-import { readRetainedListingPhoto } from './variant-listing-provider.mjs';
+import { readRetainedListingPhoto, retainedListingImageBodyKey, validateRetainedListingImageBody } from './variant-listing-provider.mjs';
 import { CODEX_LABEL_MODEL, CODEX_LABEL_POLICY, codexReadingKey, variantCodexChoice } from './variant-codex.mjs';
 
 export const MARKET_SLAB_POLICY = 'atlas-market-slab-label-v1';
@@ -86,7 +86,19 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     requireThat(digest(rows[0].snapshot)===rows[0].snapshot_hash,503,'MARKET_LABEL_CACHE_CORRUPT');return JSON.parse(rows[0].snapshot);}
   async function write(tx,key,value){const body=stableJson(value);requireThat(Buffer.byteLength(body)<=8*1024*1024,413,'MARKET_LABEL_EVIDENCE_TOO_LARGE');
     await tx.$executeRawUnsafe(`INSERT INTO ${TABLE}(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz)`,key,body,digest(body),'2000-01-01T00:00:00.000Z');}
-  const cache={getRetained:key=>machine(({tx})=>read(tx,key,true)),put:(key,value)=>machine(async({tx})=>{await lock(tx,key);const previous=await read(tx,key,true);if(previous&&stableJson(previous)===stableJson(value))return;await write(tx,key,value);})};
+  const cache={getRetained:key=>machine(({tx})=>read(tx,key,!key.startsWith('variant-listing-image-body:v1:'))),put:(key,value)=>machine(async({tx})=>{
+    if(key.startsWith('variant-listing-image-body:v1:')||value?.schemaVersion==='variant-provider-image-body/v1'){
+      validateRetainedListingImageBody(value);
+      requireThat(key===retainedListingImageBodyKey(value.sha256),400,'MARKET_PHOTO_CACHE_INVALID');
+      // Match the variant writer's content-body lock, not the market journal
+      // lock: both paths share this permanent cache and immutable body key.
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1,721930))',`atlas-listing-source:${key}`);
+      const previous=await read(tx,key);
+      requireThat(!previous||stableJson(previous)===stableJson(value),503,'VARIANT_IMAGE_BODY_CONFLICT');
+      if(!previous)await write(tx,key,value);return;
+    }
+    await lock(tx,key);const previous=await read(tx,key,true);if(previous&&stableJson(previous)===stableJson(value))return;await write(tx,key,value);
+  })};
   async function targetFor(source,job){requireThat(source.publicHash===digest(JSON.stringify(source.packet)),409,'MARKET_PUBLICATION_MISMATCH');const identity=parsePublicManualReport(source.packet).report.identity;
     const found=await machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT v.decision,v.candidate_id,v.identity_hash,j.catalog,j.catalog_hash,a.result::jsonb#>'{card,draft,identity}' approved_identity FROM atlas_manual.action a
       JOIN atlas_manual_connected.variant_confirmation v ON v.card_id=a.card_id

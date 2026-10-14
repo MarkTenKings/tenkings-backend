@@ -1,0 +1,308 @@
+{
+  "schemaVersion": "atlas-additive-catalog-candidate/v1",
+  "complete": false,
+  "productionCalls": 0,
+  "databaseWrites": 0,
+  "repoWrites": 0,
+  "deployed": false,
+  "baselineSources": 624,
+  "baselineRows": 1144344,
+  "sources": 1854,
+  "rows": 7439127,
+  "addedSources": 1230,
+  "addedRows": 6294783,
+  "inputRows": 7439127,
+  "rejectedRows": 0,
+  "repeatedIdentityRowsRetained": 22033,
+  "compressedShardBytes": 65547716,
+  "decodedShardBytes": 263793046,
+  "maximumShard": {
+    "path": "manufacturer-checklists/3de94a04413d915d2d06dd9da5317330ade06b2fc5c3b860cdc516fb030f9777.json.gz",
+    "sha256": "3de94a04413d915d2d06dd9da5317330ade06b2fc5c3b860cdc516fb030f9777",
+    "decodedSha256": "d42355a48cc7852e12ad62be49295eb032dc3f1a83f96ffb2eeeca65563b1adb",
+    "compressedBytes": 236067,
+    "decodedBytes": 2142815,
+    "rowCount": 78072
+  },
+  "indexSha256": "4c6f9759e6d339351f58a7320d8523b5a15a433984afa53c10a521faf1523d74",
+  "indexBytes": 1254485,
+  "baselineLogicalRowsPreserved": true,
+  "baselineMetadataAndOrderingPreserved": true,
+  "familyAliasBytesPreserved": true,
+  "inputProof": {
+    "baselineBundle": {
+      "path": "/Users/markthomas/.codex/worktrees/atlas-automatic-comps/ten-kings-mystery-packs-clean/packages/card-catalog-evidence/data/manufacturer-checklists.json.gz",
+      "sha256": "af80ccc563a6a5a4c2a7ec290114cac9075d58496801fb6411ba9c2983995c8f",
+      "bytes": 6149333
+    },
+    "manufacturer-parallel-families.json": {
+      "sha256": "cb1202a1a3582356701ea282490c34b7a41b7108ec7db1040ca15eef3a12c4dd",
+      "bytes": 15762
+    },
+    "manufacturer-product-aliases.json": {
+      "sha256": "690df9952d0e4328906d81c8369da5ea4ffc9a57c691aae2fed285e97c169a55",
+      "bytes": 820
+    },
+    "paniniLedger": {
+      "sha256": "0af58eb7615ca6b3c46f42bce2f3396563809665a89a184721a439829fc30bed",
+      "path": "/Users/markthomas/.codex/atlas-handoffs/sports-checklists-20261010/panini-acquisition.sqlite"
+    },
+    "paniniProductIdentity": {
+      "baselineProducts": 7,
+      "baselineProductKeys": [
+        "[\"baseball\",\"2025\",\"Panini\",\"Prizm\"]",
+        "[\"basketball\",\"2024\",\"Panini\",\"Mosaic (24-25)\"]",
+        "[\"basketball\",\"2024\",\"Panini\",\"Prizm (24-25)\"]",
+        "[\"basketball\",\"2024\",\"Panini\",\"Select (24-25)\"]",
+        "[\"football\",\"2024\",\"Donruss\",\"Optic\"]",
+        "[\"football\",\"2024\",\"Panini\",\"Prizm\"]",
+        "[\"football\",\"2025\",\"Donruss\",\"Optic\"]"
+      ],
+      "identicalEvidenceSkipped": [],
+      "retainedUsableProducts": 1056
+    }
+  },
+  "supplementProof": {
+    "root-leaf-v2-supplement.json": "0a5cd46e576c2ee33225fc047e9c7c83bb064796bea6b09c265d3cc6eadec752",
+    "root-upperdeck-supplement-final.json": "1f2eef82c0f5dee72dff6470b827909017efa9890a316e300584c5e8e57e5720",
+    "topps-expansion/normalization-final-receipt.json": "637ea6f53c495916bfc729130bf073b41c103d9bbb4f1baa3ab32f4ed9b94573",
+    "load_topps_supplement.py": "0f70695f2d910e1226441cb734f96d56dfbd8951d82ec332440e564f6d33b2cd"
+  },
+  "summary": [
+    {
+      "manufacturer": "Donruss",
+      "sport": "baseball",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 23,
+      "addedRows": 175232
+    },
+    {
+      "manufacturer": "Donruss",
+      "sport": "basketball",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 35,
+      "addedRows": 293531
+    },
+    {
+      "manufacturer": "Donruss",
+      "sport": "football",
+      "baselineSources": 2,
+      "baselineRows": 31593,
+      "addedSources": 42,
+      "addedRows": 261474
+    },
+    {
+      "manufacturer": "Fleer",
+      "sport": "basketball",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 18,
+      "addedRows": 2108
+    },
+    {
+      "manufacturer": "Fleer",
+      "sport": "golf",
+      "baselineSources": 2,
+      "baselineRows": 4613,
+      "addedSources": 0,
+      "addedRows": 0
+    },
+    {
+      "manufacturer": "Fleer",
+      "sport": "hockey",
+      "baselineSources": 4,
+      "baselineRows": 7767,
+      "addedSources": 0,
+      "addedRows": 0
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "baseball",
+      "baselineSources": 62,
+      "baselineRows": 227214,
+      "addedSources": 11,
+      "addedRows": 107984
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "basketball",
+      "baselineSources": 20,
+      "baselineRows": 7501,
+      "addedSources": 1,
+      "addedRows": 18
+    },
+    {
+      "manufacturer": "Leaf",
+      "sport": "football",
+      "baselineSources": 93,
+      "baselineRows": 414009,
+      "addedSources": 12,
+      "addedRows": 130569
+    },
+    {
+      "manufacturer": "Panini",
+      "sport": "baseball",
+      "baselineSources": 1,
+      "baselineRows": 13483,
+      "addedSources": 112,
+      "addedRows": 789210
+    },
+    {
+      "manufacturer": "Panini",
+      "sport": "basketball",
+      "baselineSources": 3,
+      "baselineRows": 88367,
+      "addedSources": 387,
+      "addedRows": 1704175
+    },
+    {
+      "manufacturer": "Panini",
+      "sport": "football",
+      "baselineSources": 1,
+      "baselineRows": 30106,
+      "addedSources": 377,
+      "addedRows": 2262906
+    },
+    {
+      "manufacturer": "Playoff",
+      "sport": "baseball",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 1,
+      "addedRows": 4030
+    },
+    {
+      "manufacturer": "Playoff",
+      "sport": "basketball",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 18,
+      "addedRows": 69854
+    },
+    {
+      "manufacturer": "Playoff",
+      "sport": "football",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 45,
+      "addedRows": 286474
+    },
+    {
+      "manufacturer": "Score",
+      "sport": "football",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 16,
+      "addedRows": 163807
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "baseball",
+      "baselineSources": 347,
+      "baselineRows": 258654,
+      "addedSources": 51,
+      "addedRows": 22780
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "basketball",
+      "baselineSources": 53,
+      "baselineRows": 31492,
+      "addedSources": 6,
+      "addedRows": 825
+    },
+    {
+      "manufacturer": "Topps",
+      "sport": "football",
+      "baselineSources": 32,
+      "baselineRows": 27112,
+      "addedSources": 5,
+      "addedRows": 1784
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "sport": "baseball",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 14,
+      "addedRows": 3836
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "sport": "basketball",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 15,
+      "addedRows": 6617
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "sport": "football",
+      "baselineSources": 4,
+      "baselineRows": 2433,
+      "addedSources": 13,
+      "addedRows": 3665
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "sport": "golf",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 15,
+      "addedRows": 3149
+    },
+    {
+      "manufacturer": "Upper Deck",
+      "sport": "hockey",
+      "baselineSources": 0,
+      "baselineRows": 0,
+      "addedSources": 13,
+      "addedRows": 755
+    }
+  ],
+  "stages": [
+    {
+      "stage": "baseline_preserved",
+      "elapsedSeconds": 7.120791416004067,
+      "peakRssBytes": 580337664
+    },
+    {
+      "stage": "panini_selected_products",
+      "elapsedSeconds": 84.35872483300045,
+      "peakRssBytes": 580337664
+    },
+    {
+      "stage": "leaf_verified_reparse",
+      "elapsedSeconds": 90.17063837499882,
+      "peakRssBytes": 896106496
+    },
+    {
+      "stage": "upperdeck_verified_reparse",
+      "elapsedSeconds": 91.14744741600589,
+      "peakRssBytes": 896106496
+    },
+    {
+      "stage": "topps_verified_reparse",
+      "elapsedSeconds": 115.08018479100429,
+      "peakRssBytes": 896106496
+    },
+    {
+      "stage": "additional_reviewed_bundles",
+      "elapsedSeconds": 115.10775683299289,
+      "peakRssBytes": 896106496
+    }
+  ],
+  "elapsedSeconds": 115.12671054099337,
+  "peakRssBytes": 896106496,
+  "freeDiskBytes": 37548834816,
+  "athleteLimit": 512,
+  "importerSha256": "f56d824243564c42490d23d132871912a917a54986b7f2bc754071a3bc2a7b57",
+  "parserSha256": {
+    "panini.py": "2fdd2afd5fd3fa2d4281801b26fdcc1c0183b1e358d34d249645531be8b6aec7",
+    "leaf_normalize.py": "4e581b4ef929247cb6c5683a8a2ee22a0e0ceefb174d717603bb6c5b33daa031",
+    "upperdeck_normalize.py": "6f5ecff209988ff37690e936b27ad3e6e9defeaf9637b74cc48a0591c144dfa0",
+    "catalog.py": "b9a6edb11e91c97728a727ff841c228c8756d980ec9aacc82536dc87d72e3f57"
+  }
+}

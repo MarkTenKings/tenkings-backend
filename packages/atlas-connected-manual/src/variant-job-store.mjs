@@ -3,11 +3,14 @@ import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
-import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION,retainedListingImageBodyKey,validateRetainedListingImageBody} from './variant-listing-provider.mjs';
 import {CODEX_ASSOCIATION_REVISION,variantCodexAliases,codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
 import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL,VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
 
 export const VARIANT_POLICY='atlas-independent-variant-v2';
+// Catalog discovery advances independently of immutable paid OCR requests.
+export const SPORTS_CATALOG_DISCOVERY_REVISION='atlas-sports-source-release-v1';
+const catalogDiscoveryRevision=identity=>'playerName'in identity?SPORTS_CATALOG_DISCOVERY_REVISION:CODEX_ASSOCIATION_REVISION;
 const table='atlas_manual_connected.variant_job';
 const listingDispatchKey=key=>`variant-listing-dispatch:v1:${key}`;
 const listingResponseKey=key=>`variant-listing-response:v1:${key}`;
@@ -81,6 +84,7 @@ export function validateVariantAction(action){
 // does not acquire a worker lease, write a result, or start provider work.
 export async function readRetainedVariantLabels(tx,catalog){
   const request=prepareVariantLabelRequest(catalog),readings=new Map(),records=new Map();
+  const scoped=catalog.candidates.some(c=>c.source.release),libraryConflicts=new Set();
   const readingKeys=request.photos.map(p=>codexReadingKey(request,p.sha256));
   const rows=readingKeys.length?await tx.$queryRawUnsafe('SELECT key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[])',readingKeys):[];
   for(const row of rows){
@@ -94,9 +98,16 @@ export async function readRetainedVariantLabels(tx,catalog){
     const row=libraryRows.get(key);if(!row)continue;
     requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');
     const library=validateCodexLibrary(JSON.parse(row.snapshot),choice);
-    for(const ref of library.references)if(photoShas.has(ref.image.sha256))readings.set(ref.image.sha256,projectCodexReading(ref.reading,catalog,[library.choice]));
+    for(const ref of library.references)if(photoShas.has(ref.image.sha256)){
+      let projected=projectCodexReading(ref.reading,catalog,[library.choice]),previous=readings.get(ref.image.sha256);
+      if(scoped&&previous?.candidateId&&projected.candidateId===null)continue;
+      if(scoped&&previous?.candidateId&&projected.candidateId&&previous.candidateId!==projected.candidateId)libraryConflicts.add(ref.image.sha256);
+      if(libraryConflicts.has(ref.image.sha256))projected={...projected,candidateId:null,canonicalCardKey:null,canonicalPrintingKey:null,
+        reason:'Conflicting retained library associations; the literal reading remains available.'};
+      readings.set(ref.image.sha256,projected);
+    }
   }
-  for(const photo of request.photos)if(!readings.has(photo.sha256)){
+  for(const photo of request.photos)if(!readings.has(photo.sha256)||scoped){
     const saved=records.get(codexReadingKey(request,photo.sha256));
     if(saved){requireThat(saved.schemaVersion==='atlas-codex-reading/v1'&&saved.policy===VARIANT_LABEL_POLICY&&saved.reading.sha256===photo.sha256
       &&Array.isArray(saved.choices)&&(saved.reading.candidateKey===null||saved.choices.some(c=>c.key===saved.reading.candidateKey)),503,'VARIANT_CODEX_READING_INVALID');
@@ -192,12 +203,12 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
        AND (previous.key IS NOT NULL OR (NOT EXISTS(SELECT 1 FROM atlas_manual.approval a WHERE a.card_id=c.id AND a.source_hash=c.content_hash)
         AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.source_hash=c.content::jsonb->'source'->>'sourceHash' AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int AND v.decision IN('SELECTED','MANUAL'))))
        AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND j.identity_revision=(c.content::jsonb->>'identityRevision')::int AND j.state IN('QUEUED','RUNNING','REQUESTED'))
-       AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND (j.identity_revision=(c.content::jsonb->>'identityRevision')::int OR EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.job_key=j.key AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int)) AND j.policy=$1 AND j.input::jsonb->>'catalogRevision'=$3)
-       ORDER BY c.id LIMIT $2`,VARIANT_POLICY,limit,CODEX_ASSOCIATION_REVISION);
-      let count=0;for(const row of rows){const d=JSON.parse(row.content),input={...variantBinding({cardId:row.id,draft:d}),identity:variantCatalogIdentity('playerName'in d.identity?'SPORTS':'POKEMON',d.identity),catalogRevision:CODEX_ASSOCIATION_REVISION,
+       AND NOT EXISTS(SELECT 1 FROM ${table} j WHERE j.card_id=c.id AND j.source_hash=c.content::jsonb->'source'->>'sourceHash' AND (j.identity_revision=(c.content::jsonb->>'identityRevision')::int OR EXISTS(SELECT 1 FROM atlas_manual_connected.variant_confirmation v WHERE v.card_id=c.id AND v.job_key=j.key AND v.identity_revision=(c.content::jsonb->>'identityRevision')::int)) AND j.policy=$1 AND j.input::jsonb->>'catalogRevision'=CASE WHEN c.content::jsonb->'identity' ? 'playerName' THEN $4 ELSE $3 END)
+       ORDER BY c.id LIMIT $2`,VARIANT_POLICY,limit,CODEX_ASSOCIATION_REVISION,SPORTS_CATALOG_DISCOVERY_REVISION);
+      let count=0;for(const row of rows){const d=JSON.parse(row.content),input={...variantBinding({cardId:row.id,draft:d}),identity:variantCatalogIdentity('playerName'in d.identity?'SPORTS':'POKEMON',d.identity),catalogRevision:catalogDiscoveryRevision(d.identity),
         ...(row.previous_key?{reuseJobKey:row.previous_key,localOnly:true,generation:randomUUID()}:{})};const value=canonical(input);
        await preparationLock(tx,row.id);
-       const [existing]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND policy=$4 AND (input::jsonb->>'catalogRevision'=$5 OR state IN('QUEUED','RUNNING','REQUESTED')) LIMIT 1`,row.id,input.sourceHash,input.identityRevision,VARIANT_POLICY,CODEX_ASSOCIATION_REVISION);
+       const [existing]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND policy=$4 AND (input::jsonb->>'catalogRevision'=$5 OR state IN('QUEUED','RUNNING','REQUESTED')) LIMIT 1`,row.id,input.sourceHash,input.identityRevision,VARIANT_POLICY,input.catalogRevision);
        if(existing)continue;
        count+=await tx.$executeRawUnsafe(`INSERT INTO ${table}(key,card_id,actor_id,access_version,policy,source_hash,identity_revision,identity_hash,input,input_hash,generation) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid) ON CONFLICT DO NOTHING`,variantJobKey(input),row.id,row.owner_id,row.access_version,VARIANT_POLICY,input.sourceHash,input.identityRevision,input.identityHash,value,digest(value),input.generation??'00000000-0000-0000-0000-000000000000');}return count;});},
     async priorCatalog(job){if(!job.input.reuseJobKey)return null;return machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1 AND card_id=$2::uuid AND source_hash=$3`,job.input.reuseJobKey,job.card_id,job.source_hash);return unpack(row)?.catalog??null;});},
@@ -244,7 +255,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const [historic]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND generation=$2::uuid`,cardId,input.requestId);
       if(historic){const saved=unpack(historic);requireThat(saved.input.sourceHash===input.sourceHash&&saved.input.identityRevision===input.identityRevision&&saved.input.identityHash===input.identityHash&&saved.input.reuseJobKey===input.jobId,409,'VARIANT_REFRESH_CONFLICT');return saved.key;}
       requireThat(b.sourceHash===input.sourceHash,409,'VARIANT_SOURCE_STALE');requireThat(b.identityRevision===input.identityRevision&&b.identityHash===input.identityHash,409,'VARIANT_IDENTITY_STALE');
-      const nextInput={...b,catalogRevision:CODEX_ASSOCIATION_REVISION,identity:variantCatalogIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',card.draft.identity),generation:input.requestId,reuseJobKey:input.jobId},key=variantJobKey(nextInput);
+      const nextInput={...b,catalogRevision:catalogDiscoveryRevision(card.draft.identity),identity:variantCatalogIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',card.draft.identity),generation:input.requestId,reuseJobKey:input.jobId},key=variantJobKey(nextInput);
       const [existing]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE key=$1`,key);
       if(existing){requireThat(canonical(unpack(existing).input)===canonical(nextInput),409,'VARIANT_REFRESH_CONFLICT');return key;}
       let [latest]=await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND source_hash=$2 AND identity_revision=$3 AND identity_hash=$4 ORDER BY created_at DESC,key DESC LIMIT 1`,cardId,b.sourceHash,b.identityRevision,b.identityHash);
@@ -364,13 +375,15 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     async reserveListingSource(job,request,{retainedOnly=false}={}){
       // Only immutable local manufacturer evidence may fill a missing year
       // for a reference request. Never trust a supplied catalog or request year.
-      const discovered=job.input.identity.year?null:await checklist.prepare(job.input.identity);
-      const resolvedIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year):job.input.identity;
+      const discovered=job.input.identity.category==='SPORTS'?await checklist.prepare(job.input.identity):null;
+      const resolvedIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year,{retainedOnly}):job.input.identity;
       requireThat(compareVariantCardNumber(resolvedIdentity.cardNumber,request.identity?.cardNumber)==='match',409,'VARIANT_LISTING_REQUEST_CHANGED');
       const listingIdentity={...resolvedIdentity,cardNumber:request.identity.cardNumber};
-      const identityEvidence=discovered?discovered.candidates.filter(c=>c.identity.year===listingIdentity.year
-        &&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,{name:c.label,language:c.identity.language},{...(request.generation?{generation:request.generation}:{})})))
-        .map(c=>({candidateId:c.candidateId,source:c.source})):null;
+      const identityEvidence=discovered&&(!job.input.identity.year||discovered.candidates.some(c=>c.source.season))?discovered.candidates.filter(c=>{
+        try{return canonical(request)===canonical(prepareVariantListingRequest(
+          {...variantChecklistListingIdentity(job.input.identity,[c],listingIdentity.year,{retainedOnly}),cardNumber:request.identity.cardNumber},
+          {name:c.label,language:c.identity.language},{...(request.generation?{generation:request.generation}:{})}));}catch{return false;}
+      }).map(c=>({candidateId:c.candidateId,source:c.source})):null;
       requireThat(!identityEvidence||identityEvidence.length>0,409,'VARIANT_LISTING_REQUEST_CHANGED');
       requireThat(typeof retainedOnly==='boolean'&&request.revision===VARIANT_LISTING_REVISION&&(!request.generation||job.input.reuseJobKey!==null&&request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,request.printing??null,{...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
       await listingLock(tx,request.requestKey);
@@ -421,8 +434,27 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
     }),
     cache:{
       get:key=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe('SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1',key);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
-      getRetained:(key,sha256=null)=>machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe("SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND ($2::text IS NULL OR snapshot::jsonb->>'sha256'=$2) ORDER BY created_at DESC LIMIT 1",key,sha256);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);}),
-      put:(key,snapshot)=>machine(async({tx})=>{requireThat(!listingJournalKey(key),400,'VARIANT_LISTING_JOURNAL_RESERVED');const image=snapshot?.schemaVersion==='variant-provider-image/v1',value=evidenceText(snapshot,'body',image?Math.ceil(4194304/3)*4:1048576);if(image){const bytes=Buffer.from(snapshot.body,'base64');requireThat(bytes.length>0&&bytes.length<=4194304&&bytes.toString('base64')===snapshot.body&&digest(bytes)===snapshot.sha256,400,'VARIANT_IMAGE_CACHE_INVALID');}await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz) ON CONFLICT DO NOTHING`,key,value,digest(value),snapshot.expiresAt);})},
+      getRetained:(key,sha256=null)=>machine(async({tx})=>{
+        if(key.startsWith('variant-listing-image-body:v1:')){const saved=await listingRead(tx,key);return saved&&(sha256===null||saved.sha256===sha256)?saved:null;}
+        const [row]=await tx.$queryRawUnsafe("SELECT snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=$1 AND ($2::text IS NULL OR snapshot::jsonb->>'sha256'=$2) ORDER BY created_at DESC LIMIT 1",key,sha256);if(!row)return null;requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');return JSON.parse(row.snapshot);
+      }),
+      put:(key,snapshot)=>machine(async({tx})=>{
+        requireThat(!listingJournalKey(key),400,'VARIANT_LISTING_JOURNAL_RESERVED');
+        const bodyImage=key.startsWith('variant-listing-image-body:v1:')||snapshot?.schemaVersion==='variant-provider-image-body/v1';
+        const image=snapshot?.schemaVersion==='variant-provider-image/v1';
+        const value=evidenceText(snapshot,'body',bodyImage?Math.ceil(2097152/3)*4:image?Math.ceil(4194304/3)*4:1048576);
+        if(bodyImage){
+          validateRetainedListingImageBody(snapshot);
+          requireThat(key===retainedListingImageBodyKey(snapshot.sha256),400,'VARIANT_IMAGE_CACHE_INVALID');
+          // Same lock namespace as the market writer: the cache PK is
+          // (key,snapshot_hash), so ON CONFLICT alone cannot enforce one body.
+          await listingLock(tx,key);const saved=await listingRecord(tx,key);
+          requireThat(!saved||saved.hash===digest(value),503,'VARIANT_IMAGE_BODY_CONFLICT');
+          if(!saved)await listingWrite(tx,key,value);return;
+        }
+        if(image){const bytes=Buffer.from(snapshot.body,'base64');requireThat(bytes.length>0&&bytes.length<=4194304&&bytes.toString('base64')===snapshot.body&&digest(bytes)===snapshot.sha256,400,'VARIANT_IMAGE_CACHE_INVALID');}
+        await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.variant_catalog_cache(key,snapshot,snapshot_hash,expires_at) VALUES($1,$2,$3,$4::timestamptz) ON CONFLICT DO NOTHING`,key,value,digest(value),snapshot.expiresAt);
+      })},
 
   });
 }

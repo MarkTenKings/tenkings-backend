@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createManufacturerChecklistVariantProvider} from '../../card-catalog-evidence/src/manufacturer-checklist.mjs';
+import {variantChecklistListingIdentity,prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
+import {createVariantJobStore} from '../src/variant-job-store.mjs';
+const identity={category:'SPORTS',manufacturer:'Panini',year:null,setName:'Panini Elite Basketball',name:'Ray Allen',cardNumber:'1',language:null};
+test('real retained exact-year release survives discovery of a different season without broadening season aliases',async()=>{
+ const provider=createManufacturerChecklistVariantProvider(),result=await provider.prepare(identity);
+ const embedded=await provider.prepare({...identity,setName:'2009 Panini Elite Basketball'});assert(embedded.candidates.length>0);assert(embedded.candidates.every(c=>c.source.release.year==='2009'));
+ const exact=result.candidates.find(c=>c.identity.year==='2009');
+ const seasonal=result.candidates.find(c=>c.identity.year==='2013-14');
+ assert(exact&&!exact.source.season&&seasonal?.source.season);
+ assert.equal(exact.source.sha256,'f408ccdba0755f44c4e07fff2d43bb175858293bbc1be76e948fa8039cbda776');
+ assert.equal(variantChecklistListingIdentity(identity,result.candidates,'2009').year,'2009');
+ assert.equal(variantChecklistListingIdentity(identity,result.candidates,'2013-14').year,'2013-14');
+ assert.throws(()=>variantChecklistListingIdentity(identity,result.candidates,'2013'),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+ assert.throws(()=>variantChecklistListingIdentity(identity,result.candidates,'2010',{retainedOnly:true}),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+ assert.equal(variantChecklistListingIdentity(identity,result.candidates,'2013',{retainedOnly:true}).year,'2013');
+ assert.equal(identity.year,null);
+});
+test('real store independently proves mixed-release exact year and printing before the denied SQL boundary',async()=>{
+ const sentinel=Error('NO_SQL_BOUNDARY');let calls=0;
+ const store=createVariantJobStore({boundary:{machineTransaction:()=>{calls++;throw sentinel;}}});
+ const job={input:{identity,reuseJobKey:null}};
+ const request=prepareVariantListingRequest({...identity,year:'2009'},{name:'ARCeologists',language:null});
+ await assert.rejects(store.reserveListingSource(job,request,{retainedOnly:true}),e=>e===sentinel);assert.equal(calls,1);
+ for(const patch of [{year:'2010'},{name:'Other Athlete'}])await assert.rejects(store.reserveListingSource(job,prepareVariantListingRequest({...request.identity,...patch},request.printing),{retainedOnly:true}),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+ await assert.rejects(store.reserveListingSource(job,prepareVariantListingRequest(request.identity,{name:'Invented printing',language:null}),{retainedOnly:true}),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+ assert.equal(calls,1,'Invalid year/player/printing never enters SQL boundary');
+});

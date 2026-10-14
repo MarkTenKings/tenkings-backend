@@ -4,7 +4,7 @@ import { canonicalJson, normalizeVariantIdentity,
   createScrydexVariantProvider, createScrydexMetadataReader, createVariantProviderImageReader, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
 import { variantCodexChoice, variantCodexAliases, codexLibraryKey, validateCodexLibrary, codexPhotoPoolKey, validateCodexPhotoPool,
   codexReadingKey, reassociateCodexReading, CODEX_LABEL_POLICY, CODEX_LABEL_MODEL } from './variant-codex.mjs';
-import {prepareVariantListingRequest,variantChecklistListingIdentity} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest,variantChecklistListingIdentity,variantChecklistListingYears} from './variant-listing-provider.mjs';
 
 const abort = signal => signal?.throwIfAborted();
 const fail = code => Object.assign(new Error(code), { code });
@@ -94,10 +94,18 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
         const searchable = identity.year ? named : named.filter(c => {
           try { variantChecklistListingIdentity(identity, [c], c.identity.year); return true; } catch { return false; }
         });
-        const searches = [...new Map(searchable.map(c => [canonicalJson({name:c.label.toLowerCase(),language:c.identity.language,cardNumber:c.identity.cardNumber,
-          ...(!identity.year?{year:c.identity.year}:{})}), {name:c.label,language:c.identity.language,cardNumber:c.identity.cardNumber,...(!identity.year?{year:c.identity.year}:{})}])).values()];
-        const listingRequest = (printing, generation = null) => prepareVariantListingRequest(
-          {...(identity.year ? identity : variantChecklistListingIdentity(identity, searchable, printing.year)),cardNumber:printing.cardNumber},
+        const searchGroups = new Map();
+        for (const c of searchable) {
+          const year=variantChecklistListingYears(identity,c)[0];
+          const key=canonicalJson({name:c.label.toLowerCase(),language:c.identity.language,cardNumber:c.identity.cardNumber,year});
+          if (!searchGroups.has(key)) searchGroups.set(key,{name:c.label,language:c.identity.language,cardNumber:c.identity.cardNumber,year,candidate:c,members:[]});
+          searchGroups.get(key).members.push(c);
+        }
+        // Identical transport requests may serve competing source releases;
+        // retain every member and require each one's own reference association.
+        const searches = [...searchGroups.values()];
+        const listingRequest = (printing, generation = null, retainedYear = null) => prepareVariantListingRequest(
+          {...variantChecklistListingIdentity(identity,[printing.candidate],retainedYear??printing.year,{retainedOnly:retainedYear!==null}),cardNumber:printing.cardNumber},
           {name:printing.name,language:printing.language},{...(generation?{generation}:{})});
         const populated=new Set(),choiceKeys=new Set(named.map(candidate=>variantCodexChoice(candidate).key)),readings=new Map();
         const revisitReadings=async photos=>{
@@ -116,7 +124,14 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
           if(saved) {
             const entry=validateCodexLibrary(saved,choice); labelPool=true;
             for(const {image} of entry.references) referencePhotos.set(image.sha256,image);
-            populated.add(variantCodexChoice(candidate).key);
+            if (choice.key === variantCodexChoice(candidate).key) populated.add(choice.key);
+            else {
+              await revisitReadings(entry.references.map(ref=>ref.image));
+              for (const ref of entry.references) if (!readings.get(ref.image.sha256)) {
+                const projected = reassociateCodexReading(ref.reading,base,[entry.choice]);
+                if (choiceKeys.has(projected.candidateKey)) populated.add(projected.candidateKey);
+              }
+            }
           }
         }
         // Shared pools also retain photos which had no catalog match. Revisit
@@ -128,12 +143,14 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
           for(const image of pool.photos)referencePhotos.set(image.sha256,image);
           await revisitReadings(pool.photos);
         }
-        const hasReference=printing=>named.some(candidate=>candidate.label===printing.name&&candidate.identity.language===printing.language
-          &&(!printing.year||candidate.identity.year===printing.year)
-          &&populated.has(variantCodexChoice(candidate).key));
+        const hasReference=printing=>printing.members.every(candidate=>populated.has(variantCodexChoice(candidate).key));
         const acquireRetainedPhotos=async(request,saved,{retainedOnly=false}={})=>{
             if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
             const evidence=await listingProvider.acquireImages({request:saved.request??request,source:saved.source,catalogCandidates:named},{signal,retainedOnly});
+            // These facts describe a retained source result, not global absence.
+            // Keep empty searches distinct from listings without usable photos.
+            if(Array.isArray(evidence.listings)&&evidence.listings.length===0)problems.push('LISTING_NO_RESULTS');
+            if(evidence.warnings?.includes('LISTING_IMAGES_INCOMPLETE'))problems.push('LISTING_IMAGES_INCOMPLETE');
             if(Object.hasOwn(evidence,'referencePhotos')){
               labelPool=true;
               if(!Array.isArray(evidence.referencePhotos))throw fail('VARIANT_LISTING_SOURCE_INVALID');
@@ -152,11 +169,21 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
         // printing acquires a source. A probe cannot reserve or dispatch.
         const retained=new Map();let bootstrapFailed=false;
         for(const printing of searches)try{
-          abort(signal);const request=listingRequest(printing);
-          const saved=await executeListingSource(request,()=>{throw fail('VARIANT_LISTING_READ_ONLY');},{retainedOnly:true});
-          if(!['MISSING','UNKNOWN','REUSED'].includes(saved.state))throw fail('VARIANT_LISTING_READ_ONLY');
-          retained.set(printing,saved.state);
-          if(saved.state==='REUSED')await acquireRetainedPhotos(request,saved,{retainedOnly:true});
+          const states=[];
+          const requests = new Map();
+          for (const member of printing.members) for (const year of variantChecklistListingYears(identity,member)) {
+            const request=listingRequest({...printing,candidate:member},null,year); requests.set(request.requestKey,request);
+          }
+          for(const request of requests.values()){
+            abort(signal);
+            const saved=await executeListingSource(request,()=>{throw fail('VARIANT_LISTING_READ_ONLY');},{retainedOnly:true});
+            if(!['MISSING','UNKNOWN','REUSED'].includes(saved.state))throw fail('VARIANT_LISTING_READ_ONLY');
+            states.push(saved.state);
+            if(saved.state==='REUSED')await acquireRetainedPhotos(request,saved,{retainedOnly:true});
+          }
+          // An old unknown transport outcome remains unknown even if another
+          // spelling has a response. Reuse every response; never buy around it.
+          retained.set(printing,states.includes('UNKNOWN')?'UNKNOWN':states.includes('REUSED')?'REUSED':'MISSING');
         }catch(error){abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;bootstrapFailed=true;problems.push('LISTING_SOURCE_UNAVAILABLE');}
         for(const printing of searches){
           if(hasReference(printing))continue;

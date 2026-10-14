@@ -1,6 +1,6 @@
 # ATLAS V4 labels and saved print sheets
 
-Implementation branch: `codex/atlas-v4-label-sheets`, based on live R23 web source `ab045d2afa5252c921edcf76aa015094b1bd21ce`. This document describes the implementation, not a production deployment receipt.
+Implementation branch: `codex/atlas-v4-label-sheets`, based on live R23 web source `ab045d2afa5252c921edcf76aa015094b1bd21ce`. The October14 local integration additionally merges the separately approved catalog source `cdf2268990c231fde1fdae0acda5e5e16ce7a1c2` so the coordinated release preserves both features. This document describes the implementation, not a production deployment receipt.
 
 ## Staff workflow
 

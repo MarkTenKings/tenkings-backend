@@ -83,11 +83,11 @@ test('exact-year records win over a starting-season fallback',async()=>{
  const r=await createManufacturerChecklistVariantProvider({catalog:data}).prepare(lameloIdentity);
  assert.deepEqual(r.candidates.map(c=>c.label),['BALL OF DUTY EXACT YEAR']);assert.deepEqual(r.candidates[0].diagnostics,[]);
 });
-test('ambiguous season product aliases fail closed while duplicate same-product evidence is allowed',async()=>{
+test('exact source title takes precedence over a conflicting season product alias while duplicate evidence is allowed',async()=>{
  const second={...lameloSource,setName:'2025-26 Topps Chrome Basketball Special Edition',aliases:['Topps Chrome'],sha256:'b'.repeat(64)};
  const data={...lameloCatalog,sources:[lameloSource,second],rows:[...lameloCatalog.rows,[1,'BALL OF DUTY','BD-13','LaMelo Ball','row:1']]};
  const r=await createManufacturerChecklistVariantProvider({catalog:data}).prepare(lameloIdentity);
- assert.deepEqual(r.candidates,[]);assert.deepEqual(r.problems,['PROVIDER_NOT_SUPPORTED']);
+ assert.deepEqual(r.candidates.map(c=>c.source.release.setName),[lameloSource.setName]);assert.deepEqual(r.problems,[]);
  assert.doesNotThrow(()=>createVariantReviewSnapshot({identity:lameloIdentity,...r,capturedAt:'2026-10-10T00:00:00.000Z'}));
  const duplicate={...data,sources:[lameloSource,{...lameloSource,sha256:'b'.repeat(64)}]};
  assert.equal((await createManufacturerChecklistVariantProvider({catalog:duplicate}).prepare(lameloIdentity)).candidates.length,1);
@@ -128,7 +128,10 @@ test('frozen Fleer supplement serves six official sports sources with literal la
  const missing=await provider.prepare({category:'SPORTS',year:'2026',setName:'Fleer Ultra Golf',name:'Matthieu Pavon',cardNumber:'FLAIR-1',manufacturer:'Fleer',language:'en'});
  assert.equal(missing.candidates.length,0,'a blank printed subset is not filled from another row');
  const jordan=await provider.prepare({category:'SPORTS',year:'92-93',setName:'Fleer',name:'Michael Jordan',cardNumber:'273',manufacturer:'Fleer',language:'en'});
- assert.equal(jordan.candidates.length,0,'unacquired historical Fleer remains an explicit gap');
+ assert.equal(jordan.candidates.length,1,'the retained historical Fleer row is now available');
+ assert.equal(jordan.candidates[0].label,'Slam Dunk');
+ assert.ok(jordan.candidates[0].diagnostics.some(d=>d.id==='manufacturer-checklist-provenance'&&d.description.includes('Trading Card Database')));
+ assert.ok(jordan.candidates[0].diagnostics.every(d=>!d.description.includes('Official checklist')));
 });
 
 const hashBytes = value => createHash('sha256').update(value).digest('hex');
@@ -173,7 +176,7 @@ test('abbreviated season never chooses a century from the player or current date
  for(const options of [{catalog:data},shardsFor(data)]){
   const p=createManufacturerChecklistVariantProvider(options);
   const query={...identity,name:'Michael Jordan',year:'92-93',setName:'Fleer',cardNumber:'273',manufacturer:'Fleer'};
-  assert.deepEqual((await p.prepare(query)).problems,['PROVIDER_NOT_SUPPORTED']);
+  assert.deepEqual((await p.prepare(query)).problems,['CHECKLIST_SEASON_AMBIGUOUS']);
   assert.equal((await p.prepare({...query,year:'1992-1993'})).candidates.length,1);
  }
 });
@@ -209,15 +212,15 @@ test('v2 keeps composite and season rules, tries fallback only after no exact ma
  assert.deepEqual((await createManufacturerChecklistVariantProvider({catalog:e.catalog,loadShard:async d=>{exactReads.push(d.path);return e.loadShard(d);}}).prepare(lameloIdentity)).candidates.map(c=>c.label),['BALL OF DUTY EXACT']);
  assert.equal(exactReads.length,1);
  const ambiguous={...lameloCatalog,sources:[lameloSource,{...lameloSource,setName:'Special Edition',aliases:['Topps Chrome'],sha256:'d'.repeat(64)}],rows:[...lameloCatalog.rows,[1,...lameloCatalog.rows[0].slice(1)]]};
- assert.deepEqual((await createManufacturerChecklistVariantProvider(shardsFor(ambiguous)).prepare(lameloIdentity)).problems,['PROVIDER_NOT_SUPPORTED']);
+ assert.deepEqual((await createManufacturerChecklistVariantProvider(shardsFor(ambiguous)).prepare(lameloIdentity)).candidates.map(c=>c.source.release.setName),[lameloSource.setName]);
 });
-test('v2 coalesces concurrent reads, serializes different products and evicts the least recently used of two shards',async()=>{
+test('v2 coalesces concurrent reads, serializes products and reuses small product shards',async()=>{
  const f=shardsFor(productsFixture()), reads=[];let active=0, peak=0;
  const p=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{reads.push(d.path);active++;peak=Math.max(peak,active);await new Promise(resolve=>setImmediate(resolve));active--;return f.loadShard(d);}});
  await Promise.all([p.prepare(identity),p.prepare(identity)]);assert.equal(reads.length,1);
  await p.prepare({...identity,setName:'Prizm'});await p.prepare(identity);await p.prepare({...identity,setName:'Select'});
  await p.prepare(identity);assert.equal(reads.length,3);
- await p.prepare({...identity,setName:'Prizm'});assert.equal(reads.length,4);assert.equal(reads[3],f.catalog.sources[1].shard.path);
+ await p.prepare({...identity,setName:'Prizm'});assert.equal(reads.length,3);
  const fresh=createManufacturerChecklistVariantProvider({catalog:f.catalog,loadShard:async d=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setImmediate(resolve));active--;return f.loadShard(d);}});
  await Promise.all(['Donruss Optic','Prizm','Select'].map(setName=>fresh.prepare({...identity,setName})));
  assert.equal(peak,1);

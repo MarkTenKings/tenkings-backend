@@ -6,7 +6,8 @@ import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,MANUFACTURER_CATALOG_SOURCES,LABEL_V4_SOURCES} from '../scripts/package-manual-container.mjs';
+import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,LABEL_V4_SOURCES} from '../scripts/package-manual-container.mjs';
+import {manufacturerRuntimeFiles} from '../../../packages/card-catalog-evidence/src/manufacturer-runtime-files.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 test('actual clean serving closure contains current workers and camera but no historical data, schema installers or build outputs',async()=>{
@@ -16,7 +17,7 @@ test('actual clean serving closure contains current workers and camera but no hi
  for(const name of CPU_SOURCES)assert(paths.has('backend/ai-grader-speedster-service/'+name),name);
  for(const path of LABEL_V4_SOURCES)assert(paths.has(path),path);
  assert.equal(CPU_SOURCES.length,8);assert(paths.has('frontend/atlas-shared/RapidCardCamera.jsx'));
- assert.deepEqual([...paths].filter(path=>path.startsWith('packages/card-catalog-evidence/data/')).sort(),[...MANUFACTURER_CATALOG_SOURCES].sort());
+ assert.deepEqual([...paths].filter(path=>path.startsWith('packages/card-catalog-evidence/data/')).sort(),await manufacturerRuntimeFiles(root));
  for(const path of paths)assert(!/(?:^|\/)(?:tests?|fixtures|test-fixtures|sql|migrations|node_modules|dist|\.generated|\.next)(?:\/|$)|\.env|atlas_photo_geometry\.py|preparation_core\.py/.test(path),path);
  const modules=new Set(CPU_SOURCES.map(name=>name.slice(0,-3)));
  const output=spawnSync('python3',['-c',[
@@ -30,7 +31,7 @@ test('actual clean serving closure contains current workers and camera but no hi
  ].join('\n'),resolve(root,'backend/ai-grader-speedster-service'),JSON.stringify(CPU_SOURCES)],{encoding:'utf8'});
  assert.equal(output.status,0,output.stderr);for(const name of JSON.parse(output.stdout))assert(modules.has(name),`Missing Python dependency: ${name}`);
 });
-test('isolated packaged catalog resolves the current Nick Kurtz identity offline and rejects each missing runtime input',async()=>{
+test('isolated packaged catalog resolves Jordan, Nick Kurtz and LaMelo offline and rejects each missing runtime input',async()=>{
  const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-catalog-'));
  try{
   const {files}=await collectManualSource();
@@ -46,7 +47,10 @@ test('isolated packaged catalog resolves the current Nick Kurtz identity offline
   const run=()=>spawnSync(process.execPath,[script,manifestPath],{encoding:'utf8',timeout:15000});
   await save();const complete=run();assert.equal(complete.status,0,complete.stderr);
   const catalog=JSON.parse(complete.stdout).manufacturerCatalog;assert.ok(catalog.candidates>=3);assert.equal(catalog.providerCalls,0);assert.equal(catalog.identity.year,null);
-  for(const path of MANUFACTURER_CATALOG_SOURCES){
+  assert.equal(catalog.jordan.secondaryDisclosure,true);assert.ok(catalog.jordan.candidates>=1);assert.ok(catalog.lamelo.candidates>=16);
+  // Common dependencies and the active catalog entry point are mandatory.
+  // Each individual shard is covered by the closure verifier and focused adversarial tests.
+  for(const path of (await manufacturerRuntimeFiles(root)).filter(path=>!path.includes('/data/manufacturer-checklists/'))){
    const file=catalogFiles.find(value=>value.path===path);assert.ok(file,path);await rm(join(temporary,path));await save(path);
    const missing=run();assert.notEqual(missing.status,0,path);assert.match(missing.stderr,/ENOENT/);
    assert.ok(missing.stderr.includes(path.split('/').at(-1)),missing.stderr);await writeFile(join(temporary,path),file.bytes);

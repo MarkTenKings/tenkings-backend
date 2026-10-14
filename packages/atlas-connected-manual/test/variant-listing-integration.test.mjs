@@ -100,7 +100,7 @@ test('unknown year prepares manufacturer-backed reference searches before confir
  };
  const first=await service.prepare({identity:target},{executeListingSource});
  assert.equal(target.year,null);assert.equal(first.candidates.length,16);assert.equal(first.candidates[0].identity.year,'2025-26');
- assert.equal(calls.length,32);assert.equal(journal.size,16);assert.equal(calls[0].request.identity.year,'2025-26');
+ assert.equal(calls.length,48,'Two read-only season/bare probes precede each of sixteen canonical dispatches');assert.equal(calls.filter(c=>c.retainedOnly).length,32);assert.equal(journal.size,16);assert.equal(calls[0].request.identity.year,'2025-26');
  const known={...target,year:'2025-26'},ordinary=prepareVariantListingRequest(known,{name:'BALL OF DUTY',language:null});
  assert.equal(calls.find(c=>c.request.printing.name==='ball of duty').request.requestKey,ordinary.requestKey);assert.deepEqual(target,original);
  await service.prepare({identity:known,generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});
@@ -122,7 +122,7 @@ test('unknown-year photos and literal Codex readings retain source-year printing
  };
  const service=createVariantCatalogService({listingProvider:provider,cache,now}),first=await service.prepare({identity},{executeListingSource});
  assert.equal(first.referencePhotos.length,1);const image=first.referencePhotos[0],choice=codexChoices(first).find(c=>c.parallel==='ball of duty');assert.equal(choice.identity.year,'2025-26');
- const reading={sha256:image.sha256,candidateKey:null,gradingCompany:'PSA',labelText:'2025-26\nTopps Chrome\nLaMelo Ball\nBD-13\nBALL OF DUTY',reason:'Retained literal slab label'};
+ const reading={sha256:image.sha256,candidateKey:null,gradingCompany:'PSA',labelText:'2025-26\nTopps Chrome Basketball\nLaMelo Ball\nBD-13\nBALL OF DUTY',reason:'Retained literal slab label'};
  const matched=reassociateCodexReading(reading,first,[]);assert.equal(matched.candidateKey,choice.key);
  const base=first.candidates.find(c=>c.parallel==='BALL OF DUTY');
  const projected=projectCodexReading(reading,first,[]);assert.equal(projected.candidateId,base.candidateId);

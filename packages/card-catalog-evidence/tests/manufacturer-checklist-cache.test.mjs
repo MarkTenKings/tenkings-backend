@@ -1,0 +1,27 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {gzipSync} from 'node:zlib';
+import {createHash} from 'node:crypto';
+import {createManufacturerChecklistVariantProvider} from '../src/manufacturer-checklist.mjs';
+const hash=b=>createHash('sha256').update(b).digest('hex');
+function fixture(rowCounts){const blobs=new Map(),counts=new Map(),sources=rowCounts.map((rowCount,i)=>{const source={manufacturer:'Topps',sport:'baseball',year:'2020',setName:'Fixture Product '+i,aliases:[],url:'https://example.com/checklist/'+i,sha256:hash('source'+i)};const rows=Array.from({length:rowCount},(_,r)=>[0,'Base','1','Test Athlete','row:'+String(r).padStart(6,'0')+':'+('a'.repeat(148))]);const decoded=Buffer.from(JSON.stringify({schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[source],rows})),bytes=gzipSync(decoded),sha256=hash(bytes),path='manufacturer-checklists/'+sha256+'.json.gz';blobs.set(path,bytes);return {...source,shard:{path,sha256,decodedSha256:hash(decoded),compressedBytes:bytes.length,decodedBytes:decoded.length,rowCount}};});const provider=createManufacturerChecklistVariantProvider({loadCatalog:async()=>({schemaVersion:'manufacturer-checklist-index/v2',complete:false,sources}),loadShard:async d=>{counts.set(d.path,(counts.get(d.path)??0)+1);return blobs.get(d.path);}});const identity=i=>({category:'SPORTS',manufacturer:'Topps',year:'2020',setName:'Fixture Product '+i,name:'Test Athlete',cardNumber:'1',language:null});return {provider,sources,counts,identity};}
+test('small retained shard groups remain reusable and results are unchanged across independent caller arrays',async()=>{const f=fixture([1,1,1,1]),first=[];for(let i=0;i<4;i++)first.push(await f.provider.prepare(f.identity(i)));for(let i=0;i<4;i++){const next=await f.provider.prepare(f.identity(i));assert.deepEqual(next,first[i]);assert.notEqual(next.candidates,first[i].candidates);}assert.equal([...f.counts.values()].reduce((a,b)=>a+b),4);});
+test('validated shard groups evict least recently used bytes only after the total budget is exceeded, preserving all choices', async () => {
+  const f = fixture([23000, 1, 23000]);
+  for (const i of [0, 2]) assert(f.sources[i].shard.decodedBytes > 4 * 1024 ** 2 && f.sources[i].shard.decodedBytes < 8 * 1024 ** 2);
+  assert(f.sources[0].shard.decodedBytes + f.sources[2].shard.decodedBytes > 8 * 1024 ** 2);
+  const first = await f.provider.prepare(f.identity(0));
+  assert.equal(first.candidates.length, 1);
+  await f.provider.prepare(f.identity(1));
+  assert.deepEqual(await f.provider.prepare(f.identity(0)), first);
+  assert.equal(f.counts.get(f.sources[0].shard.path), 1, 'a large validated shard and a small shard share the budget');
+  const second = await f.provider.prepare(f.identity(2));
+  assert.equal(second.candidates.length, 1);
+  assert.deepEqual(await f.provider.prepare(f.identity(2)), second);
+  assert.equal(f.counts.get(f.sources[2].shard.path), 1);
+  assert.deepEqual(await f.provider.prepare(f.identity(0)), first);
+  assert.equal(f.counts.get(f.sources[0].shard.path), 2, 'the older large shard was evicted when their total exceeded the budget');
+  assert.deepEqual(await f.provider.prepare(f.identity(0)), first);
+  assert.equal(f.counts.get(f.sources[0].shard.path), 2);
+});
+test('concurrent identical misses still share one verified decode and leave each result complete',async()=>{const f=fixture([1]);const values=await Promise.all(Array.from({length:16},()=>f.provider.prepare(f.identity(0))));for(const value of values)assert.deepEqual(value,values[0]);assert.equal([...f.counts.values()].reduce((a,b)=>a+b),1);});

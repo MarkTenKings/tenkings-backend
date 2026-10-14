@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, CatalogContractError } from './index.mjs';
+import { validVariantSourceSeason, resolveVariantSourceSeasonYear } from './variant-season.mjs';
 
 export const VARIANT_REVIEW_VERSION = 'atlas-variant-catalog/v1';
 export const VARIANT_CATALOG_REVISION = 'variant-catalog-2026-10-09-v1';
@@ -8,6 +9,7 @@ export const VARIANT_WARNING_CODES = Object.freeze(['LANGUAGE_UNCONFIRMED', 'DEN
   'SET_NAME_REQUIRES_REVIEW', 'REFERENCE_IMAGE_MISSING', 'CARD_ART_ONLY', 'APPLICABILITY_UNCONFIRMED', 'SCOPE_UNCONFIRMED',
   'LISTING_CLAIMS_UNREVIEWED', 'REFERENCE_USAGE_NOT_REVIEWED']);
 export const VARIANT_PROBLEM_CODES = Object.freeze(['IDENTITY_INCOMPLETE', 'CATALOG_NOT_CONFIGURED', 'CATALOG_UNAVAILABLE',
+  'CHECKLIST_SCOPE_AMBIGUOUS', 'CHECKLIST_SCOPE_NOT_RETAINED', 'CHECKLIST_CARD_NOT_FOUND', 'CHECKLIST_SEASON_AMBIGUOUS', 'LISTING_NO_RESULTS', 'LISTING_IMAGES_INCOMPLETE',
   'CATALOG_TRUNCATED', 'PROVIDER_UNAVAILABLE', 'PROVIDER_TRUNCATED', 'PROVIDER_NOT_SUPPORTED', 'NO_VARIANTS_FOUND',
   'LANGUAGE_UNCONFIRMED', 'NO_DIAGNOSTIC_PHOTOS', 'REFERENCE_PERMISSION_REQUIRED',
   'REFERENCE_ACQUISITION_PENDING', 'LISTING_SOURCE_OUTCOME_UNKNOWN', 'LISTING_SOURCE_UNAVAILABLE', 'LISTING_SOURCE_NOT_CONFIGURED']);
@@ -30,7 +32,7 @@ const url = v => { try { const u = new URL(v); return u.protocol === 'https:' &&
 export function normalizeVariantIdentity(input) {
   fail(input && typeof input === 'object' && ['POKEMON', 'SPORTS'].includes(input.category), 'identity.category');
   const value = Object.fromEntries(fields.map(k => [k, input[k] === undefined || input[k] === '' ? null : input[k]]));
-  for (const k of fields) fail(nullable(value[k], 240), `identity.${k}`);
+  for (const k of fields) fail(nullable(value[k], k === 'name' && value.category === 'SPORTS' ? 512 : 240), `identity.${k}`);
   if (value.language !== null) {
     const languages = { english: 'en', french: 'fr', german: 'de', spanish: 'es', italian: 'it', portuguese: 'pt', japanese: 'ja', korean: 'ko', chinese: 'zh' };
     value.language = languages[norm(value.language)] ?? norm(value.language);
@@ -123,8 +125,20 @@ export function validateVariantCandidate(input) {
   fail(['reviewed_catalog', 'provider_candidate'].includes(c.authority) && text(c.label, 240) && nullable(c.parallel, 120), 'candidate.identity');
   fail(keys(c.identity, fields), 'candidate.identity.fields'); normalizeVariantIdentity(c.identity);
   fail(['supported', 'unknown'].includes(c.applicability), 'candidate.applicability');
-  fail(keys(c.source, ['provider', 'recordId', 'url', 'sha256', 'references']) && text(c.source.provider, 80) && text(c.source.recordId, 256)
+  fail(keys(c.source, ['provider', 'recordId', 'url', 'sha256', 'references', ...(Object.hasOwn(c.source ?? {}, 'season') ? ['season'] : []), ...(Object.hasOwn(c.source ?? {}, 'release') ? ['release'] : [])]) && text(c.source.provider, 80) && text(c.source.recordId, 256)
     && (c.source.url === null || url(c.source.url)) && HASH.test(c.source.sha256), 'candidate.source');
+  if (Object.hasOwn(c.source, 'season')) fail(c.source.provider === 'manufacturer_checklist' && c.identity.category === 'SPORTS'
+    && validVariantSourceSeason(c.source.season) && resolveVariantSourceSeasonYear(c.identity.year, c.source.season) !== null,
+  'candidate.source.season');
+  if (Object.hasOwn(c.source, 'release')) {
+    const release = c.source.release;
+    fail(c.source.provider === 'manufacturer_checklist' && c.identity.category === 'SPORTS'
+      && keys(release, ['manufacturer', 'sports', 'year', 'setName'])
+      && ['manufacturer', 'year', 'setName'].every(key => text(release[key], 240))
+      && list(release.sports, 5) && release.sports.length > 0 && unique(release.sports)
+      && release.sports.every(sport => ['baseball','basketball','football','hockey','golf'].includes(sport))
+      && (!c.source.season || release.year === c.source.season.year), 'candidate.source.release');
+  }
   fail(list(c.source.references, 8) && c.source.references.every(r => keys(r, ['url', 'sha256']) && (r.url === null || url(r.url)) && HASH.test(r.sha256))
     && unique(c.source.references.map(r => canonicalJson(r))), 'candidate.source.references');
   if (c.authority === 'reviewed_catalog') {

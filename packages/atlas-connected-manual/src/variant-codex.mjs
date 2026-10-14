@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, normalizeVariantIdentity, validateVariantReferencePhoto } from '@tenkings/card-catalog-evidence';
 import { requireThat } from '@atlas/manual-service/contract';
+import { resolveVariantSourceSeasonYear } from '../../card-catalog-evidence/src/variant-season.mjs';
 
 export const CODEX_LABEL_MODEL = 'gpt-6-astra';
 export const CODEX_LABEL_POLICY = 'atlas-slab-label-association-v1';
@@ -8,18 +9,23 @@ export const CODEX_ASSOCIATION_REVISION = 'atlas-reference-association-v2';
 const sha = value => createHash('sha256').update(canonicalJson(value)).digest('hex');
 const normalized = value => value === null ? null : value.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
 /** Catalog identity is separate from a physical submission and a checklist's byte/row IDs. */
-export function variantCodexChoice(candidate, { literalIdentity = false } = {}) {
+export function variantCodexChoice(candidate, { literalIdentity = false, legacyRelease = false } = {}) {
   const identity = Object.fromEntries(Object.entries(normalizeVariantIdentity(candidate.identity)).map(([key,value]) =>
     [key, key === 'category' ? value : normalized(value)]));
   if (identity.cardNumber) identity.cardNumber = identity.cardNumber.replace(/^#/, '').split('/').map(part => part.replace(/^([a-z]*)(0+)(\d+)$/i, '$1$3')).join('/');
   // Only a retained manufacturer source may establish a season alias. A bare
   // year on a submission does not globally alias the following sports season.
   if (!literalIdentity && candidate.source.provider === 'manufacturer_checklist') {
-    const years = new Set(candidate.diagnostics.filter(d => ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(d.id))
-      .flatMap(d => d.description.match(/^Official checklist (?:year|season): (\d{4}-\d{2})\./)?.slice(1) ?? []));
-    if (years.size === 1) {
-      const season = [...years][0];
-      if (identity.year === season || identity.year === season.slice(0,4)) identity.year = season;
+    if (candidate.source.season) identity.year = resolveVariantSourceSeasonYear(identity.year, candidate.source.season) ?? identity.year;
+    else {
+      // Read compatibility for already-retained snapshots before structured
+      // source seasons existed. New candidates never depend on this prose.
+      const years = new Set(candidate.diagnostics.filter(d => ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(d.id))
+        .flatMap(d => d.description.match(/^Official checklist (?:year|season): (\d{4}-\d{2})\./)?.slice(1) ?? []));
+      if (years.size === 1) {
+        const season = [...years][0];
+        if (identity.year === season || identity.year === season.slice(0,4)) identity.year = season;
+      }
     }
   }
   let card, printing;
@@ -30,6 +36,12 @@ export function variantCodexChoice(candidate, { literalIdentity = false } = {}) 
     const split = candidate.source.recordId.lastIndexOf(':variant:');
     card = { provider: 'scrydex', cardId: candidate.source.recordId.slice(0,split), language: identity.language };
     printing = { printingId: candidate.source.recordId.slice(split + 9) };
+  } else if (!literalIdentity && !legacyRelease && candidate.source.provider === 'manufacturer_checklist' && candidate.source.release) {
+    const release = candidate.source.release;
+    card = { provider: candidate.source.provider, ...identity,
+      manufacturer: normalized(release.manufacturer), setName: normalized(release.setName), year: normalized(release.year),
+      sports: [...release.sports].sort() };
+    printing = { printingId: normalized(candidate.parallel) };
   } else {
     card = { provider: candidate.source.provider, ...identity };
     printing = { printingId: normalized(candidate.parallel) };
@@ -43,12 +55,35 @@ export function variantCodexChoice(candidate, { literalIdentity = false } = {}) 
  * never issue an old search or change the photographed submission. */
 export function variantCodexAliases(candidate) {
   const choice = variantCodexChoice(candidate), aliases = [choice];
-  if (candidate.source.provider === 'manufacturer_checklist' && /^\d{4}-\d{2}$/.test(choice.identity.year ?? '')
-    && candidate.diagnostics.some(d => ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(d.id))) {
-    const historic = variantCodexChoice({...candidate, identity: {...candidate.identity,year:choice.identity.year.slice(0,4)}},{literalIdentity:true});
-    if (historic.key !== choice.key) aliases.push(historic);
+  if (candidate.source.release) {
+    // Evidence-only historical keys. These title reductions are the same
+    // source-bound spellings accepted by the reader, not new paid searches.
+    const release = candidate.source.release, subset = candidate.identity.setName?.split(/\s+[—–]\s+/u).slice(1).join(' — ');
+    const titles = new Set([candidate.identity.setName, release.setName]);
+    for (const title of [...titles]) {
+      let short = title.replace(/^(?:\d{4}(?:[-\u2010-\u2015/]\d{2,4})?|\d{2}[-/]\d{2})\s+/, '')
+        .replace(/\s+(?:baseball|basketball|football|hockey|golf)$/i, '');
+      if (short.toLowerCase().startsWith(`${release.manufacturer.toLowerCase()} `)) short = short.slice(release.manufacturer.length + 1);
+      titles.add(short);
+    }
+    for (const title of titles) {
+      const old = { ...candidate, source: { ...candidate.source }, identity: { ...candidate.identity, setName: title === candidate.identity.setName ? title : `${title}${subset ? ` — ${subset}` : ''}` } };
+      delete old.source.release;
+      aliases.push(...variantCodexAliases(old));
+    }
   }
-  return aliases;
+  if (candidate.source.provider === 'manufacturer_checklist' && candidate.source.season) {
+    if (resolveVariantSourceSeasonYear(candidate.identity.year, candidate.source.season) === null) return aliases;
+    // Both entry directions see the same historical bare/full-season library.
+    // Also preserve a literal key previously written for this submitted alias.
+    aliases.push(variantCodexChoice(candidate, { literalIdentity: true }));
+    if (candidate.source.season.startingYearAlias) aliases.push(variantCodexChoice({ ...candidate,
+      identity: { ...candidate.identity, year: candidate.source.season.year.slice(0, 4) } }, { literalIdentity: true }));
+  } else if (candidate.source.provider === 'manufacturer_checklist' && /^\d{4}-\d{2}$/.test(choice.identity.year ?? '')
+    && candidate.diagnostics.some(d => ['manufacturer-checklist-year','manufacturer-checklist-season'].includes(d.id))) {
+    aliases.push(variantCodexChoice({...candidate, identity: {...candidate.identity,year:choice.identity.year.slice(0,4)}},{literalIdentity:true}));
+  }
+  return [...new Map(aliases.map(alias => [alias.key, alias])).values()];
 }
 export const codexLibraryKey = choice => `atlas-codex-library:v1:${choice.key}`;
 export const codexPhotoPoolKey = choice => `atlas-codex-photo-pool:v1:${choice.cardKey}`;
@@ -69,7 +104,7 @@ export function codexCatalogContext(catalog, options) {
       identityYearMeaning: scrydex ? 'BASE_EXPANSION_RELEASE_YEAR' : 'CATALOG_IDENTITY_YEAR',
       printingOrigin: origin, diagnostics: candidate.diagnostics,
       source: { provider: candidate.source.provider, recordId: candidate.source.recordId,
-        url: candidate.source.url, sha256: candidate.source.sha256 } };
+        url: candidate.source.url, sha256: candidate.source.sha256, ...(candidate.source.release ? { release: candidate.source.release } : {}) } };
   }).sort((a,b)=>a.candidateKey.localeCompare(b.candidateKey));
 }
 /** A card's acquired photo pool includes unmatched evidence. Pool membership
@@ -102,7 +137,7 @@ export function validateVariantReferenceLabels(value,catalog) {
   for (const r of value.readings) {
     const image=catalog.referencePhotos?.find(i=>i.sha256===r.sha256 && i.imageId===r.imageId);
     const candidate=catalog.candidates.find(c=>c.candidateId===r.candidateId);
-    const accepted = candidate ? [variantCodexChoice(candidate),variantCodexChoice(candidate,{literalIdentity:true})]
+    const accepted = candidate ? variantCodexAliases(candidate)
       .find(choice=>choice.key===r.canonicalPrintingKey&&choice.cardKey===r.canonicalCardKey) : null;
     requireThat(image && (r.candidateId===null || candidate && accepted)
       && (r.candidateId===null ? r.canonicalPrintingKey===null && r.canonicalCardKey===null
@@ -129,8 +164,14 @@ export function reassociateCodexReading(reading, catalog, previousChoices = [], 
   if (reading.candidateKey && choices.some(c=>c.key===reading.candidateKey)) return reading;
   if (reading.candidateKey) {
     const previous = previousChoices.find(c=>c.key===reading.candidateKey);
-    const equivalent = catalog.candidates.filter(c=>variantCodexAliases(c).some(alias=>alias.key===previous?.key));
-    if (equivalent.length === 1) return {...reading,candidateKey:variantCodexChoice(equivalent[0]).key};
+    const priorSources = previousContext.filter(context=>context.candidateKey===reading.candidateKey).map(context=>context.source);
+    const sourceMatches = candidate => priorSources.length > 0 && priorSources.every(source => source
+      && ['provider','recordId','url','sha256'].every(field=>source[field]===candidate.source[field]));
+    const equivalent = catalog.candidates.filter(c=>c.source.release
+      ? previous && ['category','name','cardNumber','language'].every(field=>variantCodexChoice(c).identity[field]===previous.identity[field]) && sourceMatches(c)
+      : variantCodexAliases(c).some(alias=>alias.key===previous?.key));
+    const keys = new Set(equivalent.map(c=>variantCodexChoice(c).key));
+    if (keys.size === 1) return {...reading,candidateKey:[...keys][0]};
   }
   if (!reading.labelText) return {...reading,candidateKey:null};
   const text = ` ${labelWords(reading.labelText)} `;
@@ -151,7 +192,14 @@ export function reassociateCodexReading(reading, catalog, previousChoices = [], 
     const numberMatch = number[0] && contains(number[0]) && !printedNumbers.some(m=>labelWords(m[1])===number[0] && number[1] && labelWords(m[2])!==number[1]);
     const allowedYears = [identity.year?.slice(0,4),...originYears];
     const languageConflict = Object.entries(labelLanguages).some(([code,name])=>code!==identity.language && (contains(name)||contains(code==='ja'?'JP':code==='en'?'EN':null)));
-    const setMatch = String(identity.setName??'').split(/\s+[—–]\s+/u).every(contains) || originMatch;
+    const release = context?.source.release;
+    const releaseProduct = release?.setName.replace(/^(?:\d{4}(?:[-\u2010-\u2015/]\d{2,4})?)\s+/, '')
+      .replace(/\s+(?:baseball|basketball|football|hockey|golf)$/i, '');
+    // A contextless historical match cannot inherit an unsafe old sport or
+    // product association. Literal text must establish the retained release.
+    const setMatch = release ? contains(releaseProduct) && contains(release.manufacturer)
+      && release.sports.some(contains) && years.includes(release.year.slice(0,4))
+      : String(identity.setName??'').split(/\s+[—–]\s+/u).every(contains) || originMatch;
     // A broad Holo token must never consume explicitly different finishes.
     const extraFinish = parallel==='holo' && /\b(?:reverse|cosmos|non) holo\b/.test(finish)
       || parallel==='cosmos holo' && /\breverse cosmos holo\b/.test(finish);

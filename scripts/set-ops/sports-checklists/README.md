@@ -1,10 +1,18 @@
 # Official sports checklist acquisition
 
 This is the offline acquisition adapter for the existing `card-catalog-evidence`
-variant provider and SetOps card CSV contract. It does not create another online
-catalog service or publish authoritative card printings. The requested scope is
-baseball, basketball and football, 1990 through October 10, 2026. **Coverage is
-partial**, including within the years present. There is no complete 1990 archive.
+variant provider and SetOps card CSV contract. It does not publish authoritative
+card printings. Current acquisition priorities are actual Fleer releases from
+1980 onward, basketball first, and actual releases from all other sports-card
+manufacturers from 1990 onward. Existing older evidence is preserved. The reader
+currently supports baseball, basketball, football, hockey and golf; other source
+sports remain explicit inventory gaps. **Coverage is partial.**
+
+The October 13 expansion candidate contains **1,845 sources / 7,437,588 evidence
+rows**, including every row from the 624-source baseline. Evidence rows are not a
+count of unique physical printings. See [RETAINED_IMPORT.md](RETAINED_IMPORT.md)
+for verified additive reproduction, source authority, limitations and release
+qualification. Candidate/import state does not establish deployment.
 
 ## Storage and serving
 
@@ -17,17 +25,20 @@ sheet/row locator. A plain CSV export uses existing SetOps fields (`set_id`,
 `card_number`, `player_name`, `team`, `subset`, `rookie`, `source_url`) plus
 provenance columns. This export is review material, not an automatic publication.
 
-Production reads only
-`packages/card-catalog-evidence/data/manufacturer-checklists.json.gz`. The
-adjacent manifest records its hash, compressed/decoded size and row count; the
-coverage JSON records actual source states and gaps. The gzip contains a source
-table, an interned string dictionary and compact row tuples. It is loaded lazily
-once per provider instance on the first complete SPORTS identity. Pokémon and
-incomplete identities do not load it. No network or paid provider call occurs.
+The current candidate reader requires
+`packages/card-catalog-evidence/data/manufacturer-checklists.index.json` and its
+referenced content-addressed product shards, plus the parallel-family and
+product-alias JSON files. It verifies compressed/decoded hashes and exact source
+bindings, loads shards serially and retains two per provider instance. The old
+monolith remains baseline reproduction evidence and is excluded from the serving
+package; it is not an absent-index fallback. The adjacent manifest and coverage
+JSON record candidate counts, authority, source states and remaining gaps.
+Pokémon and incomplete identities do not load the sports catalog. No network or
+paid provider call occurs in checklist lookup.
 
-`createManufacturerChecklistVariantProvider({ catalog, loadCatalog, limit })`
-returns `prepare(identity)`. Factory defaults read the bundled catalog with a
-48-choice bound. Athlete, product, manufacturer, year and card number must match.
+`createManufacturerChecklistVariantProvider({ catalog, loadCatalog, loadShard })`
+returns `prepare(identity)`. All matching evidence is considered without an
+arbitrary candidate-count cutoff. Athlete, product, manufacturer, year and card number must match.
 Only explicit manufacturer brand aliases are accepted. A composite sports name
 such as `Topps Chrome — Ball of Duty` must match both the parent product and
 the literal subset or a boundary-prefixed parallel. A bare starting year can
@@ -41,7 +52,11 @@ remain literal printing/subset evidence. Results always remain
 membership is not physical identification or human approval. SoldComps can attach
 photos to each named choice through the existing review composition.
 
-## Official archive limits
+## Retained October 10 archive observations
+
+The following describes the earlier acquisition snapshot, not the expanded
+candidate totals or current deployed coverage. New retained-import counts and
+source states are recorded in `RETAINED_IMPORT.md` and the coverage inventory.
 
 - [Topps](https://www.topps.com/pages/checklists) explicitly says products before
   2018 have no available checklists. The entire current link index was retained;
@@ -50,7 +65,7 @@ photos to each named choice through the existing review composition.
 - [Panini](https://www.paniniamerica.net/checklist.html) is a dependent UI archive.
   Visible year options: football 2004–2025; basketball 2009–2026; baseball
   2004–2005 and 2008–2026. These are index options, **not downloaded coverage**.
-  This bounded snapshot retains seven complete official UI CSV exports: 2024
+  The earlier baseline retained seven complete official UI CSV exports: 2024
   football Prizm and Donruss Optic; 2025 football Donruss Optic; 2024–25 basketball Prizm, Select and Mosaic;
   2025 baseball Prizm. Remaining years/programs need resumable acquisition. The 2025 Optic export
   lists Jaxson Dart Donruss Threads variants under official card number `3`;
@@ -73,7 +88,12 @@ photos to each named choice through the existing review composition.
   checklists include Pro Set/Press Pass brands. Brand presence is not evidence
   of complete ownership-era or historical coverage.
 
-## Reproduce or resume
+## Original acquisition commands
+
+These commands document the original offline acquisition paths. Use
+`export_retained_catalog.py` as described in `RETAINED_IMPORT.md` to construct the
+reviewed additive deployment candidate; do not overwrite the baseline monolith
+or substitute an old export for the active index.
 
 Use Python 3 with `pdfplumber` and `openpyxl` for source parsing. All source reads
 are bounded to 30 MiB; network concurrency is three. HTTP access failures are
