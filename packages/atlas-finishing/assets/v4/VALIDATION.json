@@ -1,0 +1,39 @@
+{
+  "size_mm": [
+    68.342,
+    20.082
+  ],
+  "physical_cutouts_unchanged": true,
+  "labels": {
+    "Sports": {
+      "pixels": [
+        6458,
+        1898
+      ],
+      "alpha_binary": true,
+      "white_mask_equals_print_alpha": true,
+      "CMYK_mask_equals_print_alpha": true,
+      "all_10_cutout_interiors_clear": true,
+      "white_text_clear_of_foil_and_cuts": true,
+      "vector_only": true
+    },
+    "Pokemon": {
+      "pixels": [
+        6458,
+        1898
+      ],
+      "alpha_binary": true,
+      "white_mask_equals_print_alpha": true,
+      "CMYK_mask_equals_print_alpha": true,
+      "all_10_cutout_interiors_clear": true,
+      "white_text_clear_of_foil_and_cuts": true,
+      "vector_only": true
+    }
+  },
+  "test_strip_size_mm": [
+    68.342,
+    16
+  ],
+  "source_DXF_sha256": "e97c32a6aa34ac71c56f944eef3b4e47818ceaf4a08dc92a0880d09a4ab02890",
+  "scope": "Digital checks only; this revision needs a physical test on the same foil."
+}

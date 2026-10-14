@@ -7,7 +7,7 @@ const repo = resolve(app, '../..');
 const pages = JSON.parse(readFileSync(resolve(app, '.next/server/pages-manifest.json'), 'utf8'));
 const routes = JSON.parse(readFileSync(resolve(app, '.next/routes-manifest.json'), 'utf8'));
 assert.equal(routes.basePath, '/admin', 'Staff artifact must mount only at /admin');
-assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/staff/[...path]', '/grading', '/add-cards', '/manual', '/manual/[cardId]', '/batch', '/station', '/customer-operations'].sort());
+assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/staff/[...path]', '/grading', '/add-cards', '/manual', '/manual/[cardId]', '/batch', '/labels', '/station', '/customer-operations'].sort());
 function files(dir) { return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(resolve(dir, entry.name)) : [resolve(dir, entry.name)]); }
 const forbidden = /@tenkings\/|requireAdminSession|buildAdminHeaders|QueenWidget|ATLAS_ADMIN_PHONES|AC_SYNTHETIC_ATLAS|VA_SYNTHETIC_ATLAS|__(?:Host|Secure)-atlas_staff/;
 const chunks = files(resolve(app, '.next/static')).filter(p => p.endsWith('.js'));
@@ -34,7 +34,7 @@ for (const trace of traces) {
         const sharedCamera = ['frontend/atlas-shared/RapidCardCamera.jsx', 'frontend/atlas-shared/RapidCardCamera.module.css', 'frontend/atlas-shared/rapid-camera.mjs'].includes(rel);
         const browserReportTour = /^packages\/atlas-manual-workspace\/dist\/ApprovedReportTourDialog-[A-Z0-9]{8}\.js$/.test(rel);
         assert.ok(manualResponseLink || manualPackage || sharedCamera || browserReportTour || rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json' || rel === 'packages/atlas-grading-core/package.json' || rel.startsWith('packages/atlas-grading-core/dist/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-service-bridge/')
-            || rel.startsWith('packages/atlas-site-router/') || rel === 'packages/atlas-finishing/package.json' || rel === 'packages/atlas-finishing/src/nfc.mjs' || rel === 'packages/atlas-finishing/browser.mjs', `Non-app server dependency: ${rel}`);
+            || rel.startsWith('packages/atlas-site-router/') || rel === 'packages/atlas-finishing/package.json' || rel === 'packages/atlas-finishing/src/nfc.mjs' || rel === 'packages/atlas-finishing/src/label-sheet-geometry.mjs' || rel === 'packages/atlas-finishing/browser.mjs', `Non-app server dependency: ${rel}`);
         assert.ok(!/@tenkings[+/]|stripe|mux-player|(?:^|\/)aws-sdk@|ai-grader-capture-helper/i.test(rel)
             && (!/twilio/i.test(rel) || rel === 'frontend/atlas-app/lib/server/access/twilio.mjs'), `Forbidden effect dependency: ${rel}`);
         if (/prisma/i.test(rel)) assert.ok(rel === 'frontend/atlas-app/prisma/schema.prisma' || rel.startsWith('frontend/atlas-app/.generated/staff-database/')

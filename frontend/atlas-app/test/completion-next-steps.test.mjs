@@ -62,3 +62,12 @@ test('provider access alone does not claim approval-triggered searches are enabl
   const tree = render({ marketAvailable: true, marketAutomatic: false, onToggleMarket() {} });
   assert.match(text(tree), /Search on request/); assert.doesNotMatch(text(tree), /Automatic after approval|fetched and saved automatically/);
 });
+
+
+test('published card links to actual label sheets and preserves its explicit legacy station action', () => {
+  const tree = render({ cardId: 'published-card', labelState: 'READY', onToggleLabel() {} });
+  assert.ok(all(tree, node => node.type === 'a' && node.props.href === '/labels?cardId=published-card').length);
+  assert.ok(all(tree, node => node.type === 'a' && node.props.href === '/station').length);
+  assert.ok(all(tree, node => node.type === 'button' && text(node) === 'Open legacy label & station').length);
+  assert.match(text(tree), /Check saved sheet status/); assert.doesNotMatch(text(tree), /Label printed|NFC verified/);
+});

@@ -1,0 +1,148 @@
+[
+  {
+    "name": "KOBE BRYANT",
+    "status": "PASS",
+    "lines": [
+      "KOBE",
+      "BRYANT"
+    ],
+    "cap_height_mm": 3.6,
+    "widths_mm": [
+      14.599366110028821,
+      22.78783630371094
+    ]
+  },
+  {
+    "name": "ALAKAZAM",
+    "status": "PASS",
+    "lines": [
+      "ALAKAZAM"
+    ],
+    "cap_height_mm": 3.21303,
+    "widths_mm": [
+      28.5
+    ]
+  },
+  {
+    "name": "MICHAEL JORDAN",
+    "status": "PASS",
+    "lines": [
+      "MICHAEL",
+      "JORDAN"
+    ],
+    "cap_height_mm": 3.6,
+    "widths_mm": [
+      23.984573981906493,
+      22.47970709796648
+    ]
+  },
+  {
+    "name": "LEBRON JAMES",
+    "status": "PASS",
+    "lines": [
+      "LEBRON",
+      "JAMES"
+    ],
+    "cap_height_mm": 3.6,
+    "widths_mm": [
+      21.377418305668236,
+      18.077470594710718
+    ]
+  },
+  {
+    "name": "SHAQUILLE O\u2019NEAL",
+    "status": "PASS",
+    "lines": [
+      "SHAQUILLE",
+      "O\u2019NEAL"
+    ],
+    "cap_height_mm": 3.6,
+    "widths_mm": [
+      24.62878506397638,
+      18.821076185783316
+    ]
+  },
+  {
+    "name": "SHOHEI OHTANI",
+    "status": "PASS",
+    "lines": [
+      "SHOHEI",
+      "OHTANI"
+    ],
+    "cap_height_mm": 3.6,
+    "widths_mm": [
+      20.00013468389731,
+      20.560425034025403
+    ]
+  },
+  {
+    "name": "VICTOR WEMBANYAMA",
+    "status": "REVIEW",
+    "reason": "Cannot fit at 2.8 mm minimum with the approved typeface; do not auto-condense or truncate.",
+    "fitted_cap_height_mm": 2.347,
+    "lines": [
+      "VICTOR",
+      "WEMBANYAMA"
+    ]
+  },
+  {
+    "name": "GIANNIS ANTETOKOUNMPO",
+    "status": "REVIEW",
+    "reason": "Cannot fit at 2.8 mm minimum with the approved typeface; do not auto-condense or truncate.",
+    "fitted_cap_height_mm": 2.05,
+    "lines": [
+      "GIANNIS",
+      "ANTETOKOUNMPO"
+    ]
+  },
+  {
+    "name": "CHARIZARD",
+    "status": "PASS",
+    "lines": [
+      "CHARIZARD"
+    ],
+    "cap_height_mm": 3.234886,
+    "widths_mm": [
+      28.5
+    ]
+  },
+  {
+    "name": "DARK CHARIZARD",
+    "status": "PASS",
+    "lines": [
+      "DARK",
+      "CHARIZARD"
+    ],
+    "cap_height_mm": 3.234886,
+    "widths_mm": [
+      14.371988419375597,
+      28.5
+    ]
+  },
+  {
+    "name": "PIKACHU VMAX",
+    "status": "PASS",
+    "lines": [
+      "PIKACHU",
+      "VMAX"
+    ],
+    "cap_height_mm": 3.6,
+    "widths_mm": [
+      24.008706751040776,
+      17.151748744419642
+    ]
+  },
+  {
+    "name": "ROARING MOON EX",
+    "status": "PASS",
+    "lines": [
+      "ROARING",
+      "MOON EX"
+    ],
+    "cap_height_mm": 3.6,
+    "widths_mm": [
+      24.525342255550814,
+      25.2828491106693
+    ]
+  }
+]

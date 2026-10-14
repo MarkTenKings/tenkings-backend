@@ -7,6 +7,7 @@ import { manualRequest, manualMessage } from '../lib/manual-client.mjs';
 import { STAFF_BASE_PATH } from '../lib/routes.mjs';
 import styles from './BatchGrading.module.css';
 import BatchImport from './BatchImport';
+import LabelSheets from './LabelSheets';
 import ManualCards, { ManualWorkspace } from './ManualCards';
 import { MachineReportReview } from '@atlas/manual-workspace/report-review';
 import { usePrefetchVerifiedImages } from '@atlas/manual-workspace/image-cache';
@@ -258,8 +259,8 @@ export default function BatchGrading({ staff }) {
       <header className={styles.heading}><div><p>ATLAS STUDIO</p><h1>Grading queue</h1></div><div className={styles.headingActions}>{staff.role==='REVIEWER'&&<button type="button" className={styles.deleteButton} disabled={busy||!deleteControls||deleteControls.disabled} onClick={()=>void deleteControls.removeAll()}>{deleteControls?.busy?'Deleting cards…':deleteControls?.pending?'Finish saved deletion':'Delete all cards'}</button>}<button type="button" className={styles.add} onClick={() => selectTab('INTAKE')}>+ Add cards</button></div></header>
       {(error || tab!=='INTAKE' && deleteControls?.error) && <p className={styles.error} role="alert">{error || deleteControls.error}</p>}
       <nav className={styles.tabs} aria-label="Grading queues">
-        {[['INTAKE', 'Add cards'], ['PROCESSING', 'Grading'], ['REVIEW', 'Review'], ['APPROVED', 'Label queue']].map(([value, label]) => {
-          const count = value === 'INTAKE' ? null : queueJobs.filter(job => value === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : value === 'REVIEW' ? reviewable(job) : job.state === value).length;
+        {[['INTAKE', 'Add cards'], ['PROCESSING', 'Grading'], ['REVIEW', 'Review'], ['APPROVED', 'Labels']].map(([value, label]) => {
+          const count = ['INTAKE', 'APPROVED'].includes(value) ? null : queueJobs.filter(job => value === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : value === 'REVIEW' ? reviewable(job) : job.state === value).length;
           return <button key={value} disabled={busy} aria-current={tab === value ? 'page' : undefined} onClick={() => selectTab(value)}>{label}{count !== null && <span>{count}</span>}</button>;
         })}
       </nav>
@@ -268,7 +269,8 @@ export default function BatchGrading({ staff }) {
       <section className={styles.intake} hidden={tab !== 'INTAKE'}>
         <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} intakeCards={intakeCards} onDiscarded={onDiscarded} onDeleteControls={setDeleteControls} onOpenCard={cardId=>open(queueJobs.find(job=>job.cardId===cardId)??{cardId,key:`intake:${cardId}`,state:'NEEDS_ATTENTION',intakeOnly:true})}/>
       </section>
-      {tab !== 'INTAKE' && <div className={`${styles.review} ${!queueExpanded ? styles.compactQueue : ''}`}>
+      {tab === 'APPROVED' && <LabelSheets staff={staff} embedded/>}
+      {tab !== 'INTAKE' && tab !== 'APPROVED' && <div className={`${styles.review} ${!queueExpanded ? styles.compactQueue : ''}`}>
         <aside className={styles.rail} aria-label="Cards"><button className={styles.queueToggle} type="button" aria-expanded={queueExpanded} aria-label={queueExpanded ? 'Collapse card queue' : 'Expand card queue'} onClick={() => setQueueExpanded(value => !value)}>{queueExpanded ? '← Cards' : '☰'}<small>{shown.length}</small></button>{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-label={`${job.evidence?.name || job.label || 'Card'} · ${status[job.state]}${job.evidence?.proposedGrade != null ? ` · ${job.evidence.proposedGrade}` : ''}`} title={job.evidence?.name || job.label || 'Card'} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><QueuePhoto job={job} eager={focused?.key === job.key} readPreview={readPreview}/><span className={styles.cardLabel}><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>
         {focused?.state === 'REVIEW' ? <section className={styles.machineReview} aria-label="Review proposed grade">
           {reviewError && <div className={styles.error} role="alert"><p>{reviewError}</p>

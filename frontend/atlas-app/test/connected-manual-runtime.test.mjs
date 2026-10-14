@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateLearningRuntimeConfiguration,validateMarketRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
+import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateLearningRuntimeConfiguration,validateMarketRuntimeConfiguration,manualLabelSheetsEnabled,validateLabelRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
 
 test('report images prefer their dedicated private key without changing shared provider configuration',()=>{
  const shared='fixture-shared-not-a-real-key',dedicated='fixture-image-not-a-real-key';
@@ -83,4 +83,16 @@ test('automatic market startup is cold when disabled and refuses absent queue or
  await validateMarketRuntimeConfiguration({marketAutomaticEnabled:true,client});assert.equal(calls,2);
  await assert.rejects(validateMarketRuntimeConfiguration({marketAutomaticEnabled:true,client:{$queryRawUnsafe:async()=>[{installed:false}]}}),{code:'MARKET_QUEUE_SCHEMA_REQUIRED'});
  await assert.rejects(validateMarketRuntimeConfiguration({marketAutomaticEnabled:true,client:{$queryRawUnsafe:async sql=>sql.includes('to_regclass')?[{installed:true}]:[{allowed:false}]}}),{code:'MARKET_QUEUE_GRANTS_REQUIRED'});
+});
+
+
+test('label sheets stay cold in disabled and variant runtimes and require additive schema and narrow grants',async()=>{
+ assert.equal(manualLabelSheetsEnabled({}),false);
+ assert.equal(manualLabelSheetsEnabled({ATLAS_MANUAL_LABEL_SHEETS_ENABLED:'true'}),true);
+ assert.equal(manualLabelSheetsEnabled({ATLAS_MANUAL_LABEL_SHEETS_ENABLED:'true',ATLAS_VARIANT_WORKER_ENABLED:'true'}),false);
+ let calls=0;const client={$queryRawUnsafe:async sql=>{calls++;return sql.includes('to_regclass')?[{installed:true}]:[{allowed:true}];}};
+ await validateLabelRuntimeConfiguration({enabled:false,client});assert.equal(calls,0);
+ await validateLabelRuntimeConfiguration({enabled:true,client});assert.equal(calls,5);
+ await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async()=>[{installed:false}]}}),{code:'LABEL_SCHEMA_REQUIRED'});
+ await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async sql=>sql.includes('to_regclass')?[{installed:true}]:[{allowed:false}]}}),{code:'LABEL_GRANTS_REQUIRED'});
 });

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import styles from './CompletionNextSteps.module.css';
 
 /** Presentation only. Opening a tool does not print, encode or buy a search. */
-export default function CompletionNextSteps({ published = false, reportHref, labelState = 'IDLE',
+export default function CompletionNextSteps({ published = false, reportHref, cardId, labelState = 'IDLE',
   labelOpen = false, onToggleLabel, marketAvailable = false, marketAutomatic = false, marketOpen = false, onToggleMarket, disabled = false }) {
   if (!published) return <section className={styles.panel} aria-label="Next steps after approval">
     <h2>Approval saved</h2><p>Publish the report to open its label, NFC finishing and sold comps.</p>
@@ -13,8 +13,8 @@ export default function CompletionNextSteps({ published = false, reportHref, lab
     <div className={styles.heading}><h2>Next steps</h2><p>Your report is approved. Physical finishing is separate.</p></div>
     <div className={styles.grid}>
       <article className={styles.action}><span className={styles.number} aria-hidden="true">01</span><h3>Print the label</h3>
-        <p className={styles.status}>{labelStatus}</p><p>Open the approved label, then print or use your selected station.</p>
-        <button type="button" disabled={disabled || !onToggleLabel} aria-expanded={labelOpen} onClick={onToggleLabel}>{labelOpen ? 'Hide label' : labelState === 'FAILED' ? 'Review label issue' : 'Open label & print'}</button>
+        {cardId ? <><p className={styles.status}>Check saved sheet status</p><p>Open the V4 label sheet, download its print file, and record physical printing separately.</p><Link href={`/labels?cardId=${encodeURIComponent(cardId)}`}>Open label sheets <span aria-hidden="true">↗</span></Link></> : <><p className={styles.status}>{labelStatus}</p><p>Open the approved label, then print or use your selected station.</p></>}
+        <button type="button" disabled={disabled || !onToggleLabel} aria-expanded={labelOpen} onClick={onToggleLabel}>{labelOpen ? 'Hide label' : cardId ? 'Open legacy label & station' : labelState === 'FAILED' ? 'Review label issue' : 'Open label & print'}</button>
       </article>
       <article className={styles.action}><span className={styles.number} aria-hidden="true">02</span><h3>Encode the NFC tag</h3>
         <p className={styles.status}>Check station setup</p><p>Encoding needs an enrolled Mac station and a qualified tag profile. Check setup or a saved operation.</p>

@@ -759,6 +759,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 3.914.0
         version: 3.914.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: 3.982.0
+        version: 3.982.0
       '@tenkings/card-catalog-evidence':
         specifier: workspace:*
         version: link:../card-catalog-evidence
@@ -815,12 +818,18 @@ importers:
 
   packages/atlas-finishing:
     dependencies:
+      fontkit:
+        specifier: 2.0.4
+        version: 2.0.4
       pdfkit:
         specifier: 0.17.2
         version: 0.17.2
       qrcode:
         specifier: 1.5.4
         version: 1.5.4
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
       svg-to-pdfkit:
         specifier: 0.1.8
         version: 0.1.8

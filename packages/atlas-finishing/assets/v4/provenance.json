@@ -1,0 +1,30 @@
+{
+  "version": "atlas-v4-assets-v1",
+  "fontSource": "https://github.com/google/fonts",
+  "fontPins": {
+    "Montserrat-variable.ttf": {
+      "url": "https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/montserrat/Montserrat%5Bwght%5D.ttf",
+      "version": "9.000",
+      "weight": 900
+    },
+    "RobotoCondensed-variable.ttf": {
+      "url": "https://raw.githubusercontent.com/google/fonts/69d0549e8fc7ad72e1531734c81237be401ec4fd/ofl/robotocondensed/RobotoCondensed%5Bwght%5D.ttf",
+      "version": "3.008",
+      "weight": 700
+    }
+  },
+  "specimenProvenance": "Owner-supplied ATLAS_V4_Print_Test_Package; original V4 generator not present. Static vectors extracted unchanged, dynamic glyphs rebuilt from matching pinned font outlines.",
+  "files": {
+    "DESIGN_SPEC.json": "3721254c495b6545b12f6765f5bc193a682909b04155af64121b788be2d29574",
+    "NAME_LAYOUT_EXAMPLES.json": "4b74beb20c44ff11938a5d3f25a45d1661130de6690ea53ee7bc7f8343840119",
+    "START_HERE.txt": "6636ed80cdf965e3f33ed6307ca9b560ecf2d27d6dee290606823f16aacf695f",
+    "VALIDATION.json": "35cd183d9619c2ec8409ce3e3ac7132c6add7662b66834dec5270c45ca8f451d",
+    "fonts/Montserrat-OFL.txt": "8b7141c03fa4f8d44e6345d5d4931709290f0f67875e452e95ac1fd3a027802e",
+    "fonts/Montserrat-variable.ttf": "0f7b311b2f3279e4eef9b2f968bcdbab6e28f4daeb1f049f4f278a902bcd82f7",
+    "fonts/RobotoCondensed-OFL.txt": "0e4cc6ece88573545be2ed25835363662a6182ba4a4c1b5c8feda52add30e8a6",
+    "fonts/RobotoCondensed-variable.ttf": "dace262afcee68a5276f200d8026c57221735c0118ab5fda8c2c0d3dc409a8d0",
+    "pokemon-specimen.svg": "d8123e0200e3899cc8e4b3762f06706f198bd4a02498d64721061aa1651bab46",
+    "sports-specimen.svg": "473b93687b3c11e4a198ad56a45422b670765c4caa650fb0383fb19e753d734f",
+    "vector-parts.json": "1763d930fa92b6c27d28b31d24ca60113173435c83a90b8d4d7925d3577a3ffd"
+  }
+}

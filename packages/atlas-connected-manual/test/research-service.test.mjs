@@ -8,7 +8,7 @@ test('actual research core, acknowledged providers and current market selection 
  const f=await researchFixture(),before=JSON.stringify(f.source.packet),input=f.command();
  const result=await f.service.preview(f.staff,f.cardId,input);
  assert.equal(result.state,'READY');assert.equal(result.preview.candidates.length,1);
- assert.equal(result.preview.candidates[0].sale.grade,'9');assert.equal(result.preview.atlasGrade,10);
+ assert.equal(result.preview.candidates[0].sale.grade,'9');assert.equal(result.preview.atlasGrade,f.source.packet.report.finalGrade);
  assert(!result.preview.query.includes('PSA'));assert.equal(result.research.candidates[0].conditionDecision.classification,'rejected');
  assert.equal(result.research.candidates[0].identityMatch,true);assert.equal(result.research.candidates[0].imageCompared,true);
  assert.equal('catalog' in result.research,false);assert.equal('knowledge' in result.research,false);assert.equal('estimate' in result.research,false);

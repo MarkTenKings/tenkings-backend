@@ -10,6 +10,11 @@
       "version": "atlas-standalone-003-report-image-retry",
       "file": "sql/003-report-image-retry.sql",
       "sqlSha256": "550d947fb3dc00cd56358896a755f3e2825b48fe37b7fa3124e86f90e2cfa586"
+    },
+    {
+      "version": "atlas-standalone-004-label-sheets",
+      "file": "sql/004-label-sheets.sql",
+      "sqlSha256": "7f8bd1c94defc85ad6c8b97256745297acc740c532a16912b73dd5785d1e066a"
     }
   ]
 }

@@ -20,8 +20,13 @@ export const MANUFACTURER_CATALOG_SOURCES=Object.freeze([
   'packages/card-catalog-evidence/data/manufacturer-parallel-families.json',
   'packages/card-catalog-evidence/data/manufacturer-product-aliases.json',
 ]);
+export const LABEL_V4_SOURCES=Object.freeze([
+  ...['provenance.json','vector-parts.json','sports-specimen.svg','pokemon-specimen.svg','DESIGN_SPEC.json','NAME_LAYOUT_EXAMPLES.json','START_HERE.txt','VALIDATION.json',
+    'fonts/Montserrat-variable.ttf','fonts/RobotoCondensed-variable.ttf','fonts/Montserrat-OFL.txt','fonts/RobotoCondensed-OFL.txt'].map(name=>'packages/atlas-finishing/assets/v4/'+name),
+  ...['atlas-label-jig-v1.json','ATLAS_50_LABEL_JIG_NOMINAL_MM.dxf','Atlas_Noir_II_SINGLE_CUT_UNCHANGED.dxf'].map(name=>'packages/atlas-finishing/assets/jigs/'+name),
+]);
 const required=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json',
-  ...MANUFACTURER_CATALOG_SOURCES,
+  ...MANUFACTURER_CATALOG_SOURCES,...LABEL_V4_SOURCES,
   'frontend/atlas-shared/RapidCardCamera.jsx','frontend/atlas-shared/RapidCardCamera.module.css','frontend/atlas-shared/rapid-camera.mjs',
   'frontend/atlas-app/next.config.mjs','frontend/atlas-app/.eslintrc.json','frontend/atlas-app/prisma/schema.prisma',
   'packages/atlas-site-router/routes.mjs','packages/atlas-site-router/proof.mjs','packages/atlas-site-router/server.mjs',

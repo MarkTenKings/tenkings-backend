@@ -72,6 +72,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       if (name === 'next/router') return { useRouter: () => router };
       if (name === './ManualCards') return {__esModule:true,default:'ManualCards',ManualWorkspace:'ManualWorkspace'};
       if (name === './BatchImport') return BatchImport;
+      if (name === './LabelSheets') return 'LabelSheets';
       if (['next/link', './Shell'].includes(name)) return () => null;
       if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
       if (name.endsWith('/manual-client.mjs')) return { manualRequest: request, manualMessage: failure => failure.code ?? 'Label unavailable.' };
@@ -192,15 +193,14 @@ test('old scoring policy explains the approval block and opens the bound final r
 });
 
 
-test('label queue opens the same focused review dialog as every other card',async()=>{
-  const f=await fixture();f.jobs=[{...f.jobs[0],state:'APPROVED'}];
-  f.find(node=>node.type==='button'&&/^Label queue/.test(text(node)))[0].props.onClick();await f.flush();
-  // Refresh the fixture through a staff generation to provide the updated queue.
-  f.switchStaff('next-reviewer');await f.flush();
-  assert.equal(f.find(node=>node.type==='ManualWorkspace').length,0);
-  f.find(node=>node.type==='button'&&/^Review card/.test(text(node)))[0].props.onClick();await f.flush();
-  const dialog=f.find(node=>node.type?.name==='RapidReviewDialog')[0];assert.ok(dialog);assert.equal(dialog.props.job.cardId,f.packet.cardId);
-  assert.doesNotMatch(f.text(),/Open label & finishing/);assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);f.dispose();
+test('label queue opens saved sheets without reopening a grade or dispatching finishing', async () => {
+  const f = await fixture();
+  f.find(node => node.type === 'button' && /^Labels/.test(text(node)))[0].props.onClick(); await f.flush();
+  const sheets = f.find(node => node.type === 'LabelSheets')[0];
+  assert.ok(sheets); assert.equal(sheets.props.embedded, true);
+  assert.equal(f.find(node => node.type === 'ManualWorkspace' || node.type?.name === 'RapidReviewDialog').length, 0);
+  assert.equal(f.importer().length, 1);
+  assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false); f.dispose();
 });
 
  test('failed rapid entry exposes retry for the same card and intent without losing the report', async () => {

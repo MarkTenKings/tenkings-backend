@@ -37,7 +37,7 @@ export function approvedPublicationSource(row) {
   503, 'MANUAL_PUBLICATION_CORRUPT');
   return { approval, draft };
 }
-export function createPublicationRepository({ boundary, validateAccess = null }) {
+export function createPublicationRepository({ boundary, validateAccess = null, publicationCommitted = null }) {
   async function card(tx, principal, cardId, write) {
     const [row] = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.card WHERE id=$1::uuid FOR SHARE', cardId);
     access(row, principal, write);
@@ -74,13 +74,18 @@ export function createPublicationRepository({ boundary, validateAccess = null })
         const [row] = await tx.$queryRawUnsafe(`${rowSQL} WHERE p.card_id=$1::uuid AND p.action_id=$2::uuid FOR UPDATE OF p`, before.card_id, before.action_id);
         requireThat(row && row.report_hash === before.report_hash && row.source_hash === before.source_hash, 409, 'MANUAL_PUBLICATION_CHANGED');
         if (row.state === 'PUBLISHED') {
-          requireThat(row.manifest_hash === hash, 409, 'MANUAL_PUBLICATION_CONFLICT'); return publicationStatus(row);
+          requireThat(row.manifest_hash === hash, 409, 'MANUAL_PUBLICATION_CONFLICT');
+          // Reconcile the same source-bound intent on an exact publication
+          // retry. The hook is database-only and idempotent.
+          if (publicationCommitted) await publicationCommitted({ tx, principal, cardId: row.card_id, actionId: row.action_id });
+          return publicationStatus(row);
         }
         requireThat(row.state === 'PENDING' && manifest.packet.ref.sha256 === manifest.publicHash, 409, 'MANUAL_PUBLICATION_INVALID');
         const updated = await tx.$executeRawUnsafe(`UPDATE atlas_manual.publication SET state='PUBLISHED',manifest=$1,manifest_hash=$2,public_hash=$3,published_at=clock_timestamp()
           WHERE card_id=$4::uuid AND action_id=$5::uuid AND state='PENDING'`, document, hash, manifest.publicHash, before.card_id, before.action_id);
         requireThat(updated === 1, 409, 'MANUAL_PUBLICATION_CHANGED');
         const current = await refresh(); await card(tx, current.principal, before.card_id, true);
+        if (publicationCommitted) await publicationCommitted({ tx, principal: current.principal, cardId: row.card_id, actionId: row.action_id });
         return publicationStatus({ ...row, state: 'PUBLISHED', public_hash: manifest.publicHash });
       });
     },

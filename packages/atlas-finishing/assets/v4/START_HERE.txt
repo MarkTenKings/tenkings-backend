@@ -1,0 +1,105 @@
+ATLAS V4 — REVISION AFTER THE PHYSICAL PRINT TEST
+
+LABEL: 68.342 mm wide × 20.082 mm high.
+NFC hole: 10.2 mm diameter, original location unchanged.
+All original metal cut contours are unchanged. These files revise the ink only.
+
+CHANGES
+- Grade: new taller numeral outlines, 10.2 mm high (previously 7.56 mm),
+  with 1.622 mm clear to the right edge (previously approximately 1 mm).
+- KOBE / BRYANT: two lines, each 3.6 mm ink height, approximately 39% taller.
+- ALAKAZAM: one line, 3.213 mm ink height, approximately 17% taller.
+- White details: #138 ROOKIE · 1996–97 TOPPS together below the name;
+  1.5 mm total ink height, in Roboto Condensed Bold.
+- Main foil graphics: 0.18–0.25 mm stroke widths. Wider, separated NFC
+  tracks, wave bars, grade brackets, scanner targets, and six foil fingerprint
+  contours. Other fingerprint contours remain subdued printed dark gray.
+- CERT # lettering and the GRADING caption are heavier/larger.
+- Transparent PNG pixels are strictly 0 or 255 alpha, removing partially
+  transparent ink edges from these print exports.
+
+FILES FOR THE SIMPLEST NEXT PRINT
+Sports/ATLAS_Sports_V4_PRINT.png
+Pokemon/ATLAS_Pokemon_V4_PRINT.png
+
+These are complete designs with black/dark-gray graphics and white text.
+The name, logo, grade and foil details are genuinely transparent. No color
+or white ink belongs in those foil openings. Physical holes are transparent.
+WHITE_MASK files are optional image masks for a custom-underbase workflow;
+they are not printer-specific RIP spot channels. Do not print a white rectangle.
+
+All label PNGs are 6458 × 1898 pixels, nominally 2400 ppi at actual size.
+The SVG masters are fully vector and specify the physical size in millimeters.
+Verify BOTH dimensions after import. Use 100% size; do not auto-fit or stretch.
+PREVIEW_ONLY files simulate foil color and are never print artwork.
+
+WHY THE PRINT NEEDS BOTH ARTWORK AND PROCESS CHECKS
+The previous design had foil strokes about 0.035–0.06 mm wide. V4 widens the
+important details. More source pixels alone cannot compensate for ink closing
+those tiny gaps. Several fingerprint contours were dark gray, not foil; V4
+explicitly makes six contours transparent so the foil shows through.
+
+The supplied print photos also show pale edging around foil letters and
+roughness in the black. Possible contributors include white-layer registration,
+ink spread, surface texture/adhesion, and print height or craft settings.
+Photos alone cannot determine the cause. A nozzle fault is not established.
+
+NEXT TEST — USE THE SAME FOIL/SURFACE
+1. Print Test_Strip/ATLAS_V4_LINE_TEST_PRINT.png at 68.342 × 16.000 mm.
+   Use Flat craft mode. Use High Quality for evaluating the small details;
+   omit raised/relief effects and optional gloss for this diagnostic test.
+2. Each column tests one exposed-foil width: 0.06, 0.10, 0.14, 0.18,
+   0.22, 0.26, 0.30 mm. Inspect the straight, diagonal, and curved strokes.
+   Choose a width above the thinnest consistently clean result for production.
+   These are experimental widths, not a claim of the printer's rated minimum.
+3. The lower row tests white lettering at 1.00, 1.25, 1.50, and 1.75 mm
+   overall ink height. V4 uses 1.50 mm for the main card-detail line.
+4. Confirm the foil is flat, firmly fixed, and measured at the actual print
+   surface. Check the color and white layer previews: foil areas must be empty.
+5. Keep a screenshot of Ink Mode, Craft Mode, Quality, white-layer count,
+   and White Underbase Choke along with the test result.
+
+WHITE HALO / SMALL WHITE TEXT
+eufyMake documents a default white-underbase choke of 0.2 mm. Increasing it
+can reduce exposed white edging; however, shrinking the white layer can also
+remove support from fine text. Its guidance suggests considering 0 for very
+fine white text or lines. Do not blindly increase the global value to fix
+one problem and assume the small white text will survive. The current settings
+and the test strip are needed to select a value for this material.
+
+OPTIONAL INK-SEPARATION TEST
+If a white underbase behind the entire black face is causing pale fringes,
+the Separated_Inks folders provide another test path using the SAME design:
+
+  CMYK_ONLY: black face and gray detail; choose CMYK without a white underbase.
+  WHITE_TEXT_ONLY: just the small card-detail text; choose white-only printing.
+
+Align both full canvases to the same size and X/Y origin. White text is an
+overprint on the black face, not a white base under the foil-reveal artwork.
+Verify the layer preview and ink order. If printing separate jobs, keep the
+blank fixed between them. Do not stretch a tightly cropped text bounding box
+to the full label size: the intended canvas is the complete label rectangle.
+This route needs a sample test for white opacity and adhesion. It is optional;
+do not load the combined PRINT and the separated plates on top of each other.
+
+NAME LAYOUT RULE
+Use measured glyph width, not a character-count limit. The name box is
+28.5 mm wide, with 7.65 mm available for one or two lines. Target 3.6 mm
+ink height. Keep a name on one line if it fits; otherwise break at a space
+into two balanced lines and uniformly reduce both lines only as necessary.
+Never stretch horizontally, silently truncate a name, or split an unbroken
+word. Use a 2.8 mm minimum. Extremely long surnames such as ANTETOKOUNMPO
+need an explicit alternate condensed layout and are flagged for review;
+this revision does not silently change the approved headline typeface.
+NAME_LAYOUT_EXAMPLES.json includes common examples and overflow cases.
+
+VERIFICATION
+Digitally checked: exact SVG canvas size, vector-only masters, alpha channel
+consistency, physical-hole interiors clear, separated white lettering clear
+of cuts, and the original cut geometry. V4 has not yet been physically printed.
+
+Official references consulted:
+https://wiki.eufymake.com/en/FAQ/SoftwareSettings-File-Import-Tips
+https://wiki.eufymake.com/en/FAQ/print-quality-faq
+https://support.eufymake.com/s/article/eufyMake-UV-Printer-E1-How-to-correctly-set-White-Underbase-Choke
+https://support.eufymake.com/s/article/eufyMake-UV-Printer-E1-Key-Functions-of-Editor

@@ -45,6 +45,9 @@ import { createFinishingStationRepository } from './finishing-station-repository
 import { createFinishingStationService } from './finishing-station-service.mjs';
 import { createConnectedCardReader } from './card-reader.mjs';
 import { createMachineBatchSnapshot } from './batch-snapshot.mjs';
+import { createLabelRepository } from './label-sheet-repository.mjs';
+import { createLabelService } from './label-sheet-service.mjs';
+import { createLabelWorker } from './label-worker.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -63,7 +66,7 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
   };
 }
 export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketLabeler=null,marketAutomaticEnabled=false,marketConcurrency=2,variantReviewEnabled=false,variantReadReferenceImage=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,orderDesk=null,orderDeskInbox=null,reportImageProvider=null,reportImageConcurrency=2,readOnlyGradingImages=false,
-  processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
+  labelStorage=null,processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null,variantReview=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const autonomous=batchEnabled&&typeof boundary.machineTransaction==='function';
@@ -99,9 +102,19 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient,limited,readGradingPhoto,isCleanPhotoPrepared:reportImages?.isPhotoPrepared});
   const variantJobs=variantReviewEnabled?createVariantJobStore({boundary,intakeRepository}):null;
   const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
-  const publicationRepository=createPublicationRepository({boundary,validateAccess});
+  const validateLabelAccessMany=async({tx,cardIds})=>{
+    const ids=[...new Set(cardIds)]; if(!ids.length)return;
+    const rows=await tx.$queryRawUnsafe('SELECT id FROM atlas_manual_intake.card WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE',ids);
+    requireThat(rows.length===ids.length,404,'INTAKE_CARD_NOT_FOUND');
+    const discarded=await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual_intake.card c JOIN atlas_manual_intake.discarded_card d ON d.owner_id=c.owner_id AND d.create_request_id=c.create_request_id WHERE c.id=ANY($1::uuid[]) LIMIT 1',ids);
+    requireThat(!discarded.length,410,'INTAKE_CARD_DELETED');
+  };
+  const labelRepository=labelStorage?createLabelRepository({boundary,validateAccess,validateAccessMany:validateLabelAccessMany}):null;
+  const publicationRepository=createPublicationRepository({boundary,validateAccess,publicationCommitted:labelRepository?.publicationCommitted});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:readGradingSource,onError:onWorkerError});
   const finishing=createManualFinishing({repository:publicationRepository,artifacts});
+  const labels=labelRepository?createLabelService({boundary,repository:labelRepository,finishing,storage:labelStorage}):null;
+  const labelWorker=labels?createLabelWorker({service:labels,onError:onWorkerError}):null;
   const station=stationConfig?createFinishingStationService({...stationConfig,finishing,repository:createFinishingStationRepository({boundary,validateAccess})}):null;
   const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix,validateAccess}):null;
   const presentation=presentationEnabled?createPresentationService({repository:presentationRepository,storage,processPhoto:photoProcessor,keyPrefix,run:limited}):null;
@@ -196,7 +209,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
     afterApprove: async (staff,cardId,actionId)=>{
       try { return await publication.publish(staff,cardId,actionId); }
-      finally { void marketWorker?.wake(); }
+      finally { void marketWorker?.wake(); void labelWorker?.wake(); }
     },
     measure:input=>limited(()=>measureDefectWorkspaceEdit(input)),
     assertCurrent:({card,staff})=>current(staff,card),
@@ -227,7 +240,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,learningEnabled,provider:defectProvider,receiptClient,onWorkerError});
   variantReview=variantJobs?createVariantReviewService({store:variantJobs,workflow,readReferenceImage:variantReadReferenceImage}):null;
-  const connected={variantReview,variantJobs,dealerOperations,orderDesk,orderDeskInbox,marketWorker,marketJobs,reportImages,retryGradingImage,readGradingPhoto,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  const connected={labels,labelWorker,variantReview,variantJobs,dealerOperations,orderDesk,orderDeskInbox,marketWorker,marketJobs,reportImages,retryGradingImage,readGradingPhoto,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status,savedDetails]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
         details.read(input.staff,input.card.cardId)]);

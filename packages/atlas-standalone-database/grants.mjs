@@ -19,6 +19,7 @@ import { variantWorkerGrantSQL } from '../atlas-connected-manual/src/variant-wor
 import { dealerStaffGrantSQL } from '../atlas-connected-manual/src/dealer-operations.mjs';
 import { orderDeskGrantSQL } from '../atlas-connected-manual/src/order-desk.mjs';
 import { orderDeskInboxGrantSQL } from '../atlas-connected-manual/src/order-desk-inbox.mjs';
+import { labelGrantSQL } from '../atlas-connected-manual/src/label-sheet-repository.mjs';
 import { finishingStationGrantSQL } from '../atlas-connected-manual/src/finishing-station-repository.mjs';
 
 const roleName = value => {
@@ -32,7 +33,7 @@ export function manualRuntimeGrantSQL(role) {
     connectedGrantSQL, analysisGrantSQL, analysisReceiptGrantSQL, defectMemoryGrantSQL,
     learningGrantSQL, batchGrantSQL, publicationGrantSQL, presentationGrantSQL,
     earlyGeometryGrantSQL, reportImageGrantSQL, marketJobGrantSQL, variantJobGrantSQL,
-    dealerStaffGrantSQL, orderDeskGrantSQL, orderDeskInboxGrantSQL, finishingStationGrantSQL]
+    dealerStaffGrantSQL, orderDeskGrantSQL, orderDeskInboxGrantSQL, finishingStationGrantSQL, labelGrantSQL]
     .map(grant => grant(role)).join('\n') + `\nGRANT EXECUTE ON FUNCTION atlas_manual_connected.read_grading_photo(uuid,uuid,text,text) TO \"${role}\";`; 
 }
 

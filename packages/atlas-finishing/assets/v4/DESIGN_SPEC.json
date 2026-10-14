@@ -1,0 +1,67 @@
+{
+  "size_mm": [
+    68.342,
+    20.082
+  ],
+  "grade_ink_height_mm": 10.2,
+  "grade_bbox_mm": [
+    57.25,
+    4.5,
+    66.72,
+    14.7
+  ],
+  "grade_right_clearance_mm": 1.621999999999998,
+  "original_grade_ink_height_mm": 7.5625,
+  "names": {
+    "Sports": {
+      "name": "KOBE BRYANT",
+      "status": "PASS",
+      "lines": [
+        "KOBE",
+        "BRYANT"
+      ],
+      "cap_height_mm": 3.6,
+      "widths_mm": [
+        14.599366110028821,
+        22.78783630371094
+      ]
+    },
+    "Pokemon": {
+      "name": "ALAKAZAM",
+      "status": "PASS",
+      "lines": [
+        "ALAKAZAM"
+      ],
+      "cap_height_mm": 3.21303,
+      "widths_mm": [
+        28.5
+      ]
+    }
+  },
+  "metadata": {
+    "Sports": {
+      "text": "#138 ROOKIE \u00b7 1996\u201397 TOPPS",
+      "ink_height_mm": 1.5,
+      "width_mm": 25.955826565505447,
+      "font": "Roboto Condensed Bold"
+    },
+    "Pokemon": {
+      "text": "#1/102 HOLO \u00b7 1999 POK\u00c9MON",
+      "ink_height_mm": 1.5,
+      "width_mm": 19.51499756137213,
+      "font": "Roboto Condensed Bold"
+    }
+  },
+  "main_foil_detail_width_mm": [
+    0.18,
+    0.25
+  ],
+  "wave_bar_width_and_clear_gap_mm": [
+    0.2,
+    0.2
+  ],
+  "physical_cut_geometry_changed": false,
+  "NFC_diameter_mm": 10.2,
+  "raster_dpi": 2400,
+  "print_png_alpha": "binary 0/255"
+}

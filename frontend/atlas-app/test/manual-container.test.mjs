@@ -6,7 +6,7 @@ import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,MANUFACTURER_CATALOG_SOURCES} from '../scripts/package-manual-container.mjs';
+import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,MANUFACTURER_CATALOG_SOURCES,LABEL_V4_SOURCES} from '../scripts/package-manual-container.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 test('actual clean serving closure contains current workers and camera but no historical data, schema installers or build outputs',async()=>{
@@ -14,6 +14,7 @@ test('actual clean serving closure contains current workers and camera but no hi
  assert(packages.includes('packages/atlas-connected-manual'));assert(!packages.includes('packages/database'));
  assert(!packages.includes('packages/atlas-standalone-database'));
  for(const name of CPU_SOURCES)assert(paths.has('backend/ai-grader-speedster-service/'+name),name);
+ for(const path of LABEL_V4_SOURCES)assert(paths.has(path),path);
  assert.equal(CPU_SOURCES.length,8);assert(paths.has('frontend/atlas-shared/RapidCardCamera.jsx'));
  assert.deepEqual([...paths].filter(path=>path.startsWith('packages/card-catalog-evidence/data/')).sort(),[...MANUFACTURER_CATALOG_SOURCES].sort());
  for(const path of paths)assert(!/(?:^|\/)(?:tests?|fixtures|test-fixtures|sql|migrations|node_modules|dist|\.generated|\.next)(?:\/|$)|\.env|atlas_photo_geometry\.py|preparation_core\.py/.test(path),path);

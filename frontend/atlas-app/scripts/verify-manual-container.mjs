@@ -59,6 +59,14 @@ if(mode==='native'){
   assert.equal(nativeBuild.libheif,'1.23.2');assert.equal(nativeBuild.platform,process.platform);assert.equal(nativeBuild.arch,process.arch);
   const sharp=require('sharp'),png=await sharp({create:{width:16,height:16,channels:4,background:{r:40,g:90,b:150,alpha:.5}}}).png().toBuffer();
   assert.equal((await sharp(png).metadata()).width,16);
+  // Verify the packaged fonts, vector artwork and native label child together.
+  const {renderLabelV4}=await import('../../../packages/atlas-finishing/src/label-v4.mjs');
+  const {renderLabelV4Png}=await import('../../../packages/atlas-finishing/src/label-sheet.mjs');
+  const label=renderLabelV4({identity:{playerName:'Kobe Bryant',year:'1996–97',manufacturer:'Topps',productSet:'Basketball',cardNumber:'138'},finalGrade:9.5,reportNumber:'ATLAS-0123456789AB',approvalVersion:1,cardProfile:'SPORTS'});
+  assert.equal(label.state,'READY');
+  const labelPng=await renderLabelV4Png(label),labelMetadata=await sharp(labelPng.bytes).metadata();
+  assert.equal(labelMetadata.width,6458);assert.equal(labelMetadata.height,1898);assert.equal(labelMetadata.hasAlpha,true);
+  result.labelRenderer={artworkHash:label.artworkHash,rendererProfileHash:label.rendererProfileHash,sha256:labelPng.sha256,byteCount:labelPng.bytes.length,width:labelMetadata.width,height:labelMetadata.height};
   const script=[
     'import sys,json,pathlib,hashlib',
     'sys.path.insert(0,sys.argv[1])',

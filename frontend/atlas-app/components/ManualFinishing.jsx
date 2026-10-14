@@ -120,6 +120,7 @@ export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintD
       <figure><figcaption>FRONT</figcaption><div className={styles.face} dangerouslySetInnerHTML={{ __html: rendered.front }} /></figure>
       {!compact&&<figure><figcaption>REVERSE</figcaption><div className={styles.face} dangerouslySetInnerHTML={{ __html: rendered.reverse }} /></figure>}
     </div>}
+    {plan?.binding?.cardId && <p><Link href={`/labels?cardId=${encodeURIComponent(plan.binding.cardId)}`}>Open V4 label sheets ↗</Link> <small>Sheet exports and this legacy station workflow keep separate print records.</small></p>}
     <div className={styles.controls}><button type="button" className={styles.print} onClick={print} disabled={!rendered || rendered.planId !== plan?.id || printDisabled || printingPlan === plan?.planHash || Boolean(station?.selected && currentOperation)}>
       {station?.selected ? 'Finish at station' : printingPlan === plan?.planHash ? 'Preparing print…' : 'Print label'} <span aria-hidden="true">↗</span></button>
       {plan?.label?.layoutVersion === 'atlas-noir-gold-v1' && <label>Ink<select disabled={station?.selected === true} aria-label="Label ink" value={palette} onChange={event => setPalette(event.target.value)}><option value="NOIR_GOLD">Black + gold</option><option value="MONOCHROME">Monochrome</option></select></label>}

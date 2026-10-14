@@ -20,7 +20,7 @@ test('authenticated immutable approval becomes exact repeatable label and paired
   assert.equal(f.loads(), 2); assert.equal(plan.binding.approvalActionId, f.actionId); assert.equal(plan.binding.sourceHash, f.row.source_hash);
   assert.equal(plan.binding.publicHash, f.row.public_hash); assert.equal(plan.label.finalGrade, f.full.finalGrade); assert.deepEqual(plan.label.identity, f.full.identity);
   assert.deepEqual(await f.loader.load({}, f.cardId, f.actionId), plan); assert.deepEqual(f.row, before);
-  assert.notEqual(f.approval.grade.overall.displayGrade, plan.label.finalGrade, 'fixture distinguishes tenth detail from final award');
+  assert.equal(plan.label.finalGrade, f.approval.finalGrade, 'the immutable human approval is the printed award authority');
   assert.equal(reportAwardedGrade(f.approval), plan.label.finalGrade, 'completion snapshot and immutable printed label agree');
   assert.equal(JSON.stringify(plan).includes('private/'), false); assert.equal(JSON.stringify(plan).includes('actorId'), false);
 });

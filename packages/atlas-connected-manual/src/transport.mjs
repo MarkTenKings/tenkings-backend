@@ -8,6 +8,9 @@ const ORDER_DESK_ID = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a
 const ORDER_DESK_PATH = new RegExp(`^/api/staff/manual-connected/order-desk(?:/orders/${ORDER_DESK_ID}(?:/acknowledge|/labels/INBOUND|/cards/${ORDER_DESK_ID}/photos/(?:FRONT|BACK))?)?$`);
 const ORDER_DESK_LABEL_PATH = new RegExp(`^/api/staff/manual-connected/order-desk/orders/${ORDER_DESK_ID}/labels/INBOUND$`);
 const ORDER_DESK_PHOTO_PATH = new RegExp(`^/api/staff/manual-connected/order-desk/orders/${ORDER_DESK_ID}/cards/${ORDER_DESK_ID}/photos/(?:FRONT|BACK)(?:\\?size=(?:thumbnail|detail))?$`);
+const LABEL_SHEET_PATH = new RegExp(`^/api/staff/manual-connected/label-sheets(?:/${ORDER_DESK_ID}(?:/exports(?:/${ORDER_DESK_ID}(?:/download)?)?|/print-confirmations)?)?$`);
+const LABEL_ITEM_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/(?:artwork|reprints|exports(?:/${ORDER_DESK_ID}(?:/download)?)?)$`);
+const LABEL_ARTWORK_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/artwork\\?mode=(?:preview|print)$`);
 const VERSION = 'atlas-manual-private-v1';
 const PREFIX = 'x-atlas-manual-';
 const BOUND_HEADERS = ['cookie', 'x-atlas-csrf', 'origin', 'content-type', `${PREFIX}version`,
@@ -54,6 +57,9 @@ export function isManualServicePath(value) {
       || /^\/api\/staff\/manual-connected\/stations(?:\/(?:challenge|enroll|arm|acknowledge|complete))?$/.test(url.pathname)
       || RETURN_LABEL_PATH.test(url.pathname)
       || ORDER_DESK_PATH.test(url.pathname)
+      || LABEL_SHEET_PATH.test(url.pathname) && (!url.search
+        || /^\/api\/staff\/manual-connected\/label-sheets\?cursor=(?:0|[1-9]\d{0,6})$/.test(value))
+      || LABEL_ITEM_PATH.test(url.pathname) && (!url.search || LABEL_ARTWORK_PATH.test(value))
       || /^\/api\/staff\/manual-connected\/dealer-operations(?:\/(?:location-configure|membership-configure|custody|bind-manual))?$/.test(url.pathname));
 }
 function requestParts(req, bytes, timestamp, nonce) {
@@ -150,6 +156,8 @@ export function manualResponsePolicy(path, contentType) {
     limit: MANUAL_TRANSPORT_LIMITS.jsonResponseBytes, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
   if ((RETURN_LABEL_PATH.test(path) || ORDER_DESK_LABEL_PATH.test(path)) && contentType === 'application/pdf') return {
     limit: 4 * 1024 * 1024, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
+  if (LABEL_ARTWORK_PATH.test(path) && contentType === 'image/svg+xml') return {
+    limit: 1024 * 1024, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
   requireTransport((/\/(?:images|preview-image)\//.test(path) || ORDER_DESK_PHOTO_PATH.test(path))
     && /^image\/(?:png|jpeg|webp)$/.test(contentType), 502, 'MANUAL_SERVICE_RESPONSE_INVALID');
   return { limit: MANUAL_TRANSPORT_LIMITS.imageResponseBytes, overflow: 'MANUAL_IMAGE_DIRECT_REQUIRED' };

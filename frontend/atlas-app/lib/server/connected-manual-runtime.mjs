@@ -7,6 +7,7 @@ import { createMachineStaffBoundary } from '@atlas/manual-service/machine-auth';
 import { createConnectedManual, createWorkLimiter } from '@atlas/connected-manual';
 import { geometryProcessingEnvironment } from '@atlas/connected-manual/geometry-processing';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
+import { createLabelExportStorage } from '@atlas/connected-manual/label-export-storage';
 import { identificationEffects } from '@atlas/connected-manual/identification';
 import { createAstraDefectProvider } from '@atlas/defect-analysis/provider';
 import { requireThat } from '@atlas/manual-service/contract';
@@ -89,6 +90,25 @@ export async function validateMarketRuntimeConfiguration({marketAutomaticEnabled
   requireThat(grants?.allowed===true,503,'MARKET_QUEUE_GRANTS_REQUIRED');
 }
 
+export function manualLabelSheetsEnabled(env) {
+  return env.ATLAS_MANUAL_LABEL_SHEETS_ENABLED==='true' && env.ATLAS_VARIANT_WORKER_ENABLED!=='true';
+}
+export async function validateLabelRuntimeConfiguration({enabled,client}) {
+  if(!enabled)return;
+  const [schema]=await client.$queryRawUnsafe("SELECT bool_and(to_regclass('atlas_manual_connected.'||name) IS NOT NULL) AS installed FROM unnest(ARRAY['label_item','label_sheet','label_export','label_print_event']) name");
+  requireThat(schema?.installed===true,503,'LABEL_SCHEMA_REQUIRED');
+  const [grants]=await client.$queryRawUnsafe("SELECT bool_and(has_table_privilege(current_user,'atlas_manual_connected.'||name,'SELECT') AND has_table_privilege(current_user,'atlas_manual_connected.'||name,'INSERT')) AND has_sequence_privilege(current_user,'atlas_manual_connected.label_sheet_number_seq','USAGE') AS allowed FROM unnest(ARRAY['label_item','label_sheet','label_export','label_print_event']) name");
+  requireThat(grants?.allowed===true,503,'LABEL_GRANTS_REQUIRED');
+  for(const [table,columns] of Object.entries({
+    label_item:['state','snapshot','snapshot_hash','print_svg','preview_svg','artwork_hash','renderer_profile_hash','material_profile_id','jig_hash','sheet_id','slot','previous_assignment','claim_id','lease_until','attempts','code','updated_at'],
+    label_sheet:['state','revision','manifest','manifest_hash','sealed_at'],
+    label_export:['state','object_ref','sha256','byte_count','mapping','content_type','claim_id','lease_until','attempts','attempt_base','retry_requests','code','ready_at'],
+  })) {
+    const [found]=await client.$queryRawUnsafe("SELECT bool_and(has_column_privilege(current_user,$1,c,'UPDATE')) AS allowed FROM unnest($2::text[]) c",`atlas_manual_connected.${table}`,columns);
+    requireThat(found?.allowed===true,503,'LABEL_GRANTS_REQUIRED');
+  }
+}
+
 /** Private CPU service behind the approved Vercel staff application.
  * The signed transport forwards the ordinary staff cookie; auth rechecks the
  * independently restricted manual DB role on every short transaction. */
@@ -101,6 +121,12 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const baseStorage=createPhotoStorage({client,bucket:settings.bucket,keyPrefix:settings.keyPrefix,limits:{maxObjectBytes:256*1024*1024,timeoutMs:90000}});
   const storage={...baseStorage,async createOriginalUpload(input){const result=await baseStorage.createOriginalUpload(input);
     requireThat(new URL(result.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');return result;}};
+  const labelSheetsEnabled=manualLabelSheetsEnabled(env);
+  const baseLabelStorage=labelSheetsEnabled?createLabelExportStorage({client,bucket:settings.bucket,keyPrefix:`${settings.keyPrefix}/label-exports`}):null;
+  const labelStorage=baseLabelStorage?{...baseLabelStorage,async download(...args){
+    const result=await baseLabelStorage.download(...args);
+    requireThat(new URL(result.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');return result;
+  }}:null;
   const artifactClient={send:(command,options={})=>client.send(command,{...options,abortSignal:options.abortSignal?AbortSignal.any([options.abortSignal,AbortSignal.timeout(90000)]):AbortSignal.timeout(90000)})};
   const artifacts=createManualArtifactStore({transport:createS3ManualArtifactTransport({client:artifactClient,bucket:settings.bucket,PutObjectCommand,GetObjectCommand}),prefix:`${settings.keyPrefix}/artifacts`});
   const effects=env.ATLAS_MANUAL_IDENTIFICATION_ENABLED==='true'?identificationEffects({openaiKey:env.ATLAS_MANUAL_OPENAI_KEY,googleKey:env.ATLAS_MANUAL_GOOGLE_VISION_KEY}):null;
@@ -156,7 +182,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
   requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
   const connected=createConnectedManual({orderDesk,orderDeskInbox,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,marketLabeler,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
-    readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
+    labelStorage,readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.
@@ -169,9 +195,10 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     await validateOrderDeskConfiguration({enabled:Boolean(orderDesk),client:manualClient});
     await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
     await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient});
+    await validateLabelRuntimeConfiguration({enabled:labelSheetsEnabled,client:manualClient});
     await validateVariantRuntimeConfiguration({enabled:Boolean(variantConfig),client:manualClient,worker:env.ATLAS_VARIANT_WORKER_ENABLED==='true'});
   };
-  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();orderPhotoClient?.destroy();}};
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.labelWorker?.stop(),connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reportImages?.stop(),connected.marketWorker?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();orderPhotoClient?.destroy();}};
 }
 
 export function manualReportImageSettings(env) {

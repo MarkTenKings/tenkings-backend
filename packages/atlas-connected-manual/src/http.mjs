@@ -3,9 +3,11 @@ import { createIntakeHandler } from '@atlas/manual-intake/http';
 import { object, requireThat } from '@atlas/manual-service/contract';
 import { createBatchHandler, isBatchPath } from '@atlas/batch-grading/http';
 import { createOrderDeskHandler } from './order-desk-http.mjs';
+import { createLabelSheetsHandler } from './label-sheet-http.mjs';
 
 export function createConnectedHandler({connected,boundary,origin,assertRequest}) {
   const orderDesk=createOrderDeskHandler({connected,boundary,origin});
+  const labels=createLabelSheetsHandler({connected,boundary,origin});
   const workflow=createWorkflowHandler({workflow:connected.workflow,boundary,origin,assertRequest,imageDescriptors:connected.imageDescriptors,workspaceExtras:connected.workspaceExtras});
   const intake=createIntakeHandler({service:connected.intake,boundary,origin,assertRequest});
   const batch=connected.batch?createBatchHandler({service:connected.batch,boundary,origin,assertRequest}):null;
@@ -30,6 +32,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
     try{
       await assertRequest(req);requireThat(url.origin===origin,400,'MANUAL_REQUEST_INVALID');
       if(await orderDesk(req,res,url))return true;
+      if(await labels(req,res,url))return true;
       if(isBatchPath(url.pathname)){
         requireThat(batch,503,'BATCH_DISABLED');return batch(req,res);
       }
@@ -162,6 +165,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         object(req.body,['actionId']);
         const staff=await boundary.authenticate(req.headers.cookie??'',req.headers['x-atlas-csrf']);
         const publication=await connected.publication.publish(staff,publicationFound[1],req.body.actionId);
+        void connected.labelWorker?.wake();
         res.setHeader('Cache-Control','no-store');res.status(200).json({publication});return true;
       }
       const assistanceFound=assistanceRoute.exec(url.pathname);
