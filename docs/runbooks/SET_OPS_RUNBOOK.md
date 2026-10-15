@@ -1,6 +1,16 @@
 # Set Ops Runbook
 
-## Current ATLAS production — Photoroom Plus HD (October 14, 2026)
+## Current ATLAS web release — Labels NFC batch handoff (October 15, 2026)
+
+Web release `60dddb1db76efd081bf35720bec3c834ca2a2b2a` is published: staff `dpl_BJVAWXpWPFWwt2GbVJYi7hvos29Z` / `atlas-grading-staff-1ip94ywxr-ten-kings.vercel.app`, public `dpl_B2hRvKDoqgS3BmkNsKF9HCSU5DUd` / `atlas-grading-public-pgarw9a17-ten-kings.vercel.app`. Public promotion was observed October 15 at 15:43:23 UTC; 47 ordinary canonical route/asset checks passed (`a352a524…`). Customer remains `dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB`. Native source remains `26734cb193cf81d14262264ee98d332df2183948` and image `59d6e16e…`; only two web bindings changed. New main `d98789a19e4e2cb48dd890e2e346d6e68ad2299504296183c628a2c1c4581b8f` and worker `bf83af61bd09f5584b879f907a0dffb1376b35727b32584f60d1d3fa9af32a7e` sealed with zero restarts, preserving the proxy, 125-second startup fence, schema005 and all 12 stopped predecessors (15 retained / 3 running). Exactly three control bindings advanced, with no migration/ledger write or protected card/approval/print-data change.
+
+Authenticated Labels download acceptance is awaiting the owner’s fresh staff sign-in after the release. This is published code, not yet a completed production NFC cycle. Private release receipts are under `atlas-gototags-queue-20261015`; consumed effects must not be replayed.
+
+Labels → Prepare NFC batch refreshes current approved original labels. Review the ordered selection, download once, and import once into GoToTags Variable Encode NFC Tags. Save the operation for progress/resume; enable verification and next-tag selection. Place/remove one sticker at a time and keep it paired with the displayed card. Pending PNG exports and print confirmations are separate; do not retry them to advance NFC work.
+
+This temporary handoff does not import GoToTags results, record NFC completion, or activate a native station. Production lock readiness is still unresolved: the test had static `FFFF`, zero dynamic locks at page `82`, and no configuration lock; 49 NDEF bytes exceed the 48 static-protected bytes. Do not treat the application lock icon as full protection. The reviewed disposable correction requires explicit irreversible approval before any execution.
+
+## Previous production checkpoint — Photoroom Plus HD (October 14, 2026)
 
 Application `26734cb193cf81d14262264ee98d332df2183948` is live on both native services. Start and seal passed; sealing completed **October 15, 03:10:00 UTC / October 14, 8:10 p.m. Pacific** with no process restart. Main `dc1cfd4fc749c68ff822dffed5da5d0adaa66129a9b7851cf8cd8171df409c3d` and worker `1f1f8612d8d566e02e6e2eab5bac8f86cdcc8e4f9811a03f18636d89ff59fdea` use qualified image `sha256:59d6e16e7655c427486e2b42518bc37e77ab7f8b1f9a64373b2a5e5e00890346`, with zero restarts and `unless-stopped` policies. The 125-second startup fence, exact schema005 admission gate, proxy/network and concurrent half-grade label artwork are preserved. There are **13 retained containers / 3 running**; all 10 predecessors remain stopped, disconnected and restart-disabled.
 
