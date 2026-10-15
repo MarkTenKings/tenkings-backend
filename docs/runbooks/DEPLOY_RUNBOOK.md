@@ -1,6 +1,12 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current ATLAS production — original-photo fallback (October 14, 2026)
+## Current ATLAS native label typography — October 14, 2026
+
+The approved compact full-height treatment is live for newly generated **8.5 and 9.5** labels: thinner numerals, tighter spacing, no GRADE caption, and equal visible gaps from the NFC aperture to the right label edge. All other grade artwork is byte-identical. Saved labels/reprints retain their original bytes.
+
+Native main now uses the one-file renderer overlay from application commit `9f68dc29eba80606e9012d2765609a370052285d`, image `sha256:afecfe3dfe4ab5dd720a5d7b20895093bbde0ffe21dd6802d454f4f87bc9f9f7`, container `4844eb25a6e980f41912f91473c26df9c7ca16b01442d6f5de46fd52d06f9c22`. It retains the exact prior web/auth bindings (`ee560be2`), startup fence and sealed restart policy. Worker, proxy, all web deployments and seven controls are unchanged from the original-photo fallback release below. The predecessor main is retained stopped/disconnected. All11 focused Linux renderer/sheet tests pass; all17 captured control/card/approval/learning/label-history hashes and the migration ledger match before/after start. No grading, approval, print or stored-artwork operation occurred. Exact release evidence and final postflight are in `docs/handoffs/SESSION_LOG.md` and private `atlas-half-grade-labels-20261014/native` receipts.
+
+## Prior ATLAS production — original-photo fallback (October 14, 2026)
 
 The original-photo fallback is live. The final public promotion converged at **23:43:46 UTC / 4:43:46 p.m. Pacific** on application commit `ee560be2191828711df1e6ba96a139a2ca269e5d`. Staff is `dpl_CqSEfaAjxagUMTAzMuKVFNEPrfAy` (`atlas-grading-staff-1e6q9vgy9-ten-kings.vercel.app`); public is `dpl_HUWVkidHAdZ4NCWZSaVcwTRy54HB` (`atlas-grading-public-ogekdkrk9-ten-kings.vercel.app`). Customer remains `dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB`. The existing sports CODEX/SoldComps and Pokémon-only Scrydex routing is preserved. No schema migration, catalog import, physical printing or grading approval occurred.
 
