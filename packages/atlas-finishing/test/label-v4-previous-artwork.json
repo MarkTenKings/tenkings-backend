@@ -1,0 +1,120 @@
+{
+  "description": "Pre-change ea0bf4f6 V4 artwork hashes, captured before the scoped 8.5/9.5 typography revision.",
+  "source": {
+    "identity": {
+      "playerName": "Michael Jordan",
+      "year": "92-93",
+      "manufacturer": "Fleer",
+      "productSet": "Fleer",
+      "cardNumber": "273",
+      "insert": "Slam Dunk"
+    },
+    "finalGrade": 1,
+    "reportNumber": "ATLAS-1B9173F27A11",
+    "approvalVersion": 1,
+    "cardProfile": "SPORTS"
+  },
+  "rendererProfileHash": "5654822b29650153b53961713e5c793c8fc9220cde58e96cdba1659eb7d8b026",
+  "grades": {
+    "1": {
+      "print": "4d26452e32adae8e8040eb4f832c7c3c2868037ce21ecffb59dd7eb8cd39f598",
+      "gold": "0ce9d072b6909cb2d94d7e1f01c2766cb30f9fb0d3d6813520539a86a84ce108",
+      "holo": "5c62729bdd68809a028e1448d4e415c851e3521b7d7ffb379099c8011bbe739d"
+    },
+    "2": {
+      "print": "4365813acc28c715c5deeab134741b3452e97363eae58a6de8c9ae613f0d4954",
+      "gold": "ebbf39743f2d14b1da6a8b8797029f9fe026cadb445899d31aa44ca4b722220f",
+      "holo": "3c4894fe84cf7f756f264680d6b0fa2d80134dcd6909b57c87dc283fd90a5e00"
+    },
+    "3": {
+      "print": "06429fba1d26187ff5fc21684e0e58a6c2e705fed66c11888580ec1d73d8c222",
+      "gold": "a523102bfd37ab596a2fd593acccde7182c45171583f0ec23989f80496d7f55b",
+      "holo": "a3821cdf40389017b34897ea1ad8f76f5678e67797c4c88e68d2e5b299015a47"
+    },
+    "4": {
+      "print": "2cc4f4deafa1d54ed08521c62aebf7e046fe7736edede237aef7039e5103e5a0",
+      "gold": "64395b6eab92ab2c0287dfc8296e9d2f2a8df5a32821401522b38b4c752d5b92",
+      "holo": "3f0990ef2223bb0b7b2bcdef2847dd309f9226b52e2862273f5c97823ebf7094"
+    },
+    "5": {
+      "print": "303e52df79abb267b00852fe17c4d578c1d8208ceff4391c269a552c4a7fec81",
+      "gold": "1df98f6bbfed044147bd187a6dab4f3d917fafb0e653126dbaf4c53db5ecf5e3",
+      "holo": "daf4e8df03f691d049c561b5cc922e75f4d935ed0ba6316f9dadfda3e6262cd0"
+    },
+    "6": {
+      "print": "08c1c012051bfb3cabc7d1ea09f43c48056348d80bac0b903066d5448cf7ff17",
+      "gold": "f11cfaaa178e3a26ba258395e17e1f940559d8f9be0d3b5f3b85764236563fbd",
+      "holo": "3b93adbfc83f59f138d82b62bf403143a1240483cb0c386f9512049d8c7d72ef"
+    },
+    "7": {
+      "print": "04fd6740ca67ad7900bf79ec63e8df4230e252ede98f8bc6fa09b2a195a3b858",
+      "gold": "0bb53f0a6b2b6d5a2b07f618171de6ab7290b495fd840609b3e978fdd5b294b3",
+      "holo": "03974d9591ea5e26ba7e28eae18bed50fecf34c339a2fcc2d6c8cadee0d157e1"
+    },
+    "8": {
+      "print": "c63ee2274cd07a800d484e62e715628f60ceb3c7a0e3cd1ef34b75edb5daf886",
+      "gold": "51454d39f1ce073721ae461427ba97595cb8f538d27e1762dde1c3cd57817b5d",
+      "holo": "f86e50e6d149f64ee6ed76046d8c157c60b944a1c1b2c3a061ee443e650b8d0f"
+    },
+    "9": {
+      "print": "40dd69762cf4427eb4d290d8453037ae8117809cb33b76887544d5ce2193675e",
+      "gold": "f309d7e9f06f4cd3b58b9b36ed56b19462be14c9bfa1b906f1fe9ba033ed1cad",
+      "holo": "6d6758e62e9c481bf48753bc948bd4d9d7a2dfe672fc67b4e609b9cbccbaed56"
+    },
+    "10": {
+      "print": "21c6d8b0ad5ba092fcd17df4b91589d30fd120115450f02b12224697c0be9c1c",
+      "gold": "580580b9eeecf07c7e42ef12f9f816eb7f0c1787376c78ec502c76fcc88d87ec",
+      "holo": "cb5ddedd448f8aa6b2861bff30b2f9aa76d94ac53fb660188b68d86a7da7e050"
+    },
+    "1.5": {
+      "print": "20da3f75ddf93b4f1baba73c97d443437d052258b2fb4f053c67d7200005fe9d",
+      "gold": "f8bd6f31cfdbedc76b18541343fa593c41983a07de5c568970c7e26d7954a130",
+      "holo": "74593655c4ef74e5b45a7737dcb8cbb7fda8cf817b3fd10c6c52cbdb2e888f3e"
+    },
+    "2.5": {
+      "print": "7af9de0a3b9ade8867cbea3bccca3a96d910050d8df81e1bb67ed5a3ac9e695b",
+      "gold": "ecbf41bc3d4bbff7257e1d8b2454e4e562895109201d37550c4a8b56b7a0fc86",
+      "holo": "547bc293e8539a76fde9befacdb0ee8ed992bd7f53ac9a742961a1cbdf72f6f6"
+    },
+    "3.5": {
+      "print": "3a4fcd0df5dfac34fbb9227c75c3d4b385e36c985048ad834dec8169ec04180c",
+      "gold": "a13b4c05b7b00ebc745930101d066e0b4901205392c2704e90c7c853893230c9",
+      "holo": "722670147d2303982e5a8d42f0bd6fd358e5c6a34091e3c286cbac74db692f49"
+    },
+    "4.5": {
+      "print": "a70976bb2f21bbd4d0280c75165636eb09881819eb5f0f5fda504630f67b1253",
+      "gold": "63a45a96c1b4ad0832cca69615162e7ba2ad230829185e8decfa5a635f062f3a",
+      "holo": "7b2028e009f5cb5a7981e7f3520d41343f6946c789e9ecd95342e33df7e93086"
+    },
+    "5.5": {
+      "print": "faaaee39e7ccaa0602f04d59907f5506540865a12a6925d352963cc429b46ae3",
+      "gold": "eea82c9f92730feb5bb5954c3d8a39b08b40d2d39cb29f16bcf7bf53df292f95",
+      "holo": "b533606b3b0a1a7f4b1a63bc257261e9b6137957fcddb19c06e29bf69a0ff040"
+    },
+    "6.5": {
+      "print": "62fce21b49c61d84d0878706e7a937dd7920e4457ece7546efd83578b666a947",
+      "gold": "fe2ddb504721faa9f7c6b021a315aedfe0f54d6675ea7497d62b00418a85ed14",
+      "holo": "8810167d1252085297a5db635d3a71b5fae3372fe82bb967c229ec2428f58211"
+    },
+    "7.5": {
+      "print": "e9d2703efd2a573ed4ba56a14ab02b34c6c351375b4cae945465ee23b0a19bd9",
+      "gold": "202e36a161a5579245892bf7087b9efaae2795b21a39c85e8d7a880afbf1e840",
+      "holo": "8ef76da2eaf9137a51a54746cb53a2367412fb1d1751a3cfe734485db92f780a"
+    },
+    "8.5": {
+      "print": "f85b0731cc6b52bd597d9602d2296971719f2d79a055b0c1177561795d557e0f",
+      "gold": "d172d111cf11599f1b022c12d2b602310d69fed87c6ada02d62fb2f2e55a4e30",
+      "holo": "bf9357158b95ca42b586ced3cba82c59e67a5c88b738cbd5fab11bfcf6931c9c"
+    },
+    "9.5": {
+      "print": "079f84b9c27942bec0d1bf53bfee9895a846f93da0140f5988d43a33792b9f1e",
+      "gold": "3ef19791ef249f5c4708777a5d33a587c9942e75e365800c782d6fdc7781d01a",
+      "holo": "3c1df0c5f996bb5596cf2e13fa8c366b4d9b3f3d07aca6058c79e44a55e434a3"
+    }
+  },
+  "unaffectedParts": {
+    "name": "e38138cb00972829fcb28b0a881be85eddd15e31e81337843bbe222dab5f80ee",
+    "metadata": "4c599eff0d4e4a2ae05022bda4ffdb82f072dd862eb5f1df276414a35906015a",
+    "certificate": "939e604271421fcf294479a62acab6e647308017bca654921fbf794539787fc6"
+  }
+}

@@ -8,6 +8,7 @@ import { LABEL_JIG_V1, labelPointOnSheet, labelSlotTransform } from '../src/labe
 import { LABEL_EXPORT_PROFILE_V1, renderLabelSheetSvg, validateLabelV4Artwork } from '../src/label-sheet.mjs';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
+const previousArtwork = JSON.parse(readFileSync(new URL('./label-v4-previous-artwork.json', import.meta.url)));
 const fixture = (overrides = {}) => ({ identity: { playerName: 'Kobe Bryant', year: '1996–97', manufacturer: 'Topps', productSet: 'Basketball', cardNumber: '138', parallel: null, insert: null },
   finalGrade: 9.5, reportNumber: 'ATLAS-0123456789AB', approvalVersion: 1, cardProfile: 'SPORTS', ...overrides });
 function part(svg, name) {
@@ -16,6 +17,58 @@ function part(svg, name) {
   while ((token = tags.exec(svg))) { depth += token[0].startsWith('</') ? -1 : 1; if (!depth) return svg.slice(start, tags.lastIndex); }
   throw new Error('UNBALANCED_GROUP');
 }
+
+async function gradeInkColumns(svg) {
+  const isolated = `<svg xmlns="http://www.w3.org/2000/svg" width="68.342mm" height="20.082mm" viewBox="0 0 68.342 20.082"><g fill="white">${part(svg, 'grade')}</g></svg>`;
+  const { data, info } = await sharp(Buffer.from(isolated), { density: 600 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const columns = [];
+  for (let x = 0; x < info.width; x++) {
+    let top = info.height, bottom = -1;
+    for (let y = 0; y < info.height; y++) if (data[(y * info.width + x) * 4 + 3] >= 128) {
+      top = Math.min(top, y); bottom = y;
+    }
+    if (bottom < 0) continue;
+    const last = columns.at(-1);
+    if (last?.right === x) { last.right = x + 1; last.top = Math.min(last.top, top); last.bottom = Math.max(last.bottom, bottom + 1); }
+    else columns.push({ left: x, right: x + 1, top, bottom: bottom + 1 });
+  }
+  return { columns: columns.map(column => ({ left: column.left * 68.342 / info.width, right: column.right * 68.342 / info.width,
+    top: column.top * 20.082 / info.height, bottom: column.bottom * 20.082 / info.height })), pixelMm: Math.max(68.342 / info.width, 20.082 / info.height) };
+}
+
+test('only 8.5 and 9.5 change saved artwork; every other grade preserves print and both previews byte-for-byte', () => {
+  assert.notEqual(LABEL_V4_RENDERER_PROFILE_HASH, previousArtwork.rendererProfileHash, 'new artwork requires a new recipe identity');
+  for (const [grade, expected] of Object.entries(previousArtwork.grades)) {
+    const affected = [8.5, 9.5].includes(Number(grade));
+    for (const previewMaterial of ['gold', 'holo']) {
+      const rendered = renderLabelV4({ ...previousArtwork.source, finalGrade: Number(grade) }, { previewMaterial });
+      const compare = affected ? assert.notEqual : assert.equal;
+      compare(sha(rendered.printSvg), expected.print, `${grade} print`);
+      compare(sha(rendered.previewSvg), expected[previewMaterial], `${grade} ${previewMaterial}`);
+      assert.equal(rendered.artworkHash, sha(rendered.printSvg));
+      if (affected) {
+        assert.equal(part(rendered.printSvg, 'caption'), '<g data-part="caption"></g>');
+        assert.equal(part(rendered.previewSvg, 'grade'), part(rendered.printSvg, 'grade'));
+        for (const [name, hash] of Object.entries(previousArtwork.unaffectedParts)) assert.equal(sha(part(rendered.printSvg, name)), hash, name);
+      }
+    }
+  }
+});
+
+test('8.5 and 9.5 have compact full-height numerals, a distinct decimal, and equal aperture-to-edge side gaps', async () => {
+  for (const finalGrade of [8.5, 9.5]) {
+    const { columns, pixelMm } = await gradeInkColumns(renderLabelV4(fixture({ finalGrade })).printSvg);
+    assert.equal(columns.length, 3, `${finalGrade} retains two distinct numerals and its decimal`);
+    const [whole, decimal, five] = columns;
+    assert.ok(Math.abs((whole.left - 56.35) - (68.342 - five.right)) <= pixelMm, 'visible side gaps are equal');
+    assert.ok(Math.abs(five.right - whole.left - 8) <= pixelMm, 'compact grade is 8mm wide');
+    // Curved 8/9 overshoot the flat top of 5 by about 0.16mm in the pinned font.
+    for (const numeral of [whole, five]) assert.ok(Math.abs(numeral.bottom - numeral.top - 10.2) <= 0.2, 'both numerals remain full height');
+    assert.ok(Math.abs(whole.top - five.top) <= 0.2 && Math.abs(whole.bottom - five.bottom) <= 0.2, 'numerals share cap height and baseline, allowing font overshoot');
+    assert.ok(decimal.bottom - decimal.top < 2 && Math.abs(decimal.bottom - whole.bottom) <= 0.15, 'decimal remains small and baseline aligned');
+    for (const gap of [decimal.left - whole.right, five.left - decimal.right]) assert.ok(Math.abs(gap - 0.18) <= pixelMm, 'tight ink gaps remain visibly open');
+  }
+});
 
 test('pinned fonts reproduce supplied V4 specimen headline metrics and overflow decisions', () => {
   const sports = fitLabelV4Name('KOBE BRYANT'), pokemon = fitLabelV4Name('ALAKAZAM');
@@ -71,16 +124,19 @@ test('material simulation is independent of grade and cannot become print input'
 
 test('dynamic certificate, name, grade and metadata stay entirely clear of all original physical cuts', async () => {
   const vectors = JSON.parse(readFileSync(new URL('../assets/v4/vector-parts.json', import.meta.url)));
-  const label = renderLabelV4(fixture());
-  for (const name of ['name', 'grade', 'certificate', 'metadata', 'caption']) {
-    const component = part(label.printSvg, name);
-    const svg = (clipped) => `<svg xmlns="http://www.w3.org/2000/svg" width="68.342mm" height="20.082mm" viewBox="0 0 68.342 20.082"><defs>${vectors.clips}</defs><g fill="white" ${clipped ? 'clip-path="url(#body)"' : ''}>${component}</g></svg>`;
-    const images = await Promise.all([false, true].map(clipped => sharp(Buffer.from(svg(clipped)), { density: 600 }).ensureAlpha().raw().toBuffer()));
-    let maximumLoss = 0;
-    for (let i = 3; i < images[0].length; i += 4) maximumLoss = Math.max(maximumLoss, images[0][i] - images[1][i]);
-    // librsvg's additional clip changes glyph-edge antialiasing by up to 10/255
-    // even far from the cuts. A real cut removes opaque interior pixels.
-    assert.ok(maximumLoss <= 16, `${name} must not silently clip a glyph into a physical opening (loss ${maximumLoss})`);
+  for (const finalGrade of [8, 8.5, 9.5]) {
+    const label = renderLabelV4(fixture({ finalGrade }));
+    for (const name of ['name', 'grade', 'certificate', 'metadata', 'caption']) {
+      const component = part(label.printSvg, name);
+      if (name === 'caption' && finalGrade !== 8) { assert.equal(component, '<g data-part="caption"></g>'); continue; }
+      const svg = (clipped) => `<svg xmlns="http://www.w3.org/2000/svg" width="68.342mm" height="20.082mm" viewBox="0 0 68.342 20.082"><defs>${vectors.clips}</defs><g fill="white" ${clipped ? 'clip-path="url(#body)"' : ''}>${component}</g></svg>`;
+      const images = await Promise.all([false, true].map(clipped => sharp(Buffer.from(svg(clipped)), { density: 600 }).ensureAlpha().raw().toBuffer()));
+      let maximumLoss = 0;
+      for (let i = 3; i < images[0].length; i += 4) maximumLoss = Math.max(maximumLoss, images[0][i] - images[1][i]);
+      // librsvg's additional clip changes glyph-edge antialiasing by up to 10/255
+      // even far from the cuts. A real cut removes opaque interior pixels.
+      assert.ok(maximumLoss <= 16, `${finalGrade} ${name} must not silently clip a glyph into a physical opening (loss ${maximumLoss})`);
+    }
   }
 });
 

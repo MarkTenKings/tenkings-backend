@@ -16,12 +16,16 @@ function asset(path) {
 }
 const vectors = JSON.parse(asset('vector-parts.json'));
 const headline = fontkit.create(asset('fonts/Montserrat-variable.ttf')).getVariation({ wght: 900 });
-const detail = fontkit.create(asset('fonts/RobotoCondensed-variable.ttf')).getVariation({ wght: 700 });
+const detailFont = fontkit.create(asset('fonts/RobotoCondensed-variable.ttf'));
+const detail = detailFont.getVariation({ wght: 700 });
+const halfGradeFont = detailFont.getVariation({ wght: 600 });
 export const LABEL_V4_RENDERER_PROFILE = Object.freeze({
   version: 'atlas-v4-outlined-label-v1', physicalWidthMm: 68.342, physicalHeightMm: 20.082,
   fontkit: '2.0.4', headlineWeight: 900, detailWeight: 700, shaping: 'fontkit-layout-kern-disabled-v1',
   name: { boxWidthMm: 28.5, boxHeightMm: 7.65, targetInkHeightMm: 3.6, minimumInkHeightMm: 2.8 },
-  grade: 'original-custom-10-and-pinned-condensed-numerals-v1',
+  grade: 'original-whole-grades-and-compact-full-height-half-grades-v2',
+  halfGradeRules: { grades: [8.5, 9.5], weight: 600, widthMm: 8, inkHeightMm: 10.2, gapMm: 0.18, topMm: 4.5,
+    apertureRightMm: 56.35, labelRightMm: 68.342, caption: false },
   certificate: 'full-cert-arc-v1', alpha: 'straight-rgba-alpha-threshold-128-v1',
   certificateRules: { baselineRadiusMm: 6.78, maximumArcDeg: 120, targetInkHeightMm: 0.99, minimumInkHeightMm: 0.85 },
   metadataRules: { widthMm: 28.5, targetInkHeightMm: 1.5, minimumInkHeightMm: 1, topMm: 12.8 },
@@ -94,6 +98,22 @@ function certificateOutline(text, layout) {
 
 function gradeOutline(grade) {
   if (grade === 10) return vectors.grade10;
+  if (grade === 8.5 || grade === 9.5) {
+    const rules = LABEL_V4_RENDERER_PROFILE.halfGradeRules;
+    const glyphs = [...String(grade)].map(character => shape(character, halfGradeFont));
+    const top = Math.max(...glyphs.map(glyph => glyph.b.maxY));
+    const bottom = Math.min(...glyphs.map(glyph => glyph.b.minY));
+    const sy = rules.inkHeightMm / (top - bottom);
+    const sx = (rules.widthMm - 2 * rules.gapMm) / glyphs.reduce((width, glyph) => width + glyph.width, 0);
+    // Pack visible ink bounds, not font advances, and center between the actual
+    // NFC aperture and label edge. All glyphs share the same scale and baseline.
+    let x = (rules.apertureRightMm + rules.labelRightMm - rules.widthMm) / 2;
+    return glyphs.map(glyph => {
+      const outline = `<g transform="translate(${n(x)},${rules.topMm}) scale(${n(sx)},${n(-sy)}) translate(${n(-glyph.b.minX)},${n(-top)})">${glyph.paths}</g>`;
+      x += glyph.width * sx + rules.gapMm;
+      return outline;
+    }).join('');
+  }
   const text = String(grade), full = shape(text, detail);
   // Keep each grade within the original 9.47 x 10.2 mm frame. Only numerals
   // use this explicit condensed recipe; headline glyphs are never stretched.
@@ -141,7 +161,9 @@ export function renderLabelV4(input, { previewMaterial = 'gold', certificateLayo
     const cert = certificateOutline(`${reportNumber} · V${approvalVersion}`, certificateLayout);
     diagnostics.certificate = { ...cert }; delete diagnostics.certificate.paths;
     const grade = gradeOutline(finalGrade), captionText = finalGrade === 10 ? 'GEM MINT' : 'GRADE';
-    const captionShape = shape(captionText, detail), caption = place(captionShape, 57.65, 15.25, Math.min(1.05, 8.4 * captionShape.height / captionShape.width));
+    const captionShape = shape(captionText, detail);
+    const caption = finalGrade === 8.5 || finalGrade === 9.5 ? ''
+      : place(captionShape, 57.65, 15.25, Math.min(1.05, 8.4 * captionShape.height / captionShape.width));
     const clearance = `<mask id="grade-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="68.342" height="20.082"><rect width="68.342" height="20.082" fill="white"/><g fill="black" stroke="black" stroke-width=".75">${grade}</g></mask>`;
     const staticInk = certificateLayout === 'full-cert-under-name-v1' ? vectors.staticInkWithoutWaveform : vectors.staticInk;
     const defs = `${vectors.clips}${clearance}<mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="68.342" height="20.082"><rect width="68.342" height="20.082" fill="white"/><g fill="black" color="black">${staticInk}<g data-part="grade">${grade}</g><g data-part="caption">${caption}</g><g data-part="name">${namePaths}</g><g data-part="certificate">${cert.paths}</g></g></mask>`;
