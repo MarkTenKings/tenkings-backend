@@ -53,9 +53,9 @@ test('partial 800 ppi export retains the full canvas and exact first/last clockw
 });
 
 // This corpus covers every accepted grade in both categories, long accepted
-// names/metadata and full twelve-hex certificates. Its golden PNG is byte-for-
-// byte identical to the original strip renderer, including all foil openings,
-// connected ink components and antialiasing at strip and label boundaries.
+// names/metadata and full twelve-hex certificates. The mixed-sheet golden
+// includes the approved compact 8.5/9.5 typography. Unaffected individual
+// fixtures retain their original strip-renderer byte goldens below.
 function mixedSheet() {
   return Array.from({ length: 50 }, (_, i) => {
     const cardProfile = i % 2 ? 'POKEMON' : 'SPORTS';
@@ -70,12 +70,12 @@ function mixedSheet() {
   });
 }
 
-test('bounded clipped strips preserve the qualified mixed 50-label raster and individual bytes', async () => {
+test('bounded clipped strips preserve the mixed 50-label golden and original unaffected individual bytes', async () => {
   const { renderLabelV4Png, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 } = await import('../src/label-sheet.mjs');
   const items = mixedSheet();
   for (const category of ['SPORTS', 'POKEMON']) assert.equal(new Set(items.filter(item => item.source.cardProfile === category).map(item => item.source.finalGrade)).size, 19);
   const result = await renderLabelSheetPng(items);
-  assert.equal(result.sha256, 'f74b34fbeb6d06d3dea46b78f96f0aa981fea12d8281da93102b04f02d9cf7db');
+  assert.equal(result.sha256, '9091008d13d8ac37bc1c37cb1d0534daeaa15dc17753012b6e6812f59d2afc62');
   assert.equal(result.manifest.exportProfileId, 'atlas-v4-sheet-800ppi-diagnostic-v2');
   assert.equal(result.manifest.rasterReceipt.rasterizer, 'sharp-0.33.5-clipped-strip-png-v2');
   assert.ok(result.manifest.rasterReceipt.rasterizedTiles > 50);
