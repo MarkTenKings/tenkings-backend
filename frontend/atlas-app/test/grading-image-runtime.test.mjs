@@ -34,7 +34,7 @@ test('serving grants the exact selected original or generated frame and retains 
     await read(input); // Cache cannot confuse original and generated domains.
   }
   assert.equal(calls.length, 2);
-  await assert.rejects(read({ kind:'original', descriptor:{ ...photo.workingFrame, schemaVersion:4 }, photo }), { code:'GRADING_IMAGE_REQUIRED' });
+  await assert.rejects(read({ kind:'original', descriptor:{ ...photo.workingFrame, schemaVersion:5 }, photo }), { code:'GRADING_IMAGE_REQUIRED' });
   await assert.rejects(read({ kind:'original', descriptor:{ ...photo.workingFrame, originalDescriptorSha256:'f'.repeat(64) }, photo }));
 });
 test('fallback frame grants retain the approved storage-origin restriction', async () => {

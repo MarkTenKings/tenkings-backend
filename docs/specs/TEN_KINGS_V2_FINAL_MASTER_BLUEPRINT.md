@@ -1,3 +1,11 @@
+## Owner-approved Photoroom Plus HD removal — October 14, 2026
+
+Mark authorizes replacing ATLAS's executable OpenAI generative background removal with Photoroom Plus HD only, while preserving Astra identification/grading, shared OpenAI credentials, historical evidence and the per-side original-photo fallback. The full-resolution orientation-normalized source must keep its dimensions, placement, scale and color profile. No crop, resize, enhancement, relighting or generated background is authorized. Unsupported sizes must be rejected before dispatch, and failed/uncertain removal must use the original without another provider dispatch or later image substitution.
+
+After inspecting original/Plus side-by-side full images and all four corner close-ups for Mewtwo and Jordan, Mark accepted the observed slight edge color differences and instructed the release lead to continue integration. This supersedes exact equality at every visible fractional-alpha pixel only to the extent of that reviewed behavior. The implementation retains exact opaque RGB and uses a conservative bounded fractional-edge check; actual differences and validation limits must be recorded truthfully. It must never claim complete RGB equality, repaint the output, accept broad color changes or remove evidence of worn corners. Independent review, focused regression/canary qualification and runbook deployment remain required. Existing graded images/receipts/approvals must not be reprocessed or replaced. Recovery pauses removal or uses originals and must never reactivate OpenAI removal.
+
+Production acceptance will use fresh sports and Pokémon photos uploaded by Mark after deployment. No grade approval or label printing is authorized by this release.
+
 ## Owner-approved ATLAS original-photo fallback — October 14, 2026
 
 Mark authorizes background removal as a best-effort first step. If an attempted side finishes with failure, rejection, or no confirmed usable result, continue identification, Astra/xhigh geometry and defect analysis using that side’s saved decoded original. A generated Front and original Back, or original Front and generated Back, are valid pairs. Pending image work still gets its normal opportunity to finish. This supersedes R15’s generated-only/no-original-fallback rule for new grading work, without changing saved approvals or numerical grading policy.

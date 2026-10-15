@@ -51,3 +51,17 @@ test('generated report image selector binds side, approval version and exact PNG
  assert.deepEqual(await client.read(input),bytes);
  await assert.rejects(manualPublicClient(config,async()=>new Response(bytes,{headers:{'content-type':'image/webp'}})).read(input));
 });
+
+
+test('Photoroom access signs the exact output selector and accepts only bounded JSON without lifting PNG transport limits',async()=>{
+ const input={kind:'REPORT_IMAGE_ACCESS',token:'ar_'+'A'.repeat(24),version:1,side:'FRONT',findingId:null,outputSha256:'d'.repeat(64)};
+ const signed=signManualPublicRequest(config,input);
+ assert.deepEqual(verifyManualPublicRequest({key:config.manualKey},signed.body,signed.signature).request,input);
+ for(const change of [{version:null},{side:null},{outputSha256:'bad'},{findingId:'finding'},{url:'https://other.invalid'}])
+  assert.throws(()=>signManualPublicRequest(config,{...input,...change}));
+ const json=manualPublicClient(config,async()=>new Response('{"grant":true}',{headers:{'content-type':'application/json'}}));
+ assert.deepEqual(await json.read(input),{grant:true});
+ await assert.rejects(manualPublicClient(config,async()=>new Response('x'.repeat(16*1024+1),{headers:{'content-type':'application/json'}})).read(input));
+ await assert.rejects(manualPublicClient(config,async()=>new Response('png',{headers:{'content-type':'image/png'}})).read(input));
+ await assert.rejects(manualPublicClient(config,async()=>new Response(Buffer.alloc(4*1024*1024+1),{headers:{'content-type':'image/png'}})).read({...input,kind:'REPORT_IMAGE'}));
+});

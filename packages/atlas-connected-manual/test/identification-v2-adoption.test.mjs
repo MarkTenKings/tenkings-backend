@@ -1058,10 +1058,10 @@ test('queued upfront cutouts defer new identification without occupying a model 
 });
 
 
-test('mixed original Front and generated Back identify with exact selected pixels and honest saved frame provenance',async()=>{
+for(const cleaned of [false,true])test(`mixed original Front and ${cleaned?'Photoroom cleaned':'historical generated'} Back identify with exact selected pixels and honest saved frame provenance`,async()=>{
  const bytes=Object.fromEntries(await Promise.all(['FRONT','BACK'].map(async(side,i)=>[side,await sharp({create:{width:24,height:32,channels:3,background:i?'#123456':'#789abc'}}).png().toBuffer()])));
  const frames={},f=await fixture({readGradingPhoto:async({side,photo})=>{
-  const frame={schemaVersion:side==='FRONT'?2:3,raster:{content:{sha256:digest(bytes[side])}},...(side==='BACK'?{generation:{sourceFrame:photo.workingFrame}}:{})};
+  const frame={schemaVersion:side==='FRONT'?2:cleaned?4:3,raster:{content:{sha256:digest(bytes[side])}},...(side==='BACK'?{[cleaned?'segmentation':'generation']:{sourceFrame:photo.workingFrame}}:{})};
   frames[side]=frame;return{photo:{...photo,workingFrame:frame},bytes:bytes[side]};}});
  assert.equal((await f.identification.run(f.staff,f.cardId)).state,'COMPLETE');
  const saved=f.artifactsOf('IDENTIFICATION_IMAGE');assert.equal(saved.length,2);

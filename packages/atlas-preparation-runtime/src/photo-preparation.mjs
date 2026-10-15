@@ -65,7 +65,7 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
   const limits = { ...requestedLimits }, engine = structuredClone(requestedEngine);
   requireThat(limits && Object.keys(limits).length === keys.length && keys.every(k => Number.isSafeInteger(limits[k]) && limits[k] > 0), 'PREPARATION_LIMIT');
   const frame = parseDecodedFrame(source.frame, source.original, source.decodePlan), { content, dimensions } = frame.raster;
-  requireThat(content.mime === 'image/png' && frame.treatment.bitDepth === 8 && (frame.treatment.channels === 3 || frame.schemaVersion === 3 && frame.treatment.channels === 4)
+  requireThat(content.mime === 'image/png' && frame.treatment.bitDepth === 8 && (frame.treatment.channels === 3 || [3, 4].includes(frame.schemaVersion) && frame.treatment.channels === 4)
     && frame.treatment.colorSpace === 'sRGB', 'PREPARATION_RASTER_UNSUPPORTED');
   requireThat(source.bytes instanceof Uint8Array && source.bytes.buffer instanceof ArrayBuffer && source.bytes.byteLength === content.byteCount
     && content.byteCount <= limits.maxInputBytes && dimensions.width * dimensions.height <= limits.maxPixels, 'PREPARATION_LIMIT');

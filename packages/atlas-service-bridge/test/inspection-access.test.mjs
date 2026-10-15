@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInspectionAccess, INSPECTION_STORAGE_ORIGIN } from '../src/inspection-access.mjs';
+import { parseInspectionAccess, parseReportImageAccess, INSPECTION_STORAGE_ORIGIN } from '../src/inspection-access.mjs';
 import { signManualPublicRequest, verifyManualPublicRequest, MANUAL_PUBLIC_ORIGIN } from '../src/manual-public.mjs';
 const hash = 'a'.repeat(64), publicHash = 'b'.repeat(64);
 const access = () => ({ version: 'atlas-approved-image-access-v1', publicToken: 'ar_' + 'A'.repeat(24),
@@ -31,4 +31,18 @@ test('new access request is signed and versioned without accepting arbitrary obj
   assert.deepEqual(verifyManualPublicRequest({ key: config.manualKey }, signed.body, signed.signature).request, request);
   for (const change of [{ version: null }, { side: null }, { url: 'https://other.invalid' }, { findingId: 'other' }])
     assert.throws(() => signManualPublicRequest(config, { ...request, ...change }));
+});
+
+
+test('Photoroom direct access allows bounded full resolution with exact approval and output bindings', () => {
+  const value={...access(),version:'atlas-approved-report-image-access-v1',execution:'PHOTOROOM_PLUS_API',
+    image:{url:`${INSPECTION_STORAGE_ORIGIN}/cutout?grant=fixture`,sha256:hash,byteCount:25*1024*1024,mime:'image/png',width:3024,height:4032}};
+  assert.deepEqual(parseReportImageAccess(value,{publicToken:value.publicToken,approvalVersion:1,publicHash,side:'FRONT',sha256:hash,byteCount:value.image.byteCount,width:3024,height:4032}),value);
+  for(const expected of [{publicToken:'ar_'+'B'.repeat(24)},{approvalVersion:2},{publicHash:hash},{side:'BACK'},{sha256:publicHash},{byteCount:1},{width:4032},{height:3024}])
+    assert.throws(()=>parseReportImageAccess(value,expected));
+  for(const mutate of [v=>{v.execution='OPENAI_IMAGES_API';},v=>{v.image.width=5001;},v=>{v.image.byteCount=101*1024*1024+1;},
+    v=>{v.image.mime='image/webp';},v=>{v.image.url='https://attacker.invalid/photo';},v=>{v.image.url+= '#fragment';}]){
+    const changed=structuredClone(value);mutate(changed);assert.throws(()=>parseReportImageAccess(changed));
+  }
+  assert.throws(()=>parseInspectionAccess(value));
 });

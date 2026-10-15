@@ -10,7 +10,6 @@ import { standaloneRoleSQL } from '../grants.mjs';
 import { canonical, digest } from '../../atlas-manual-service/src/contract.mjs';
 import { REPORT_IMAGE_RECIPE, reportImageRecipeHash } from '../../atlas-connected-manual/src/report-image-provider.mjs';
 import { createReportImageStore } from '../../atlas-connected-manual/src/report-image-store.mjs';
-import { reportImageRejection } from '../../atlas-connected-manual/src/report-image-retry.mjs';
 import { createGradingPhotoReader } from '../../atlas-connected-manual/src/grading-photo-reader.mjs';
 
 const args = process.argv.slice(2), output = process.env.ATLAS_IMAGE_RETRY_EVIDENCE;
@@ -85,7 +84,6 @@ try {
   assert.equal(status.rejection.failedRequestId, x.failed); assert.deepEqual(await row(x.key), before);
   assert.deepEqual(await preserved(), preservedBefore);
   checks.push('real stored status reads exact rejection without any job/card/source/manual/approval/Front writes');
-  assert(reportImageRejection({ ...before, recipe: JSON.parse(before.recipe) }));
   for (const [index, value] of [[0, other], [1, 2], [4, randomUUID()], [5, 'FRONT'], [7, randomUUID()], [8, digest('wrong recipe')]]) {
     await assert.rejects(call(main, x.args.map((entry, i) => i === index ? value : entry)), /ACCESS_DENIED|UNAVAILABLE|EVIDENCE_INVALID/);
   }

@@ -1,5 +1,13 @@
 # Set Ops Runbook
 
+## Photoroom Plus qualified candidate — October 14, 2026
+
+The owner approved continued Plus HD integration and release after inspecting full-photo and corner comparisons. The candidate now requires exact dimensions, ICC and fully opaque RGB, while permitting only the observed one-level RGB decrease on fractional-alpha edge pixels within the documented conservative bounds. All four actual sports/Pokémon Front/Back responses pass, including the19.2MB3024×4032 original and25.2MB sports Back. Independent visual review found no obvious lost artwork or white corner wear. Historical strict-v1 failure receipts remain preserved; no claim of byte-identical fractional-edge RGB or vendor-internal behavior is made.
+
+The sole executable removal provider is Photoroom Plus HD with a dedicated server-side secret. Full-resolution public signed-grant transport, exact schema005 startup admission and cross-mode legacy-job retirement are implemented and qualified. Original-photo failure fallback, mixed pairs, all other Astra/OpenAI functions and historical images/receipts/readers remain intact. Recovery must pause removal or use originals; it must never restore OpenAI removal. See `packages/atlas-connected-manual/REPORT_IMAGES.md` and SESSION_LOG for exact policy, tests and cutover evidence.
+
+This checkpoint is **not yet deployed**. Current native main includes the separately released half-grade label fix at9f68dc29 (main4844eb25/imageafecfe3d); worker and staff/public web remainee560be2, schema004 and controls125/85/93. The release will preserve the half-grade fix and all unrelated changes, using fresh one-use plans. No migration, restart, historical reprocessing/regrading, approval or printing has occurred for this task. Mark will upload fresh cards after deployment for authenticated upload→removal→Astra→review/report acceptance. Historical deployment actions below remain consumed.
+
 ## Current ATLAS production — original-photo fallback (October 14, 2026)
 
 The original-photo fallback is live. The final public promotion converged at **23:43:46 UTC / 4:43:46 p.m. Pacific** on application commit `ee560be2191828711df1e6ba96a139a2ca269e5d`. Staff is `dpl_CqSEfaAjxagUMTAzMuKVFNEPrfAy` (`atlas-grading-staff-1e6q9vgy9-ten-kings.vercel.app`); public is `dpl_HUWVkidHAdZ4NCWZSaVcwTRy54HB` (`atlas-grading-public-ogekdkrk9-ten-kings.vercel.app`). Customer remains `dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB`. The existing sports CODEX/SoldComps and Pokémon-only Scrydex routing is preserved. No schema migration, catalog import, physical printing or grading approval occurred.

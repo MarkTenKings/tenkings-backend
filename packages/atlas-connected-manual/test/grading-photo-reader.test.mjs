@@ -4,7 +4,7 @@ import { createStoredGradingPhotoReader } from '../src/grading-photo-reader.mjs'
 import { createConnectedManual } from '../src/index.mjs';
 import { variantJobGrantSQL } from '../src/variant-job-store.mjs';
 import { photo, working } from './photo-fixture.mjs';
-import { savedGradingPhoto } from './grading-photo-fixture.mjs';
+import { savedGradingPhoto, savedBackgroundRemovedPhoto } from './grading-photo-fixture.mjs';
 
 test('provider-disabled connected variant composition reads only a saved generated frame', async () => {
   const saved = await savedGradingPhoto(photo), calls = [];
@@ -77,4 +77,16 @@ test('isolated variant grants add saved-image projection without image queue cap
   assert.match(worker, /read_grading_photo\(uuid,uuid,text,text\)/);
   assert.doesNotMatch(worker, /report_image_job|card_image_binding|card_image_intent/);
   assert.doesNotMatch(variantJobGrantSQL('synthetic_main'), /read_grading_photo/);
+});
+
+test('saved Photoroom frame is read without dispatch and retains truthful CLEANED status and exact binding', async () => {
+ const saved=await savedBackgroundRemovedPhoto(photo,working.png);let row=saved.row,reads=0;
+ const reader=createStoredGradingPhotoReader({boundary:{machineTransaction:async(_staff,work)=>work({principal:{mode:'LOCAL_FIXTURE'},tx:{$queryRawUnsafe:async()=>[row]}})},
+  storage:{async readDecodedFrame({frame}){reads++;assert.deepEqual(frame,saved.frame);return {bytes:saved.bytes};}}});
+ const input={cardId:photo.original.binding.cardId,uploadId:photo.original.uploadId,side:'FRONT',photo};
+ assert.deepEqual(await reader.photoStatus(input),{state:'READY',code:null,source:'CLEANED',backgroundRemoval:{state:'READY',code:null}});
+ const found=await reader.readGradingPhoto(input);assert.deepEqual(found.bytes,saved.bytes);assert.deepEqual(found.photo.workingFrame,saved.frame);
+ const reread=await reader.readGradingPhoto({...input,photo:found.photo});assert.deepEqual(reread.bytes,saved.bytes);
+ assert.equal(reads,2);assert.equal(found.photo.workingFrame.generation,undefined);
+ row={...saved.row,source_hash:'f'.repeat(64)};await assert.rejects(reader.readGradingPhoto(input),{code:'REPORT_IMAGE_BINDING_INVALID'});
 });

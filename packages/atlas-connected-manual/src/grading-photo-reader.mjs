@@ -3,7 +3,7 @@ import { parseDecodedFrame } from '@atlas/photo-core';
 
 const terminalFallback = job => ['FAILED', 'UNKNOWN'].includes(job?.state) && job.result == null;
 const safeCode = job => /^[A-Z][A-Z0-9_]{0,100}$/.test(job?.code ?? '') ? job.code : null;
-const prepared = job => terminalFallback(job) || job?.state === 'READY' && job.result?.media?.frame?.schemaVersion === 3;
+const prepared = job => terminalFallback(job) || job?.state === 'READY' && [3, 4].includes(job.result?.media?.frame?.schemaVersion);
 
 /** Reading the saved grading image never constructs an image provider, starts
  * discovery or exposes a queue mutation. Both serving and isolated review use
@@ -15,9 +15,10 @@ export function createGradingPhotoReader({ photo: readPhoto, storage }) {
       const job = await readPhoto(cardId, uploadId, side);
       if (!job) return { state: 'WAITING', code: null };
       requireThat(['QUEUED', 'RUNNING', 'REQUESTED', 'READY', 'FAILED', 'UNKNOWN'].includes(job.state), 503, 'REPORT_IMAGE_STORED_CONTENT_INVALID');
-      if (job.state === 'READY' && job.result?.media?.frame?.schemaVersion !== 3)
+      if (job.state === 'READY' && ![3, 4].includes(job.result?.media?.frame?.schemaVersion))
         return { state: 'FAILED', code: 'GRADING_IMAGE_FRAME_INVALID' };
-      if (prepared(job)) return { state: 'READY', code: null, source: terminalFallback(job) ? 'ORIGINAL' : 'GENERATED',
+      if (prepared(job)) return { state: 'READY', code: null, source: terminalFallback(job) ? 'ORIGINAL'
+        : job.result.media.frame.schemaVersion === 4 ? 'CLEANED' : 'GENERATED',
         backgroundRemoval: { state: job.state, code: safeCode(job) } };
       return { state: job.state, code: safeCode(job) };
     },
@@ -28,13 +29,15 @@ export function createGradingPhotoReader({ photo: readPhoto, storage }) {
     async readGradingPhoto({ cardId, uploadId, side, photo, signal }) {
       const job = await readPhoto(cardId, uploadId, side);
       requireThat(prepared(job), 409, 'GRADING_IMAGE_PENDING');
-      const originalFrame = photo.workingFrame.generation?.sourceFrame ?? photo.workingFrame;
+      const originalFrame = photo.workingFrame.segmentation?.sourceFrame ?? photo.workingFrame.generation?.sourceFrame ?? photo.workingFrame;
       const fallback = terminalFallback(job), frame = fallback ? originalFrame : job.result?.media?.frame;
       requireThat(photo.original.binding.cardId === cardId && photo.original.uploadId === uploadId && photo.original.binding.side === side
         && job.bound_original_sha256 === photo.original.content.sha256
         && job.source_hash === originalFrame.raster.content.sha256
         && (fallback ? [1, 2].includes(frame.schemaVersion) : frame?.schemaVersion === 3
-          && frame.generation?.sourceFrame?.raster?.content?.sha256 === originalFrame.raster.content.sha256),
+          && frame.generation?.sourceFrame?.raster?.content?.sha256 === originalFrame.raster.content.sha256
+          || frame?.schemaVersion === 4
+          && frame.segmentation?.sourceFrame?.raster?.content?.sha256 === originalFrame.raster.content.sha256),
       409, 'GRADING_IMAGE_SOURCE_MISMATCH');
       parseDecodedFrame(frame, photo.original, photo.decodePlan);
       const found = await storage.readDecodedFrame({ frame, original: photo.original, decodePlan: photo.decodePlan, signal });

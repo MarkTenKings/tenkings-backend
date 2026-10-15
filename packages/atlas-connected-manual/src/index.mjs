@@ -84,7 +84,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
         actionId:batchActionId(card.sourceHash,'ENQUEUE'),cards:[{cardId,sourceHash:card.sourceHash}]});}
     }});
   const reportImages=reportImageProvider?createReportImages({store:createReportImageStore({boundary,client:receiptClient}),storage,artifacts,provider:reportImageProvider,keyPrefix,concurrency:reportImageConcurrency,onError:onWorkerError}):null;
-  const retryGradingImage=reportImages?createReportImageRetry({boundary,intakeRepository,recipe:reportImageProvider.recipe,wake:()=>reportImages.wake()}):null;
+  const retryGradingImage=reportImages?createReportImageRetry({boundary,intakeRepository}):null;
   const gradingPhotos=reportImages??(readOnlyGradingImages?createStoredGradingPhotoReader({boundary,storage}):null);
   const readGradingPhoto=async input=>{
     requireThat(gradingPhotos,503,'GRADING_IMAGE_NOT_CONFIGURED');

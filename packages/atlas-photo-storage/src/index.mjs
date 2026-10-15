@@ -292,7 +292,7 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
     async writeGeneratedFrame({ frame, original, decodePlan, bytes, signal } = {}) {
       original = parseOriginal(original); decodePlan = clone(decodePlan);
       const planned = parseDecodedFrame(frame, original, decodePlan);
-      check(planned.schemaVersion === 3 && planned.raster.object.versionId === null, 'PHOTO_STORAGE_CONFLICT');
+      check([3, 4].includes(planned.schemaVersion) && planned.raster.object.versionId === null, 'PHOTO_STORAGE_CONFLICT');
       const stored = await writeExpected(derivedExpectation(planned), bytes, signal);
       return parseDecodedFrame({ ...planned, raster: { ...planned.raster, object: stored.object } }, original, decodePlan);
     },

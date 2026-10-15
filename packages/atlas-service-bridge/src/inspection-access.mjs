@@ -35,3 +35,26 @@ export function parseInspectionAccess(value, expected = {}) {
       byteCount: image.byteCount, mime: image.mime, width: image.width, height: image.height,
       ...(image.preview ? { preview: parseInspectionPreview(image.preview, image.sha256) } : {}) } };
 }
+
+// Full-resolution Photoroom presentation is separate from canonical inspection
+// media. Only a short-lived grant crosses the public service bridge.
+export function parseReportImageAccess(value, expected = {}) {
+  check(value?.version === 'atlas-approved-report-image-access-v1' && value.execution === 'PHOTOROOM_PLUS_API'
+    && /^ar_[A-Za-z0-9_-]{24}$/.test(value.publicToken)
+    && Number.isSafeInteger(value.approvalVersion) && value.approvalVersion > 0 && value.approvalVersion <= 2147483647
+    && sha(value.publicHash) && ['FRONT', 'BACK'].includes(value.side));
+  for (const key of ['publicToken', 'approvalVersion', 'publicHash', 'side'])
+    if (expected[key] !== undefined) check(value[key] === expected[key]);
+  const image = value.image;
+  check(image && sha(image.sha256) && image.mime === 'image/png'
+    && Number.isSafeInteger(image.width) && image.width >= 2 && image.width <= 5000
+    && Number.isSafeInteger(image.height) && image.height >= 2 && image.height <= 5000
+    && image.width * image.height <= 25_000_000
+    && Number.isSafeInteger(image.byteCount) && image.byteCount > 0 && image.byteCount <= 101 * 1024 * 1024);
+  for (const key of ['sha256', 'byteCount', 'width', 'height'])
+    if (expected[key] !== undefined) check(image[key] === expected[key]);
+  return { version: value.version, execution: value.execution, publicToken: value.publicToken,
+    approvalVersion: value.approvalVersion, publicHash: value.publicHash, side: value.side,
+    image: { url: readUrl(image.url), sha256: image.sha256, byteCount: image.byteCount,
+      mime: image.mime, width: image.width, height: image.height } };
+}

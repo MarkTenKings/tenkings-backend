@@ -15,6 +15,11 @@
       "version": "atlas-standalone-004-label-sheets",
       "file": "sql/004-label-sheets.sql",
       "sqlSha256": "7f8bd1c94defc85ad6c8b97256745297acc740c532a16912b73dd5785d1e066a"
+    },
+    {
+      "version": "atlas-standalone-005-photoroom-removal",
+      "file": "sql/005-photoroom-removal.sql",
+      "sqlSha256": "f76f882edb3bad6f36e423bf388380a16f8602de29eddb32a647dc8916763089"
     }
   ]
 }

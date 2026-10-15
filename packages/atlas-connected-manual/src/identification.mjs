@@ -350,7 +350,8 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
           const found=await readGradingPhoto({cardId,uploadId:slot.upload.uploadId,side,photo:slot.photo,signal:dispatchSignal});
           const photo=found?.photo;
           requireThat(([1,2].includes(photo?.workingFrame?.schemaVersion)
-            || photo?.workingFrame?.schemaVersion===3 && photo.workingFrame.generation)
+            || photo?.workingFrame?.schemaVersion===3 && photo.workingFrame.generation
+            || photo?.workingFrame?.schemaVersion===4 && photo.workingFrame.segmentation)
             && found.bytes instanceof Uint8Array,503,'IDENTIFICATION_GENERATED_PHOTO_REQUIRED');
           const bytes=await sharp(found.bytes,{limitInputPixels:52_000_000,failOn:'warning'}).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();
           requireThat(bytes.length<=3*1024*1024,422,'IDENTIFICATION_PHOTO_TOO_LARGE');

@@ -2,12 +2,12 @@ import { digest, object, requireThat } from '@atlas/manual-service/contract';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { parseSpeedsterTraceRleV1, decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
-import { MANUAL_PUBLIC_PATH, verifyManualPublicRequest } from '@atlas/service-bridge/manual-public';
+import { MANUAL_PUBLIC_PATH, MANUAL_PUBLIC_MAX_IMAGE_ACCESS_JSON, verifyManualPublicRequest } from '@atlas/service-bridge/manual-public';
 import { presentationRow } from './presentation-repository.mjs';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
 import { readApprovedIdentityDetails } from './presentation-identity.mjs';
 import { inspectionPreviewMedia, inspectionPreviewGrant } from './inspection-preview.mjs';
-import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
+import { parseInspectionAccess, parseReportImageAccess } from '@atlas/service-bridge/inspection-access';
 
 async function optionalReportImages(reportImages, row, packet) {
   if (!reportImages) return null;
@@ -77,6 +77,14 @@ export function createApprovedManualReader({ client, artifacts, storage, present
     else if (claims.request.kind === 'REPORT_IMAGE') {
       result = await reportImages?.image(row, packet, claims.request.side, claims.request.outputSha256, signal);
       if (!result) return null;
+    }
+    else if (claims.request.kind === 'REPORT_IMAGE_ACCESS') {
+      const access = await reportImages?.imageAccess(row, packet, claims.request.side, claims.request.outputSha256, signal);
+      if (!access) return null;
+      const checked = parseReportImageAccess(access, { publicToken: packet.publicToken, approvalVersion: packet.approvalVersion,
+        publicHash: row.public_hash, side: claims.request.side, sha256: claims.request.outputSha256 });
+      result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify(checked)) };
+      requireThat(result.bytes.length <= MANUAL_PUBLIC_MAX_IMAGE_ACCESS_JSON, 503, 'REPORT_IMAGE_ACCESS_INVALID');
     }
     else if (claims.request.kind === 'PRESENTATION_IMAGE') {
       const extra = await presentation(row, packet.publicToken);

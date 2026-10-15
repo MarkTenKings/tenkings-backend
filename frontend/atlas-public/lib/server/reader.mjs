@@ -5,7 +5,7 @@ import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitm
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
-import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
+import { parseInspectionAccess, parseReportImageAccess } from '@atlas/service-bridge/inspection-access';
 import { parseReportImages } from '@atlas/report-view/report-images-contract';
 
 export class PublicReportReader {
@@ -30,6 +30,16 @@ export class PublicReportReader {
             || !/^[a-f0-9]{64}$/.test(outputSha256 ?? '')) return null;
         const selected = (await this.manualReport({ token, version }))?.reportImages?.images?.[side];
         if (!selected || selected.sha256 !== outputSha256) return null;
+        if (selected.execution === 'PHOTOROOM_PLUS_API') {
+            const found = await this.manual.read({ kind: 'REPORT_IMAGE_ACCESS', token, version, side, findingId: null, outputSha256 });
+            if (!found) return null;
+            const access = parseReportImageAccess(found, { publicToken: token, approvalVersion: version,
+                publicHash: selected.publicHash, side, sha256: outputSha256, byteCount: selected.byteCount,
+                width: selected.width, height: selected.height });
+            const current = (await this.manualReport({ token, version }))?.reportImages?.images?.[side];
+            if (!current || canonical(current) !== canonical(selected)) return null;
+            return { access };
+        }
         const found = await this.manual.read({ kind: 'REPORT_IMAGE', token, version, side, findingId: null, outputSha256 });
         if (!found) return null;
         const bytes = Buffer.from(found);

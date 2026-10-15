@@ -1,68 +1,40 @@
-# Upfront card images and report presentation
+# Upload-bound background removal
 
-OpenAI generative background removal starts after a new upload is verified and its working raster is prepared. Each side has a durable intake intent; automatic identification and geometry wait for that edit to settle without occupying processing slots. Ready cutouts are reused in staff previews, as additional Astra inputs, and in published reports. A missing or failed cutout does not prevent manual review. Originals remain retained and control all coordinates and measurements. Publication binds an existing ready image and never starts another edit.
+## Release status — October 14, 2026
 
-## Processing and authority
+The owner approved continuation and release after the full-photo/corner comparison. This Photoroom Plus HD candidate is locally qualified and awaits independent release review/build/cutover. It is not deployed at this checkpoint. Current main includes the separately released half-grade label fix at9f68dc29; worker/web remainee560be2 and schema004. Fresh runtime observations, not historical release actions, govern cutover.
 
-- `card_image_intent` admits the exact new upload and `card_image_binding` immutably binds its side and original SHA to a shared job. No historical intake backfill runs.
-- `report_image_binding` pins a publication/action/side/manifest to a cache job. Its rows are immutable.
-- `report_image_job` deduplicates the exact source raster SHA and canonical model/prompt/output recipe SHA across uploads and publications. READY bytes and result are immutable. Changing a recipe affects subsequently admitted uploads; it does not rewrite an existing publication's selected presentation.
-- Discovery verifies the current upload, original/working decode chain and saved intent, then uses the full working raster. Equivalent encodings with identical working pixels can reuse a job while each binding retains its own original SHA. Provider inputs are verified private bytes in a multipart upload, never public or presigned URLs.
-- A deployment-authenticated worker takes a PostgreSQL advisory capacity lock, claims with `SKIP LOCKED`, and renews a 300-second lease every 30 seconds. Default concurrency is two, configurable from one to eight, and is enforced across worker processes. API timeout is 180 seconds.
-- Workers claim only their exact recipe hash and recheck recipe equality before source reads or paid dispatch. Older queued recipes remain queued for a compatible worker; they cannot be silently edited using a newer model/prompt. The original photograph remains available for review. Paid response receipts must match the claimed model/prompt/recipe/source/request/output before adoption; mismatches retain their receipt and terminate without storing a result.
-- A durable REQUESTED marker precedes each paid POST. A network failure, timeout, server error, or expired REQUESTED lease becomes UNKNOWN. Images edits have no asserted idempotency guarantee; `X-Client-Request-Id` is audit correlation only. UNKNOWN never automatically purchases a replacement edit.
-- Explicit HTTP 429 rejections and pre-dispatch operational failures retry with capped backoff, at most six attempts. Deterministic invalid output is terminal. Late response/usage receipts remain appendable to the actual dispatched request even after publication retirement or lease loss; late bytes cannot be adopted through lost authority.
-- Outputs must fully decode as PNG, have alpha 0 on at least 0.1% of pixels and a near-opaque foreground (alpha at least 250/255) on at least 10%, remain within 8,294,400 pixels and 4 MiB, and fit the shared public descriptor bounds. Actual OpenAI canaries peaked at 254 with foreground primarily 252–253; requiring an exact-255 pixel incorrectly rejected genuine cutouts. Exact-255 and near-opaque counts are recorded separately, with the threshold explicit, and returned bytes are never normalized. Drawn checkerboards, opaque/empty/faint images and speck-only alpha do not qualify. An alpha check does not prove that generated card details are unchanged.
-- Provider base64 is length-bounded and validated by canonical decode/encode equality, avoiding recursive regular-expression failure on large valid images. Invalid success payloads retain request correlation and any returned usage in the failure receipt.
-- Stored derivatives use purpose `reveal`, with explicitly approximate frame alignment. Originals remain every measurement and detail-inspection authority. The generation may alter printed pixels, framing, and dimensions.
-- Public REPORT and REPORT_IMAGE reads never enqueue or call a provider. Optional manifest failure cannot hide the original report. Every PNG read is authorized by the current exact publication and requested output hash; the reader rechecks publication authority before returning. Bucket objects remain private.
-- The optional REPORT lookup reads both sides together with 150 ms pool acquisition, 350 ms SQL statement and 500 ms transaction limits. It runs alongside other presentation reads and is omitted after a 750 ms total wait. A timeout advertises no ready derivative; original evidence and the final publication authorization check remain mandatory.
+Four actual3024×4032 sports/Pokémon Front/Back PNG responses pass the owner-approved bounded edge rule, with exact dimensions, ICC and every fully opaque RGB sample. The19,166,170-byte Mewtwo Front and25,238,449-byte Jordan Back were uploaded without downsampling. Visible changed pixels range from0.118881% to0.143374%, exclusively fractional-alpha channels decreasing by1. No enclosed alpha holes were found. Independent corner inspection found no obvious lost artwork or white wear. Fractional alpha softens the displayed fringe; exact physical material boundaries and vendor internals are not proven. Source/response bytes are untouched. Original strict-v1 rejection receipts remain truthful historical evidence.
 
-## Runtime and schema
+## Provider contract
 
-The feature defaults off. The existing image tables originate in `20260930170000_report_presentation_images`. Apply and record the additive intake migration `20261012231000_card_image_intake` through the release owner's normal exact-source process. Apply only `reportImageGrantSQL(actual_manual_serving_role)` from `src/report-image-store.mjs`; it gives the existing scoped manual role SELECT/INSERT on the image job, publication binding, intake intent and intake binding tables, narrowly selected job-state/receipt UPDATE columns, and publication SELECT. It gives no deletion or source/recipe mutation capability.
+Only `POST https://image-api.photoroom.com/v2/edit` is executable. Dedicated server-side `ATLAS_PHOTOROOM_API_KEY` supplies `x-api-key`; header `pr-hd-background-removal: auto` is mandatory. Other OpenAI features and shared credentials remain separate.
 
-Configure the private manual service:
+The exact normalized full-resolution RGB8 working PNG is uploaded as `imageFile`, with only:
 
-```text
-ATLAS_MANUAL_REPORT_IMAGES_ENABLED=true
-ATLAS_MANUAL_REPORT_IMAGES_CONCURRENCY=2
-ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY=<private report-image credential>
-```
+- `removeBackground=true`
+- `referenceBox=originalImage`
+- `padding=0`
+- `outputSize=<source width>x<source height>`
+- `export.format=png`
+- `colorSpace=original`
 
-`ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY` takes precedence for this pipeline and the isolated canary. If absent, they retain compatibility with `ATLAS_MANUAL_OPENAI_KEY`; an explicitly configured empty/invalid dedicated value fails configuration rather than falling back. Identification, defect analysis, research and customer credential selection are unchanged. Configure the dedicated key only on the private service.
+No background generation, crop, resize, enhancement, relighting or Basic parameter is sent. Input admission rejects encoded bytes over30,000,000, dimensions over5,000 or pixels over25,000,000 before durable dispatch and again before the single HTTP POST. It never downsamples. Output is bounded to101MiB, RGBA8 PNG, with identical dimensions/ICC. Nonempty unsupported-attributes responses fail closed. Provider rejection is terminal; ambiguous responses remain UNKNOWN and cannot authorize another POST.
 
-The model is pinned in source to `gpt-image-2.5-sunburst-2026-09-08`, with `xhigh` quality, PNG, transparent background, `1104x1520`, and one output. Recipe `atlas-background-extraction-api-v2` explicitly requests alpha 0 outside the physical edge, opaque printed borders and defects, unchanged framing, and no colored background, gradient, shadow or checkerboard. Prompt and full recipe are recorded in each job. The existing private lifecycle starts/stops the worker; construction remains cold. The public Vercel app receives no OpenAI or bucket credential.
+Recipe `atlas-photoroom-plus-hd-v2` validates all alpha255 RGB exactly. Fractional-alpha channel deltas may only be−1 or0; changed pixels must be≤0.2% of visible pixels, with≥98% visible pixels fully opaque. Fractional pixels must connect to the exterior through four-neighbor nonopaque regions and lie within Manhattan distance16 of alpha0. Separate transparent-region flooding rejects enclosed transparent holes. All measured counts, deltas and topology are recorded in strict schema4 provenance. Public metadata truthfully distinguishes exact opaque RGB from bounded fractional-edge RGB. The returned PNG is never recolored, repaired or rewritten.
 
-Before wide activation, validate actual account model access and a small representative canary set using the exact recipe, inspect the results, and record observed latency/token usage. Unit/SQL tests provide no API throughput or visual-quality evidence. The release owner found the existing shared runtime credential returned HTTP 401 and selected a separate report-image credential without rotating unrelated consumers. No key value is logged or copied into source.
+Contract sources verified during this request: [Plus OpenAPI](https://docs.photoroom.com/getting-started/api-reference-openapi), [HD removal](https://docs.photoroom.com/image-editing-api-plus-plan/hd-background-removal), [Plus limits and original color](https://docs.photoroom.com/image-editing-api-plus-plan/file-size-resolution-and-format). Actual-response validation remains mandatory for every result.
 
-One explicitly paid local canary, with that scoped credential supplied securely by the release owner:
+## Preserved workflow and cutover
 
-```sh
-node packages/atlas-connected-manual/scripts/report-image-canary.mjs \
-  --ack-paid-image-edit --source /absolute/approved-source.webp \
-  --source-sha256 <verified-source-sha> --content-type image/webp \
-  --output /absolute/private-canary-output
-```
+Each upload retains immutable card/side/original/source hashes, exact recipe/cache identity, receipt and selected grading frame. Historical schema3 OpenAI images remain readable without OpenAI dispatch capability. FAILED/UNKNOWN without an output selects the saved verified original. Mixed original/cleaned pairs continue through identification, Astra/xhigh geometry, preparation, defects, thumbnails and human review.
 
-The canary saves an intent, output, safe receipt, and real-alpha validation. Its IMAGE_BYTES_QUALIFIED status still requires visual acceptance. Do not rerun an UNKNOWN request as though it were a confirmed rejection.
+Migration005 is locally qualified but unapplied at this checkpoint. It forbids old-provider admission/dispatch/late result adoption and new same-upload retries. Exact historical retry receipts remain readable. The worker terminalizes own-mode old-provider QUEUED/RUNNING jobs as FAILED and REQUESTED as UNKNOWN, retains bindings/audits and never creates another job for that upload. Late receipts may append evidence but cannot replace selected pixels. Historical READY images, reports and approvals remain unchanged. Removal-enabled startup verifies exact005 function bodies/attributes, enabled guards and origin replication mode before serving or dispatching.
 
-## Historical images
+Cutover requires a fresh census, graceful stop/drain of the exact current native pair, qualified schema/runtime/web artifacts and005 before new runtime admission. Recovery must pause removal or use originals; never restore the old removal adapter. Existing consumed deployment actions must not be replayed. No historical reprocessing, regrading, grade approval or printing is authorized by this release.
 
-Previously imported `OPENAI_BUILT_IN` ready images remain readable with their original provenance. The prototype import method and publication enqueue path have been deleted. New work uses the intake API pipeline only.
+Staff full images continue through verified direct storage access. Photoroom public presentation uses a bounded16KiB access response with a120-second exact immutable storage grant, current publication check and hash/size/dimension bindings. The public browser verifies the exact full-resolution bytes. Historical raw presentation retains its4MiB bridge bound. The native→bridge→public route→browser chain is tested with a25MiB synthetic PNG payload.
 
-## Public contract and validation
+## Evidence
 
-The separate `reportImages` response envelope uses `parseReportImages(value, {packet, publicHash})` from `@atlas/report-view/report-images-contract`. Its descriptor includes the exact public token/version/hash, side, published inspection source SHA, optional original/generation source SHAs, output SHA/bytes/dimensions, relative image URL, execution/model/prompt version, and explicit presentation-only/approximate-alignment flags. It exposes no bucket key, source descriptor, API key, or provider response body. Existing `packet.images` is unchanged.
-
-Run focused provider/worker/alpha/binding and bridge tests with:
-
-```sh
-node --test packages/atlas-connected-manual/test/report-images.test.mjs \
-  packages/atlas-connected-manual/test/publication-reader.test.mjs \
-  packages/atlas-service-bridge/test/manual-public.test.mjs
-```
-
-`scripts/validate-report-images-postgres.mjs` uses the existing finite owned PostgreSQL harness and real staff/machine authentication. It verifies cross-publication deduplication, concurrency, leases, retry exhaustion, late paid receipts, retirement, intake admission and retake binding, ready-image publication reuse, narrow grants, and immutable publication preservation. Its explicit fixture arguments are required; it refuses ambient database URLs. The release owner controls remote fixture execution and production changes.
-
-Official API references checked September 30, 2026: [Images edit](https://developers.openai.com/api/reference/resources/images/methods/edit), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), and [image generation](https://developers.openai.com/api/docs/guides/image-generation). These establish request parameters and model naming, not account access or per-card visual accuracy.
+Exactly four standalone Plus calls were made, one per side/category, with no retries or production image writes. Sources, responses, receipts, native-sample analysis, corner figures, runtime census and disposable schema qualification are retained privately under `/Users/markthomas/.codex/atlas-handoffs/atlas-photoroom-plus-20261014`. The secret remains outside Git with0600 permissions and must never enter logs or public configuration. SESSION_LOG records qualification and planned/observed release actions. Mark will upload fresh cards after deployment for authenticated production acceptance; existing graded cards will not be replayed.

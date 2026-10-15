@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createCardImageStore, currentCardImage } from './card-image-store.mjs';
 import { reportImageAttemptBase } from './report-image-retry.mjs';
+import { REPORT_IMAGE_RECIPE, reportImageRecipeHash } from './report-image-provider.mjs';
 
 const live = `p.state='PUBLISHED' AND p.manifest_hash=b.manifest_hash AND p.mode=j.mode
  AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=b.card_id)`;
@@ -32,19 +33,29 @@ export function createReportImageStore({ boundary, client }) {
           SELECT 1 FROM atlas_manual_connected.report_image_binding b WHERE b.card_id=p.card_id AND b.action_id=p.action_id AND b.side=s.side))
         AND p.card_id::text||':'||p.action_id::text>$3 ORDER BY p.card_id,p.action_id LIMIT $2`, principal.mode, limit, after));
     },
-    claim(concurrency = 2, recipeHash = null) {
+    claim(concurrency = 2, recipeHash = reportImageRecipeHash(REPORT_IMAGE_RECIPE)) {
       requireThat(Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 8
-        && (recipeHash === null || /^[a-f0-9]{64}$/.test(recipeHash)), 500, 'REPORT_IMAGE_CONFIG_INVALID');
+        && recipeHash === reportImageRecipeHash(REPORT_IMAGE_RECIPE), 500, 'REPORT_IMAGE_CONFIG_INVALID');
       return machine(async ({ tx, principal }) => {
         const [lock] = await tx.$queryRawUnsafe('SELECT pg_try_advisory_xact_lock(721930,64) AS locked');
         if (!lock.locked) return null;
+        // Cutover is terminal for each old upload binding. Never rebind or
+        // repurchase it under the new recipe. Late replies can append audit
+        // evidence, but clearing the claim prevents adopting their pixels.
+        await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.report_image_job j SET
+          state=CASE WHEN state='REQUESTED' THEN 'UNKNOWN' ELSE 'FAILED' END,
+          code='REPORT_IMAGE_PROVIDER_RETIRED',claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp(),
+          audit=audit||jsonb_build_array(jsonb_build_object('event','PROVIDER_RETIRED','previousState',state,
+            'requestId',claim_id,'code','REPORT_IMAGE_PROVIDER_RETIRED','at',clock_timestamp()))
+          WHERE mode=$1 AND state IN('QUEUED','RUNNING','REQUESTED')
+          AND recipe::jsonb->>'execution' IN('OPENAI_IMAGES_API','OPENAI_BUILT_IN')`, principal.mode);
         // A process may die after a paid POST. Never infer that it was rejected.
         await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.report_image_job j SET state=CASE WHEN state='REQUESTED' THEN 'UNKNOWN'
           WHEN attempts-${attemptBaseSQL('j')}>=6 THEN 'FAILED' ELSE 'QUEUED' END,code=CASE WHEN state='REQUESTED' THEN 'REPORT_IMAGE_RESPONSE_UNKNOWN' ELSE 'REPORT_IMAGE_LEASE_EXPIRED' END,
           claim_id=NULL,lease_until=NULL,available_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
-          WHERE state IN('RUNNING','REQUESTED') AND lease_until<=clock_timestamp()`);
+          WHERE mode=$1 AND state IN('RUNNING','REQUESTED') AND lease_until<=clock_timestamp()`, principal.mode);
         const [count] = await tx.$queryRawUnsafe(`SELECT count(*)::int n FROM atlas_manual_connected.report_image_job
-          WHERE state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`);
+          WHERE mode=$1 AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`, principal.mode);
         if (count.n >= concurrency) return null;
         const [job] = await tx.$queryRawUnsafe(`SELECT j.* FROM atlas_manual_connected.report_image_job j
           WHERE j.state='QUEUED' AND j.attempts-${attemptBaseSQL('j')}<6 AND j.available_at<=clock_timestamp() AND j.mode=$1
@@ -61,6 +72,7 @@ export function createReportImageStore({ boundary, client }) {
         AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp() AND ${authorized}`, job.key, job.claim_id)) === 1);
     },
     async dispatch(job) {
+      requireThat(job.recipe_hash === reportImageRecipeHash(REPORT_IMAGE_RECIPE), 409, 'REPORT_IMAGE_RECIPE_UNSUPPORTED');
       return machine(async ({ tx }) => (await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.report_image_job j SET state='REQUESTED',
         audit=audit||jsonb_build_array(jsonb_build_object('event','REQUESTED','requestId',$2::text,'at',clock_timestamp())),updated_at=clock_timestamp()
         WHERE key=$1 AND claim_id=$2::uuid AND state='RUNNING' AND lease_until>clock_timestamp() AND ${authorized}`, job.key, job.claim_id)) === 1);
@@ -77,6 +89,7 @@ export function createReportImageStore({ boundary, client }) {
       job.key, job.claim_id, value, principal.mode)) === 1);
     },
     finish(job, { result = null, code = null, disposition = 'FAILED', receipt = null } = {}) {
+      requireThat(!result || job.recipe_hash === reportImageRecipeHash(REPORT_IMAGE_RECIPE), 409, 'REPORT_IMAGE_RECIPE_UNSUPPORTED');
       const resultText = result ? canonical(result, { maxBytes: 65536 }) : null;
       const attempt = job.attempts - reportImageAttemptBase(job);
       const state = result ? 'READY' : disposition === 'RETRY' && attempt < 6 ? 'QUEUED' : disposition === 'UNKNOWN' ? 'UNKNOWN' : 'FAILED';

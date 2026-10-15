@@ -122,6 +122,33 @@ test('generated transparent photographs prepare through automatic and human-save
   assert.equal(adopted.sides.FRONT.confirmation, null);
 });
 
+test('Photoroom alpha-only frame reaches automatic and human preparation with unchanged canonical geometry', async () => {
+  const path=join(directory,'segmentation.png'),inputPath=join(directory,'segmentation-source.png');
+  await writeFile(inputPath,source.bytes);
+  execFileSync(python,['-I','-c',`import sys,cv2,numpy as np,math\na=cv2.imread(sys.argv[1],cv2.IMREAD_UNCHANGED)\nassert a.dtype==np.uint8 and a.shape[2]==3\nb=cv2.cvtColor(a,cv2.COLOR_BGR2BGRA);r=b.reshape(-1,4);n=math.ceil(len(r)*0.001);r[:n,3]=0;r[n,3]=127\nassert np.array_equal(a,b[:,:,:3]);assert cv2.imwrite(sys.argv[2],b)`,inputPath,path]);
+  const bytes=await readFile(path),pixels=source.frame.raster.dimensions.width*source.frame.raster.dimensions.height,transparent=Math.ceil(pixels*0.001);
+  const frame=parseDecodedFrame({schemaVersion:4,kind:'decoded-frame',id:'synthetic-segmentation',
+    originalDescriptorSha256:descriptorSha256(source.original),decodePlanSha256:descriptorSha256(source.decodePlan),
+    raster:{object:{key:'derived/segmentation.png',versionId:'one'},content:{mime:'image/png',sha256:sha(bytes),byteCount:bytes.length},dimensions:source.frame.raster.dimensions},
+    sourceToFrame:source.frame.sourceToFrame,treatment:{decoder:'photoroom-plus-hd-background-removal',version:'plus-hd-auto',policyVersion:'atlas-background-removal-grading-image-v1',channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'preserved',hdrTreatment:'not-present'},
+    segmentation:{sourceFrame:source.frame,recipeHash:'a'.repeat(64),provider:'PHOTOROOM_PLUS',endpoint:'https://image-api.photoroom.com/v2/edit',
+      foregroundRGB:{validation:'bounded-edge-rgb-v1',visiblePixels:pixels-transparent,opaquePixels:pixels-transparent-1,fractionalPixels:1,
+        comparedChannels:3,mismatchedPixels:0,mismatchedChannels:0,opaqueMismatchedPixels:0,minChannelDelta:0,maxChannelDelta:0},
+      alphaBoundary:{validation:'exterior-alpha-band-v1',connectivity:4,distanceMetric:'manhattan',maxFractionalDistance:1,
+        enclosedTransparentPixels:0,enclosedFractionalPixels:0}}},source.original,source.decodePlan);
+  const cleaned={...source,frame,bytes},geometry=structuredClone(workspace);
+  Object.assign(geometry.sides.FRONT.image,{frameId:frame.id,frameSha256:sha(bytes)});
+  const manual=await prepareGeometry(input({workspace:geometry,source:cleaned}));
+  const automatic=await preparePhotoGeometry({source:cleaned,matColor:'BLACK',quad:geometry.sides.FRONT.physical.quad,
+    engine:await preparationRuntimeIdentity(python),limits,pythonExecutable:python,outputContract:PREPARATION_CORE_V1});
+  for(const name of ['rectified','inspection']){
+    assert.deepEqual(manual.outputs[name].bytes,automatic.outputs[name].bytes);
+    assert.deepEqual(manual.outputs[name].frameToDerivative,prepared.outputs[name].frameToDerivative);
+  }
+  assert.equal(manual.frameDescriptorSha256,descriptorSha256(frame));assert.equal(sha(bytes),frame.raster.content.sha256);
+  assert.equal(geometry.sides.FRONT.confirmation,null);
+});
+
 test('versioned core preparation preserves canonical core bytes and transforms; lazy reveals preserve its analysis frame', async () => {
   const engine = await preparationRuntimeIdentity(python);
   const options = { source, matColor: 'BLACK', limits, pythonExecutable: python, engine };

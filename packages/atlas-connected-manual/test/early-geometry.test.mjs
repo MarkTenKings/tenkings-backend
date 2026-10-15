@@ -16,7 +16,7 @@ import { MACHINE_GEOMETRY_POLICY } from '../src/machine-geometry.mjs';
 import { ASTRA_GEOMETRY_POLICY, prepareAstraGeometryRequest } from '../src/astra-geometry.mjs';
 import { geometrySideSettings } from '../src/details.mjs';
 import { createGradingPhotoReader } from '../src/grading-photo-reader.mjs';
-import { savedGradingPhoto } from './grading-photo-fixture.mjs';
+import { savedGradingPhoto, savedBackgroundRemovedPhoto } from './grading-photo-fixture.mjs';
 
 const settings = { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', profile: null, fields: { name: '' } };
 const identity = { identity: { opencv: 'fixture', numpy: 'fixture', physicalProposalPolicy: 'fixture', sources: {} }, native: { fixture: 'a'.repeat(64) } };
@@ -435,13 +435,15 @@ test('historical engine discovery advances past saved photos without purchasing 
 });
 
 
-test('ordinary discovery releases failed Front using its original while generated Back retains its own frame and cache',async()=>{
+for(const cleaned of [false,true])test(`ordinary discovery releases failed Front using its original while ${cleaned?'Photoroom cleaned':'historical generated'} Back retains its own frame and cache`,async()=>{
  const f=await fixture(),front=await f.upload('FRONT'),back=await f.upload('BACK');
- const frontPhoto=f.photos.get(front.uploadId),backPhoto=f.photos.get(back.uploadId),saved=await savedGradingPhoto(backPhoto);
+ const frontPhoto=f.photos.get(front.uploadId),backPhoto=f.photos.get(back.uploadId);
+ const saved=cleaned?await savedBackgroundRemovedPhoto(backPhoto,(await f.storage.readDecodedFrame({frame:backPhoto.workingFrame,original:backPhoto.original,decodePlan:backPhoto.decodePlan})).bytes)
+  :await savedGradingPhoto(backPhoto);
  const failed={key:digest('failed-front'),state:'FAILED',result:null,code:'REPORT_IMAGE_REQUEST_REJECTED',source_hash:frontPhoto.workingFrame.raster.content.sha256,bound_original_sha256:frontPhoto.original.content.sha256};
  const ready={...saved.row,result:saved.result},before=canonical(failed),observed={};
  const reader=createGradingPhotoReader({photo:async(_card,_upload,side)=>side==='FRONT'?failed:ready,
-  storage:{readDecodedFrame:input=>input.frame.schemaVersion===3?Promise.resolve({bytes:saved.bytes}):f.storage.readDecodedFrame(input)}});
+  storage:{readDecodedFrame:input=>[3,4].includes(input.frame.schemaVersion)?Promise.resolve({bytes:saved.bytes}):f.storage.readDecodedFrame(input)}});
  const service=f.build({isCleanPhotoPrepared:reader.isPhotoPrepared,readGradingPhoto:reader.readGradingPhoto,runVisual:async input=>{
   observed[input.job.input.side]=input.source;
   const {request,evidence}=await prepareAstraGeometryRequest({source:input.source,side:input.job.input.side});
@@ -456,7 +458,7 @@ test('ordinary discovery releases failed Front using its original while generate
    assert.equal(found.input.frameDescriptorSha256,descriptorSha256(frame));assert.deepEqual(found.packet.photoFrame,frame);
    assert.deepEqual(observed[side].frame,frame);assert.equal(digest(observed[side].bytes),frame.raster.content.sha256);
   }
-  assert.equal(observed.FRONT.frame.generation,undefined);assert.equal(observed.BACK.frame.schemaVersion,3);
+  assert.equal(observed.FRONT.frame.generation,undefined);assert.equal(observed.BACK.frame.schemaVersion,cleaned?4:3);
   assert.equal(canonical(failed),before);assert.equal(f.jobs.size,2);
  }finally{await service.stop();}
 });

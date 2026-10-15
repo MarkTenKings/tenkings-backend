@@ -18,7 +18,7 @@ export function createCleanPhotoDescriptor({ reportImages, imageReadUrl, imageUr
     const grant = imageReadUrl
       ? await imageReadUrl({ kind:'clean', descriptor, photo:{ original:media.original, workingFrame:media.frame, decodePlan:media.decodePlan } })
       : { url:imageUrl(cardId,side,'clean',content.sha256), sha256:content.sha256, byteCount:content.byteCount, mime:content.mime };
-    return { ...grant, ...descriptor.raster.dimensions, generative:true, alignment:'grading-image' };
+    return { ...grant, ...descriptor.raster.dimensions, generative:media.frame.schemaVersion !== 4, alignment:'grading-image' };
     } catch(error) {
       rethrowPreviewControlFailure(error);
       try { onError({code:error?.code??'REPORT_IMAGE_UNAVAILABLE'}); } catch {}

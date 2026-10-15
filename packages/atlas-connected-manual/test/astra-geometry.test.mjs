@@ -53,6 +53,20 @@ test('original fallback geometry uses lossless original pixels, explicit provena
  const result=projectAstraGeometryResponse({status:200,bodyText:response(visual),evidence},evidence);
  assert.deepEqual(result.printed.quad,visual.printed.quad);
 });
+test('Photoroom geometry preserves xhigh policy and exact clean crops without claiming generated pixels',async()=>{
+ const source=await fixture();source.frame.schemaVersion=4;delete source.frame.generation;
+ source.frame.segmentation={provider:'PHOTOROOM_PLUS'};
+ const {request,evidence}=await prepareAstraGeometryRequest({source,side:'BACK'});
+ assert.match(request.instructions,/background-removed photograph with verified unchanged foreground RGB and original framing/);
+ assert.doesNotMatch(request.instructions,/generated photograph|ORIGINAL/);
+ assert.equal(request.model,'gpt-6-astra');assert.equal(request.reasoning.effort,'xhigh');
+ assert.equal(evidence.gradingSha256,digest(source.bytes));assert.equal(evidence.images.length,5);
+ for(const [index,image] of request.input[0].content.filter(item=>item.type==='input_image').entries()){
+  const descriptor=evidence.images[index],input=sharp(source.bytes);
+  if(index)input.extract({left:descriptor.left,top:descriptor.top,width:descriptor.width,height:descriptor.height});
+  assert.deepEqual(await sharp(Buffer.from(image.image_url.split(',')[1],'base64')).raw().toBuffer(),await input.raw().toBuffer());
+ }
+});
 test('durable one-dispatch journal reprojects retained raw response without another model call or changed grading request',async()=>{
  const source=await fixture(),job={key:'j',claimId:'c',input:{side:'FRONT',cardId:'card'}};let saved=null,calls=0;const artifacts=new Map();
  const store={async readModel(){return saved;},async dispatchModel(_j,requestHash,request){if(saved)return false;saved={requestHash,request,response:null};return true;},async saveModelResponse(_j,_hash,response){saved.response=response;return true;}};

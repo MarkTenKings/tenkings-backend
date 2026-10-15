@@ -90,6 +90,32 @@ export async function validateMarketRuntimeConfiguration({marketAutomaticEnabled
   requireThat(grants?.allowed===true,503,'MARKET_QUEUE_GRANTS_REQUIRED');
 }
 
+// Runtime roles deliberately cannot read the schema-owner migration ledger.
+// Verify the exact005 function bodies and both enabled table triggers through
+// pg_catalog before the private host listens or starts removal admission.
+export async function validateReportImageRuntimeConfiguration({enabled,client}) {
+  if(!enabled)return;
+  const [schema]=await client.$queryRawUnsafe(`SELECT
+    current_setting('session_replication_role')='origin'
+    AND EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('atlas_manual_connected.report_image_guard()')
+      AND p.prorettype='trigger'::regtype AND NOT p.prosecdef
+      AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+      AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+      AND encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='722ae9f407ca348ea509e2ece684b0d961385cd1dcb8d036ba3522016775a732')
+    AND EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('atlas_manual_connected.retry_report_image(uuid,integer,uuid,uuid,uuid,text,text,uuid,text)')
+      AND p.prorettype='jsonb'::regtype AND p.prosecdef
+      AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+      AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+      AND encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='4d71ba973fe521b05dcce6f52d2797e207533485c588dd0d75790a12311e70bc')
+    AND (SELECT count(*)=2 FROM pg_trigger t
+      WHERE t.tgrelid=to_regclass('atlas_manual_connected.report_image_job')
+      AND t.tgfoid=to_regprocedure('atlas_manual_connected.report_image_guard()')
+      AND NOT t.tgisinternal AND t.tgenabled='O' AND t.tgqual IS NULL AND t.tgnargs=0
+      AND ((t.tgname='report_image_provider_admission' AND t.tgtype=7)
+        OR (t.tgname='report_image_guard' AND t.tgtype=27))) AS installed`);
+  requireThat(schema?.installed===true,503,'REPORT_IMAGE_SCHEMA_REQUIRED');
+}
+
 export function manualLabelSheetsEnabled(env) {
   return env.ATLAS_MANUAL_LABEL_SHEETS_ENABLED==='true' && env.ATLAS_VARIANT_WORKER_ENABLED!=='true';
 }
@@ -135,7 +161,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     const key=`${kind}:${contextOnly}:${descriptorSha256(descriptor)}`,cached=reads.get(key);
     if(cached&&cached.expires>Date.now())return cached.value;
     let value;
-    if(kind==='original')requireThat([1,2,3].includes(descriptor.schemaVersion),503,'GRADING_IMAGE_REQUIRED');
+    if(kind==='original')requireThat([1,2,3,4].includes(descriptor.schemaVersion),503,'GRADING_IMAGE_REQUIRED');
     value=kind==='original'?await storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300})
       :await storage.createImmutableDerivativeRead({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300});
     for(const grant of [value,value.preview,value.display,value.display?.preview])if(grant?.url)
@@ -192,6 +218,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   }):null;
   const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers});
   const validateConfiguration=async()=>{
+    await validateReportImageRuntimeConfiguration({enabled:Boolean(reportImageSettings),client:manualClient});
     await validateOrderDeskConfiguration({enabled:Boolean(orderDesk),client:manualClient});
     await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
     await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient});
@@ -204,8 +231,9 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
 export function manualReportImageSettings(env) {
   if(env.ATLAS_MANUAL_REPORT_IMAGES_ENABLED!=='true')return null;
   const concurrency=Number(env.ATLAS_MANUAL_REPORT_IMAGES_CONCURRENCY??2);
-  const apiKey=env.ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY??env.ATLAS_MANUAL_OPENAI_KEY;
+  const apiKey=env.ATLAS_PHOTOROOM_API_KEY;
   requireThat(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=8
-    &&typeof apiKey==='string'&&apiKey.length>=12&&!/[\r\n]/.test(apiKey),503,'REPORT_IMAGE_CONFIG_INVALID');
+    &&typeof apiKey==='string'&&apiKey.length>=12&&apiKey.length<=4096&&!/[\s\x00-\x1f\x7f]/.test(apiKey)
+    &&apiKey!==env.ATLAS_MANUAL_OPENAI_KEY,503,'REPORT_IMAGE_CONFIG_INVALID');
   return {concurrency,apiKey};
 }

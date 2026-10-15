@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateLearningRuntimeConfiguration,validateMarketRuntimeConfiguration,manualLabelSheetsEnabled,validateLabelRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
+import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateReportImageRuntimeConfiguration,validateLearningRuntimeConfiguration,validateMarketRuntimeConfiguration,manualLabelSheetsEnabled,validateLabelRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
 
-test('report images prefer their dedicated private key without changing shared provider configuration',()=>{
+test('Photoroom removal requires its dedicated private key and cannot borrow OpenAI credentials',()=>{
  const shared='fixture-shared-not-a-real-key',dedicated='fixture-image-not-a-real-key';
- const env={ATLAS_MANUAL_REPORT_IMAGES_ENABLED:'true',ATLAS_MANUAL_OPENAI_KEY:shared,ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY:dedicated};
+ const env={ATLAS_MANUAL_REPORT_IMAGES_ENABLED:'true',ATLAS_MANUAL_OPENAI_KEY:shared,ATLAS_PHOTOROOM_API_KEY:dedicated};
  assert.deepEqual(manualReportImageSettings(env),{concurrency:2,apiKey:dedicated});
  assert.equal(env.ATLAS_MANUAL_OPENAI_KEY,shared);
- assert.equal(manualReportImageSettings({...env,ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY:undefined}).apiKey,shared);
+ assert.throws(()=>manualReportImageSettings({...env,ATLAS_PHOTOROOM_API_KEY:undefined}),{code:'REPORT_IMAGE_CONFIG_INVALID'});
+ assert.throws(()=>manualReportImageSettings({...env,ATLAS_PHOTOROOM_API_KEY:shared}),{code:'REPORT_IMAGE_CONFIG_INVALID'});
  assert.equal(manualReportImageSettings({...env,ATLAS_MANUAL_OPENAI_KEY:undefined}).apiKey,dedicated);
  assert.equal(manualReportImageSettings({ATLAS_MANUAL_REPORT_IMAGES_ENABLED:'false'}),null);
  for(const value of ['', 'bad\nkey-long-enough'])
-   assert.throws(()=>manualReportImageSettings({...env,ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY:value}),{code:'REPORT_IMAGE_CONFIG_INVALID'});
+   assert.throws(()=>manualReportImageSettings({...env,ATLAS_PHOTOROOM_API_KEY:value}),{code:'REPORT_IMAGE_CONFIG_INVALID'});
 });
 import {generateKeyPairSync} from 'node:crypto';
 import {staffContentSecurityPolicy} from '../lib/content-security.mjs';
@@ -95,4 +96,14 @@ test('label sheets stay cold in disabled and variant runtimes and require additi
  await validateLabelRuntimeConfiguration({enabled:true,client});assert.equal(calls,5);
  await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async()=>[{installed:false}]}}),{code:'LABEL_SCHEMA_REQUIRED'});
  await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async sql=>sql.includes('to_regclass')?[{installed:true}]:[{allowed:false}]}}),{code:'LABEL_GRANTS_REQUIRED'});
+});
+
+
+test('removal startup requires the exact005 provider fence and receipt-only functions; disabled removal is cold',async()=>{
+ let calls=0;const client={$queryRawUnsafe:async sql=>{calls++;assert.match(sql,/pg_proc/);assert.match(sql,/pg_trigger/);assert.match(sql,/report_image_provider_admission/);assert.doesNotMatch(sql,/_standalone_migrations/);return[{installed:true}];}};
+ await validateReportImageRuntimeConfiguration({enabled:false,client});assert.equal(calls,0);
+ await validateReportImageRuntimeConfiguration({enabled:true,client});assert.equal(calls,1);
+ for(const rows of [[],[{installed:false}],[{installed:null}],[{installed:'true'}]])
+  await assert.rejects(validateReportImageRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async()=>rows}}),{code:'REPORT_IMAGE_SCHEMA_REQUIRED'});
+ await assert.rejects(validateReportImageRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async()=>{throw Error('database unavailable');}}}),/database unavailable/);
 });

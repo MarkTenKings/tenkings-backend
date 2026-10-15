@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { digest } from '@atlas/manual-service/contract';
-import { createReportImageRetry, reportImageRejection, reportImageAttemptBase } from '../src/report-image-retry.mjs';
-import { REPORT_IMAGE_RECIPE, reportImageRecipeHash } from '../src/report-image-provider.mjs';
+import { createReportImageRetry, reportImageAttemptBase } from '../src/report-image-retry.mjs';
+import { reportImageRecipeHash } from '../src/report-image-provider.mjs';
+const REPORT_IMAGE_RECIPE = {execution:'OPENAI_IMAGES_API',model:'historical-fixture',promptVersion:'historical-v1',prompt:'historical-fixture'};
 import { createGradingPhotoReader } from '../src/grading-photo-reader.mjs';
 import { createConnectedHandler } from '../src/http.mjs';
 
@@ -18,28 +19,10 @@ export function rejectedImageFixture() {
       { event: 'FAILED', requestId, receipt, code: 'REPORT_IMAGE_REQUEST_REJECTED' }] };
 }
 
-test('only exact definite400 Images rejection exposes explicit same-image recovery, including legacy receipt', async () => {
-  const job = rejectedImageFixture(), failure = reportImageRejection(job);
-  assert.deepEqual(failure, { code: 'REPORT_IMAGE_REQUEST_REJECTED', retryable: true, jobKey: job.key, failedRequestId: job.audit.at(-1).requestId });
-  job.attempts = 30; assert.deepEqual(reportImageRejection(job), failure, 'explicit retry has no arbitrary lifetime cap');
-  const reader = createGradingPhotoReader({ photo: async () => job, storage: { readDecodedFrame: () => assert.fail('status cannot read or generate pixels') } });
-  assert.deepEqual(await reader.photoStatus({}), { state:'READY',code:null,source:'ORIGINAL',backgroundRemoval:{state:'FAILED',code:'REPORT_IMAGE_REQUEST_REJECTED'} });
-});
-
-test('accepted, uncertain, local-output failures, changed recipes and corrupt audit never authorize another paid edit', () => {
-  const mutations = [
-    j => { j.state = 'READY'; }, j => { j.state = 'UNKNOWN'; }, j => { j.state = 'REQUESTED'; },
-    j => { j.code = 'REPORT_IMAGE_ALPHA_INVALID'; }, j => { j.claim_id = randomUUID(); }, j => { j.result = {}; },
-    j => { j.recipe_hash = digest('old recipe'); }, j => { j.audit.pop(); }, j => { j.audit.push(j.audit[1]); },
-    j => { j.audit.unshift(j.audit[0]); }, j => { j.audit[1].receipt.status = 200; },
-    j => { j.audit[1].receipt.status = 500; }, j => { j.audit[1].receipt.status = 408; },
-    j => { j.audit[1].receipt.sourceSha256 = digest('another upload'); },
-    j => { j.audit[1].receipt.clientRequestId = randomUUID(); },
-    j => { j.audit[2].receipt = { ...j.audit[2].receipt, status: 400, providerRequestId: 'different' }; },
-    ...['outputSha256', 'byteCount', 'usage'].map(key => j => { j.audit[1].receipt[key] = null; }),
-    j => { j.audit.splice(0, 0, { event: 'RETRY_REQUESTED', failedRequestId: j.audit[0].requestId }); },
-  ];
-  for (const mutate of mutations) { const job = rejectedImageFixture(); mutate(job); assert.equal(reportImageRejection(job), null); }
+test('historical failed removal remains readable as original fallback without retry authority', async () => {
+ const job=rejectedImageFixture();
+ const reader=createGradingPhotoReader({photo:async()=>job,storage:{readDecodedFrame:()=>assert.fail('status cannot dispatch')}});
+ assert.deepEqual(await reader.photoStatus({}),{state:'READY',code:null,source:'ORIGINAL',backgroundRemoval:{state:'FAILED',code:'REPORT_IMAGE_REQUEST_REJECTED'}});
 });
 
 test('bounded worker attempts restart from explicit immutable retry base without resetting historical attempts', () => {
@@ -55,13 +38,13 @@ test('retry service reconciles only existing intents; a new retry cannot replace
   const retry = createReportImageRetry({ recipe: REPORT_IMAGE_RECIPE, wake: () => { wakes++; throw Error('Temporary wake failure'); },
     intakeRepository: { authorizeInTransaction: async (_tx, p, card, options) => { assert.equal(p, principal); assert.equal(card, cardId); assert.deepEqual(options, { edit: true, lock: 'UPDATE' }); } },
     boundary: { transaction: async (_staff, work) => work({ principal, refresh: async () => ({ principal }), tx: { $queryRawUnsafe: async (_sql, ...args) => {
-      if(_sql.startsWith('SELECT EXISTS')){assert.deepEqual(args,[input.jobKey,input.requestId]);return[{acknowledged}];}
+      if(_sql.startsWith('SELECT j.recipe_hash')){assert.deepEqual(args,[input.jobKey,input.requestId]);return acknowledged?[{recipe_hash:reportImageRecipeHash(REPORT_IMAGE_RECIPE)}]:[];}
       calls++; assert.deepEqual(args, [principal.id, 7, input.requestId, cardId, input.uploadId, side, input.jobKey, input.failedRequestId, reportImageRecipeHash(REPORT_IMAGE_RECIPE)]);
       return [{ receipt: { ...input, side } }];
     } } }) } });
   assert.deepEqual(await retry({}, cardId, side, input), { state: 'ACCEPTED', acknowledgedRequest: { ...input, side } });
-  assert.equal(calls, 1); assert.equal(wakes, 1);
-  acknowledged=false;await assert.rejects(retry({},cardId,side,input),{code:'REPORT_IMAGE_RETRY_UNAVAILABLE'});assert.equal(calls,1);assert.equal(wakes,1);
+  assert.equal(calls, 1); assert.equal(wakes, 0);
+  acknowledged=false;await assert.rejects(retry({},cardId,side,input),{code:'REPORT_IMAGE_RETRY_UNAVAILABLE'});assert.equal(calls,1);assert.equal(wakes,0);
   await assert.rejects(retry({}, cardId, side, { ...input, changed: true })); assert.equal(calls, 1);
 });
 

@@ -578,9 +578,9 @@ for(const side of ['FRONT','BACK'])for(const terminal of ['READY','FAILED','UNKN
    assert.match(f.sideText(sideName),/Grading image ready/);assert.equal(f.previewSrc(sideName),'/new-generated.png');
   }else{
    assert.match(f.sideText(sideName),/Image needs attention/);assert.equal(f.previewSrc(sideName),undefined);
-   assert.match(f.sideText(sideName),terminal==='FAILED'?/OpenAI rejected the image request/:/saved request needs review before another image request/);
-   assert.equal(f.has(`Retry ${sideName} background removal`),terminal==='FAILED');
-   assert.equal(f.has(`Check ${sideName} image status`),terminal==='UNKNOWN');
+   assert.match(f.sideText(sideName),terminal==='FAILED'?/Background removal was rejected/:/saved request needs review before another image request/);
+   assert.equal(f.has(`Retry ${sideName} background removal`),false);
+   assert.equal(f.has(`Check ${sideName} image status`),true);
   }
   assert.equal(f.previewSrc(otherName),'/saved-opposite.png');
   assert.equal(f.field('Name').props.value,'Unsaved name');assert.equal(f.field('Year').props.value,'2022-23');
@@ -600,7 +600,7 @@ test('opening REQUESTED image work observes failure without consuming or replayi
   card.gradingImages.BACK={uploadId:'BACK',state:'FAILED',code:'REPORT_IMAGE_REQUEST_REJECTED',
    rejection:{retryable:true,jobKey:'a'.repeat(64),failedRequestId:'new-failed-request'}};
   await f.tick();assert.equal(reads,initialReads+2);assert.match(f.sideText('Back'),/Image needs attention/);
-  assert.equal(f.disabled('Retry Back background removal'),true);assert.equal(f.has('Check saved retry'),true);
+  assert.equal(f.has('Retry Back background removal'),false);assert.equal(f.has('Check saved retry'),true);
   assert.equal(store.getItem(key),JSON.stringify(savedRetry),'status cannot replace the exact uncertain retry with a newer failure');
   const stopped=reads;await f.tick();assert.equal(reads,stopped);
  }finally{f.dispose();}
@@ -614,34 +614,27 @@ for(const binding of ['old-upload','missing-upload'])test(`REQUESTED image polli
   assert.equal(f.has('Retry Back background removal'),false);assert.equal(f.previewSrc('Front'),'/saved-front.png');
  }finally{f.dispose();}
 });
-test('explicit background retry retains the photo pair and unsaved details, then observes preparation without another dispatch',async()=>{
- let card=rejectedBackImage(),reads=0;const posts=[],store=storage(null);
- const f=harness(store,async(path,{body})=>{
-  posts.push({path,body:plain(body)});assert.equal(JSON.parse(store.getItem(key)).intent,'RETRY_GRADING_IMAGE');
-  card.gradingImages.BACK={uploadId:'BACK',state:'QUEUED'};return imageRetryAck(body);
- },{readCard:()=>{reads++;return structuredClone(card);}});
- f.render();await flush();f.render();assert.equal(posts.length,0);assert.match(f.sideText('Back'),/Image needs attention/);
- assert.equal(f.has('Retry Back background removal'),true);assert.equal(f.has('Retry Front background removal'),false);
- f.change('Name','My unsaved name');f.render();f.click('Retry Back background removal');await flush();f.render();
- assert.equal(posts.length,1);assert.deepEqual(posts[0],{path:'/api/staff/manual-connected/cards/card/grading-images/BACK/retry',body:{
-  requestId:posts[0].body.requestId,uploadId:'BACK',jobKey:'a'.repeat(64),failedRequestId:'failed-back-request'}});
- assert.match(posts[0].body.requestId,/^[0-9a-f-]{36}$/);assert.equal(store.getItem(key),null);
- assert.equal(f.previewSrc('Front'),'/saved-front.png');assert.equal(f.field('Name').props.value,'My unsaved name');
- card.gradingImages.BACK={uploadId:'BACK',state:'REQUESTED'};
- const before=reads;await f.tick();assert.equal(reads,before+1);await f.tick();assert.equal(reads,before+2);assert.equal(posts.length,1);
- card.gradingImages.BACK={uploadId:'BACK',state:'FAILED',code:'REPORT_IMAGE_ALPHA_INVALID'};
- await f.tick();assert.equal(reads,before+3);assert.match(f.sideText('Back'),/returned image could not be used for grading/);
- const stopped=reads;await f.tick();assert.equal(reads,stopped);assert.equal(posts.length,1);f.dispose();
+test('historical retryable rejection offers status only and preserves the photo pair and unsaved details',async()=>{
+ const card=rejectedBackImage(),store=storage(null),originalPair=plain(card.card.sides);
+ const f=harness(store,async()=>assert.fail('No new background retry'),{readCard:()=>structuredClone(card)});
+ try{
+  f.render();await flush();f.render();assert.match(f.sideText('Back'),/Image needs attention/);
+  assert.equal(f.has('Retry Back background removal'),false);assert.equal(f.has('Check Back image status'),true);
+  f.change('Name','My unsaved name');f.render();f.click('Check Back image status');await flush();f.render();
+  assert.equal(f.previewSrc('Front'),'/saved-front.png');assert.equal(f.field('Name').props.value,'My unsaved name');
+  assert.deepEqual(plain(card.card.sides),originalPair);assert.equal(store.getItem(key),null);
+ }finally{f.dispose();}
 });
 for(const uncertain of ['lost-response','wrong-ack'])test(`background retry ${uncertain} resumes the identical intent without buying another retry`,async()=>{
- const card=rejectedBackImage(),store=storage(null),posts=[];
+ const prior={path:'/api/staff/manual-connected/cards/card/grading-images/BACK/retry',intent:'RETRY_GRADING_IMAGE',body:{requestId:'saved-retry',uploadId:'BACK',jobKey:'a'.repeat(64),failedRequestId:'failed-back-request'}};
+ const card=rejectedBackImage(),store=storage(prior),posts=[];
  const f=harness(store,async(path,{body})=>{
   posts.push({path,body:plain(body)});
   if(posts.length===1){if(uncertain==='lost-response')throw {status:503};return imageRetryAck({...body,uploadId:'unrelated'});}
   return imageRetryAck(body);
  },{readCard:()=>card});
- f.render();await flush();f.render();f.click('Retry Back background removal');await flush();f.render();
- assert.equal(posts.length,1);assert.equal(f.has('Check saved retry'),true);assert.equal(f.disabled('Retry Back background removal'),true);
+ f.render();await flush();f.render();assert.equal(f.has('Retry Back background removal'),false);f.click('Check saved retry');await flush();f.render();
+ assert.equal(posts.length,1);assert.equal(f.has('Check saved retry'),true);assert.equal(f.has('Retry Back background removal'),false);
  const retained=JSON.parse(store.getItem(key));assert.deepEqual(retained.body,posts[0].body);
  f.click('Check saved retry');await flush();f.render();assert.deepEqual(posts[1],posts[0]);assert.equal(store.getItem(key),null);f.dispose();
 });

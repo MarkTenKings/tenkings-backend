@@ -240,6 +240,54 @@ function decodedShape(value) {
 }
 export function parseDecodedFrame(value, originalValue, decodePlan) {
   const original = parseOriginal(originalValue); validateDecodePlan(decodePlan, original);
+  if (value?.schemaVersion === 4) {
+    // Background removal retains exact opaque RGB and permits only the bounded
+    // exterior-edge rounding described below. The normalized photograph remains
+    // the exact coordinate authority; historical generated frames stay separate.
+    object(value, ['schemaVersion', 'kind', 'id', 'originalDescriptorSha256', 'decodePlanSha256',
+      'raster', 'sourceToFrame', 'treatment', 'segmentation']);
+    requireThat(value.kind === 'decoded-frame'); text(value.id);
+    raster(value.raster); treatment(value.treatment);
+    object(value.segmentation, ['sourceFrame', 'recipeHash', 'provider', 'endpoint', 'foregroundRGB', 'alphaBoundary']);
+    requireThat([1, 2].includes(value.segmentation.sourceFrame?.schemaVersion));
+    const source = parseDecodedFrame(value.segmentation.sourceFrame, original, decodePlan);
+    sha(value.segmentation.recipeHash);
+    requireThat(value.segmentation.provider === 'PHOTOROOM_PLUS'
+      && value.segmentation.endpoint === 'https://image-api.photoroom.com/v2/edit', 'PHOTO_SOURCE_MISMATCH');
+    const rgb = value.segmentation.foregroundRGB, pixels = value.raster.dimensions.width * value.raster.dimensions.height;
+    object(rgb, ['validation', 'visiblePixels', 'opaquePixels', 'fractionalPixels', 'comparedChannels', 'mismatchedPixels',
+      'mismatchedChannels', 'opaqueMismatchedPixels', 'minChannelDelta', 'maxChannelDelta']);
+    requireThat(rgb.validation === 'bounded-edge-rgb-v1'
+      && [rgb.visiblePixels, rgb.opaquePixels, rgb.fractionalPixels, rgb.mismatchedPixels, rgb.mismatchedChannels].every(n => Number.isSafeInteger(n) && n >= 0)
+      && rgb.visiblePixels > 0 && rgb.visiblePixels < pixels && pixels - rgb.visiblePixels >= Math.ceil(pixels * 0.001)
+      && rgb.opaquePixels + rgb.fractionalPixels === rgb.visiblePixels && rgb.opaquePixels >= rgb.visiblePixels * 0.98
+      && rgb.comparedChannels === 3 && rgb.opaqueMismatchedPixels === 0
+      && rgb.mismatchedPixels <= rgb.fractionalPixels && rgb.mismatchedPixels <= rgb.visiblePixels * 0.002
+      && rgb.mismatchedChannels >= rgb.mismatchedPixels && rgb.mismatchedChannels <= rgb.mismatchedPixels * 3
+      && rgb.minChannelDelta === (rgb.mismatchedPixels ? -1 : 0) && rgb.maxChannelDelta === 0, 'PHOTO_SOURCE_MISMATCH');
+    const boundary = value.segmentation.alphaBoundary;
+    object(boundary, ['validation', 'connectivity', 'distanceMetric', 'maxFractionalDistance', 'enclosedTransparentPixels', 'enclosedFractionalPixels']);
+    requireThat(boundary.validation === 'exterior-alpha-band-v1' && boundary.connectivity === 4 && boundary.distanceMetric === 'manhattan'
+      && Number.isSafeInteger(boundary.maxFractionalDistance) && boundary.maxFractionalDistance >= (rgb.fractionalPixels ? 1 : 0)
+      && boundary.maxFractionalDistance <= (rgb.fractionalPixels ? 16 : 0)
+      && boundary.enclosedTransparentPixels === 0 && boundary.enclosedFractionalPixels === 0, 'PHOTO_SOURCE_MISMATCH');
+    requireThat(value.originalDescriptorSha256 === hash(original) && value.decodePlanSha256 === hash(decodePlan)
+      && equal(value.sourceToFrame, source.sourceToFrame)
+      && equal(value.raster.dimensions, source.raster.dimensions)
+      && value.raster.object.key !== original.object.key && value.raster.object.key !== source.raster.object.key
+      && source.raster.content.mime === 'image/png' && source.treatment.channels === 3
+      && source.treatment.bitDepth === 8 && source.treatment.colorSpace === 'sRGB'
+      && value.raster.content.mime === 'image/png' && value.treatment.channels === 4
+      && value.treatment.bitDepth === 8 && value.treatment.colorSpace === source.treatment.colorSpace
+      && value.treatment.colorTreatment === 'preserved'
+      && value.treatment.decoder === 'photoroom-plus-hd-background-removal'
+      && value.treatment.policyVersion === 'atlas-background-removal-grading-image-v1', 'PHOTO_SOURCE_MISMATCH');
+    requireThat(value.raster.dimensions.width <= 5000 && value.raster.dimensions.height <= 5000
+      && pixels <= 25_000_000 && pixels <= decodePlan.limits.maxPixels && pixels * 4 <= decodePlan.limits.maxRasterBytes
+      && value.raster.content.byteCount <= 101 * 1024 * 1024
+      && value.raster.content.byteCount <= decodePlan.limits.maxOutputBytes, 'PHOTO_DECODE_LIMIT');
+    return copy(value);
+  }
   if (value?.schemaVersion === 3) {
     // A generated grading image starts its own pixel coordinate system. The
     // uploaded photograph remains explicit lineage, never a claimed geometric

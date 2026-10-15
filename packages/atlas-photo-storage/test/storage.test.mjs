@@ -452,3 +452,31 @@ test('generated RGBA grading frame persists its own dimensions and exact bytes w
  const wrong=structuredClone(decoded.original);wrong.binding.side='BACK';
  await assert.rejects(store.readDecodedFrame({...args,frame:stored,original:wrong}),code('PHOTO_SOURCE_MISMATCH'));
 });
+
+test('Photoroom frame storage preserves exact full-frame bytes and source lineage without replacing an existing object',async()=>{
+ const png=channels=>{const header=Buffer.alloc(13);header.writeUInt32BE(4);header.writeUInt32BE(3,4);header[8]=8;header[9]=channels===3?2:6;
+  const samples=Buffer.alloc(3*(1+4*channels));for(let y=0;y<3;y++)for(let x=0;x<4;x++){const i=y*(1+4*channels)+1+x*channels;samples[i]=122;samples[i+1]=140;samples[i+2]=180;if(channels===4)samples[i+3]=y===0&&x===0?0:255;}
+  return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',header),chunk('sRGB',Buffer.from([0])),chunk('IDAT',deflateSync(samples)),chunk('IEND',Buffer.alloc(0))]);};
+ const originalBytes=png(3);
+ const client=new ByteTransport(),store=storage(client),uploadPlan=plan(originalBytes);
+ await store.writeOriginal({uploadPlan,bytes:originalBytes});
+ const decoded=await store.decodeOriginal({uploadPlan,decodeLimits});
+ const sourceFrame=await store.writeDecodedFrame(decoded,{id:'normalized',key:'test/derived/normalized.png'});
+ const bytes=png(4);
+ const frame={schemaVersion:4,kind:'decoded-frame',id:'removed',originalDescriptorSha256:descriptorSha256(decoded.original),decodePlanSha256:descriptorSha256(decoded.decodePlan),
+  raster:{object:{key:'test/derived/removed.png',versionId:null},content:{mime:'image/png',byteCount:bytes.length,sha256:sha256(bytes)},dimensions:sourceFrame.raster.dimensions},sourceToFrame:sourceFrame.sourceToFrame,
+  treatment:{decoder:'photoroom-plus-hd-background-removal',version:'plus-hd-auto',policyVersion:'atlas-background-removal-grading-image-v1',channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'preserved',hdrTreatment:'not-present'},
+  segmentation:{sourceFrame,recipeHash:'a'.repeat(64),provider:'PHOTOROOM_PLUS',endpoint:'https://image-api.photoroom.com/v2/edit',
+   foregroundRGB:{validation:'bounded-edge-rgb-v1',visiblePixels:11,opaquePixels:11,fractionalPixels:0,comparedChannels:3,mismatchedPixels:0,mismatchedChannels:0,opaqueMismatchedPixels:0,minChannelDelta:0,maxChannelDelta:0},
+   alphaBoundary:{validation:'exterior-alpha-band-v1',connectivity:4,distanceMetric:'manhattan',maxFractionalDistance:0,enclosedTransparentPixels:0,enclosedFractionalPixels:0}}};
+ const args={frame,original:decoded.original,decodePlan:decoded.decodePlan,bytes};
+ const stored=await store.writeGeneratedFrame(args),read=await store.readDecodedFrame({...args,frame:stored});
+ assert.deepEqual(read.bytes,bytes);assert.deepEqual(stored.segmentation.sourceFrame,sourceFrame);
+ assert.deepEqual(stored.sourceToFrame,sourceFrame.sourceToFrame);assert.deepEqual(await store.writeGeneratedFrame(args),stored);assert.equal(putCount(client),3);
+ await assert.rejects(store.writeGeneratedFrame({...args,bytes:Buffer.from('replacement')}),code('PHOTO_STORAGE_CONFLICT'));
+ const wrong=structuredClone(decoded.original);wrong.binding.side='BACK';
+ await assert.rejects(store.readDecodedFrame({...args,frame:stored,original:wrong}),code('PHOTO_SOURCE_MISMATCH'));
+ const shifted=structuredClone(frame);shifted.sourceToFrame[2]++;
+ await assert.rejects(store.writeGeneratedFrame({...args,frame:shifted}),code('PHOTO_SOURCE_MISMATCH'));
+ assert.deepEqual((await store.readDecodedFrame({...args,frame:stored})).bytes,bytes);assert.equal(putCount(client),3);
+});

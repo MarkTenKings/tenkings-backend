@@ -30,7 +30,7 @@ function checkSource(workspace, side, source) {
     && frame.id === image.frameId && content.sha256 === image.frameSha256
     && dimensions.width === image.width && dimensions.height === image.height, 'PREPARATION_SOURCE_MISMATCH');
   requireThat(content.mime === 'image/png' && frame.treatment.bitDepth === 8
-    && (frame.treatment.channels === 3 || frame.schemaVersion === 3 && frame.treatment.channels === 4) && frame.treatment.colorSpace === 'sRGB', 'PREPARATION_RASTER_UNSUPPORTED');
+    && (frame.treatment.channels === 3 || [3, 4].includes(frame.schemaVersion) && frame.treatment.channels === 4) && frame.treatment.colorSpace === 'sRGB', 'PREPARATION_RASTER_UNSUPPORTED');
   requireThat(source.bytes instanceof Uint8Array && source.bytes.buffer instanceof ArrayBuffer);
   return { state, frame, content, dimensions };
 }

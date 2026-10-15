@@ -102,3 +102,19 @@ test('hung optional report image lookup is omitted within a bounded wait and a l
  rejectLookup(Error('late optional failure'));
  await new Promise(resolve=>setImmediate(resolve));
 });
+
+
+test('Photoroom access follows current approval authority and remains JSON-only through the native reader',async()=>{
+ const f=await setup();let enabled=true,calls=0;
+ const client={$transaction:async fn=>fn({$queryRawUnsafe:async()=>enabled?[f.row]:[]})};
+ const value={version:'atlas-approved-report-image-access-v1',execution:'PHOTOROOM_PLUS_API',publicToken:f.row.public_token,approvalVersion:1,
+  publicHash:f.row.public_hash,side:'FRONT',image:{url:'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/cutout?grant=fixture',
+   sha256:'d'.repeat(64),byteCount:25*1024*1024,mime:'image/png',width:3024,height:4032}};
+ const claims=f.claims('IMAGE');claims.request.kind='REPORT_IMAGE_ACCESS';claims.request.outputSha256=value.image.sha256;
+ const reportImages={async imageAccess(row,packet,side,hash){calls++;assert.equal(row.manifest_hash,f.row.manifest_hash);assert.equal(packet.publicToken,f.row.public_token);
+  assert.equal(side,'FRONT');assert.equal(hash,value.image.sha256);return value;}};
+ const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage,reportImages});
+ const result=await reader.read(claims);assert.equal(result.contentType,'application/json');assert.deepEqual(JSON.parse(result.bytes),value);assert.ok(result.bytes.length<16384);
+ reportImages.imageAccess=async()=>{enabled=false;return value;};
+ await assert.rejects(reader.read(claims),{code:'MANUAL_PUBLICATION_CHANGED'});assert.equal(calls,1);
+});

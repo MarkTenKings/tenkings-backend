@@ -4,7 +4,8 @@ import { parseDerivative, parseDecodedFrame, descriptorSha256 } from '@atlas/pho
 import { processedPhoto } from '@atlas/manual-intake';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { parseReportImages, reportImageURL } from '@atlas/report-view/report-images-contract';
-import { reportImageRecipeHash } from './report-image-provider.mjs';
+import { parseReportImageAccess } from '@atlas/service-bridge/inspection-access';
+import { REPORT_IMAGE_RECIPE, reportImageRecipeHash, inspectReportImageInput, inspectPhotoroomOutput } from './report-image-provider.mjs';
 import { createGradingPhotoReader } from './grading-photo-reader.mjs';
 
 const SIDES = ['FRONT','BACK'];
@@ -50,15 +51,16 @@ function sourceMatches(saved, packet, side, cardId) {
 }
 function gradingFrame(job, output, keyPrefix) {
   const source = job.sourceMedia;
-  return parseDecodedFrame({ schemaVersion: 3, kind: 'decoded-frame', id: `grading-image:${job.key}`,
+  return parseDecodedFrame({ schemaVersion: 4, kind: 'decoded-frame', id: `grading-image:${job.key}`,
     originalDescriptorSha256: descriptorSha256(source.original), decodePlanSha256: descriptorSha256(source.decodePlan),
     raster: { content: { mime:'image/png', sha256:output.sha256, byteCount:output.byteCount },
       dimensions: { width:output.width, height:output.height },
       object: { key:`${keyPrefix}/derived/${job.source_card_id}/grading-image/${job.key}/${output.sha256}.png`, versionId:null } },
-    sourceToFrame:[1,0,0,0,1,0,0,0,1],
-    treatment:{decoder:'openai-images-edit',version:job.recipe.model,policyVersion:'atlas-generated-grading-image-v1',
-      channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'},
-    generation:{sourceFrame:source.frame,recipeHash:reportImageRecipeHash(job.recipe),model:job.recipe.model,promptVersion:job.recipe.promptVersion},
+    sourceToFrame:source.frame.sourceToFrame,
+    treatment:{decoder:'photoroom-plus-hd-background-removal',version:job.recipe.version,policyVersion:'atlas-background-removal-grading-image-v1',
+      channels:4,bitDepth:8,colorSpace:'sRGB',colorTreatment:'preserved',hdrTreatment:'not-present'},
+    segmentation:{sourceFrame:source.frame,recipeHash:reportImageRecipeHash(job.recipe),provider:'PHOTOROOM_PLUS',
+      endpoint:'https://image-api.photoroom.com/v2/edit',foregroundRGB:output.foregroundRGB,alphaBoundary:output.alphaBoundary},
   }, source.original, source.decodePlan);
 }
 function outputDescriptor(job, output, keyPrefix, frame) {
@@ -69,16 +71,16 @@ function outputDescriptor(job, output, keyPrefix, frame) {
     raster: { content: { mime: 'image/png', sha256: output.sha256, byteCount: output.byteCount },
       dimensions: { width: output.width, height: output.height },
       object: { key: `${keyPrefix}/derived/${job.source_card_id}/card-cutout/${job.key}/${output.sha256}.png`, versionId: null } },
-    encoder: { name: job.recipe.execution === 'OPENAI_BUILT_IN' ? 'openai-built-in-image-edit' : 'openai-images-edit',
-      version: job.recipe.model ?? 'model-not-reported', settingsSha256: reportImageRecipeHash(job.recipe) } },
+    encoder: { name: 'photoroom-plus-hd-background-removal',
+      version: job.recipe.version, settingsSha256: reportImageRecipeHash(job.recipe) } },
   frame, source.original, source.decodePlan);
 }
 
 /** A cold, optional worker/read facade. Only start()/tick() discover or execute
  * edits; public HTTP methods below only read saved records and cached bytes. */
 export function createReportImages({ store, artifacts, storage, provider, keyPrefix, concurrency = 2,
-  intervalMs = 5000, onError = () => {}, timers = globalThis, inspect = inspectReportImage } = {}) {
-  requireThat(store && artifacts && storage && provider?.recipe && /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(keyPrefix)
+  intervalMs = 5000, onError = () => {}, timers = globalThis, inspect = inspectPhotoroomOutput } = {}) {
+  requireThat(store && artifacts && storage && provider?.recipe && canonical(provider.recipe) === canonical(REPORT_IMAGE_RECIPE) && /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(keyPrefix)
     && Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 8, 503, 'REPORT_IMAGE_CONFIG_INVALID');
   const emit = error => { try { onError({ code: safeCode(error) }); } catch {} };
   async function publicationSource(row, signal) {
@@ -117,8 +119,8 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
       } catch (error) { emit(error); if (signal.aborted) throw error; }
     }
   }
-  async function persist(job, bytes, receipt, signal) {
-    const output = await inspect(bytes); signal.throwIfAborted();
+  async function persist(job, bytes, sourceBytes, receipt, signal) {
+    const output = await inspect(bytes, sourceBytes); signal.throwIfAborted();
     const frame = await storage.writeGeneratedFrame({ ...job.sourceMedia, frame:gradingFrame(job, output, keyPrefix), bytes, signal });
     const descriptor = await storage.writeDerivative({ ...job.sourceMedia, frame, descriptor: outputDescriptor(job, output, keyPrefix, frame), bytes, signal });
     return { version: 'atlas-report-image-result-v1', sourceSha256: job.source_hash, recipeHash: reportImageRecipeHash(job.recipe),
@@ -140,28 +142,30 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
           decodePlan: job.sourceMedia.decodePlan, signal: controller.signal })
         : await storage.readDerivative({ ...job.sourceMedia, signal: controller.signal });
       requireThat(digest(source.bytes) === job.source_hash, 503, 'REPORT_IMAGE_SOURCE_MISMATCH');
+      await inspectReportImageInput({ bytes: source.bytes, contentType: job.sourceMedia.descriptor.raster.content.mime,
+        sourceSha256: job.source_hash, ...job.sourceMedia.frame.raster.dimensions });
       controller.signal.throwIfAborted();
       // If the dispatch transaction itself loses its reply, assume it may
       // have committed. A REQUESTED marker must never be reset for a retry.
       dispatched = true;
       if (!await store.dispatch(job)) { dispatched = false; requireThat(false, 409, 'REPORT_IMAGE_LEASE_LOST'); }
       const generated = await provider.edit({ bytes: source.bytes, sourceSha256: job.source_hash,
-        contentType: job.sourceMedia.descriptor.raster.content.mime, requestId: job.claim_id, signal: controller.signal });
+        contentType: job.sourceMedia.descriptor.raster.content.mime, ...job.sourceMedia.frame.raster.dimensions, requestId: job.claim_id, signal: controller.signal });
       providerReceipt = generated.receipt;
       await store.recordReceipt(job, providerReceipt);
-      requireThat(providerReceipt?.execution === job.recipe.execution && providerReceipt.model === job.recipe.model
-        && providerReceipt.promptVersion === job.recipe.promptVersion && providerReceipt.promptSha256 === digest(job.recipe.prompt)
+      requireThat(providerReceipt?.execution === 'PHOTOROOM_PLUS_API' && providerReceipt.recipeVersion === job.recipe.version
+        && providerReceipt.endpoint === 'https://image-api.photoroom.com/v2/edit'
         && providerReceipt.recipeHash === job.recipe_hash && providerReceipt.sourceSha256 === job.source_hash
         && providerReceipt.clientRequestId === job.claim_id && providerReceipt.outputSha256 === digest(generated.bytes)
         && providerReceipt.byteCount === generated.bytes.length, 503, 'REPORT_IMAGE_RECEIPT_MISMATCH');
-      const result = await persist(job, generated.bytes, generated.receipt, controller.signal);
+      const result = await persist(job, generated.bytes, source.bytes, generated.receipt, controller.signal);
       await store.finish(job, { result });
     } catch (error) {
       emit(error);
       const receipt = error.receipt ?? providerReceipt;
       if (receipt) { try { await store.recordReceipt(job, receipt); } catch (saveError) { emit(saveError); } }
       try { await store.finish(job, { code: safeCode(error), receipt,
-        disposition: error.disposition ?? (['REPORT_IMAGE_OUTPUT_INVALID','REPORT_IMAGE_ALPHA_INVALID','REPORT_IMAGE_RECIPE_UNSUPPORTED','REPORT_IMAGE_RECEIPT_MISMATCH'].includes(error.code) ? 'FAILED' : dispatched ? 'UNKNOWN' : ['PHOTO_STORAGE_CONFLICT','REPORT_IMAGE_SOURCE_MISMATCH'].includes(error.code) ? 'FAILED' : 'RETRY') }); }
+        disposition: error.disposition ?? (['REPORT_IMAGE_OUTPUT_INVALID','REPORT_IMAGE_ALPHA_INVALID','REPORT_IMAGE_RECIPE_UNSUPPORTED','REPORT_IMAGE_RECEIPT_MISMATCH','REPORT_IMAGE_INPUT_INVALID','REPORT_IMAGE_INPUT_UNSUPPORTED'].includes(error.code) ? 'FAILED' : dispatched ? 'UNKNOWN' : ['PHOTO_STORAGE_CONFLICT','REPORT_IMAGE_SOURCE_MISMATCH'].includes(error.code) ? 'FAILED' : 'RETRY') }); }
       catch (saveError) { emit(saveError); }
     } finally { timers.clearInterval(heartbeat); await renewing; controllers.delete(controller); }
   }
@@ -187,11 +191,14 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
       && qualifiedAlpha(result.output.alpha, result.output.width * result.output.height), 503, 'REPORT_IMAGE_BINDING_INVALID');
     const value = { publicToken: packet.publicToken, approvalVersion: packet.approvalVersion, publicHash, side,
       sourceSha256: packet.images[side].sha256,
-      ...(publicationBound ? { generationSourceSha256: result.sourceSha256, originalSha256: job.original_sha256 } : {}),
+      ...(publicationBound ? { [job.recipe.execution === 'PHOTOROOM_PLUS_API' ? 'segmentationSourceSha256' : 'generationSourceSha256']: result.sourceSha256, originalSha256: job.original_sha256 } : {}),
       sha256: result.output.sha256, width: result.output.width, height: result.output.height,
       byteCount: result.output.byteCount, contentType: 'image/png', transparent: true, presentationOnly: true,
-      preservesOriginalRGB: false, alignment: 'approximate-frame-fit', promptVersion: job.recipe.promptVersion,
-      model: job.recipe.model, execution: job.recipe.execution };
+      ...(job.recipe.execution === 'PHOTOROOM_PLUS_API'
+        ? { preservesOriginalRGB: false, preservesOpaqueRGB: true, foregroundRGBValidation: 'bounded-edge-rgb-v1',
+          alignment: 'original-frame', recipeVersion: job.recipe.version, execution: job.recipe.execution }
+        : { preservesOriginalRGB: false, alignment: 'approximate-frame-fit', promptVersion: job.recipe.promptVersion,
+          model: job.recipe.model, execution: job.recipe.execution }) };
     return { ...value, url: reportImageURL(value) };
   }
   async function manifest(row, packet) {
@@ -238,6 +245,21 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
       }
     },
     wake() { return cycle(); },
+    async imageAccess(row, packet, side, outputSha256, signal) {
+      requireThat(SIDES.includes(side), 404, 'REPORT_IMAGE_NOT_FOUND');
+      const job = await store.ready(row, side);
+      if (!job || job.recipe.execution !== 'PHOTOROOM_PLUS_API') return null;
+      const value = checked(job, packet, row.public_hash, side); if (value.sha256 !== outputSha256) return null;
+      const grant = await (storage.createImmutableDerivativeRead ?? storage.createDerivativeRead)({ ...job.result.media, expiresIn: 120, signal });
+      const access = parseReportImageAccess({ version: 'atlas-approved-report-image-access-v1', execution: value.execution,
+        publicToken: value.publicToken, approvalVersion: value.approvalVersion, publicHash: value.publicHash, side,
+        image: { ...grant, width: value.width, height: value.height } },
+      { sha256: value.sha256, byteCount: value.byteCount, width: value.width, height: value.height });
+      // A retired or replaced publication may not acquire a fresh storage grant.
+      const current = await store.ready(row, side);
+      if (!current || current.key !== job.key || canonical(checked(current, packet, row.public_hash, side)) !== canonical(value)) return null;
+      return access;
+    },
     async image(row, packet, side, outputSha256, signal) {
       const job = await store.ready(row, side); if (!job) return null;
       const value = checked(job, packet, row.public_hash, side); if (value.sha256 !== outputSha256) return null;
