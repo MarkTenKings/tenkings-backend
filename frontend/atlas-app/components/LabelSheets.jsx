@@ -5,6 +5,7 @@ import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 import { manualRequest, manualMessage } from '../lib/manual-client.mjs';
 import { STAFF_BASE_PATH } from '../lib/routes.mjs';
 import { createLabelSheetsClient, labelArtworkHref, labelName, labelSheetMessage, labelSheetName } from '../lib/label-sheets-client.mjs';
+import { buildNfcBatch, nfcBatchCsv, nfcBatchMessage } from '../lib/gototags-nfc-export.mjs';
 import styles from './LabelSheets.module.css';
 
 const mergePages = pages => {
@@ -62,6 +63,8 @@ export default function LabelSheets({ staff, embedded = false, initialCardId = n
   const [tab, setTab] = useState('sheets'), [search, setSearch] = useState(''), [filter, setFilter] = useState('all'), [selectedItemId, setSelectedItemId] = useState(null);
   const [error, setError] = useState(''), [actionError, setActionError] = useState(''), [detailError, setDetailError] = useState(''), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [pending, setPending] = useState(null);
   const [dialog, setDialog] = useState(null), [download, setDownload] = useState(null), [message, setMessage] = useState(''), [itemExports, setItemExports] = useState({}), [reload, setReload] = useState(0), [paging, setPaging] = useState(false);
+  const nfcRequest = useRef(null);
+  const [nfcBatch, setNfcBatch] = useState(null), [nfcSelected, setNfcSelected] = useState([]), [nfcBusy, setNfcBusy] = useState(false), [nfcError, setNfcError] = useState(''), [nfcMessage, setNfcMessage] = useState('');
   const readOnly = staff.role !== 'REVIEWER', selectionKey = `atlas-label-sheets:${staff.id}:selection`;
   const refresh = useCallback(async (currentOwner = owner.current) => {
     if (!client.current || reading.current) return;
@@ -95,6 +98,7 @@ export default function LabelSheets({ staff, embedded = false, initialCardId = n
   }, [initialCardId]);
   useEffect(() => {
     const token = {}; owner.current = token; client.current = null; reading.current = false; mutating.current = false; cursors.current = [0]; requestedCard.current = initialCardId; setPaging(false); setActionError('');
+    nfcRequest.current = null; setNfcBatch(null); setNfcSelected([]); setNfcBusy(false); setNfcError(''); setNfcMessage('');
     setListing(null); setSheet(null); setLoading(true); setError(''); setPending(null); setBusy(false); setDownload(null); setDialog(null); setItemExports({}); setMessage(''); setDetailError('');
     try { const saved = JSON.parse(localStorage.getItem(selectionKey) || 'null'); selected.current = saved?.sheetId ?? null; setSheetId(selected.current); setSlot(Number.isInteger(saved?.slot) && saved.slot >= 1 && saved.slot <= 50 ? saved.slot : 1); } catch { selected.current = null; setSheetId(null); }
     void (async () => {
@@ -120,6 +124,49 @@ export default function LabelSheets({ staff, embedded = false, initialCardId = n
     selected.current = id; setSheetId(id); setSlot(1); setSheet(null); setDetailError(''); setDownload(null);
     try { const detail = await currentClient.sheet(id); if (owner.current === token && selected.current === id && readSequence.current === sequence) setSheet(detail); }
     catch (failure) { if (owner.current === token && selected.current === id && readSequence.current === sequence) setDetailError(failureText(failure)); }
+  };
+  const prepareNfc = async (download = false) => {
+    if (nfcRequest.current || !client.current || readOnly) return;
+    const token = owner.current, currentClient = client.current, requestToken = {};
+    const expected = nfcBatch, selectedItems = [...nfcSelected];
+    nfcRequest.current = requestToken; setNfcBusy(true); setNfcError(''); setNfcMessage('');
+    try {
+      // Read-only GETs deliberately do not use run(), resume(), or pending print intents.
+      const session = await manualRequest('/api/staff/session');
+      if (owner.current !== token) return;
+      if (session.staff?.id !== staff.id) throw { code: 'MANUAL_STAFF_CHANGED' };
+      const pages = await Promise.all([...cursors.current].map(cursor => currentClient.list({ cursor })));
+      if (owner.current !== token) return;
+      const current = mergePages(pages), details = [];
+      // Bound concurrent transactions while retaining every loaded sheet, including frozen ones.
+      for (let i = 0; i < current.sheets.length; i += 4) {
+        details.push(...await Promise.all(current.sheets.slice(i, i + 4).map(value => currentClient.sheet(value.sheetId))));
+        if (owner.current !== token) return;
+      }
+      const confirmedSession = await manualRequest('/api/staff/session');
+      if (owner.current !== token) return;
+      if (confirmedSession.staff?.id !== staff.id) throw { code: 'MANUAL_STAFF_CHANGED' };
+      const fresh = { ...buildNfcBatch(details), hasMore: Boolean(current.hasMore) };
+      setNfcBatch(fresh);
+      if (!download || !expected || JSON.stringify(fresh.rows) !== JSON.stringify(expected.rows)) {
+        // Preserve deliberate exclusions; a newly arrived card needs selection
+        // after the first review instead of silently joining a refreshed batch.
+        setNfcSelected(fresh.rows.filter(row => !expected || selectedItems.includes(row.itemId)).map(row => row.itemId));
+        if (download) setNfcError(nfcBatchMessage({ code: 'NFC_BATCH_CHANGED' }));
+        return;
+      }
+      const csv = nfcBatchCsv(fresh, selectedItems), link = document.createElement('a');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      try {
+        link.href = url; link.download = `atlas-nfc-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+        document.body.appendChild(link); link.click();
+      } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+      setNfcMessage(`CSV download requested for ${selectedItems.length} card${selectedItems.length === 1 ? '' : 's'}. Import it once into GoToTags. Encoding results are shown in GoToTags; ATLAS has not recorded NFC completion.`);
+    } catch (failure) {
+      if (owner.current === token) { setNfcBatch(null); setNfcSelected([]); setNfcError(nfcBatchMessage(failure) ?? failureText(failure)); }
+    } finally {
+      if (owner.current === token && nfcRequest.current === requestToken) { nfcRequest.current = null; setNfcBusy(false); }
+    }
   };
   const run = async operation => {
     if (mutating.current || !client.current || readOnly) return;
@@ -159,6 +206,19 @@ export default function LabelSheets({ staff, embedded = false, initialCardId = n
     {message && <p className={styles.message} role="status">{message}</p>}
     {listing && initialCardId && !allItems.some(value => value.cardId === initialCardId) && <p className={styles.attention} role="status">This card’s label is not in the loaded results yet. {listing.hasMore ? 'Load older sheets and labels to check its saved status.' : 'It will appear here when its published label is prepared.'}</p>}
     {download && <div className={styles.download} role="status"><a className={`${styles.button} ${styles.primary}`} href={download.url} download rel="noopener noreferrer">Download saved PNG ↓</a><p>This link expires {new Date(download.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Request it again if needed.</p></div>}
+    {listing && <section className={styles.nfcBatch} aria-labelledby="nfc-batch-title">
+      <div className={styles.nfcHeading}><div><h2 id="nfc-batch-title">NFC batch · GoToTags</h2><p>One chip per current approved card, in sheet and position order. Replacement labels are excluded.</p></div><button type="button" className={styles.button} disabled={nfcBusy || readOnly} onClick={() => void prepareNfc()}>{nfcBusy ? 'Checking approved labels…' : nfcBatch ? 'Refresh NFC batch' : 'Prepare NFC batch'}</button></div>
+      {nfcError && <p className={styles.error} role="alert">{nfcError}</p>}
+      {nfcMessage && <p className={styles.message} role="status">{nfcMessage}</p>}
+      {nfcBatch && <>
+        <p className={styles.nfcScope}>{nfcBatch.rows.length} current card{nfcBatch.rows.length === 1 ? '' : 's'} on the loaded sheets · {nfcSelected.length} selected. {nfcBatch.hasMore ? 'Older sheets are not included. Load older sheets below, then refresh this batch to include them.' : 'All listed sheets checked.'} Uncheck any card already encoded. After refreshing, select any newly added cards you want to encode.</p>
+        {nfcBatch.rows.length > 0 ? <><ol className={styles.nfcRows} aria-label="NFC encoding order">{nfcBatch.rows.map(row => <li key={row.itemId}>
+          <label><input type="checkbox" checked={nfcSelected.includes(row.itemId)} disabled={nfcBusy} onChange={event => { setNfcSelected(old => event.target.checked ? [...old, row.itemId] : old.filter(id => id !== row.itemId)); setNfcMessage(''); }}/><span><strong>{row.name}</strong><small>{labelSheetName({ number: row.sheetNumber })} · Position {row.slot} · {row.reportNumber} · v{row.approvalVersion} · Grade {row.grade}</small><small>GoToTags ID: {row.correlationId}</small></span></label>
+          <a href={row.reportHref} target="_blank" rel="noopener noreferrer">Approved report ↗</a>
+        </li>)}</ol><div className={styles.nfcInstructions}><ol><li>Download the checked cards, then import the CSV into a new GoToTags <strong>Variable Encode NFC Tags</strong> operation.</li><li>Keep this order, enable verification and automatic selection of the next tag. The file requests permanent locking for every chip.</li><li>Place one chip on the reader, wait for GoToTags success, remove it and pair it with the matching card before placing the next chip. Save the GoToTags operation to retain its progress.</li></ol><p>Do not import the same CSV twice or restart completed rows. Downloading does not record encoding, locking or physical printing in ATLAS.</p></div><button type="button" className={`${styles.button} ${styles.primary}`} disabled={nfcBusy || readOnly || !nfcSelected.length} onClick={() => void prepareNfc(true)}>Download NFC batch CSV</button></> : <p className={styles.nfcScope}>No current original labels are ready in these sheets.</p>}
+        {nfcBatch.excluded.length > 0 && <details className={styles.nfcExcluded}><summary>{nfcBatch.excluded.length} label{nfcBatch.excluded.length === 1 ? '' : 's'} excluded</summary><ul>{nfcBatch.excluded.map(row => <li key={row.itemId}>{labelSheetName({ number: row.sheetNumber })}, position {row.slot}: {row.name} — {row.reason}</li>)}</ul></details>}
+      </>}
+    </section>}
     <nav className={styles.tabs} aria-label="Label views"><button type="button" aria-current={tab === 'sheets' ? 'page' : undefined} onClick={() => setTab('sheets')}>Print sheets <span>{listing?.sheets.length ?? '—'}</span></button><button type="button" aria-current={tab === 'labels' ? 'page' : undefined} onClick={() => setTab('labels')}>Individual labels <span>{listing ? allItems.length : '—'}</span></button></nav>
     {loading && !listing ? <div className={styles.empty} role="status">Loading your saved labels…</div> : !listing ? <div className={styles.empty}><h2>Labels are unavailable.</h2><p>Your approved reports remain saved. Refresh to try again.</p></div> : tab === 'sheets' ? listing.sheets.length ? <div className={styles.workspace}>
       <aside className={styles.rail} aria-label="Saved sheets"><div className={styles.caption}><h2>Your sheets</h2><span>{listing.sheets.filter(value => value.state === 'OPEN').length} draft</span></div><div className={styles.sheetList}>{listing.sheets.map(value => <button type="button" key={value.sheetId} className={styles.sheetItem} aria-current={sheetId === value.sheetId ? 'true' : undefined} onClick={() => void selectSheet(value.sheetId)}><span className={styles.sheetTop}><strong>{labelSheetName(value)}</strong><small>{stateName(value.state)}</small></span><span className={styles.sheetCount}>{value.occupied}<small> / 50 labels</small></span><span className={styles.progress}><span style={{ width: `${value.occupied / 50 * 100}%` }}/></span><span className={styles.stock}><i className={`${styles.stockDot} ${stockName(value) === 'Holographic' ? styles.holo : ''}`}/>{stockName(value)}</span></button>)}</div><p className={styles.railFoot}>Up to 50 labels per sheet.<br/>Export at any count.<br/>New sheets open automatically.</p></aside>

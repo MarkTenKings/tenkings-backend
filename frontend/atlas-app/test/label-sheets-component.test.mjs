@@ -5,13 +5,14 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import * as api from '../lib/label-sheets-client.mjs';
+import * as nfc from '../lib/gototags-nfc-export.mjs';
 import * as geometry from '../../../packages/atlas-finishing/src/label-sheet-geometry.mjs';
 const require = createRequire(new URL('../package.json', import.meta.url)), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const code = babel.transformSync(readFileSync(new URL('../components/LabelSheets.jsx', import.meta.url), 'utf8'), { filename: 'LabelSheets.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false }).code;
 const all = (value, predicate, out = []) => { if (Array.isArray(value)) value.forEach(child => all(child, predicate, out)); else if (value && typeof value === 'object') { if (predicate(value)) out.push(value); all(value.props?.children, predicate, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
 function data(number = 1, count = 3) {
-  const sheetId = randomUUID(); const items = Array.from({ length: count }, (_, index) => ({ itemId: randomUUID(), sheetId, cardId: randomUUID(), approvalActionId: randomUUID(), slot: index + 1, state: 'READY', labelHash: 'a'.repeat(64), snapshot: { identity: { playerName: `Saved Player ${number}-${index + 1}`, year: '2024', productSet: 'Saved Set' }, grade: 9.5, reportNumber: `ATLAS-${number}-${index + 1}`, approvalVersion: 2 } }));
+  const sheetId = randomUUID(); const items = Array.from({ length: count }, (_, index) => ({ itemId: randomUUID(), sheetId, cardId: randomUUID(), approvalActionId: randomUUID(), approvalVersion: 2, purpose: 'ORIGINAL', originalItemId: null, slot: index + 1, state: 'READY', labelHash: 'a'.repeat(64), snapshot: { identity: { playerName: `Saved Player ${number}-${index + 1}`, year: '2024', productSet: 'Saved Set' }, grade: 9.5, reportNumber: `ATLAS-${number}-${index + 1}`, approvalVersion: 2, reportHref: `https://atlasgrading.com/reports/ar_${String(number * 50 + index).padStart(24, '0')}?v=2` } }));
   return { sheetId, number, state: 'OPEN', revision: count, occupied: count, capacity: 50, materialProfileId: 'atlas-v4-gold-v1', jigHash: geometry.LABEL_JIG_V1.jigHash, items, exports: [], printEvents: [] };
 }
 async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUUID(), role: 'REVIEWER' }, error = null, saved = new Map(), hold = null, initialCardId = null, pendingItems = [] } = {}) {
@@ -24,10 +25,10 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
     useCallback(fn, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) slots[id] = { deps, value: fn }; return slots[id].value; },
     useEffect(fn, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) { const old = slots[id]; slots[id] = { deps, cleanup: old?.cleanup }; effects.push(() => { old?.cleanup?.(); slots[id].cleanup = fn(); }); } },
   };
-  const f = { sheets, calls, saved, error, hold, initialCardId, pendingItems, postError: null };
+  const f = { sheets, calls, saved, error, hold, initialCardId, pendingItems, postError: null, downloads: [], blobs: new Map() };
   const request = async (url, options = {}) => {
     calls.push({ url, ...options });
-    if (url === '/api/staff/session') return { staff: { ...staff }, csrf: 'csrf' };
+    if (url === '/api/staff/session') return { staff: { ...staff, ...f.sessionStaff }, csrf: 'csrf' };
     if (f.hold) { const value = f.hold(url, options); if (value) return value; }
     if (f.error) throw f.error;
     if (!options.method && f.pages && url.startsWith(api.LABEL_SHEETS_PATH) && !url.slice(api.LABEL_SHEETS_PATH.length).startsWith('/')) return f.pages[new URL(url, 'https://fixture.test').searchParams.get('cursor') ?? '0'];
@@ -42,13 +43,15 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
     if (sheet) return structuredClone(sheet);
     throw new Error(`Unexpected fixture path: ${url}`);
   };
-  vm.runInNewContext(code, { exports, crypto: { randomUUID }, URL, setInterval(fn) { timers.add(fn); return fn; }, clearInterval: fn => timers.delete(fn), document: { visibilityState: 'visible' },
+  class BrowserURL extends URL { static createObjectURL(blob) { const url = `blob:${randomUUID()}`; f.blobs.set(url, blob); return url; } static revokeObjectURL() {} }
+  vm.runInNewContext(code, { exports, crypto: { randomUUID }, URL: BrowserURL, Blob, setTimeout: fn => fn(), setInterval(fn) { timers.add(fn); return fn; }, clearInterval: fn => timers.delete(fn), document: { visibilityState: 'visible', body: { appendChild() {} }, createElement() { return { remove() {}, click() { f.downloads.push({ href: this.href, filename: this.download }); } }; } },
     localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) }, require(name) {
       if (name === 'react') return react;
       if (name === 'next/link') return 'a';
       if (name === './Shell') return 'Shell';
       if (name === '@atlas/finishing/label-sheet-geometry') return geometry;
       if (name.endsWith('/label-sheets-client.mjs')) return { ...api, createLabelSheetsClient: options => api.createLabelSheetsClient({ ...options, cryptoImpl: { randomUUID } }) };
+      if (name.endsWith('/gototags-nfc-export.mjs')) return nfc;
       if (name.endsWith('/manual-client.mjs')) return { manualRequest: request, manualMessage: failure => failure.code ?? failure.message ?? 'Request unavailable' };
       if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/admin' };
       if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key === '__esModule' ? false : key });
@@ -176,4 +179,83 @@ test('individual material stays bound to its saved item when its older sheet pag
   f.listItems = [item]; await f.tick(); f.click('Individual labels 1');
   assert.equal(f.detail().sheet.materialProfileId, 'atlas-v4-holo-v1');
   assert.equal(f.detail().item.snapshot.grade, 9.5); assert.doesNotMatch(f.text(), /Sheet 000/); f.dispose();
+});
+
+test('NFC batch downloads exact fresh approved URLs in sheet order without touching the pending PNG export', async () => {
+  const first = data(1, 1), second = data(2, 2), staff = { id: randomUUID(), role: 'REVIEWER' }, saved = new Map();
+  const key = `atlas-label-sheets:${staff.id}:pending`, intent = JSON.stringify({ version: 1, staffId: staff.id, kind: 'export', path: `${api.LABEL_SHEETS_PATH}/${first.sheetId}/exports`, body: { requestId: randomUUID(), expectedSheetRevision: first.revision, exportProfileId: api.LABEL_EXPORT_PROFILE } });
+  saved.set(key, intent);
+  const f = await fixture({ sheets: [second, first], staff, saved });
+  assert.ok(f.button('Retry saved request')); assert.equal(f.button('Export this sheet').props.disabled, true);
+  // Historical individual summaries are not used as NFC authority.
+  f.listItems = [{ ...data(9).items[0], snapshot: { reportHref: 'https://wrong.example' } }];
+  f.click('Prepare NFC batch'); await f.flush();
+  assert.match(f.text(), /3 current cards on the loaded sheets/);
+  const rows = f.find(node => node.type === 'ol' && node.props['aria-label'] === 'NFC encoding order')[0];
+  assert.ok(text(rows).indexOf('Saved Player 1-1') < text(rows).indexOf('Saved Player 2-1'));
+  const before = f.calls.length; f.click('Download NFC batch CSV'); await f.flush();
+  assert.equal(f.downloads.length, 1); const csv = await f.blobs.get(f.downloads[0].href).text();
+  assert.equal(csv, nfc.nfcBatchCsv(nfc.buildNfcBatch([first, second]), [...first.items, ...second.items].map(item => item.itemId)));
+  assert.ok(f.calls.slice(before).some(call => call.url === `${api.LABEL_SHEETS_PATH}/${first.sheetId}`));
+  assert.ok(f.calls.slice(before).some(call => call.url === `${api.LABEL_SHEETS_PATH}/${second.sheetId}`));
+  assert.equal(f.calls.some(call => call.method), false); assert.equal(saved.get(key), intent); assert.equal(first.printEvents.length, 0);
+  assert.match(f.text(), /ATLAS has not recorded NFC completion/); assert.ok(f.button('Retry saved request')); f.dispose();
+});
+
+test('NFC refresh excludes replaced approvals and replacement labels and selection controls the CSV', async () => {
+  const sheet = data(1, 4); sheet.items[2].state = 'SUPERSEDED'; sheet.items[3].purpose = 'REPRINT'; sheet.items[3].originalItemId = sheet.items[0].itemId;
+  const f = await fixture({ sheets: [sheet] }); f.click('Prepare NFC batch'); await f.flush();
+  assert.match(f.text(), /2 current cards/); assert.match(f.text(), /2 labels excluded/); assert.match(f.text(), /Approval changed/);
+  const boxes = f.find(node => node.type === 'input' && node.props.type === 'checkbox'); assert.equal(boxes.length, 2);
+  boxes[0].props.onChange({ target: { checked: false } }); f.render(); f.click('Download NFC batch CSV'); await f.flush();
+  const csv = await f.blobs.get(f.downloads[0].href).text(); assert.ok(csv.includes(sheet.items[1].snapshot.reportHref));
+  assert.ok(!csv.includes(sheet.items[0].snapshot.reportHref)); assert.ok(!csv.includes(sheet.items[2].snapshot.reportHref)); assert.ok(!csv.includes(sheet.items[3].snapshot.reportHref)); f.dispose();
+});
+
+test('NFC download rechecks current approval and refuses a stale preview without silently downloading the new queue', async () => {
+  const sheet = data(1, 2), f = await fixture({ sheets: [sheet] }); f.click('Prepare NFC batch'); await f.flush();
+  sheet.items[0].state = 'SUPERSEDED'; sheet.containsSuperseded = true;
+  f.click('Download NFC batch CSV'); await f.flush(); assert.equal(f.downloads.length, 0);
+  assert.match(f.text(), /The queue changed/); assert.match(f.text(), /1 current card/);
+  f.click('Download NFC batch CSV'); await f.flush(); assert.equal(f.downloads.length, 1);
+  assert.ok(!(await f.blobs.get(f.downloads[0].href).text()).includes(sheet.items[0].snapshot.reportHref)); f.dispose();
+});
+
+test('NFC invalid URLs and failed fresh reads produce no partial download', async () => {
+  const sheet = data(), f = await fixture({ sheets: [sheet] }); f.click('Prepare NFC batch'); await f.flush();
+  sheet.items[1].snapshot.reportHref = 'https://unrelated.example/reports/test';
+  f.click('Download NFC batch CSV'); await f.flush(); assert.equal(f.downloads.length, 0);
+  assert.match(f.text(), /saved report URL does not match/); assert.equal(f.button('Download NFC batch CSV'), undefined);
+  sheet.items[1].snapshot.reportHref = `https://atlasgrading.com/reports/ar_${'X'.repeat(24)}?v=2`;
+  f.click('Prepare NFC batch'); await f.flush(); f.error = { code: 'LABEL_ACCESS_DENIED' };
+  f.click('Download NFC batch CSV'); await f.flush(); assert.equal(f.downloads.length, 0); assert.equal(f.button('Download NFC batch CSV'), undefined); f.dispose();
+});
+
+test('NFC does not download after the signed-in account changes, including a late prior-account sheet response', async () => {
+  const sheet = data(), f = await fixture({ sheets: [sheet] }); f.click('Prepare NFC batch'); await f.flush();
+  f.sessionStaff = { id: randomUUID() }; f.click('Download NFC batch CSV'); await f.flush(); assert.equal(f.downloads.length, 0);
+  f.sessionStaff = null; f.click('Prepare NFC batch'); await f.flush(); let resolve;
+  f.hold = url => url === `${api.LABEL_SHEETS_PATH}/${sheet.sheetId}` ? new Promise(done => { resolve = done; }) : null;
+  f.click('Download NFC batch CSV'); await f.flush(); assert.ok(resolve);
+  f.hold = null; f.sheets = [data(2)]; f.switchStaff(randomUUID()); await f.flush(); resolve(sheet); await f.flush();
+  assert.equal(f.downloads.length, 0); assert.doesNotMatch(f.text(), /Saved Player 1/); assert.equal(f.button('Download NFC batch CSV'), undefined); f.dispose();
+});
+
+test('NFC batch uses a fresh listing, discloses older-page scope and stays unavailable to read-only staff', async () => {
+  const first = data(1, 1), second = data(2, 1), f = await fixture({ sheets: [first] });
+  f.sheets = [second, first]; f.pages = { 0: { version: 'atlas-label-sheets-v1', sheets: [second, first], items: [...second.items, ...first.items], pending: [], hasMore: true, nextCursor: 20 } };
+  f.click('Prepare NFC batch'); await f.flush(); assert.match(f.text(), /2 current cards/); assert.match(f.text(), /Older sheets are not included/);
+  assert.equal(f.calls.some(call => call.method), false); f.dispose();
+  const observer = await fixture({ staff: { id: randomUUID(), role: 'OBSERVER' } }); assert.equal(observer.button('Prepare NFC batch').props.disabled, true); observer.dispose();
+});
+
+test('NFC refresh preserves deliberately unchecked cards and does not select new arrivals automatically', async () => {
+  const first = data(1, 2), second = data(2, 1), f = await fixture({ sheets: [first] });
+  f.click('Prepare NFC batch'); await f.flush();
+  f.find(node => node.type === 'input' && node.props.type === 'checkbox')[0].props.onChange({ target: { checked: false } }); f.render();
+  f.sheets = [second, first]; f.click('Refresh NFC batch'); await f.flush();
+  const boxes = f.find(node => node.type === 'input' && node.props.type === 'checkbox');
+  assert.deepEqual(boxes.map(node => node.props.checked), [false, true, false]);
+  f.click('Download NFC batch CSV'); await f.flush(); const csv = await f.blobs.get(f.downloads[0].href).text();
+  assert.ok(csv.includes(first.items[1].snapshot.reportHref)); assert.ok(!csv.includes(first.items[0].snapshot.reportHref)); assert.ok(!csv.includes(second.items[0].snapshot.reportHref)); f.dispose();
 });
