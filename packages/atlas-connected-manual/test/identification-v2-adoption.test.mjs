@@ -43,7 +43,7 @@ function deferred() {
 // unique effect claims. They do not establish PostgreSQL or staff-session proof.
 async function fixture({ category = 'Sports cards', values = {}, pauseModel = false,
   engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false,
-  clock=()=>Date.now(), limited, readGradingPhoto=null, isCleanPhotoPrepared=null } = {}) {
+  clock=()=>Date.now(), limited, readGradingPhoto=null, isCleanPhotoPrepared=null, catalogReader } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID(), edit: true };
   const sourceHash = digest('original synthetic pair'), objects = new Map();
   const db = { attempts: new Map(), details: new Map(), actions: new Map(), events: new Map() };
@@ -203,7 +203,7 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
     },
   });
   const details = createDetailsStore({ boundary, intakeRepository });
-  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, clock, limited, readGradingPhoto, isCleanPhotoPrepared, ...(engineVersion?{engineVersion}:{}) };
+  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, clock, limited, readGradingPhoto, isCleanPhotoPrepared, catalogReader, ...(engineVersion?{engineVersion}:{}) };
   const identification = createIdentification(config);
   return { cardId, staff, sourceHash, originalPair, workingBytes, objects, db, calls, artifacts, details,
     identification, proposed, modelEntered, modelRelease,
@@ -375,7 +375,7 @@ test('Pokémon V2 uses one model call with dependent Front detail; publisher and
   assert.equal(adopted.details.profile, 'POKEMON'); assert.equal(adopted.details.fields.manufacturer, 'The Pokémon Company');
   assert.equal(adopted.details.fields.variant, 'Holo'); assert.equal(adopted.details.parallel, 'Holo');
   assert.equal(adopted.details.fields.card_number.length, 80);
-  assert.throws(() => gradingIdentity(adopted.details), { name: 'SpeedsterIdentityValidationError' });
+  assert.equal(gradingIdentity(adopted.details).layoutType, null);
   const reviewed = await f.save({ layoutType: 'POKEMON' }), identity = gradingIdentity(reviewed.details);
   assert.equal(identity.cardName, 'Pikachu'); assert.equal(identity.cardNumber.length, 80);
   assert.equal(identity.manufacturer,'The Pokémon Company');
@@ -879,12 +879,12 @@ for(const [layoutType,evidence] of [['POKEMON','Front: BASIC Pikachu, HP 60 and 
  assert.equal(result.layout.front_sha256,result.provenance.photos.front.sha256);assert.equal(defects.confirmation,null);assert(Object.values(defects.sides).every(s=>s.inspection===null&&s.humanEditedIds.length===0));
 });
 
-test('ambiguous or medium-confidence Pokémon layout stays unresolved without a category default or Astra dispatch',async()=>{
+test('ambiguous or medium-confidence Pokémon layout stays unresolved while grading reaches geometry',async()=>{
  for(const layoutProposal of [{value:null,confidence:'unknown',evidence:null},{value:'POKEMON',confidence:'medium',evidence:'Front: partially visible HP text.'}]){
   const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,category:'Pokémon',layoutProposal});let initialized=0;
-  const connected={async open(){return {...await f.details.read(f.staff,f.cardId),card:{ready:true,sourceHash:f.sourceHash,sides:{FRONT:{upload:{uploadId:'front'}},BACK:{upload:{uploadId:'back'}}}},manual:null,identification:await f.identification.status(f.staff,f.cardId)};},identification:f.identification,initialize:async()=>{initialized++;}};
+  const connected={async open(){return {...await f.details.read(f.staff,f.cardId),card:{ready:true,sourceHash:f.sourceHash,sides:{FRONT:{upload:{uploadId:'front'}},BACK:{upload:{uploadId:'back'}}}},manual:null,identification:await f.identification.status(f.staff,f.cardId)};},identification:f.identification,earlyGeometry:{async ensure(){initialized++;return {earlyGeometry:{FRONT:{state:'PENDING'},BACK:{state:'PENDING'}}};}}};
   const result=await createBatchPreparation({connected}).run(f.staff,{cardId:f.cardId,sourceHash:f.sourceHash,uploads:{FRONT:'front',BACK:'back'},stage:'PREPARE'});
-  assert.equal(result.code,'BATCH_IDENTITY_NEEDS_REVIEW');assert.equal(initialized,0);assert.equal((await f.details.read(f.staff,f.cardId)).details.layoutType,null);assert.equal(f.calls.http.length,3);
+  assert.notEqual(result.code,'BATCH_IDENTITY_NEEDS_REVIEW');assert.equal(initialized,1);assert.equal((await f.details.read(f.staff,f.cardId)).details.layoutType,null);assert.equal(f.calls.http.length,3);
  }
 });
 
@@ -911,12 +911,14 @@ for(const category of ['Sports cards','Pokémon'])test(`current generated-image 
  const result=await current.identification.run(current.staff,current.cardId);assert.equal(result.state,'COMPLETE');
  const request=current.calls.http.find(call=>call.url.hostname==='api.openai.com').body;
  assert.deepEqual(request.reasoning,{effort:'xhigh'});assert.equal(request.max_output_tokens,32768);
- assert.equal(request.text.format.name,'atlas_card_details_layout_v3');
+ assert.equal(request.text.format.name,'atlas_card_details_layout_v4');
  const images=request.input[0].content.filter(part=>part.type==='input_image');
  assert.equal(images.length,category==='Pokémon'?3:2);assert(images.every(part=>part.detail==='high'));
  assert.equal(result.result.provenance.reasoning_effort,'xhigh');
  assert.equal(result.result.provenance.engine_version,ATLAS_IDENTIFICATION_LAYOUT_VERSION);
- assert.match(request.instructions,/copyright year as a medium-confidence year proposal/);
+ assert.match(request.instructions,/full card-recognition knowledge/);
+ assert.doesNotMatch(request.instructions,/Do not fill gaps from memorized|return every field unknown|Never substitute a guessed set/);
+ assert.ok(result.result.recognition.catalog);
  assert.doesNotMatch(request.instructions,/A copyright year alone, a player statistics year/);
  assert.equal(current.calls.http.length,3);
 });
@@ -1074,4 +1076,80 @@ for(const cleaned of [false,true])test(`mixed original Front and ${cleaned?'Phot
  }
  assert.equal((await f.restart().run(f.staff,f.cardId)).state,'COMPLETE');
  assert.equal(f.calls.http.filter(call=>call.url.hostname==='api.openai.com').length,1,'saved completion cannot dispatch again');
+});
+
+
+function catalogEvidence(status, matches=[]) {
+ return {status,catalog:{indexSha256:digest('catalog fixture'),sourceCount:1,rowCount:1,coverage:'partial'},queries:[],matches,truncated:false,problems:[]};
+}
+function catalogMatch(){
+ const identity={category:'SPORTS',name:'Example Player',manufacturer:'Fleer',year:'1992-93',setName:'Fleer',cardNumber:'273',language:null};
+ const printing='Base',sha256=digest('source'),locator='row:273';
+ return {identity,printing,queryIndices:[0],source:{provider:'manufacturer_checklist',recordId:`manufacturer-row:v1:${digest(JSON.stringify([sha256,[printing,identity.cardNumber,identity.name,locator]]))}`,
+  url:'https://example.com/retained-checklist',sha256,locator,evidenceAuthority:'secondary',sourcePublisher:'Trading Card Database',shardSha256:digest('shard'),
+  release:{manufacturer:identity.manufacturer,year:identity.year,setName:identity.setName,sports:['basketball']}}};
+}
+test('every successful recognition consults CODEX and fills missing fields from one identity without replacing model evidence',async()=>{
+ const queries=[];
+ const catalogReader={async lookup(query){queries.push(query);return catalogEvidence('matched',[catalogMatch()]);}};
+ const f=await fixture({values:{manufacturer:null,year:null,set_name:null,card_number:null},catalogReader});
+ const completed=await f.identification.run(f.staff,f.cardId);
+ assert.equal(completed.state,'COMPLETE');assert.equal(queries.length,1);
+ assert.equal(queries[0].fields.setName,null);assert.equal(queries[0].fields.name,'Example Player');
+ assert.equal(completed.result.recognition.modelSuggestions.set_name.value,null);
+ assert.equal(completed.result.recognition.catalog.status,'matched');
+ assert.equal(completed.result.suggestions.set_name.value,'Fleer');
+ assert.equal((await f.details.read(f.staff,f.cardId)).details.fields.card_number,'273');
+ const original=f.artifactsOf('IDENTIFICATION_RESPONSE').find(value=>value.stage==='MODEL');
+ const output=JSON.parse(Buffer.from(original.base64,'base64').toString('utf8'));
+ assert.equal(JSON.parse(output.output[0].content[0].text).set_name.value,null);
+ assert.equal(completed.result.provenance.response_sha256,original.sha256);
+ await f.restart().run(f.staff,f.cardId);assert.equal(queries.length,1);assert.equal(f.calls.http.length,3);
+});
+for(const status of ['no_match','ambiguous','unavailable'])test(`CODEX ${status} preserves Astra's recognized identity and never changes COMPLETE into a failure`,async()=>{
+ let calls=0;const catalogReader={async lookup(){calls++;if(status==='unavailable')throw Error('synthetic catalog failure');return catalogEvidence(status);}};
+ const f=await fixture({catalogReader}),completed=await f.identification.run(f.staff,f.cardId);
+ assert.equal(completed.state,'COMPLETE');assert.equal(calls,1);assert.equal(completed.result.recognition.catalog.status,status);
+ assert.deepEqual(completed.result.suggestions,f.proposed);
+ assert.equal((await f.details.read(f.staff,f.cardId)).details.fields.set_name,'Fixture set');
+});
+test('catalog enrichment preserves a human explicit clear and rejects fabricated catalog adoption in saved result validation',async()=>{
+ const catalogReader={async lookup(){return catalogEvidence('matched',[catalogMatch()]);}};
+ const f=await fixture({pauseModel:true,values:{set_name:null},catalogReader});
+ const running=f.identification.run(f.staff,f.cardId);await f.modelEntered.promise;await f.save({set_name:''});f.modelRelease.resolve();
+ const completed=await running;assert.equal(completed.state,'COMPLETE');assert.equal(completed.result.suggestions.set_name.value,'Fleer');
+ assert.equal((await f.details.read(f.staff,f.cardId)).details.fields.set_name,'');
+ const corrupt=clone(completed.result);corrupt.suggestions.set_name.value='Fabricated set';
+ assert.throws(()=>parseAtlasIdentificationResult(corrupt,JSON.parse(f.currentRow().input).input));
+});
+
+test('a nonapplicable Pokémon layout cannot discard a complete sports identity or rewrite the provider receipt',async()=>{
+ const layoutProposal={value:null,confidence:'high',evidence:'Front: sports card; Pokémon layout does not apply.'};
+ const f=await fixture({layoutProposal,catalogReader:{async lookup(){return catalogEvidence('no_match');}}});
+ const completed=await f.identification.run(f.staff,f.cardId);
+ assert.equal(completed.state,'COMPLETE');assert.deepEqual(completed.result.suggestions,f.proposed);
+ assert.deepEqual({value:completed.result.layout.value,confidence:completed.result.layout.confidence,evidence:completed.result.layout.evidence},{value:null,confidence:'unknown',evidence:null});
+ assert.equal((await f.details.read(f.staff,f.cardId)).details.fields.set_name,'Fixture set');
+ const response=f.artifactsOf('IDENTIFICATION_RESPONSE').find(value=>value.stage==='MODEL');
+ const payload=JSON.parse(Buffer.from(response.base64,'base64').toString());
+ assert.deepEqual(JSON.parse(payload.output[0].content[0].text).layout_type,layoutProposal);
+ assert.equal(completed.result.provenance.response_sha256,response.sha256);
+ assert.equal((await f.restart().run(f.staff,f.cardId)).state,'COMPLETE');assert.equal(f.calls.http.length,3);
+});
+
+test('a model answer near its deadline survives a subsequent catalog timeout and is adopted once',async t=>{
+ const entered=deferred();let catalogSignal;
+ const f=await fixture({pauseModel:true,catalogReader:{lookup(_query,{signal}){catalogSignal=signal;entered.resolve();return new Promise(()=>{});}}});
+ t.mock.timers.enable({apis:['setTimeout']});
+ try{
+  const running=f.identification.run(f.staff,f.cardId);await f.modelEntered.promise;
+  t.mock.timers.tick(ATLAS_IDENTIFICATION_XHIGH_POLICY.deadlines.model-1000);
+  f.modelRelease.resolve();await entered.promise;
+  t.mock.timers.tick(6000);
+  const completed=await running;
+  assert.equal(completed.state,'COMPLETE');assert.equal(catalogSignal.aborted,true);
+  assert.deepEqual(completed.result.suggestions,f.proposed);assert.equal(completed.result.recognition.catalog.status,'unavailable');
+  assert.equal((await f.details.read(f.staff,f.cardId)).details.fields.set_name,'Fixture set');
+  await f.restart().run(f.staff,f.cardId);assert.equal(f.calls.http.length,3);assert.equal(f.db.attempts.size,1);
+ }finally{f.modelRelease.resolve();t.mock.timers.reset();}
 });

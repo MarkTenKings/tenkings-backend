@@ -33,7 +33,7 @@ export function createFilmScene(manifest) {
     macro.crop = { x:40+clamp(b.x+b.width/2-width/2,0,1270-width),y:40+clamp(b.y+b.height/2-height/2,0,1778-height),width,height };
     macro.calibratedBounds = Math.abs(b.width/20-macro.region.measurement.widthMm)<1e-6 && Math.abs(b.height/20-macro.region.measurement.heightMm)<1e-6;
   }
-  return { manifest, sides, macro, name: report.identity.playerName ?? report.identity.cardName, grade: report.finalGrade,
+  return { manifest, sides, macro, name: report.identity.playerName ?? report.identity.cardName ?? 'Card identity unconfirmed', grade: report.finalGrade,
     subtitle: [report.identity.year,report.identity.productSet,report.identity.parallel].filter(Boolean).join(' · ') };
 }
 export function sampleFilm(scene,time) {

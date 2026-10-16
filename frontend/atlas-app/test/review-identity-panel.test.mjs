@@ -25,12 +25,13 @@ test('optional blanks and whitespace never manufacture no-op revisions or unsupp
  assert.equal(Object.hasOwn(saved.identity,'manufacturer'),false);
 });
 
-test('changed identities validate required fields, bounds, kind and unsupported saved keys before submission',()=>{
- for(const changed of [{cardName:''},{productSet:''},{year:'2'.repeat(25)},{manufacturer:'a'.repeat(121)},{layoutType:'UNKNOWN'}])assert.throws(()=>identity.reviewIdentityEdit(pokemon,{...pokemon,...changed}));
+test('changed identities preserve unknown fields and validate bounds, supplied kind and unsupported keys',()=>{
+ for(const changed of [{year:'2'.repeat(25)},{manufacturer:'a'.repeat(121)},{layoutType:'UNKNOWN'}])assert.throws(()=>identity.reviewIdentityEdit(pokemon,{...pokemon,...changed}));
+ for(const field of ['cardName','productSet','layoutType'])assert.equal(identity.reviewIdentityEdit(pokemon,{...pokemon,[field]:''}).identity[field],null);
  assert.throws(()=>identity.reviewIdentityEdit({...pokemon,language:'English'},{...pokemon,year:'2023'}));
  const historical={...pokemon};delete historical.layoutType;
  assert.equal(identity.reviewIdentityEdit(historical,{...historical}),null);
- assert.throws(()=>identity.reviewIdentityEdit(historical,{...historical,year:'2023'}));
+ assert.equal(identity.reviewIdentityEdit(historical,{...historical,year:'2023'}).identity.layoutType,null);
 });
 
 const require=createRequire(import.meta.url),babel=require('next/dist/compiled/babel/core'),nextRequire=createRequire(require.resolve('next/package.json'));

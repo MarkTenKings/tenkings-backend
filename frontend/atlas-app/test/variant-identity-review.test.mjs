@@ -40,7 +40,7 @@ function fixture({ component = 'default', props, beforeEffects } = {}) {
     if(name.endsWith('variant-reference-photos.mjs'))return referencePhotos;
     if(name.endsWith('variant-reference-status.mjs'))return referenceStatus;
     if(name.endsWith('variant-season.mjs'))return sourceSeason;
-    if(name.endsWith('manual-client.mjs'))return{manualRequest:async(path,options)=>{if(!options.method){f.reads++;return f.read?f.read():structuredClone(f.status);}f.writes.push(options.body);if(f.save)return f.save(options.body);const input=options.body;f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:input.decision!=='UNRESOLVED'};return structuredClone(f.status);}};
+    if(name.endsWith('manual-client.mjs'))return{manualRequest:async(path,options)=>{if(!options.method){f.reads++;return f.read?f.read():structuredClone(f.status);}f.writes.push(options.body);if(f.save)return f.save(options.body);const input=options.body;f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:true};return structuredClone(f.status);}};
     if(name.endsWith('.css'))return new Proxy({},{get:(_,key)=>key});return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);
   }});
   f.exports=exports;f.render=()=>{let loops=0;do{dirty=false;cursor=0;tree=exports[component](f.props);beforeEffects?.(tree);effects.splice(0).forEach(fn=>fn());assert.ok(++loops<20);}while(dirty);return tree;};
@@ -53,10 +53,10 @@ test('saved sports identity stays visible before and after an empty catalog with
  f.status.result.catalog.candidates=[];f.status.result.suggestion=null;f.render();
  const summary=()=>f.find(node=>node.props['aria-label']==='Saved card identification')[0];
  for(const value of ['Card identified','Drake Maye','2025','Panini','Donruss Optic Football — Donruss Threads','DTBH-DME','Saved variantNot recorded'])assert(text(summary()).includes(value),value);
- await flush();f.render();assert.match(f.text(),/reference library has no usable variant matches/);assert.match(f.text(),/Variant still needs confirmation/);
+ await flush();f.render();assert.match(f.text(),/reference library has no usable variant matches/);assert.match(f.text(),/Variant still needs review/);
  assert.doesNotMatch(f.text(),/waits for an identified card|Card name not recorded/);assert.equal(f.gates.at(-1),false);assert.equal(f.writes.length,0);
  assert.equal(f.button('Confirm selected identity').props.disabled,true);
- f.button('I cannot tell').props.onClick();f.render();assert.match(f.text(),/card identification and grading work stay saved/);
+ f.button('I cannot tell').props.onClick();f.render();assert.match(f.text(),/Leave the variant unconfirmed and continue grading/);
  for(const value of ['Drake Maye','Panini','Donruss Optic Football — Donruss Threads','DTBH-DME','Saved variantNot recorded'])assert(text(summary()).includes(value),value);
  assert.equal(f.gates.at(-1),false);assert.equal(f.writes.length,0);f.dispose();
 });
@@ -75,11 +75,11 @@ test('empty catalog exposes physical-variant verification directly without retyp
  const field=f.find(node=>node.type==='input'&&node.props.maxLength===120)[0];assert.equal(field.props.value,'');assert.equal(f.button('Confirm selected identity').props.disabled,true);
  field.props.onChange({target:{value:'Observed printing from physical card'}});f.render();assert.equal(f.button('Confirm selected identity').props.disabled,false,'explicit printing is sufficient');
  assert.equal(f.find(node=>node.type==='textarea').length,0);assert.equal(f.button('Confirm selected identity').props.disabled,false);assert.equal(f.writes.length,0);
- f.button('I cannot tell').props.onClick();f.render();assert.equal(f.gates.at(-1),false);assert.equal(f.writes.length,0);assert.ok(f.button('Save for identity review'));f.dispose();
+ f.button('I cannot tell').props.onClick();f.render();assert.equal(f.gates.at(-1),false);assert.equal(f.writes.length,0);assert.ok(f.button('Keep variant unconfirmed'));f.dispose();
 });
 test('choice alone keeps approval blocked; explicit successful confirmation opens gate after workspace refresh',async()=>{const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();assert.equal(f.gates.at(-1),false);f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.writes.length,1);assert.equal(f.writes[0].decision,'SELECTED');assert.equal(f.saved,1);assert.equal(f.gates.at(-1),true);assert.match(f.text(),/Human confirmed/);f.dispose();});
 test('lost acknowledgement retains exact decision and reconciles with read only before another choice',async()=>{const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();f.save=input=>{f.status={...f.status,confirmation:{...input,selectedCandidateId:input.candidateId},approvalReady:true};throw Error('lost reply');};f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.gates.at(-1),false);assert.ok(f.radios().every(node=>node.props.disabled));assert.ok(f.button('Check retained decision'));f.button('Check retained decision').props.onClick();await flush();f.render();assert.equal(f.writes.length,1);assert.equal(f.saved,1);assert.equal(f.gates.at(-1),true);f.dispose();});
-test('unresolved saves hold and explicit named printing needs no note',async()=>{const f=fixture();await flush();f.render();f.button('I cannot tell').props.onClick();f.render();assert.equal(f.button('Save for identity review').props.disabled,false);f.button('Save for identity review').props.onClick();await flush();f.render();assert.equal(f.writes[0].decision,'UNRESOLVED');assert.equal(f.gates.at(-1),false);f.find(node=>node.type==='input'&&node.props.maxLength===120)[0].props.onChange({target:{value:'English reverse holo'}});f.render();assert.equal(f.find(node=>node.type==='textarea').length,0);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.writes[1].decision,'MANUAL');assert.equal(f.gates.at(-1),true);f.dispose();});
+test('explicit unconfirmed decision opens final review and a later named printing needs no note',async()=>{const f=fixture();await flush();f.render();f.button('I cannot tell').props.onClick();f.render();assert.equal(f.button('Keep variant unconfirmed').props.disabled,false);f.button('Keep variant unconfirmed').props.onClick();await flush();f.render();assert.equal(f.writes[0].decision,'UNRESOLVED');assert.equal(f.gates.at(-1),true);assert.match(f.text(),/Variant unconfirmed · reviewed/);assert.doesNotMatch(f.text(),/Human confirmed/);f.find(node=>node.type==='input'&&node.props.maxLength===120)[0].props.onChange({target:{value:'English reverse holo'}});f.render();assert.equal(f.find(node=>node.type==='textarea').length,0);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.writes[1].decision,'MANUAL');assert.equal(f.gates.at(-1),true);f.dispose();});
 test('saved decision with failed workspace reload stays gated and offers read-only recovery',async()=>{const f=fixture();await flush();f.render();f.radios()[0].props.onChange();f.render();f.reload=()=>{throw Error('workspace lost');};f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.gates.at(-1),false);assert.match(f.text(),/current review could not be reloaded/);f.reload=null;f.button('Check saved matches').props.onClick();await flush();f.render();assert.equal(f.writes.length,1);assert.equal(f.gates.at(-1),true);f.dispose();});
 test('reloading after changed identity acknowledgement refreshes old workspace and refuses stale gate',async()=>{const f=fixture();f.status.identityRevision=2;f.status.approvalReady=true;f.status.confirmation={decision:'MANUAL',sourceHash:f.status.sourceHash,identityRevision:2,identityHash:f.status.identityHash};await flush();f.render();assert.equal(f.saved,1);assert.equal(f.gates.at(-1),false);assert.ok(f.radios().every(node=>node.props.disabled));f.dispose();});
 test('late status from another card is discarded; queued polling does no writes and ends on unmount',async()=>{const f=fixture();let finish;f.read=()=>new Promise(resolve=>{finish=resolve;});await flush();f.props.cardId=randomUUID();f.status.state='QUEUED';f.read=null;f.render();await flush();f.render();const latest=f.text();finish({...f.status,state:'FAILED'});await flush();f.render();assert.equal(f.text(),latest);assert.match(f.text(),/queued/);assert.equal(f.writes.length,0);f.dispose();});
@@ -97,7 +97,7 @@ test('an immediate image refusal stays unavailable after effects; another source
 });
 
 
-test('manual draft after an unresolved hold restores as manual, and a new choice cannot reuse previous manual confirmation',async()=>{const f=fixture();await flush();f.render();f.button('I cannot tell').props.onClick();f.render();f.button('Save for identity review').props.onClick();await flush();f.render();assert.ok(f.button('Base'));f.find(node=>node.type==='input'&&node.props.maxLength===120)[0].props.onChange({target:{value:'English reverse holo'}});f.render();assert.equal(f.find(node=>node.type==='textarea').length,0);f.remount();await flush();f.render();assert.equal(f.button('Save for identity review'),undefined);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.gates.at(-1),true);f.radios()[0].props.onChange();f.render();assert.equal(f.gates.at(-1),false);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.dispose();});
+test('manual draft after an unresolved hold restores as manual, and a new choice cannot reuse previous manual confirmation',async()=>{const f=fixture();await flush();f.render();f.button('I cannot tell').props.onClick();f.render();f.button('Keep variant unconfirmed').props.onClick();await flush();f.render();assert.ok(f.button('Base'));f.find(node=>node.type==='input'&&node.props.maxLength===120)[0].props.onChange({target:{value:'English reverse holo'}});f.render();assert.equal(f.find(node=>node.type==='textarea').length,0);f.remount();await flush();f.render();assert.equal(f.button('Keep variant unconfirmed'),undefined);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.button('Confirm selected identity').props.onClick();await flush();f.render();assert.equal(f.gates.at(-1),true);f.radios()[0].props.onChange();f.render();assert.equal(f.gates.at(-1),false);assert.equal(f.button('Confirm selected identity').props.disabled,false);f.dispose();});
 
 test('historical automatic recheck metadata cannot block a saved human confirmation or offer dispatch',async()=>{
  const f=fixture();f.status.approvalReady=true;f.status.confirmation={decision:'SELECTED',selectedCandidateId:'suggested',sourceHash:f.status.sourceHash,identityRevision:1,identityHash:f.status.identityHash,reprocessRequired:true,recheckState:'UNKNOWN',recheckRetryable:true};
@@ -200,8 +200,8 @@ test('an unsaved not-shown choice can be explicitly discarded for one durable re
  f.save=input=>{f.status={...f.status,state:'QUEUED',refreshable:false,refreshRequestId:input.requestId,jobId:hash('f'),result:null};return structuredClone(f.status);};
  const click=f.button(label).props.onClick;click();click();await flush();f.render();
  assert.equal(f.writes.length,1);assert.equal(f.writes[0].jobId,hash('e'));assert.ok(f.writes[0].requestId);assert.equal(f.writes[0].actionId,undefined);assert.equal(f.writes[0].decision,undefined);
- assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);assert.equal(f.button(label),undefined);assert.equal(f.button('Save for identity review'),undefined);
- f.remount();await flush();f.render();assert.equal(f.button('Save for identity review'),undefined,'the discarded local hold does not return after reload');f.dispose();
+ assert.equal(f.saved,0);assert.equal(f.gates.at(-1),false);assert.equal(f.button(label),undefined);assert.equal(f.button('Keep variant unconfirmed'),undefined);
+ f.remount();await flush();f.render();assert.equal(f.button('Keep variant unconfirmed'),undefined,'the discarded local hold does not return after reload');f.dispose();
 });
 
 test('discard-and-refresh refuses stale binding and cannot replace an uncertain retained confirmation',async()=>{
@@ -209,7 +209,7 @@ test('discard-and-refresh refuses stale binding and cannot replace an uncertain 
  const stale=fixture();stale.status.jobId=hash('e');stale.status.refreshable=true;await flush();stale.render();stale.button('My card is not shown').props.onClick();stale.render();
  stale.status.sourceHash=hash('f');stale.button(label).props.onClick();await flush();stale.render();assert.equal(stale.writes.length,0);assert.match(stale.text(),/photos or saved card identity changed/);stale.dispose();
  const pending=fixture();pending.status.jobId=hash('e');pending.status.refreshable=true;await flush();pending.render();pending.button('My card is not shown').props.onClick();pending.render();
- const oldRefresh=pending.button(label).props.onClick;pending.save=()=>{throw Error('uncertain save');};pending.button('Save for identity review').props.onClick();await flush();pending.render();
+ const oldRefresh=pending.button(label).props.onClick;pending.save=()=>{throw Error('uncertain save');};pending.button('Keep variant unconfirmed').props.onClick();await flush();pending.render();
  assert.equal(pending.writes.length,1);assert.equal(pending.button(label).props.disabled,true);assert.ok(pending.button('Check retained decision'));
  oldRefresh();await flush();pending.render();assert.equal(pending.writes.length,1,'even a stale click handler must not replace the pending request');assert.ok(pending.button('Check retained decision'));pending.dispose();
 });
@@ -226,11 +226,11 @@ test('compatible collector number without a stated set total is visibly unconfir
  assert.match(f.text(),/Variants for this card/);assert.match(f.text(),/Full collector number unconfirmed · check the number and set total/);
  assert.equal(f.radios().length,4);assert.equal(f.writes.length,0);f.dispose();
 });
-test('an unresolved hold never claims human-confirmed identity or offers to retry an inherited grading check',async()=>{
- const f=fixture();f.status.confirmation={decision:'UNRESOLVED',selectedCandidateId:null,sourceHash:f.status.sourceHash,
+test('saved unconfirmed decision permits review without claiming human-confirmed identity or retrying an inherited check',async()=>{
+ const f=fixture();f.status.approvalReady=true;f.status.confirmation={decision:'UNRESOLVED',selectedCandidateId:null,sourceHash:f.status.sourceHash,
   identityRevision:1,identityHash:f.status.identityHash,reprocessRequired:true,recheckState:'REFUSED',recheckRetryable:true};
- await flush();f.render();assert.equal(f.gates.at(-1),false);assert.ok(f.button('Save for identity review'));
- assert.equal(f.button('Retry confirmed variant check'),undefined);assert.doesNotMatch(f.text(),/Human confirmed|variant check needs attention/);
+ await flush();f.render();assert.equal(f.gates.at(-1),true);assert.ok(f.button('Keep variant unconfirmed'));
+ assert.equal(f.button('Retry confirmed variant check'),undefined);assert.doesNotMatch(f.text(),/Human confirmed|Identity confirmed|variant check needs attention/);
  assert.equal(f.writes.length,0);f.dispose();
 });
 

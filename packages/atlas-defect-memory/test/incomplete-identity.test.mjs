@@ -39,7 +39,7 @@ test('revision-one LaMelo with the observed null year produces a source-bound ba
     'Incomplete targets never become publishable lesson designs');
 });
 
-test('missing optional year, sports manufacturer and historical Pokémon layout omit lessons for both profiles', async () => {
+test('missing set, year, sports manufacturer and Pokémon layout omit lessons for both profiles', async () => {
   for (const [profile, base] of [['SPORTS', identity], ['POKEMON', pokemonIdentity]]) {
     for (const year of [null, undefined, '', '  ']) {
       const target = { ...base, year }; if (year === undefined) delete target.year;
@@ -49,13 +49,20 @@ test('missing optional year, sports manufacturer and historical Pokémon layout 
     const target = { ...base }; delete target[field];
     assert.deepEqual((await targetFixture(profile, target).retrieve()).freshness.missingFields, [field]);
     assert.deepEqual((await targetFixture(profile, { ...target, year: null }).retrieve()).freshness.missingFields, ['year', field]);
+    for (const productSet of [null, undefined, '', '  ']) {
+      const missingSet = { ...base, productSet }; if (productSet === undefined) delete missingSet.productSet;
+      const knowledge = await targetFixture(profile, missingSet).retrieve();
+      assert.deepEqual(knowledge.freshness.missingFields, ['productSet']);
+      assert.equal(knowledge.status, 'BASELINE_WITHOUT_EXAMPLES');
+    }
+    assert.deepEqual((await targetFixture(profile, { ...target, year: null, productSet: null }).retrieve()).freshness.missingFields, ['year', 'productSet', field]);
   }
 });
 
 test('absent year does not disguise malformed supplied identity metadata', async () => {
   for (const [profile, base] of [['SPORTS', laMeloIdentity], ['POKEMON', { ...pokemonIdentity, year: null }]]) {
     for (const patch of [{ year: 2026 }, { year: {} }, { year: false }, { year: 'x'.repeat(513) }, { year: '\n' },
-      { productSet: null }, { productSet: ' ' }, { parallel: {} }, { cardNumber: 13 },
+      { productSet: {} }, { productSet: 13 }, { parallel: {} }, { cardNumber: 13 },
       ...(profile === 'SPORTS' ? [{ manufacturer: {} }, { insert: false }] : [{ layoutType: 'OTHER' }, { layoutType: {} }])]) {
       await assert.rejects(targetFixture(profile, { ...base, ...patch }).retrieve(),
         error => ['MEMORY_DESIGN_INVALID', 'MEMORY_EVIDENCE_INVALID'].includes(error.code));
@@ -98,7 +105,7 @@ test('complete design keeps valid reviewed lessons and propagates genuine memory
 test('incomplete-design evidence cannot masquerade as an empty bank or contain unavailable design lessons', async () => {
   const knowledge = await targetFixture('SPORTS', laMeloIdentity).retrieve();
   for (const change of [value => { value.status = 'EMPTY_REVIEWED_BANK'; }, value => { value.freshness.missingFields = []; },
-    value => { value.freshness.missingFields = ['productSet']; }, value => { value.freshness.missingFields = ['layoutType']; },
+    value => { value.freshness.missingFields = ['playerName']; }, value => { value.freshness.missingFields = ['layoutType']; },
     value => { value.freshness.targetContentHash = digest('different target'); }]) {
     const changed = structuredClone(knowledge); change(changed); changed.sha256 = retrievalDigest(changed);
     assert.throws(() => validateRetrieval(changed), { code: 'MEMORY_RETRIEVAL_INVALID' });
@@ -106,7 +113,7 @@ test('incomplete-design evidence cannot masquerade as an empty bank or contain u
 });
 
 test('both profiles can prepare and restore exact baseline Astra requests with all ten images and unchanged model settings', async () => {
-  for (const [profile, targetIdentity] of [['SPORTS', laMeloIdentity], ['POKEMON', { ...pokemonIdentity, year: null }]]) {
+  for (const [profile, targetIdentity] of [['SPORTS', { ...laMeloIdentity, productSet: null }], ['POKEMON', { ...pokemonIdentity, year: null, productSet: null, layoutType: null }]]) {
     const f = targetFixture(profile, targetIdentity), input = contextInputFixture();
     input.profile = profile; input.cardId = f.target.cardId; input.binding.manualRevision = 1;
     input.binding.manualContentHash = f.target.contentHash; input.knowledge = await f.retrieve();

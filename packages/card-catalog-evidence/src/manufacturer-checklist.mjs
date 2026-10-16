@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { normalizeVariantIdentity, compareVariantCardNumber, variantCandidateId, validateVariantCandidate } from './variant-review.mjs';
+import { manufacturerAthleteKey, manufacturerIdentityCatalogHash, validateManufacturerIdentityIndex } from './manufacturer-identity-index.mjs';
 
 export const MANUFACTURER_CHECKLIST_REVISION = 'manufacturer-checklist/v1';
 const HASH = /^[a-f0-9]{64}$/;
@@ -35,10 +36,9 @@ function productScope(value) {
     : { product: value, subset: null };
 }
 function athleteName(value) {
-  const names = String(value).split('/').map(norm);
   // The Panini export sometimes repeats the same athlete on both faces. A
   // multi-athlete card with different names is never reduced to one player.
-  return [...new Set(names)].join(' / ');
+  return manufacturerAthleteKey(value);
 }
 
 const INDEX_REVISION = 'manufacturer-checklist-index/v2';
@@ -144,16 +144,17 @@ async function bundledProductAliases() {
  * request, publication, inference from unrelated parallels, or human decision.
  * The bundled catalog is a partial acquisition snapshot, never complete scope.
  */
-export function createManufacturerChecklistVariantProvider({ catalog = null, loadCatalog = null, loadShard = null, limit = Infinity } = {}) {
+export function createManufacturerChecklistVariantProvider({ catalog = null, loadCatalog = null, loadShard = null, loadIdentityIndex = null, limit = Infinity } = {}) {
   check(limit === Infinity || Number.isSafeInteger(limit) && limit > 0, 'limit');
   check(catalog === null || loadCatalog === null, 'choose one catalog reader');
   check(loadShard === null || typeof loadShard === 'function', 'shard reader');
-  let loaded, families, productAliases, releaseGroups, loading = Promise.resolve();
+  let loaded, catalogData, identityNames, families, productAliases, releaseGroups, loading = Promise.resolve();
   const cache = new Map(), inFlight = new Map();
   let cachedDecodedBytes = 0;
   async function load() {
     if (!loaded) loaded = (async () => {
       const data = catalog ?? await (loadCatalog ?? bundledCatalog)();
+      catalogData = data;
       return data?.schemaVersion === INDEX_REVISION ? shardIndex(data) : rowCatalog(data);
     })();
     try { return await loaded; } catch (error) { loaded = null; throw error; }
@@ -194,8 +195,107 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
     }
     return bound(await inFlight.get(key));
   }
+  async function namesFor(archive) {
+    if (archive.kind === 'rows') {
+      const names = new Map();
+      for (const rows of archive.index.values()) for (const row of rows) {
+        const name = athleteName(archive.cell(row, 3));
+        if (!names.has(name)) names.set(name, new Set());
+        names.get(name).add(row[0]);
+      }
+      return names;
+    }
+    if (!identityNames) identityNames = (async () => {
+      const data = loadIdentityIndex ? await loadIdentityIndex() : JSON.parse(gunzipSync(
+        await boundedFile(new URL('../data/manufacturer-identities.index.json.gz', import.meta.url), 8 * 1024 * 1024),
+        { maxOutputLength: 32 * 1024 * 1024 }));
+      return validateManufacturerIdentityIndex(data, catalogData);
+    })();
+    try { return await identityNames; } catch (error) { identityNames = null; throw error; }
+  }
+  async function lookup(input = {}, { signal, maxMatches = 80, maxShards = 80 } = {}) {
+    const result = { status: 'unavailable', catalog: null, queries: [], matches: [], truncated: false, problems: [] };
+    try {
+      check(Number.isSafeInteger(maxMatches) && maxMatches > 0 && maxMatches <= 500 && Number.isSafeInteger(maxShards) && maxShards > 0 && maxShards <= 200, 'identity lookup bounds');
+      signal?.throwIfAborted();
+      // Consult the complete release index even when the model returned no set,
+      // number, category, or usable name. Absence is an observed lookup outcome.
+      const archive = await load(); signal?.throwIfAborted();
+      result.catalog = { indexSha256: manufacturerIdentityCatalogHash(catalogData), sourceCount: archive.sources.length,
+        rowCount: archive.kind === 'shards' ? archive.sources.reduce((sum, source) => sum + source.shard.rowCount, 0) : catalogData.rows.length, coverage: 'partial' };
+      const fields = input.fields ?? input;
+      const proposals = Array.isArray(input.proposals) ? input.proposals.slice(0, 5) : [];
+      const text = value => typeof value === 'string' && value.trim() && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value) ? value.trim() : null;
+      const queries = [fields, ...proposals].map(value => ({ category: text(value?.category), name: text(value?.name ?? value?.playerName ?? value?.cardName),
+        manufacturer: text(value?.manufacturer), year: text(value?.year), setName: text(value?.setName ?? value?.productSet), cardNumber: text(value?.cardNumber),
+        sport: ['baseball', 'basketball', 'football', 'hockey', 'golf'].includes(norm(value?.sport ?? value?.printedCardType)) ? norm(value?.sport ?? value?.printedCardType) : null }));
+      result.queries = queries;
+      const seenQueries = new Set(), seenRows = new Map(), reads = new Set();
+      let usable = false;
+      const ordered = queries.map((query, queryIndex) => ({ query, queryIndex }))
+        .sort((a, b) => ['setName', 'manufacturer', 'year', 'cardNumber', 'name'].reduce((n, key) => n + Number(Boolean(b.query[key])) - Number(Boolean(a.query[key])), 0));
+      for (const { query, queryIndex } of ordered) {
+        signal?.throwIfAborted();
+        if (seenQueries.has(canonical(query))) continue;
+        seenQueries.add(canonical(query));
+        if (query.category && !['SPORTS', 'Sports', 'sports'].includes(query.category)) continue;
+        if (!query.name && !query.setName && !query.cardNumber && !query.manufacturer && !query.year) continue;
+        usable = true;
+        let nameKeys = null, namedSources = null;
+        if (query.name) {
+          const names = await namesFor(archive), key = athleteName(query.name);
+          nameKeys = names.has(key) ? new Set([key]) : new Set([...names.keys()].filter(name => key.split(' ').every(token => name.split(' ').includes(token))));
+          namedSources = new Set([...nameKeys].flatMap(name => [...names.get(name)]));
+        }
+        const scope = query.setName ? productScope(query.setName) : null;
+        const sources = archive.sources.map((source, sourceIndex) => ({ source, sourceIndex })).filter(({ source, sourceIndex }) => {
+          if (namedSources && !namedSources.has(sourceIndex)) return false;
+          if (query.sport && source.sport !== query.sport) return false;
+          if (query.manufacturer && ![source.manufacturer, ...(source.manufacturerAliases ?? [])].some(value => norm(value) === norm(query.manufacturer))) return false;
+          if (query.year && checklistYear(query.year) !== checklistYear(source.year)
+            && !(shortSeason(query.year) && checklistYear(source.year).slice(2) === shortSeason(query.year))
+            && !(source.sport === 'basketball' && /^\d{4}$/.test(query.year) && checklistYear(source.year) === `${query.year}-${String(Number(query.year) + 1).slice(-2)}`)) return false;
+          return !scope || source.products.has(productName(scope.product, source.manufacturer));
+        });
+        for (const { source, sourceIndex } of sources) {
+          signal?.throwIfAborted();
+          const shardKey = source.shard?.sha256 ?? String(sourceIndex);
+          if (!reads.has(shardKey) && reads.size >= maxShards) { result.truncated = true; break; }
+          reads.add(shardKey);
+          const shard = archive.kind === 'rows' ? archive : await rowsFor(source);
+          signal?.throwIfAborted();
+          const rows = nameKeys ? [...nameKeys].flatMap(name => shard.index.get(`${checklistYear(source.year)}|${name}`) ?? []) : [...shard.index.values()].flat();
+          for (const row of rows) {
+            if (archive.kind === 'rows' && row[0] !== sourceIndex) continue;
+            const [printing, cardNumber, name, locator] = [1, 2, 3, 4].map(column => shard.cell(row, column));
+            if (query.cardNumber && compareVariantCardNumber(query.cardNumber, cardNumber) !== 'match') continue;
+            if (scope?.subset && norm(printing) !== scope.subset && !norm(printing).startsWith(`${scope.subset} `)) continue;
+            const recordId = `manufacturer-row:v1:${digest([source.sha256, [printing, cardNumber, name, locator]])}`;
+            const rowKey = canonical([recordId, source.manufacturer, source.setName, source.year, source.sport]);
+            if (seenRows.has(rowKey)) { const match = seenRows.get(rowKey); if (!match.queryIndices.includes(queryIndex)) match.queryIndices.push(queryIndex); continue; }
+            if (result.matches.length >= maxMatches) { result.truncated = true; continue; }
+            const match = { identity: { category: 'SPORTS', name, manufacturer: source.manufacturer, year: source.year, setName: source.setName, cardNumber, language: null }, printing,
+              queryIndices: [queryIndex], source: { provider: 'manufacturer_checklist', recordId, url: source.url, sha256: source.sha256, locator,
+                evidenceAuthority: source.evidenceAuthority ?? 'primary', sourcePublisher: source.sourcePublisher ?? source.manufacturer,
+                release: { manufacturer: source.manufacturer, sports: [source.sport], year: source.year, setName: source.setName }, shardSha256: source.shard?.sha256 ?? null } };
+            seenRows.set(rowKey, match); result.matches.push(match);
+          }
+        }
+      }
+      const identities = new Set(result.matches.map(match => canonical(match.identity)));
+      result.status = result.truncated || identities.size > 1 ? 'ambiguous' : identities.size === 1 ? 'matched' : usable ? 'no_match' : 'insufficient_evidence';
+      if (result.truncated) result.problems.push('IDENTITY_LOOKUP_TRUNCATED');
+      if (!usable) result.problems.push('IDENTITY_LOOKUP_NO_SUPPORTED_HINTS');
+      return result;
+    } catch (error) {
+      result.status = 'unavailable';
+      result.problems.push(signal?.aborted ? 'IDENTITY_LOOKUP_ABORTED' : 'IDENTITY_LOOKUP_UNAVAILABLE');
+      return result;
+    }
+  }
   return Object.freeze({
     id: 'manufacturer_checklist', revision: MANUFACTURER_CHECKLIST_REVISION,
+    lookup,
     async prepare(input, { signal } = {}) {
       signal?.throwIfAborted();
       const identity = normalizeVariantIdentity(input), empty = { candidates: [], problems: [], truncated: false };
@@ -404,4 +504,11 @@ export function createManufacturerChecklistVariantProvider({ catalog = null, loa
       return { candidates: candidates.slice(0, limit), problems, truncated };
     },
   });
+}
+
+/** Sparse identity consultation against the entire retained sports release.
+ * Advisory results never confirm the photographed printing or block grading. */
+export function createManufacturerChecklistIdentityReader(options = {}) {
+  const provider = createManufacturerChecklistVariantProvider(options);
+  return Object.freeze({ lookup: provider.lookup });
 }

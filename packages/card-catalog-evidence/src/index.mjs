@@ -442,4 +442,4 @@ export { SCRYDEX_VARIANT_PROVIDER_REVISION, importScrydexVariantCandidates, scry
 export { VARIANT_PROVIDER_MEDIA_LIMITS, createVariantProviderImageReader } from './provider-media.mjs';
 
 export { CATALOG_DEMAND_VERSION, CATALOG_DEMAND_POLICY, CATALOG_DEMAND_LIMITS, normalizeCatalogDemand, catalogDemandKey, catalogDemandResultHash, validateCatalogDemandResult, validateCatalogDemandAcquisition, filterCatalogDemandResult, isCatalogDemandSourceUrl, catalogDemandSourceKind } from './demand.mjs';
-export { MANUFACTURER_CHECKLIST_REVISION, createManufacturerChecklistVariantProvider } from './manufacturer-checklist.mjs';
+export { MANUFACTURER_CHECKLIST_REVISION, createManufacturerChecklistVariantProvider, createManufacturerChecklistIdentityReader } from './manufacturer-checklist.mjs';

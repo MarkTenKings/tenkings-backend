@@ -25,9 +25,9 @@ export function variantStatus(value) {
 }
 export function variantConfirmationCurrent(value) {
   const proof = value?.confirmation;
-  return Boolean(['SELECTED','MANUAL'].includes(proof?.decision)
+  return Boolean(['SELECTED','MANUAL','UNRESOLVED'].includes(proof?.decision)
     && proof.sourceHash === value.sourceHash && proof.identityRevision === value.identityRevision
-    && proof.identityHash === value.identityHash && (proof.decision === 'MANUAL' || proof.selectedCandidateId));
+    && proof.identityHash === value.identityHash && (proof.decision !== 'SELECTED' || proof.selectedCandidateId));
 }
 export const variantApprovalReady = value => value?.enabled === false || Boolean(value?.approvalReady && variantConfirmationCurrent(value));
 export function createVariantReviewClient({ cardId, staffId, request, storage, cryptoImpl = globalThis.crypto }) {

@@ -8,8 +8,13 @@ test('optional metadata retains unknowns without manufacturing identity evidence
   assert.equal(sports.year,null);assert.equal(sports.manufacturer,null);
   const pokemon=canonicalizeNewSpeedsterSessionIdentity('POKEMON',{cardName:'Pikachu',year:null,productSet:'151',layoutType:'POKEMON',manufacturer:'Pokémon'});
   assert.equal(pokemon.year,null);assert.equal(pokemon.manufacturer,'Pokémon');
-  for(const identity of [{...sports,playerName:''},{...sports,productSet:''}])assert.throws(()=>canonicalizeNewSpeedsterSessionIdentity('SPORTS',identity));
-  assert.throws(()=>canonicalizeNewSpeedsterSessionIdentity('POKEMON',{cardName:'Pikachu',productSet:'151'}));
+  for(const field of ['playerName','productSet'])for(const value of ['', ' ', null, undefined])
+    assert.equal(canonicalizeNewSpeedsterSessionIdentity('SPORTS',{...sports,[field]:value})[field],null);
+  const partial=canonicalizeNewSpeedsterSessionIdentity('POKEMON',{cardName:null,productSet:null,layoutType:null});
+  assert.equal(partial.cardName,null);assert.equal(partial.productSet,null);assert.equal(partial.layoutType,null);
+  assert.equal(Object.hasOwn(canonicalizeNewSpeedsterSessionIdentity('POKEMON',{cardName:'Pikachu',productSet:'151'}),'layoutType'),false);
+  for(const patch of [{productSet:42},{playerName:{}},{productSet:'x'.repeat(121)},{layoutType:'OTHER'}])
+    assert.throws(()=>canonicalizeNewSpeedsterSessionIdentity(Object.hasOwn(patch,'layoutType')?'POKEMON':'SPORTS',patch));
 });
 
 test('existing canonical identity bytes and hashes stay unchanged without an optional Pokémon manufacturer',()=>{

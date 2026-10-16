@@ -27,5 +27,6 @@ export function reviewIdentityEdit(current, edited) {
   const profile = Object.hasOwn(current, 'playerName') ? 'SPORTS' : 'POKEMON';
   // Historical Pokémon hashes distinguish an omitted manufacturer from null.
   if (profile === 'POKEMON' && !identity.manufacturer) delete identity.manufacturer;
+  if (profile === 'POKEMON' && !identity.layoutType) identity.layoutType = null;
   return { type: 'IDENTITY_EDIT', identity: canonicalizeNewSpeedsterSessionIdentity(profile, identity) };
 }

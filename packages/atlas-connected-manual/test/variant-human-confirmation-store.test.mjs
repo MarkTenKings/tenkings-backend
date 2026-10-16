@@ -39,7 +39,7 @@ test('current human decisions permit approval independently of historical unfini
  assert(!f.reads.some(sql=>sql.includes('atlas_defect_analysis')));assert.equal(f.store.pendingRechecks,undefined);assert.equal(f.store.prepareConfirmation,undefined);
  for(const change of ['source','identity']){const changed=structuredClone(f.card);if(change==='source')changed.draft.source.sourceHash=digest('replacement');else changed.draft.identity.parallel='Different';await assert.rejects(f.store.assertApproval({},changed),{code:'VARIANT_CONFIRMATION_REQUIRED'});}
 });
-test('missing or unresolved physical confirmation still cannot approve a card',async()=>{
+test('missing review and legacy unresolved nonnull printing remain gated',async()=>{
  const missing=fixture({confirmed:false});await assert.rejects(missing.store.assertApproval({},missing.card),{code:'VARIANT_CONFIRMATION_REQUIRED'});
  const unresolved=fixture();unresolved.confirmation.decision='UNRESOLVED';await assert.rejects(unresolved.store.assertApproval({},unresolved.card),{code:'VARIANT_CONFIRMATION_REQUIRED'});
 });
@@ -63,3 +63,16 @@ test('Scrydex-verified series names preserve saved set identity during first pri
   assert.equal(reviewed.productSet,'151');
  }
 });
+
+ test('explicit unresolved review clears proposed printing and permits final approval only for the current unknown identity',async()=>{
+  const f=fixture({confirmed:false}),before=structuredClone(f.card.draft),action={...f.action,decision:'UNRESOLVED'};delete action.manualParallel;
+  const identity=variantSelectedIdentity(f.card,action,null),draft={...f.card.draft,identity,identityRevision:f.card.draft.identityRevision+1};
+  assert.equal(identity.parallel,null);assert.equal(identity.cardName,before.identity.cardName);assert.equal(identity.productSet,before.identity.productSet);
+  await f.store.validateCommit({tx:f.tx,principal:f.principal,cardId:f.card.cardId,input:{actionId:randomUUID(),action},draft});
+  assert.equal(f.writes.length,1);assert.equal(f.writes[0].args[10],'UNRESOLVED');assert.deepEqual(f.card.draft,before);
+  const reviewed=fixture();reviewed.card.draft.identity.parallel=null;reviewed.card.draft.identity.productSet=null;
+  reviewed.card.contentHash=digest(canonical(reviewed.card.draft));Object.assign(reviewed.confirmation,{decision:'UNRESOLVED',identity_hash:variantBinding(reviewed.card).identityHash});
+  await reviewed.store.assertApproval({},reviewed.card);const status=await reviewed.store.read({},reviewed.card.cardId);assert.equal(status.approvalReady,true);
+  assert.equal(reviewed.writes.length,0,'review eligibility does not itself approve or publish a report');
+  const stale=structuredClone(reviewed.card);stale.draft.source.sourceHash=digest('replacement');await assert.rejects(reviewed.store.assertApproval({},stale),{code:'VARIANT_CONFIRMATION_REQUIRED'});
+ });

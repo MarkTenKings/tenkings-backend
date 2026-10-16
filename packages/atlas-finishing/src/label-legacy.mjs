@@ -19,12 +19,12 @@ export function validateManualLabel(label) {
   const nullableMetadata = sports ? ['year', 'manufacturer'] : ['year'];
   const optional = sports ? ['parallel', 'insert', 'cardNumber'] : ['parallel', 'cardNumber'];
   if (!identity || typeof identity !== 'object' || Array.isArray(identity)
-    || required.some(key => !text(identity[key], key === 'year' ? 24 : 180))
+    || required.some(key => !text(identity[key], 180, true))
     || nullableMetadata.some(key => !text(identity[key], key === 'year' ? 24 : 180, true))
     || optional.some(key => identity[key] !== '' && !text(identity[key], 120, true))
     || Object.keys(identity).some(key => ![...required, ...nullableMetadata, ...optional, ...(!sports ? ['layoutType', 'manufacturer'] : [])].includes(key))
     || !sports && identity.manufacturer !== undefined && !text(identity.manufacturer, 120)
-    || !sports && identity.layoutType !== undefined && !['POKEMON', 'TRAINER', 'ENERGY'].includes(identity.layoutType)) fail('MANUAL_LABEL_IDENTITY_INVALID');
+    || !sports && identity.layoutType != null && !['POKEMON', 'TRAINER', 'ENERGY'].includes(identity.layoutType)) fail('MANUAL_LABEL_IDENTITY_INVALID');
   return label;
 }
 function fit(paragraphs, measureText, width, height) {

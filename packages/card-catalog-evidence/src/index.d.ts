@@ -192,6 +192,26 @@ export type ManufacturerChecklistShard = { path: string; sha256: string; decoded
   compressedBytes: number; decodedBytes: number; rowCount: number };
 export type ManufacturerChecklistIndex = { schemaVersion: 'manufacturer-checklist-index/v2'; complete: false;
   sources: (ManufacturerChecklistSource & { shard: ManufacturerChecklistShard })[] };
+export interface ManufacturerIdentityLookupMatch {
+  identity: VariantIdentity; printing: string; queryIndices: number[];
+  source: { provider: 'manufacturer_checklist'; recordId: string; url: string; sha256: string; locator: string;
+    evidenceAuthority: 'primary' | 'secondary'; sourcePublisher: string; shardSha256: string | null;
+    release: { manufacturer: string; sports: string[]; year: string; setName: string } };
+}
+export interface ManufacturerIdentityLookupResult {
+  status: 'matched' | 'ambiguous' | 'no_match' | 'insufficient_evidence' | 'unavailable';
+  catalog: { indexSha256: string; sourceCount: number; rowCount: number; coverage: 'partial' } | null;
+  queries: Partial<VariantIdentity>[]; matches: ManufacturerIdentityLookupMatch[]; truncated: boolean; problems: string[];
+}
+export type ManufacturerIdentityLookupFields = Partial<VariantIdentity> & { sport?: string | null; printedCardType?: string | null };
+export function createManufacturerChecklistIdentityReader(options?: {
+  catalog?: ManufacturerChecklistCatalog | ManufacturerChecklistIndex | null;
+  loadCatalog?: (() => Promise<ManufacturerChecklistCatalog | ManufacturerChecklistIndex>) | null;
+  loadShard?: ((descriptor: ManufacturerChecklistShard) => Promise<Uint8Array>) | null;
+  loadIdentityIndex?: (() => Promise<unknown>) | null;
+}): { lookup(input: { fields: ManufacturerIdentityLookupFields; proposals?: ManufacturerIdentityLookupFields[] }, options?: {
+  signal?: AbortSignal; maxMatches?: number; maxShards?: number;
+}): Promise<ManufacturerIdentityLookupResult> };
 export function createManufacturerChecklistVariantProvider(options?: { catalog?: ManufacturerChecklistCatalog | ManufacturerChecklistIndex | null;
   loadCatalog?: (() => Promise<ManufacturerChecklistCatalog | ManufacturerChecklistIndex>) | null;
   loadShard?: ((descriptor: ManufacturerChecklistShard) => Promise<Uint8Array>) | null; limit?: number }): {

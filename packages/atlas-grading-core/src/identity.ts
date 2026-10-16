@@ -4,12 +4,6 @@ export type SpeedsterCardProfile = "SPORTS" | "POKEMON";
 export const SPEEDSTER_POKEMON_LAYOUT_TYPES = ["POKEMON", "TRAINER", "ENERGY"] as const;
 export type SpeedsterPokemonLayoutType = typeof SPEEDSTER_POKEMON_LAYOUT_TYPES[number];
 
-const requiredText = (label: string, max = 120) => z
-  .string({ error: `${label} is required.` })
-  .trim()
-  .min(1, `${label} is required.`)
-  .max(max, `${label} is too long.`);
-
 const optionalText = (label: string, max = 120) => z
   .union([z.string().max(max, `${label} is too long.`), z.null()])
   .optional()
@@ -19,32 +13,26 @@ const optionalText = (label: string, max = 120) => z
   });
 
 const sportsIdentitySchema = z.object({
-  playerName: requiredText("Player name"),
+  playerName: optionalText("Player name"),
   year: optionalText("Year", 24),
   manufacturer: optionalText("Manufacturer"),
-  productSet: requiredText("Product / set"),
+  productSet: optionalText("Product / set"),
   parallel: optionalText("Parallel"),
   insert: optionalText("Insert"),
   cardNumber: optionalText("Card number"),
 }).strict();
 
 const pokemonIdentitySchema = z.object({
-  cardName: requiredText("Card name"),
+  cardName: optionalText("Card name"),
   year: optionalText("Year", 24),
   // Omission must stay omission for historical Pokémon identity hashes.
   manufacturer: z.string().trim().min(1).max(120).optional(),
-  productSet: requiredText("Set"),
+  productSet: optionalText("Set"),
   parallel: optionalText("Parallel"),
   cardNumber: optionalText("Card number"),
   layoutType: z.enum(SPEEDSTER_POKEMON_LAYOUT_TYPES, {
     error: "Pokémon layout type is required.",
-  }).optional(),
-}).strict();
-
-const newPokemonIdentitySchema = pokemonIdentitySchema.extend({
-  layoutType: z.enum(SPEEDSTER_POKEMON_LAYOUT_TYPES, {
-    error: "Pokémon layout type is required.",
-  }),
+  }).nullable().optional(),
 }).strict();
 
 export type SpeedsterSportsIdentity = z.output<typeof sportsIdentitySchema>;
@@ -55,7 +43,7 @@ export class SpeedsterIdentityValidationError extends Error {
   readonly fields: Record<string, string>;
 
   constructor(error: z.ZodError) {
-    super("Complete the required Speedster identity fields.");
+    super("Check the supplied ATLAS identity fields.");
     this.name = "SpeedsterIdentityValidationError";
     this.fields = Object.fromEntries(
       error.issues.map((issue) => [issue.path.join(".") || "identity", issue.message]),
@@ -78,16 +66,15 @@ export function canonicalizeSpeedsterSessionIdentity(
 }
 
 /**
- * New Pokémon sessions must carry the human-authoritative layout discriminator.
- * The compatibility parser above deliberately continues to accept historical
- * identities that predate the field; callers must never use it to create a new
- * Pokémon session.
+ * Descriptive identity is independent of physical grading. Unconfirmed values
+ * remain null, and absent historical Pokémon layout/manufacturer keys stay
+ * absent. The caller still supplies the supported physical card profile.
  */
 export function canonicalizeNewSpeedsterSessionIdentity(
   cardProfile: SpeedsterCardProfile,
   value: unknown,
 ): SpeedsterSessionIdentity {
-  const parsed = (cardProfile === "SPORTS" ? sportsIdentitySchema : newPokemonIdentitySchema).safeParse(value);
+  const parsed = (cardProfile === "SPORTS" ? sportsIdentitySchema : pokemonIdentitySchema).safeParse(value);
   if (!parsed.success) throw new SpeedsterIdentityValidationError(parsed.error);
   return parsed.data;
 }

@@ -66,3 +66,12 @@ test('print and NFC preparation overlap without inventing physical completion', 
   await assert.rejects(dispatchApprovedFinishing({ plan, association, now: 1500 }), /ASSOCIATION/);
   await assert.rejects(dispatchApprovedFinishing({ plan: samplePlan({ mode: 'LOCAL_FIXTURE' }), association, now: 1000 }), /FIXTURE/);
 });
+
+test('unknown label identity remains absent without a fabricated printed name or set',()=>{
+ const identity={playerName:null,productSet:null,year:null,manufacturer:null,parallel:null,insert:null,cardNumber:null};
+ const plan=samplePlan({identity});assert.deepEqual(plan.label.identity,identity);
+ const rendered=renderManualLabel({label:plan.label,measureText,qr});
+ assert.match(rendered.front,/ATLAS-0123456789AB/);assert.doesNotMatch(rendered.front,/null|undefined|Unknown|Example Player/);
+ const legacy={...plan.label,layoutVersion:'atlas-noir-gold-v1'};delete legacy.design;
+ assert.doesNotMatch(renderLegacy({label:legacy,measureText,qr}).front,/null|undefined|Unknown|Example Player/);
+});

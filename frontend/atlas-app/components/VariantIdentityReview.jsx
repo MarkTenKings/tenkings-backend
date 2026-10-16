@@ -192,7 +192,9 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     timer = setTimeout(tick, pollIntervalMs); return () => { stopped = true; clearTimeout(timer); };
   }, [enabled, status?.state, pending, pollIntervalMs]);
   const identitySaved = current && variantConfirmationCurrent(status) && !drafted;
-  const confirmed = current && variantApprovalReady(status) && !drafted && !unresolved && !manual && (status?.confirmation?.decision === 'MANUAL' || choice === status?.confirmation?.selectedCandidateId);
+  const reviewedUnconfirmed = identitySaved && status?.confirmation?.decision === 'UNRESOLVED';
+  const confirmed = current && variantApprovalReady(status) && !drafted && !manual
+    && (reviewedUnconfirmed || !unresolved && (status?.confirmation?.decision === 'MANUAL' || choice === status?.confirmation?.selectedCandidateId));
   const gate = !enabled || Boolean(!previewOnly && confirmed && !pending && !busy && !reloadNeeded);
   useEffect(() => { callbacks.current.onGateChange?.(gate); }, [gate]);
   useEffect(() => { callbacks.current.onActivityChange?.(Boolean(busy || pending && (!previewOnly || referenceOperation(pending.operation)))); return () => callbacks.current.onActivityChange?.(false); }, [busy, pending, previewOnly]);
@@ -241,7 +243,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     try {
       const result = await owner.confirm({ candidateId: choice, unresolved: Boolean(unresolved), manual });
       if (version !== generation.current) return;
-      accept(owner, result); setNotice(result.confirmation?.decision === 'UNRESOLVED' ? 'Variant held for review. Your card identification and grading work are saved.' : 'Your identity decision is saved.');
+      accept(owner, result); setNotice(result.confirmation?.decision === 'UNRESOLVED' ? 'The variant remains unconfirmed. Your decision is saved and final grade review can continue.' : 'Your identity decision is saved.');
       await refreshWorkspace();
     } catch (failure) { if (version === generation.current) { setPending(retainedPending(owner)); setError(variantError(failure)); } }
     finally { if (version === generation.current) { lock.current = false; setBusy(false); } }
@@ -276,8 +278,8 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
     : pending
     ? { approve: () => void check(), disabled: busy || disabled, approveLabel: referenceOperation(pending.operation) ? 'Check reference request' : 'Check saved decision', message: 'Check the retained request before making another choice.' }
     : { approve: needsChoice ? focusChoices : () => void save(), disabled: needsChoice ? unavailable : confirmationDisabled,
-      approveLabel: needsChoice ? 'Choose variant' : unresolved ? 'Save for identity review' : 'Confirm variant',
-      message: needsChoice ? 'Choose Base or enter the printing you can verify on your physical card.' : unresolved ? 'Keep this card for identity review.' : `Confirm ${selected?.label ?? manual?.parallel ?? 'the variant'} from your physical card.` };
+      approveLabel: needsChoice ? 'Choose variant' : unresolved ? 'Keep variant unconfirmed' : 'Confirm variant',
+      message: needsChoice ? 'Choose a printing you can verify, or leave the variant unconfirmed.' : unresolved ? 'Save the variant as unconfirmed and continue to final grade review.' : `Confirm ${selected?.label ?? manual?.parallel ?? 'the variant'} from your physical card.` };
   const savedName = identity?.playerName || identity?.cardName || identity?.name;
   const savedDetails = [['Year',identity?.year],['Manufacturer',identity?.manufacturer ?? (savedIdentification?.sourceHash === sourceHash ? savedIdentification.fields?.manufacturer : null)],['Set',identity?.productSet ?? identity?.setName],['Card number',identity?.cardNumber],['Saved variant',identity?.parallel]];
   const renderGroup = group => {
@@ -296,10 +298,10 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
           : <details className={styles.more} key={group.key}><summary>{group.label} · {entries.length}</summary>{contents}</details>;
   };
   return <section className={styles.panel} aria-label="Final card identity review">
-    <header className={styles.heading}><div><p className={styles.eyebrow}>{previewOnly ? 'CARD VARIANT REFERENCES' : 'FINAL REVIEW · CARD VARIANT'}</p><h2>{previewOnly ? 'Compare variant references' : 'Confirm the card variant'}</h2></div><span className={identitySaved ? styles.confirmed : styles.badge}>{identitySaved ? 'Human confirmed' : 'Variant still needs confirmation'}</span></header>
-    {previewOnly ? <p role="status">Reference preview · Your grading review stays saved. Confirm the variant during final review.</p> : renderReviewActions ? !gate && renderReviewActions({...reviewAction, busy, message: error || (busy ? 'Checking saved work…' : reviewAction.message)}) : <div className={styles.actions} aria-label="Variant confirmation"><div><strong>{confirmed ? 'Identity confirmed for this saved card' : selected ? selected.label : manual ? manual.parallel || 'Choose the physical printing' : unresolved ? 'Keep for variant review' : 'Confirm the variant or keep it unresolved'}</strong><p role="status">{busy ? 'Checking saved work…' : notice || 'A suggested match is never approved automatically.'}</p></div>
+    <header className={styles.heading}><div><p className={styles.eyebrow}>{previewOnly ? 'CARD VARIANT REFERENCES' : 'FINAL REVIEW · CARD VARIANT'}</p><h2>{previewOnly ? 'Compare variant references' : 'Review the card variant'}</h2></div><span className={identitySaved ? styles.confirmed : styles.badge}>{reviewedUnconfirmed ? 'Variant unconfirmed · reviewed' : identitySaved ? 'Human confirmed' : 'Variant still needs review'}</span></header>
+    {previewOnly ? <p role="status">Reference preview · Your grading review stays saved. Review the variant during final approval.</p> : renderReviewActions ? !gate && renderReviewActions({...reviewAction, busy, message: error || (busy ? 'Checking saved work…' : reviewAction.message)}) : <div className={styles.actions} aria-label="Variant confirmation"><div><strong>{reviewedUnconfirmed ? 'Variant remains unconfirmed' : confirmed ? 'Identity confirmed for this saved card' : selected ? selected.label : manual ? manual.parallel || 'Choose the physical printing' : unresolved ? 'Leave variant unconfirmed' : 'Confirm the variant or keep it unresolved'}</strong><p role="status">{busy ? 'Checking saved work…' : notice || 'A suggested match is never approved automatically.'}</p></div>
       {pending ? <button type="button" className={styles.primary} disabled={busy || disabled} onClick={() => void check()}>{referenceOperation(pending.operation) ? 'Check retained reference request' : 'Check retained decision'}</button>
-        : <button type="button" className={styles.primary} disabled={confirmationDisabled} onClick={() => void save()}>{unresolved ? 'Save for identity review' : confirmed ? 'Identity confirmed' : 'Confirm selected identity'}</button>}
+        : <button type="button" className={styles.primary} disabled={confirmationDisabled} onClick={() => void save()}>{unresolved ? 'Keep variant unconfirmed' : confirmed ? 'Identity confirmed' : 'Confirm selected identity'}</button>}
     </div>}
     <section className={styles.savedIdentity} aria-label="Saved card identification"><p>{savedName ? 'Card identified' : 'Saved card details'}</p><h3>{savedName || 'Card name not recorded'}</h3><dl>{savedDetails.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value == null || value === '' ? 'Not recorded' : value}</dd></div>)}</dl></section>
       {!status && <p role="status">Checking saved photo matches…</p>}{stateText && <p role="status" className={styles.notice}>{stateText}</p>}
@@ -338,7 +340,7 @@ export default function VariantIdentityReview({ cardId, staffId, csrf, enabled, 
       const reference = variantReference(candidate, cardId, { artwork: false });
       return <article key={image.sha256}><button type="button" className={styles.galleryPhoto} disabled={!reference || !photograph.url} onClick={event => compare(candidate, event)} aria-label={`Compare ${candidate.label}`}><ReferencePhoto image={reference} label={candidate.label}/></button><p className={styles.labelReading}><strong>{referenceLabel(image)}</strong>{image.labelReading.text || 'No readable card or slab-label text is saved for this photograph.'}</p><p>{image.labelReading.reason}</p>{referenceSource(image, candidate)}</article>;
     })}</div></section>}
-      {!previewOnly && status && <div className={styles.unknown}><p>{candidates.length ? 'None of these is a clear variant match?' : 'Keep the variant unresolved if you cannot verify it.'}</p><div><button type="button" aria-pressed={unresolved === 'NOT_SHOWN'} disabled={unavailable} onClick={() => choose(null, 'NOT_SHOWN')}>My card is not shown</button><button type="button" aria-pressed={unresolved === 'CANNOT_TELL'} disabled={unavailable} onClick={() => choose(null, 'CANNOT_TELL')}>I cannot tell</button></div>{unresolved && <p>Your card identification and grading work stay saved. Final approval waits for variant confirmation. Do not guess from artwork or reflections.</p>}</div>}
+      {!previewOnly && status && <div className={styles.unknown}><p>{candidates.length ? 'None of these is a clear variant match?' : 'Keep the variant unresolved if you cannot verify it.'}</p><div><button type="button" aria-pressed={unresolved === 'NOT_SHOWN'} disabled={unavailable} onClick={() => choose(null, 'NOT_SHOWN')}>My card is not shown</button><button type="button" aria-pressed={unresolved === 'CANNOT_TELL'} disabled={unavailable} onClick={() => choose(null, 'CANNOT_TELL')}>I cannot tell</button></div>{unresolved && <p>Leave the variant unconfirmed and continue grading. Final report approval is a separate review.</p>}</div>}
 
     </div></div>
     {groups.filter(group => group.key !== 'same').map(renderGroup)}

@@ -4,6 +4,7 @@ import {constants} from 'node:fs';
 import {resolve,relative} from 'node:path';
 import {createHash} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
+import {createManufacturerIdentityIndexBuilder,manufacturerIdentityCanonical,validateManufacturerIdentityIndex} from './manufacturer-identity-index.mjs';
 
 const DATA='packages/card-catalog-evidence/data/';
 const HASH=/^[a-f0-9]{64}$/;
@@ -34,7 +35,12 @@ export async function manufacturerRuntimeFiles(workspace){
   assert(Array.isArray(index.sources)&&index.sources.length<=20000,'Catalog source bounds');
   assert.equal(Object.keys(index).sort().join(','),'complete,schemaVersion,sources');
   files.push(indexPath);
-  for(const {shard,...metadata} of index.sources){
+  const identityPath=DATA+'manufacturer-identities.index.json.gz';
+  const identityIndex=JSON.parse(gunzipSync(await readBounded(workspace,identityPath,8*1024*1024),{maxOutputLength:32*1024*1024}));
+  validateManufacturerIdentityIndex(identityIndex,index);
+  files.push(identityPath);
+  const identityBuilder=createManufacturerIdentityIndexBuilder(index);
+  for(const [sourceIndex,{shard,...metadata}] of index.sources.entries()){
     assert(shard&&HASH.test(shard.sha256)&&HASH.test(shard.decodedSha256),'Catalog shard hashes');
     assert.equal(Object.keys(shard).sort().join(','),'compressedBytes,decodedBytes,decodedSha256,path,rowCount,sha256');
     assert.equal(shard.path,`manufacturer-checklists/${shard.sha256}.json.gz`,'Catalog shard path');
@@ -50,7 +56,9 @@ export async function manufacturerRuntimeFiles(workspace){
     assert.equal(canonical(data.sources),canonical([metadata]),'Catalog shard source binding');
     assert(Array.isArray(data.rows)&&data.rows.length===shard.rowCount,'Catalog shard row count');
     assert(data.rows.every(row=>Array.isArray(row)&&row.length===5&&row[0]===0),'Catalog shard row binding');
+    identityBuilder.add(sourceIndex,data);
     files.push(path);
   }
+  assert.equal(manufacturerIdentityCanonical(identityIndex),manufacturerIdentityCanonical(identityBuilder.finish()),'Catalog identity index must cover every source row');
   return [...new Set(files)].sort();
 }

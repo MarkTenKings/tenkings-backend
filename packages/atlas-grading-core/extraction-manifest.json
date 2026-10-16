@@ -62,8 +62,8 @@
       "source": "frontend/nextjs-app/lib/ai-grader-v2/identity.ts",
       "canonical": "packages/atlas-grading-core/src/identity.ts",
       "sha256": "a46dbfa5a594cf56467a60d52251b18c09e23c6a44f46d4dd3c54ad7e239092c",
-      "currentSha256": "8dfd98b37861ca52f43e816b78b203d9ac695d032a8387da9f918150b868f387",
-      "reason": "Allow unknown year/manufacturer to remain null during inspection; retain optional supplied Pok\u00e9mon manufacturer. Historical canonical identity objects keep exactly the same bytes when no optional manufacturer is supplied. Grading formulas, photograph inspection and report approval gates are unchanged.",
+      "currentSha256": "4f9f9290677bb129a3d693be6702bda7671142cbcff853f3b97e203662c2c25d",
+      "reason": "Allow unknown descriptive identity fields to remain null during physical inspection; keep the supported card profile required and omit design-specific lessons for incomplete identity; retain optional supplied Pok\u00e9mon manufacturer. Historical canonical identity objects keep exactly the same bytes when no optional manufacturer is supplied. Grading formulas, photograph inspection and report approval gates are unchanged.",
       "compatibilityTest": "packages/atlas-grading-core/test/identity.test.mjs"
     }
   ]

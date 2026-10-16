@@ -561,24 +561,25 @@ test('same identity confirmation keeps confirmed borders and returns to its repo
 
 
 
-test('an unresolved hold after an earlier variant check stays in identity review without attempting report preview',async()=>{
+test('explicit unconfirmed variant returns to report and still requires a separate final approval',async()=>{
  const f=harness();await flush();f.render();await f.openGrade();f.render();const saved=f.variant().onSaved;
- f.preview=()=>{throw Error('held identity must not request a report');};
- f.current={...f.current,geometry:{confirmed:false},variantVerification:{enabled:true,approvalReady:false,
+ f.current={...f.current,identity:{cardName:null,productSet:null,parallel:null},variantVerification:{enabled:true,approvalReady:true,
   confirmation:{decision:'UNRESOLVED',reprocessRequired:true,recheckState:'REFUSED',recheckRetryable:true}}};
- await saved();await flush();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);assert.equal(f.geometry(),undefined);
+ await saved();await flush();f.render();assert.ok(f.variant());assert.ok(f.report());assert.equal(f.geometry(),undefined);
+ f.variant().onGateChange(true);f.report().onReadyChange(true);f.render();
+ assert.equal(f.button('Approve final grade and queue label').props.disabled,false);
  assert.doesNotMatch(f.text(),/Recheck border placement|Checking the confirmed variant/);assert.equal(f.actions.length,0);f.dispose();
 });
-test('a retained unresolved hold reopens identity review on reload and remains reachable after returning to grading',async()=>{
+test('a retained unconfirmed variant leaves grading usable and its review remains reachable',async()=>{
  const f=harness({initialView:{variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'UNRESOLVED',reprocessRequired:true,recheckState:'UNKNOWN'}}}});
- await flush();f.render();assert.ok(f.variant());assert.equal(f.report(),undefined);f.button('Back to grading review').props.onClick();f.render();
- assert.ok(f.defects());assert.match(f.text(),/The card variant is held for review/);f.button('Review card variant').props.onClick();f.render();
+ await flush();f.render();assert.ok(f.defects());assert.equal(f.report(),undefined);
+ assert.match(f.text(),/The variant remains unconfirmed/);f.button('Review card variant').props.onClick();f.render();
  assert.ok(f.variant());assert.equal(f.actions.length,0);assert.ok(f.calls.every(call=>!call.options?.method));f.dispose();
 });
 
 test('card correction stays above the mounted variant panel and retains pending-save navigation locks',async()=>{
  const f=harness({initialView:{identity:{cardName:'Saved card',parallel:'Saved printing'},variantVerification:{enabled:true,approvalReady:false,confirmation:{decision:'UNRESOLVED'}}}});
- await flush();f.render();assert.ok(f.variant());const edit=f.button('Edit card details').props.onClick;
+ await flush();f.render();f.button('Review card variant').props.onClick();f.render();assert.ok(f.variant());const edit=f.button('Edit card details').props.onClick;
  f.variant().onActivityChange(true);f.render();edit();f.render();assert.ok(f.variant(),'a stale edit handler cannot leave pending variant recovery');
  f.variant().onActivityChange(false);f.render();f.button('Edit card details').props.onClick();await flush();f.render();
  assert.ok(f.variant());assert.equal(f.variant().disabled,true);assert.equal(f.identity().draft.cardName,'Saved card');assert.equal(f.actions.length,0);
@@ -751,7 +752,7 @@ test('unchanged details close without a command, revision or variant invalidatio
 
 test('identity failures retain the draft, validation prevents requests and duplicate saves share one command',async()=>{
  const f=harness({initialGeometrySide:'FRONT',initialView:{identity:editableIdentity}});await flush();f.render();f.identity().onEdit();f.render();
- f.identity().onChange('cardName','');f.render();await f.identity().onSave();f.render();assert.ok(f.identity().errors.cardName);assert.equal(f.actions.length,0);
+ f.identity().onChange('cardName','x'.repeat(121));f.render();await f.identity().onSave();f.render();assert.ok(f.identity().errors.cardName);assert.equal(f.actions.length,0);
  f.identity().onChange('cardName','Pikachu');f.identity().onChange('year','2023');f.render();let reject;
  f.onExecute=()=>new Promise((_resolve,no)=>{reject=no;});const save=f.identity().onSave;const work=save();await save();f.render();
  assert.equal(f.actions.length,1);assert.equal(f.identity().saving,true);f.identity().onCancel();f.render();assert.ok(f.identity().draft);

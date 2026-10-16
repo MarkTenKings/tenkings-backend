@@ -140,14 +140,16 @@ export function renderLabelV4(input, { previewMaterial = 'gold', certificateLayo
       || !Number.isSafeInteger(approvalVersion) || approvalVersion < 1
       || !['gold', 'holo'].includes(previewMaterial)) throw new Error('LABEL_V4_SOURCE_INVALID');
   const name = cardProfile === 'SPORTS' ? identity.playerName : identity.cardName;
-  if (typeof name !== 'string' || !name.trim() || Object.values(identity).some(value => value != null && (typeof value !== 'string' || value.length > 512))) throw new Error('LABEL_V4_SOURCE_INVALID');
+  if (name !== null && (typeof name !== 'string' || !name.trim()) || Object.values(identity).some(value => value != null && (typeof value !== 'string' || value.length > 512))) throw new Error('LABEL_V4_SOURCE_INVALID');
   const source = structuredClone({ identity, finalGrade, reportNumber, approvalVersion, cardProfile });
   const rendererProfileHash = certificateLayout === 'full-cert-arc-v1' ? LABEL_V4_RENDERER_PROFILE_HASH
     : hash(stable({ ...LABEL_V4_RENDERER_PROFILE, certificate: certificateLayout }));
   const diagnostics = { name: null, metadata: null, certificate: null, gradeRecipe: LABEL_V4_RENDERER_PROFILE.grade };
   const attention = code => ({ state: 'NEEDS_LAYOUT', source, rendererProfileHash, diagnostics: { ...diagnostics, code } });
   try {
-    const fitted = fitLabelV4Name(name);
+    // Unknown identity stays absent in the artwork and source snapshot. The
+    // immutable report number still identifies this graded physical specimen.
+    const fitted = name === null ? { state: 'READY', lines: [], shapes: [], inkHeightMm: 0, widthsMm: [] } : fitLabelV4Name(name);
     diagnostics.name = { text: name, lines: fitted.lines, inkHeightMm: n(fitted.inkHeightMm), widthsMm: fitted.widthsMm.map(n) };
     if (fitted.state !== 'READY') return attention('NAME_OVERFLOW');
     const nameHeight = fitted.shapes.length * fitted.inkHeightMm + (fitted.shapes.length - 1) * 0.45;
@@ -168,7 +170,7 @@ export function renderLabelV4(input, { previewMaterial = 'gold', certificateLayo
     const staticInk = certificateLayout === 'full-cert-under-name-v1' ? vectors.staticInkWithoutWaveform : vectors.staticInk;
     const defs = `${vectors.clips}${clearance}<mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="68.342" height="20.082"><rect width="68.342" height="20.082" fill="white"/><g fill="black" color="black">${staticInk}<g data-part="grade">${grade}</g><g data-part="caption">${caption}</g><g data-part="name">${namePaths}</g><g data-part="certificate">${cert.paths}</g></g></mask>`;
     const ink = `<g clip-path="url(#body)" mask="url(#ink)"><rect width="68.342" height="20.082" fill="#000000"/>${vectors.grayDetails}<g data-part="metadata" fill="white">${metadataPaths}</g></g>`;
-    const title = `${name}, grade ${finalGrade}, ${reportNumber}, version ${approvalVersion}`;
+    const title = `${name ? `${name}, ` : ''}grade ${finalGrade}, ${reportNumber}, version ${approvalVersion}`;
     const wrap = (purpose, content) => `<svg xmlns="http://www.w3.org/2000/svg" width="68.342mm" height="20.082mm" viewBox="0 0 68.342 20.082" data-atlas-artwork="${purpose}" data-renderer="atlas-v4-outlined-label-v1" role="img"><title>${esc(title)}</title>${content}</svg>`;
     const printSvg = wrap('PRINT', `<defs>${defs}</defs>${ink}`);
     const colors = previewMaterial === 'gold' ? ['#c99c3d', '#ecd296', '#b78b32'] : ['#7ddfe7', '#c8a4ec', '#f1b6d4'];

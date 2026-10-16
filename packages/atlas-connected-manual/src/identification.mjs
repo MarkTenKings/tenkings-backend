@@ -53,7 +53,7 @@ export function identificationEffects({ openaiKey, googleKey, fetchImpl=fetch })
     model:(request,context)=>send('https://api.openai.com/v1/responses',request,{Authorization:`Bearer ${openaiKey}`},context.signal) };
 }
 
-export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,readGradingPhoto=null,isCleanPhotoPrepared=null,
+export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,readGradingPhoto=null,isCleanPhotoPrepared=null,catalogReader,
   clock = () => Date.now(), limited = work => work() }) {
   requireThat(engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION,503,'IDENTIFICATION_VERSION_UNSUPPORTED');
   requireThat(!effects || typeof receiptClient?.$queryRawUnsafe==='function',503,'IDENTIFICATION_RECEIPT_STORE_REQUIRED');
@@ -151,7 +151,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
     const cardId=seedRow.card_id, pair={sourceHash:seedRow.source_hash};
     let row=recovery?null:seedRow, claimError=null, claimStarted=false;
     const verifiedOcr=new Set();
-      requireThat(saved.engineVersion===ATLAS_IDENTIFICATION_LAYOUT_VERSION,503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+      requireThat(['atlas-identification-layout-v3',ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(saved.engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
       let dispatched=false;
       const effect=kind=>async(request,context)=>{
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
@@ -184,6 +184,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       };
       try {
         const result=await identifyAtlasCard(saved.input,{
+          catalogReader,
           readPhoto:async descriptor=>loaded.get(descriptor.ref),
           ocr:recovery?async(request,context)=>{
             const cached=recovery.ocr[context.side];

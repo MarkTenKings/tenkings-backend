@@ -52,15 +52,16 @@ export function renderManualLabel({ label, measureText, qr, palette = 'NOIR_GOLD
     tracking: d.variantTracking, font: 'Helvetica-Bold', maxLines: 2, width: 80.5, measureText }) : null;
   let fitted;
   for (let max = d.nameSize; max >= d.nameMinSize - 0.001; max = number(max - 0.1)) {
-    fitted = fitLines(name, { maximum: max, minimum: d.nameMinSize, tracking: d.nameTracking,
-      font: d.nameFont, maxLines: 2, width: 80.5, measureText });
+    fitted = name === null ? { lines: [], size: max, leading: number(max * 1.06) }
+      : fitLines(name, { maximum: max, minimum: d.nameMinSize, tracking: d.nameTracking,
+        font: d.nameFont, maxLines: 2, width: 80.5, measureText });
     if (fitted.lines.length * fitted.leading + (variant ? variant.lines.length * variant.leading + 3 : 0) <= 39) break;
     fitted = null;
   }
   if (!fitted) fail('MANUAL_LABEL_IDENTITY_REQUIRES_LAYOUT');
   const total = fitted.lines.length * fitted.leading + (variant ? variant.lines.length * variant.leading + 3 : 0);
   const start = 7 + (39 - total) / 2, fixture = label.mode === 'LOCAL_FIXTURE';
-  const title = `ATLAS ${name}, approved version ${label.approvalVersion}, grade ${label.finalGrade}${fixture ? ', example only' : ''}`;
+  const title = `ATLAS ${name ?? label.reportNumber}, approved version ${label.approvalVersion}, grade ${label.finalGrade}${fixture ? ', example only' : ''}`;
   const svg = (content, accessibleTitle) => `<svg xmlns="http://www.w3.org/2000/svg" width="2.73in" height="0.83in" viewBox="0 0 ${g.width} ${g.height}" role="img"><title>${esc(accessibleTitle)}</title>${content}</svg>`;
   const logo = label.layoutVersion === 'atlas-signature-v2'
     ? `<svg x="4.5" y="9" width="35.5" height="36" viewBox="98 190 1058 866" preserveAspectRatio="xMidYMid meet"><image width="1254" height="1254" href="${LABEL_LOGO_DATA_URI}"/></svg>`

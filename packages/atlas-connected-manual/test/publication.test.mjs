@@ -86,3 +86,13 @@ test('publication validation failures expose only a typed code and remain observ
  assert.deepEqual(logged.at(-1),{code:'MANUAL_PUBLICATION_INTERRUPTED'});
  f.failRead(false);assert.equal((await publish(f)).state,'PUBLISHED');assert.equal(f.row.action_id,before.action_id);
 });
+
+for(const cardProfile of ['SPORTS','POKEMON'])test(`${cardProfile} publication preserves unresolved identity without altering grade or approval`,async()=>{
+ const identity=cardProfile==='SPORTS'?{playerName:null,productSet:null,year:null,manufacturer:null}:{cardName:null,productSet:null,year:null,layoutType:null};
+ const f=await publicationFixture({cardProfile,identity}),before=structuredClone(f.row);
+ assert.equal((await publish(f)).state,'PUBLISHED');const p=await packet(f);
+ assert.deepEqual(p.report.identity,f.full.identity);assert.equal(p.report.identity.productSet,null);
+ assert.deepEqual(p.report.grade,f.full.grade);assert.equal(p.report.finalGrade,f.full.finalGrade);
+ assert.equal(f.row.report,before.report);assert.equal(f.row.report_hash,before.report_hash);
+ assert.deepEqual(parsePublicManualReport(p),p);
+});

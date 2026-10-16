@@ -174,3 +174,14 @@ test('individual 2400 ppi PNG has binary alpha, original NFC clearance, pHYs and
   assert.equal(first.bytes.readUInt32BE(offset + 4), Math.round(6458 / 0.068342)); assert.equal(first.bytes.readUInt32BE(offset + 8), Math.round(1898 / 0.020082));
   assert.equal(first.bytes[offset + 12], 1); assert.ok(first.manifest.rasterReceipt.peakRssBytes < 512 * 1024 * 1024);
 });
+
+test('V4 preserves null identity in the source and omits unconfirmed name and metadata paths',()=>{
+ for(const cardProfile of ['SPORTS','POKEMON']){
+  const identity={...(cardProfile==='SPORTS'?{playerName:null}:{cardName:null}),year:null,manufacturer:null,productSet:null,cardNumber:null,parallel:null};
+  const input=fixture({cardProfile,identity}),rendered=renderLabelV4(input);
+  assert.equal(rendered.state,'READY');assert.deepEqual(rendered.source,input);
+  assert.equal(rendered.diagnostics.name.text,null);assert.deepEqual(rendered.diagnostics.name.lines,[]);
+  assert.equal(part(rendered.printSvg,'name'),'<g data-part="name"></g>');assert.equal(rendered.diagnostics.metadata.text,'');
+  assert.doesNotMatch(rendered.printSvg,/null|undefined|Unknown/);validateLabelV4Artwork(rendered);
+ }
+});

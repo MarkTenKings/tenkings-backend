@@ -133,7 +133,6 @@ const pokemonCard = () => ({ revision: 7,
 
 for (const { label, field } of [
   { label: 'Card family', field: 'profile' },
-  { label: 'Pokémon card kind', field: 'layoutType' },
 ]) test(`actual card details keep a cleared saved ${field} blank and explain required fields before combined submission`, async () => {
   const store = storage(null), posts = []; let card = pokemonCard();
   const f = harness(store, async (path, options) => {
@@ -312,7 +311,7 @@ test('an edit arriving during a details save is retained and cannot silently ini
 });
 
 test('grading identity errors are explained inline before any journal or request',async()=>{
-  for(const [field,value]of [['Name',''],['Year','x'.repeat(25)],['Manufacturer','x'.repeat(121)],['Product / set','x'.repeat(121)]]){
+  for(const [field,value]of [['Name','x'.repeat(121)],['Year','x'.repeat(25)],['Manufacturer','x'.repeat(121)],['Product / set','x'.repeat(121)]]){
     const store=storage(null),f=harness(store,async()=>assert.fail('invalid identity must not write'),{readCard:sportsCard});
     f.render();await flush();f.render();f.change(field,value);f.render();f.submit();await flush();f.render();
     assert.equal(f.field(field).props['aria-invalid'],true);assert.match(f.text(),/Check the highlighted card details/);assert.equal(store.getItem(key),null);
@@ -665,15 +664,15 @@ for(const state of ['FAILED','NEEDS_REVIEW','READY','RUNNING'])test(`${state} au
  assert.equal(posts[0].body.detailsRevision,card.revision);assert.equal(f.workspaceProps().initialGeometrySide,undefined);
  f.dispose();
 });
-test('invalid identification stays editable before entering the sequential workspace',async()=>{
- let card=failedPhotos();card.details.fields.name='';const posts=[],f=harness(storage(null),async(path,{body})=>{
+test('unknown card family stays editable before entering the sequential workspace',async()=>{
+ let card=failedPhotos();card.details.profile=null;const posts=[],f=harness(storage(null),async(path,{body})=>{
   posts.push({path,body:plain(body)});
-  if(path.endsWith('/details'))card={...card,revision:4,details:{...card.details,fields:{...card.details.fields,...body.changes}}};
+  if(path.endsWith('/details'))card={...card,revision:4,details:{...card.details,...body.changes}};
   else if(path.endsWith('/initialize'))card={...card,manual:{current:true,revision:1}};
   else assert.fail(path);return {};
  },{readCard:()=>card,fromBatch:true});
- f.render();await flush();f.render();assert.equal(posts.length,0);assert.equal(f.field('Name').props['aria-invalid'],true);
- assert.equal(f.has('Edit Front geometry'),false);f.change('Name','Corrected player');f.render();f.submit();await flush();f.render();
+ f.render();await flush();f.render();assert.equal(posts.length,0);assert.equal(f.field('Card family').props['aria-invalid'],true);
+ assert.equal(f.has('Edit Front geometry'),false);f.change('Card family','SPORTS');f.render();f.submit();await flush();f.render();
  assert.deepEqual(posts.map(p=>p.path.split('/').at(-1)),['details','initialize']);assert.equal(posts[1].body.detailsRevision,4);assert.equal(f.workspace(),true);f.dispose();
 });
 test('direct review entry waits for both current generated photos, pending uploads, and exact pending commands',async()=>{
@@ -739,4 +738,22 @@ test('direct review title uses authoritative photo-bound identification instead 
 test('preparation failure reports retained evidence without claiming a new outline save',()=>{
  const message=manualMessage({code:'MANUAL_PREPARATION_FAILED'});
  assert.match(message,/saved outline and photos are kept/);assert.doesNotMatch(message,/Your outline is saved/);
+});
+
+for(const profile of ['SPORTS','POKEMON'])test(`${profile} partial identification enters grading with blank descriptive fields and no invented identity`,async()=>{
+ let card=failedPhotos();card.details.profile=profile;card.details.layoutType=null;
+ for(const field of ['name','set_name','year','manufacturer','card_number'])card.details.fields[field]='';
+ const before=plain(card.details),posts=[],f=harness(storage(null),async(path,{body})=>{
+  posts.push({path,body:plain(body)});assert.equal(path.endsWith('/initialize'),true);
+  card={...card,manual:{current:true,revision:1}};return {};
+ },{readCard:()=>card,fromBatch:true});
+ f.render();await flush();f.render();await flush();f.render();
+ assert.equal(f.workspace(),true);assert.equal(posts.length,1);assert.deepEqual(card.details,before);f.dispose();
+});
+test('partial identification message states that missing fields can stay blank',async()=>{
+ const card=sportsCard();card.details.fields.set_name='';
+ const f=harness(storage(null),async()=>assert.fail('No automatic initialization without ready grading images'),{readCard:()=>card});
+ f.render();await flush();f.render();assert.match(f.text(),/Identification returned partial details/);
+ assert.match(f.text(),/Unconfirmed fields can stay blank while grading continues/);
+ assert.equal(f.field('Product / set').props['aria-invalid'],false);f.dispose();
 });

@@ -110,12 +110,14 @@ try {
   checks.push('SELECTED exact catalog printing and later MANUAL correction work with no notes/AI and preserve the saved catalog result');
   const unresolvedCard = await seed(), unresolvedStatus = await review.status(staff, unresolvedCard.cardId);
   const held = await review.confirm(staff, unresolvedCard.cardId, inputFor(unresolvedStatus, { decision: 'UNRESOLVED' }));
-  assert.equal(held.approvalReady, false);
-  await assert.rejects(store.assertApproval(staff, await service.read(staff, unresolvedCard.cardId)), { code: 'VARIANT_CONFIRMATION_REQUIRED' });
+  assert.equal(held.approvalReady, true);
+  const reviewedUnknown=await service.read(staff, unresolvedCard.cardId);
+  assert.equal(reviewedUnknown.draft.identity.parallel,null);
+  await store.assertApproval(staff,reviewedUnknown);
   const noBinding = inputFor(held, { manualParallel: 'Base', sourceHash: digest('wrong-photo-pair') });
   await assert.rejects(review.confirm(staff, unresolvedCard.cardId, noBinding), { code: 'VARIANT_SOURCE_STALE' });
   await assert.rejects(review.confirm(staff, unresolvedCard.cardId, { ...noBinding, actionId: randomUUID(), sourceHash: held.sourceHash, identityHash: digest('wrong-identity') }), { code: 'VARIANT_IDENTITY_STALE' });
-  checks.push('unresolved and wrong-source/identity commands do not fabricate a physical variant confirmation');
+  checks.push('explicit unconfirmed review preserves null printing; wrong-source/identity commands cannot reuse review');
   const confirmationBefore=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.variant_confirmation WHERE action_id=$1::uuid',selectedInput.actionId);
   const actionBefore=await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE action_id=$1::uuid',selectedInput.actionId);
   await assert.rejects(fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.variant_confirmation SET observed_features='changed' WHERE action_id=$1::uuid", selectedInput.actionId));

@@ -132,9 +132,10 @@ test('manual path preserves the existing rejection of unmeasurable borderless ce
 });
 
 
-test('unknown year and manufacturer do not change measurement score or bypass photograph inspection',()=>{
-  const known=source(),partial=source();partial.identity.year=null;partial.identity.manufacturer=null;
+test('unconfirmed descriptive identity does not change measurement score or bypass photograph inspection',()=>{
+  const known=source(),partial=source();
+  for(const field of ['playerName','productSet','year','manufacturer'])partial.identity[field]=null;
   const report=previewAtlasManualReport(partial);assert.deepEqual(report.grade,previewAtlasManualReport(known).grade);
-  assert.equal(report.identity.year,null);assert.equal(report.identity.manufacturer,null);
+  for(const field of ['playerName','productSet','year','manufacturer'])assert.equal(report.identity[field],null);
   delete partial.manualInspection;assert.throws(()=>previewAtlasManualReport(partial),/INSPECTION_REQUIRED/);
 });

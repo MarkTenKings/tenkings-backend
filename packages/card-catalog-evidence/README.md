@@ -24,6 +24,36 @@ The executable sports/Pokémon fixtures are **synthetic protocol examples**. The
 
 Types are provided in `src/index.d.ts`. Fixtures show complete wire values. Contract schema versions, not package semver alone, select parsers. Existing SetOps and research hashes retain their original meanings.
 
+## Sparse sports identity consultation
+
+`createManufacturerChecklistIdentityReader().lookup({ fields, proposals }, { signal })`
+consults the full retained release index before reporting a result. Unlike the
+later variant helper, it accepts missing set, card number, manufacturer, or year.
+The caller can supply the model's proposed identity and optional alternative
+proposals; an optional `sport`/`printedCardType` narrows names shared across sports.
+Every match returns the exact source identity, printing row, URL, retained-source
+SHA-256, locator, publisher/authority, release, and content-addressed shard binding.
+It does not establish that a photographed card is that printing.
+
+The outcomes are `matched` (one core identity), `ambiguous`, `no_match`,
+`insufficient_evidence`, and `unavailable`. All retain the consulted catalog hash,
+source/row counts and partial coverage when available. Lookup failure, empty
+identity, unsupported category, or ambiguity is advisory and must not prevent
+grading. Bounds are explicit: defaults return at most 80 rows and decode at most
+80 source shards, with any exceeded bound reported as truncated/ambiguous.
+
+The derived `manufacturer-identities.index.json.gz` maps normalized athlete names
+to source shards, including multi-athlete names. It binds to the complete catalog
+index hash; returned rows still pass the existing compressed/decoded hashes and
+source-metadata checks. This permits name-only lookup without rereading 7.4
+million rows. Packaging reconstructs the index from every source row and rejects
+missing names, stale bindings, and missing files. Rebuild after a catalog update:
+
+```sh
+node scripts/set-ops/sports-checklists/build-identity-index.mjs
+git add -f packages/card-catalog-evidence/data/manufacturer-identities.index.json.gz
+```
+
 ## Published reader boundary
 
 ```js

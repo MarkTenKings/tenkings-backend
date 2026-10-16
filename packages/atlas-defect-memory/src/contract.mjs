@@ -28,9 +28,7 @@ export function deriveDesignContext(profile, identity) {
 export function targetDesignContext(profile, identity) {
   requireThat(['SPORTS', 'POKEMON'].includes(profile) && identity && Object.getPrototypeOf(identity) === Object.prototype,
     400, 'MEMORY_DESIGN_REQUIRED');
-  text(identity.productSet);
-  requireThat(normalized(identity.productSet), 503, 'MEMORY_DESIGN_INVALID');
-  const fields = ['year', ...(profile === 'SPORTS' ? ['manufacturer', 'parallel', 'insert', 'cardNumber'] : ['layoutType', 'parallel', 'cardNumber'])];
+  const fields = ['year', 'productSet', ...(profile === 'SPORTS' ? ['manufacturer', 'parallel', 'insert', 'cardNumber'] : ['layoutType', 'parallel', 'cardNumber'])];
   const values = Object.fromEntries(fields.map(field => {
     const value = identity[field];
     if (value == null || value === '') return [field, null];
@@ -38,7 +36,7 @@ export function targetDesignContext(profile, identity) {
   }));
   if (profile === 'POKEMON' && values.layoutType !== null)
     requireThat(['pokemon', 'trainer', 'energy'].includes(values.layoutType), 503, 'MEMORY_DESIGN_INVALID');
-  const missingFields = ['year', profile === 'SPORTS' ? 'manufacturer' : 'layoutType'].filter(field => values[field] === null);
+  const missingFields = ['year', 'productSet', profile === 'SPORTS' ? 'manufacturer' : 'layoutType'].filter(field => values[field] === null);
   return immutable({ design: missingFields.length ? null : deriveDesignContext(profile, identity), missingFields });
 }
 export function validateDesign(design) {
@@ -108,9 +106,9 @@ export function validateFreshness(value) {
     hash(value.targetContentHash);
     requireThat(['SPORTS', 'POKEMON'].includes(value.category) && value.reason === 'INCOMPLETE_IDENTITY'
       && value.fallback === 'BASELINE_WITHOUT_EXAMPLES' && Array.isArray(value.missingFields)
-      && value.missingFields.length > 0 && value.missingFields.length <= 2
+      && value.missingFields.length > 0 && value.missingFields.length <= 3
       && new Set(value.missingFields).size === value.missingFields.length
-      && value.missingFields.every(field => ['year', value.category === 'SPORTS' ? 'manufacturer' : 'layoutType'].includes(field)),
+      && value.missingFields.every(field => ['year', 'productSet', value.category === 'SPORTS' ? 'manufacturer' : 'layoutType'].includes(field)),
     503, 'MEMORY_RETRIEVAL_INVALID');
     return;
   }

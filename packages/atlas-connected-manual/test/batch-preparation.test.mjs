@@ -205,17 +205,18 @@ test('parked image preparation continues through identification, geometry and de
   } finally { await worker.stop(); }
 });
 
-for (const cacheState of ['READY', 'NEEDS_REVIEW']) for (const unknownMetadata of [false,true]) test(`PREPARE admits ${cacheState} physical/prepared evidence with missing printed borders and ${unknownMetadata?'unknown':'known'} year/manufacturer`, async () => {
+for (const cacheState of ['READY', 'NEEDS_REVIEW']) for (const unknownMetadata of [false,true]) for (const identificationState of ['COMPLETE', 'UNKNOWN']) test(`PREPARE admits ${cacheState} physical/prepared evidence with missing printed borders, ${unknownMetadata?'unknown':'known'} identity and ${identificationState} identification`, async () => {
   const f = fixture(), uploads = { FRONT: 'front', BACK: 'back' }, calls = [];
   f.state.geometry.sides.BACK.printed = null;
   const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage: 'PREPARE' };
   const opened = { card: { ready: true, sourceHash: job.sourceHash,
     sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) },
-    revision: 4, manual: null, identification: { state: 'COMPLETE' }, details: {
-      fields: { name: 'Synthetic player', category: 'Sports cards', manufacturer: unknownMetadata?'':'Fixture', card_number: '1', year: unknownMetadata?'':'2026', set_name: 'Evidence test', variant: '', card_type: '' },
+    revision: 4, manual: null, identification: { state: identificationState }, details: {
+      fields: { name: unknownMetadata?'':'Synthetic player', category: 'Sports cards', manufacturer: unknownMetadata?'':'Fixture', card_number: unknownMetadata?'':'1', year: unknownMetadata?'':'2026', set_name: unknownMetadata?'':'Evidence test', variant: '', card_type: '' },
       profile: 'SPORTS', layoutType: null, cornerShape: 'SQUARE', matColor: 'BLACK', parallel: '', insert: '', touched: [], sourceHash: job.sourceHash,
     } };
   const connected = { open: async () => opened,
+    identification: { async run() { return { state: identificationState }; } },
     earlyGeometry: { async ensure() { calls.push('geometry'); return { earlyGeometry: {
       FRONT: { state: 'READY', machineUsable: true },
       BACK: { state: cacheState, machineUsable: true, unresolved: ['PRINTED_GEOMETRY_UNRESOLVED'] },

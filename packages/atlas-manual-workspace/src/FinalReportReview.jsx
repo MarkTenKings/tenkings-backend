@@ -257,7 +257,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
   const fragment = selectedFinding && reportFindingFragment(reportKey, selectedFinding.id);
   const findingLink = publicView ? reportFindingLink(publication, fragment) : fragment;
   if (!available) return <section className="rr-report" aria-label="Final draft review unavailable"><div className="rr-unavailable"><h1>{publicView ? 'Report temporarily unavailable' : 'Review draft report'}</h1><p role="alert">{publicView ? 'The approved evidence could not be verified. Please try again later.' : 'The full report does not match the current saved review. Return to Findings and open the draft report again.'}</p></div></section>;
-  const identity = report.identity, name = identity.playerName ?? identity.cardName;
+  const identity = report.identity, name = identity.playerName ?? identity.cardName ?? 'Card identity unconfirmed';
   const identityLine = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber && `#${identity.cardNumber}`].filter(Boolean).join(' · ');
   return <section className={`rr-report rr-inspect rr-platinum${precise ? ' rr-precision' : ''}${printing ? ' rr-printing' : ''}${publicView ? ' rr-public' : ''}${machine ? ' rr-machine' : ''}${inspectionMode ? ' rr-guided rr-guided-' + inspectionMode : ''}`} data-finding-selected={Boolean(selectedFinding)} aria-label={publicView ? 'Approved ATLAS grading report' : 'Final draft report review'} onKeyDown={event => {
     if (event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName ?? '') || event.target?.isContentEditable) return;

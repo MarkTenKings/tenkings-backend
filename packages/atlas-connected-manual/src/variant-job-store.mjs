@@ -53,9 +53,9 @@ const current=`EXISTS(SELECT 1 FROM atlas_manual.card c WHERE c.id=j.card_id AND
  AND atlas_manual_connected.display_owner_current(j.actor_id,j.access_version)`;
 const active=`j.key=$1 AND j.claim_id=$2::uuid AND j.state IN('RUNNING','REQUESTED') AND j.lease_until>clock_timestamp() AND ${current}`;
 export function variantBinding(card){const d=card.draft;return {cardId:card.cardId,sourceHash:d.source?.sourceHash,identityRevision:d.identityRevision,identityHash:variantIdentityHash(d.identity)};}
-export function variantCatalogIdentity(profile,identity){return {category:profile,name:identity.playerName??identity.cardName,year:identity.year,setName:identity.productSet,cardNumber:identity.cardNumber,manufacturer:identity.manufacturer??null};}
+export function variantCatalogIdentity(profile,identity){return {category:profile,name:identity.playerName??identity.cardName??null,year:identity.year,setName:identity.productSet,cardNumber:identity.cardNumber,manufacturer:identity.manufacturer??null};}
 export function variantSelectedIdentity(card,action,result){
-  if(action.decision==='UNRESOLVED')return card.draft.identity;
+  if(action.decision==='UNRESOLVED')return canonicalizeNewSpeedsterSessionIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',{...card.draft.identity,parallel:null});
   if(action.decision==='MANUAL')return canonicalizeNewSpeedsterSessionIdentity('playerName'in card.draft.identity?'SPORTS':'POKEMON',{...card.draft.identity,parallel:action.manualParallel});
   const candidate=result?.catalog?.candidates.find(c=>c.candidateId===action.candidateId);
   requireThat(candidate,409,'VARIANT_RESULT_STALE');
@@ -192,7 +192,8 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       requireThat(job?.catalog&&(job.result_hash===action.resultHash||job.catalog_hash===action.resultHash)&&job.source_hash===b.sourceHash&&(job.identity_revision===b.identityRevision&&job.identity_hash===b.identityHash||(await confirmation(tx,card))?.job_key===job.key),409,'VARIANT_RESULT_STALE');}
     return {job,identity:variantSelectedIdentity(card,action,job?.result??(job?.catalog?{catalog:job.catalog}:null))};
   }
-  async function approvalCheck(tx,card){const row=await confirmation(tx,card);requireThat(['SELECTED','MANUAL'].includes(row?.decision),409,'VARIANT_CONFIRMATION_REQUIRED');
+  async function approvalCheck(tx,card){const row=await confirmation(tx,card);requireThat(['SELECTED','MANUAL','UNRESOLVED'].includes(row?.decision)
+      && (row.decision!=='UNRESOLVED'||card.draft.identity.parallel===null),409,'VARIANT_CONFIRMATION_REQUIRED');
     return row;}
   return Object.freeze({
     async discover(limit=25){requireThat(Number.isInteger(limit)&&limit>=1&&limit<=100,500,'VARIANT_CONFIG_INVALID');return machine(async({tx})=>{

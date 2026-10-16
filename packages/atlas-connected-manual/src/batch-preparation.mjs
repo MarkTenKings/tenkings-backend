@@ -127,7 +127,9 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
             const identification = await identify(staff, job.cardId, { dispatchSignal });
             if (identification.state === 'RETRY_WAIT') return {kind:'WAIT',retryAfterMs:identification.retryAfterMs};
             if (identification.state === 'RUNNING') return wait();
-            if (identification.state !== 'COMPLETE') return attention('BATCH_IDENTITY_NEEDS_REVIEW');
+            // A terminal identification failure or partial answer does not
+            // erase the saved physical card family or prevent measurement.
+            // The identity validator below still requires a supported family.
             opened = await current(staff, job);
           }
           try { gradingIdentity(opened.details); } catch { return attention('BATCH_IDENTITY_NEEDS_REVIEW'); }
@@ -186,7 +188,7 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
       return { kind: 'REVIEW', evidence: { authority: 'MACHINE_PROPOSAL', reportRef, reportHash,
         sourceHash: job.sourceHash, manualRevision: card.revision, manualContentHash: card.contentHash,
         proposedGrade: report.proposedGrade, findingCount: report.findings.length,
-        name: report.identity.playerName ?? report.identity.cardName,
+        name: report.identity.playerName ?? report.identity.cardName ?? null,
         limitations: report.limitations, calculationState: report.calculationState,
         unresolvedGeometry: report.unresolvedGeometry, analysisId: report.analysisId } };
     },
