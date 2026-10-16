@@ -8,7 +8,7 @@ The new native source requires additive schema006 (`e073b918aa83aecc52453deb10ba
 
 The performance opt-in action-response header must be signed and forwarded by matching native/web versions. Start and verify the new native verifier before promoting the new staff client; old absent-header requests retain their exact signature format. Preserve the existing125-second startup fence, resource/network/security settings, main init, shared credentials and current physical-card data. Retain customer deployment. The reviewed baseline has19 retained containers/3 running; an additive replacement pair yields21 retained/3 running. Root owns coordinated deployment; the performance chat does not independently restart or publish.
 
-Release planning and initial read-only workload census are private. Native contract checks31/31 and the two owned PostgreSQL admission/diagnostic tests pass. No claim pause is held. Final combined build, candidate/source qualification, fresh exact workload/tombstone reconciliation, reviewed plans, planned/observed SESSION_LOG entries and post-release acceptance remain required.
+Release planning and initial read-only workload census are private. Native contract checks32/32 and the two owned PostgreSQL admission/diagnostic tests pass. No claim pause is held. Final combined build, candidate/source qualification, fresh exact workload/tombstone reconciliation, reviewed plans, planned/observed SESSION_LOG entries and post-release acceptance remain required.
 
 ## Current ATLAS sold-comps progress repair — live (October 16, 2026)
 
