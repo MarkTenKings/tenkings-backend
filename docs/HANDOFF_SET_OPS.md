@@ -1,6 +1,16 @@
 # Set Ops Handoff (Living)
 
-## Current ATLAS sold-comps progress repair — live (October 16, 2026)
+## Current repeated-card reliability and human-review performance release — live (October 16, 2026)
+
+Combined source `50b59900fd9527bd177dab4f694d99d5aa3033ca` is live on the native main/worker and staff/public web. Public publication was observed at 20:55:39 UTC; 52 ordinary canonical route/asset checks passed, and the temporary processing pause was explicitly released at **20:57:11.211 UTC**. Postflight at 20:57:26 UTC confirms the holder is absent, all seven visible cards and four approvals remain accounted for, discarded rows are unchanged, and every previously READY market response and retained label request is preserved. Subsequent sections describe prior releases.
+
+Repeated submissions keep separate physical photographs, findings, grades, approvals and certificates. Shared public reference waits now isolate affected photographs, preserve market retry attempts and permit bounded cache/acquisition progress under grading load. A current live submission can explicitly retry a proven credit rejection from its retained request even when the original owner was deleted. Unknown paid outcomes remain unknown and are not automatically replayed. Astra/xhigh, CODEX consultation, scoring and human approval behavior remain unchanged.
+
+The separate review-performance implementation is included: one workspace owner removes a duplicate initial read, the exact Back image is prepared during Front review, and eligible findings actions can return the authoritative saved workspace. Known committed saves recover through reads without duplicate writes. Measured fixture improvements and limits are in `docs/atlas/audits/2026-10-16/human-review-performance.md`; they do not establish production click latency. Fresh authenticated operator acceptance remains to be observed.
+
+Exact production identities, schema006/control revisions, qualification and consumed release evidence are in the current Deploy Runbook. This ATLAS release does not change Set Ops lifecycle, labels, NFC, image processing or approval policy.
+
+## Prior sold-comps progress repair — October 16, 2026
 
 The approved-card complaint exposed a visibility gap after successful SoldComps acquisition: the Jordan job had saved 240 listings while Astra/xhigh reviewed their photographs. Frozen source `cfa40e80101cfeb60da3e4ab02f220a1c6a0a28a` displays that saved pool immediately, with durable aggregate reading progress and no invented completion counts for older jobs. Provisional rows cannot be selected/published and do not claim match or grade. Final READY evidence/source bindings remain authoritative. Status polling reads saved evidence without provider calls.
 

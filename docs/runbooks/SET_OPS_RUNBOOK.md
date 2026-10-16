@@ -1,6 +1,16 @@
 # Set Ops Runbook
 
-## Current ATLAS sold-comps progress repair — live (October 16, 2026)
+## Current repeated-card reliability and human-review performance release — live (October 16, 2026)
+
+Combined source `50b59900fd9527bd177dab4f694d99d5aa3033ca` is live on the native main/worker and staff/public web. Public publication was observed at 20:55:39 UTC; 52 ordinary canonical route/asset checks passed, and the temporary processing pause was explicitly released at **20:57:11.211 UTC**. Postflight at 20:57:26 UTC confirms the holder is absent, all seven visible cards and four approvals remain accounted for, discarded rows are unchanged, and every previously READY market response and retained label request is preserved. Subsequent sections describe prior releases.
+
+Repeated submissions keep separate physical photographs, findings, grades, approvals and certificates. Shared public reference waits now isolate affected photographs, preserve market retry attempts and permit bounded cache/acquisition progress under grading load. A current live submission can explicitly retry a proven credit rejection from its retained request even when the original owner was deleted. Unknown paid outcomes remain unknown and are not automatically replayed. Astra/xhigh, CODEX consultation, scoring and human approval behavior remain unchanged.
+
+The separate review-performance implementation is included: one workspace owner removes a duplicate initial read, the exact Back image is prepared during Front review, and eligible findings actions can return the authoritative saved workspace. Known committed saves recover through reads without duplicate writes. Measured fixture improvements and limits are in `docs/atlas/audits/2026-10-16/human-review-performance.md`; they do not establish production click latency. Fresh authenticated operator acceptance remains to be observed.
+
+Exact production identities, schema006/control revisions, qualification and consumed release evidence are in the current Deploy Runbook. This ATLAS release does not change Set Ops lifecycle, labels, NFC, image processing or approval policy.
+
+## Prior sold-comps progress repair — October 16, 2026
 
 Native source `cfa40e80101cfeb60da3e4ab02f220a1c6a0a28a` / image `sha256:1b0c100e0b20350b7b6d827abdfac568db29750feef7fa64e0adbe55a7bb69d0` and exactly Staff129 / PublicReader89 / STAFF-SMS97 are installed. Web publication and canonical verification passed; the temporary claim pause was explicitly released at 18:14:53.890 UTC. Published staff is `dpl_EG6gfSS239v55sUD3KbQ1HTv8LoU` / `atlas-grading-staff-kh38xc85o-ten-kings.vercel.app`; published public is `dpl_9CVKTFHQjUvXE9dHjPxLQ6bGhjSr` / `atlas-grading-public-tw83p51tx-ten-kings.vercel.app`; customer `dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB` remains retained.
 

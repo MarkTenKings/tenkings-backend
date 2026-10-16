@@ -45525,3 +45525,96 @@ Local fixture server/browser execution only is planned; no customer approvals, p
 - Requests on successful complete responses: finding save4→2, Front findings2→1, Back findings5→3; opening and Next each remove one workspace GET. Hydration remains required and the new response pays its final freshness reads. Server save/commit, post-confirmation, preview and verified-image phases are separately retained; overlapping task sums are not an additive critical-path claim. No evidence establishes production's reported8–10second dominant cause.
 - Added three mocked-clock timeout regressions:5second optional limit, remaining200second budget and exhausted budget. Late hydration cannot change a returned receipt; contract file41/41 passes. Production staff build now passes on Node22.23.2, including STAFF_BUILD_BOUNDARY_PASS with27 browser chunks,13 server traces and1748 traced files. Broader review/frontend/connected suites are running after timing completion; final counts follow in the qualification handoff.
 - Source is frozen for an implementation commit and coordinated integration by the reliability lead. New native signed-header verifier must precede the new web proxy; rollback to an older verifier requires older web proxy first. Our branch has no schema change, provider request, customer approval, deployment, shared-service restart or migration. Full audit with all cache conditions and remaining limits follows in a documentation commit.
+
+
+## 2026-10-16T20:32:40.096930+00:00 — Combined source and pre-release qualification
+
+Performance3949e104 integrated as50b59900fd9527bd177dab4f694d99d5aa3033ca; only append-only session-log conflict, both complete histories preserved. All performance source bytes equal its reviewed commit. Root combined tests: frontend727/727; connected804/806with2native skips; workflow110/111with1native skip; workspace263/271with8native/demo skips; schema7/7; zero failures. Production staff build passes27browserchunks/13servertraces/1759files. Receipt integrated-checks-01.json in the private reliability handoff. Independent performance qualification separately runs identical workflow/workspace source with Python enabled (382/382 reported); final receipt awaited. Actual-image Linux tests include two skipped approval/report cases.
+
+Root froze source50b59900 with2602 web input files, exactly22 reviewed source deltas and58 non-web paths (tests/docs/legacy preview repair and separately applied schema006). Webmanifest c6b0a43836bd8cf3a8de8af220f9dea7dc59d3a1485a5f91d88de36d490708e4. Fresh candidateplan d9edb9d0fec13a80d9cffdcf2ff456b1ac36c2c22281e78b4ca84ed1e5c1fbd7 preserves current canonical targets/customer/env. Fresh nativebuildplan1a11a88492a1647f16bae968931328b9b16ff525d90a0f11c7f0b32e4f1b8235 overlays58 exact files, fresh isolated grading/workspace compilation, full1858catalogclosure and33Linux testfiles on the current cfa/1b0c100e image, with serving state preserved. Plan reviews and read-only dry run precede effects; no candidate has been created or native image built yet.
+
+Performance timing is controlled fixture evidence, not production latency:40paired flows match findings/geometry/report hashes and action/revision sequence. Original raw trials retained; desktop/warm3 replacement addresses disclosed PG contention, phonecold uses bounded repeat, phonewarm remains original noisy/inconclusive after repeat setup reload timeout. No further timed runs. Detailed audit documentation will be imported in the final handoff.
+
+
+## 2026-10-16T20:36:06.549751+00:00 — Planned additive release candidates
+
+Root reviewed frozen source50b59900 and both independent final plan reviews. Native read-only dry-run PASS, receipt1613f6af88de1fccd7c6694ff91f25a4f937fe2eb154bf3240fb5fffd38b42ce. Next effects are one additive image build/test under native plan1a11a88492a1647f16bae968931328b9b16ff525d90a0f11c7f0b32e4f1b8235 and exact22file upload plus unpromoted staff/public candidate creation under web plan d9edb9d0fec13a80d9cffdcf2ff456b1ac36c2c22281e78b4ca84ed1e5c1fbd7. Canonical targets, current runtime pair, database, credentials and customer deployment remain unchanged. No provider calls or human approvals. Each effect records a one-use intent and uncertain effects are reconciled without replay. Performance final qualification is complete and its CPU hold is lifted; no remaining timing runs. Final source-dependent web tests15/15 and full source/mode partition review passed.
+
+
+## 2026-10-16T20:37:50.149062+00:00 — Additive runtime qualification observed
+
+Reviewed image build completed: source50b59900, image sha256:aecf20828b5c9c0165c229b62aefaf9e74b4f62806a2fca7b4c9fb6448a0b6c2;329/329 Linux tests passed, zero skips/failures/cancellations. Image receipt4fed0edf57de6e0ef2116484202c450c6d6192fb3e41188c101e00ed610455b1 confirms serving containers unchanged, network-isolated tests, no database connections/provider calls and qualified Init=true. Exact22new source files uploaded; staff candidate dpl_7GeTNXKEtgFFXrqq6A9nkA4uenrp / atlas-grading-staff-15csdie39-ten-kings.vercel.app is building without canonical promotion. Admission plan e09ac97e6f539184338ff65b839ef6fa8680e7b524cf458d143fd382543257f9 prepared read-only; no holder acquired.
+
+
+## 2026-10-16T20:38:53.462892+00:00 — Planned native configuration staging
+
+Independent image/runtime/admission review passed. Runtime plan1e020ec457e2ab111d055d98caa316d8e4fc9ed0f9e45572935842e1ec6406d9 binds exact imageaecf20828b5c9c0165c229b62aefaf9e74b4f62806a2fca7b4c9fb6448a0b6c2, source50b59900 and READYstaff15csdie39. Stage dry-run3edb9b85e8966a437c868cfbc017027e623526da362a74fa09da33361e2b9c0c passed. Root will stage the reviewed remote configuration files once, with only WEB_DEPLOYMENT/WEB_RELEASE_SHA differences; no container stop/start or database mutation occurs in this phase. Public candidate dpl_5FXvkkjA2Yf8nP6SSX8J5D34T4QR / atlas-grading-public-m6herhxie-ten-kings.vercel.app is building.
+
+
+## 2026-10-16T20:39:25.430768+00:00 — Staging and web candidate observations
+
+Native stage PASS receipt0e3616a0ecdf31406e62dc7d9a2559d4506c4ddc660dbf0b826e994095c1dde5; serving pair unchanged. Both Vercel candidates are READY. Staff qualification0a6a49a5d4ec01c4ecff9b402346ffc86b8a51832a79ef387d2a66d64a3ee6e7 verifies2602current tree identities/modes,22current changed source reads,2580retained qualified unchanged bodies and served review-performance/identity/keep-variant/progressive-comps/NFC bytes. Public served qualification is running. No canonical targets, database or running containers changed.
+
+
+## 2026-10-16T20:43:28.241179+00:00 — Planned coordinated cutover after final data review
+
+Both web candidates passed exact source/served-byte qualification and independent review; combined proof b9ed84649a675a7574e1c55cfa45700c42c13862ac765cbdfce47d35ac3263a4. Root reviewed data plan9c7eba64f20701fc1c658cbd60c96cf1f25aba2106906bc4b5d51138bebb1031: exact additive006procedure,1ledgerrow,Staff129→130/PublicReader89→90/STAFF-SMS97→98; preserve105other tables, all other schema/grants/control rows, schema005 and old ledger. Independent data review is required before execution. Publication plan d9227ccbcae66bca4bafe8abb4c089429be187548664e52016300f3fc3a8f424 passed independent review.
+
+Once the final review passes, root will acquire admission plan e09ac97e6f539184338ff65b839ef6fa8680e7b524cf458d143fd382543257f9 once, take fresh read-only workload/historical evidence, gracefully drain/disconnect exactly the predecessor pair under runtime plan1e020ec457e2ab111d055d98caa316d8e4fc9ed0f9e45572935842e1ec6406d9, apply the exact atomic data delta, start and verify the new pair, seal restart policy without restarting, verify fresh native/database readiness, then update existing public staff-origin and promote exact staff/public candidates in that order. Canonical ordinary route/asset verification precedes explicit holder release and read-only postflight. No SIGKILL, deleted-card restoration, human grade approval, paid diagnostic dispatch, credential change, customer deployment change or unrelated service restart. Interrupted/uncertain effects are reconciled read-only with consumed intents preserved; never replay.
+
+Final independent data review passed at 2026-10-16T20:44:11.057261+00:00: exact plan9c7eba64,16source hashes,8control preimage rows,5ledger rows and105protected-table commitment scope verified. Root proceeds with the already-recorded coordinated cutover.
+
+
+## 2026-10-16T20:45:32.959472+00:00 — Admission and graceful drain observed; exact data apply next
+
+Admission holder d3ec9331-b552-4e30-9c9d-3f781ccc9ac2/PID1606436 remains live, fixed expiry22:14:12.489UTC. Fresh workload24f4acd1 and historical proof78189d29 were classified without row writes as8de51208; seven visible cards/four approvals preserved, no active paid work. Quiesce dry-run48bd43c6 and execute d32f47c7095894b098a9746414b8f596d9146644406d2d4b7861261a455f9a77 passed; exact predecessor pair exited0 and disconnected, no SIGKILL. Root now applies reviewed data plan9c7eba64 exactly once before starting the new runtime. No other native or web changes occurred.
+
+
+
+## 2026-10-16 — Human-review performance qualified and handed to integrated release owner
+
+Implementation committed as `3949e104b07d664675f246a39a04abffa6937ad4` on `codex/atlas-review-performance`. Release lead accepted and integrated it as `50b59900fd9527bd177dab4f694d99d5aa3033ca`, preserving both append-only session histories. No source changed after that implementation commit; this entry and `docs/atlas/audits/2026-10-16/human-review-performance.md` are documentation-only qualification handoff.
+
+Final local checks: staff727/727; manual workflow+workspace382/382 with native Python enabled; connected795 passed in full run plus the2 initially skipped native tests passed separately with compatible Python. All1906 cases exercised successfully, zero failures. Staff production build and private/browser dependency boundary passed. `git diff --check` passed. Full logs are in `/Users/markthomas/.codex/atlas-handoffs/atlas-review-performance-20261016/qualification/`, including `staff-build.log`, `staff-tests.log`, `manual-suites.log`, `connected-suites.log`, `connected-native-tests.log`. `source-and-browser-assets.json` binds all12 measured application source hashes to3949e104 and the built chunk `895-940bd9d77a4cd9d1.js` SHA`e8a4dd00b13bd46627b2db5ca145cd7d4e18819d2eefe3a150b60ba711899eed` to the three markers `x-atlas-workspace`, `atlas-manual-action-workspace-v1`, `Refresh saved review`.
+
+Full audit records all desktop/phone cold/warm medians and observed maxima, separate server/image phases, exact request reductions, unchanged saved-result checks, source provenance, retained noisy originals/replacements, incomplete warm-phone repeat, timeout fallback and production limitations. Physical phones and production8–10second latency are not qualified. The release owner is running combined-source qualification and owns native-first/web-second release and any rollback; this effort performed no production write, provider request, customer approval, restart, migration or deployment. No separate release or restart is requested from this branch.
+
+Imported the performance audit and append-only final qualification from f821e5857e329ed46241bfa9e803dcc3d341d214 during the coordinated release. Runtime source remains frozen50b59900; documentation only.
+
+Added the repeated-card reliability audit with qualified source/scope, bounded shared-reference behavior, overlapping test counts and explicit pending production acceptance. Documentation only; coordinated database transaction remains in progress.
+
+
+## 2026-10-16T20:49:44.709490+00:00 — Atomic006/control transaction observed; native start next
+
+Data apply PASS bd11f831aadd3363f85bbce698ac7547284625cd46ff17dc121e012dd9714d87 completed 2026-10-16T20:48:59.045Z. Exactly3control writes and1migration ledger row committed atomically, exact006procedure and retained005 verified. Protected105table commitments, historical ledger rows, other objects/grants and unrelated controls preserved. Same admission holder retained. Root proceeds with reviewed native start and seal; source50b59900/imageaecf20828, exact existing runtime settings and125second startup fence. No web promotion yet.
+
+
+## 2026-10-16T20:52:13.274340+00:00 — New native services started; restart policy seal next
+
+Start PASS6ac3ddfda224ebe717a178f8ae9acde4af89b38b7b9efd2fb9e7848059e89155, source50b59900/imageaecf20828; both ready markers present and unsigned private requests refused401. Preserved125second startup fence, old/unrelated containers and all reviewed runtime settings; no process restart. Independent committed-data review passed. Root seals unless-stopped on exactly the two new services, then obtains fresh native/database readiness before web publication.
+
+Seal PASS45819806c3525470025e4d45ddd2f94de8428f4f0a288ea02b2a060ea237fdf2: new mainf97ce31a6ae138bdb09b2d2160c82869fd44af139eeaeee68cf1c0bc14487d4e and workera5bb2cac9f6777b5e863171af1d7c2856931b225cd57d723e8050ba254e9f0aa have unless-stopped policy and zero restarts. Exactly21retained/3running, predecessor pair remains stopped/disconnected/restart-disabled. The existing startup fence/resources/security/proxy/credentials are preserved. Planned web effects remain exact publication pland9227ccb with fresh readiness and same-holder continuity.
+
+Combined readiness0809d3258df42812a542590cd7243ea77a64c820ff43cb2af915d101a8eb302e verifies live native50b59900, schemas005/006, current three controls and original admission continuity. Origin PATCH observed20:53:23.863Z: only existing public staff-origin now points to staff15csdie39; exact observation36c26673c5a39439817d9351fdaf1c66c649535cabf65495abac6f7dd48e0c79. Customer and other environment/target values preserved. Planned exact staff promotion follows under the same reviewed publication plan.
+
+Staff promotion returned captured HTTP201 and the production target changed to dpl_7GeTNXKEtgFFXrqq6A9nkA4uenrp. Initial observation still showed the old atlas-grading-staff.vercel.app alias, so the strict observation check stopped. Original intent/response/lagged observation are retained. Root will use the pre-reviewed read-only finalize path with fresh readiness and the original holder to observe settled aliases; no promotion replay or new write is planned.
+
+Staff publication settled20:54:57.554Z and was finalized read-only, observation4f8df719017a73d1ff2ea405ad2ce7eec13b5b04a0380d00d6151b86fb064060. Original201/intent preserved; requestsSent0 during finalization. All staff aliases and production target now match qualified dpl_7GeTNXKEtgFFXrqq6A9nkA4uenrp; same holder continuity and customer preservation verified. Exact public promotion proceeds under the original reviewed plan with fresh readiness02/a054323f.
+
+Public promotion observed20:55:39.792Z, exact dpl_5FXvkkjA2Yf8nP6SSX8J5D34T4QR / atlas-grading-public-m6herhxie-ten-kings.vercel.app, observationeaea6c3fd0c212cc1aca2a7316313b72f0001096df25dda856262b8f82a741a6. Canonical aliases and targets match, customer retained, same holder continuity verified. Ordinary unauthenticated canonical route/asset qualification is now running before explicit admission release.
+
+
+## 2026-10-16T20:56:55.839637+00:00 — Canonical verification passed; planned explicit admission release
+
+Canonical result c38ed09774b05db6b55855889b56ab6b0eacb88f086718449b329abe9c2616f2 passed52ordinary unauthenticated route/asset requests, exact staff/public deployment/build bytes, actual manual performance/identity/progressive features and retained customer13assets. Authentication redirects are expected; no authenticated staff action or human grade approval was performed. Native/data/web cutover is complete. Root takes one current native health observation, then explicitly releases holderd3ec9331-b552-4e30-9c9d-3f781ccc9ac2 under admissionplane09ac97e. Read-only postflight will verify holder absence, current cards/discards and retained READY market responses/label requests. Normal eligible background work may resume; no diagnostic provider request or historical reset is authorized.
+
+Admission explicitly released 2026-10-16T20:57:11.211Z, receipt5cf6dc8fb54b3472018f9b64d5e8709cb848912853c7ec93b234926f75500280. Holder process exited0 without reacquisition. Pre-release health35309509 at20:56:57UTC verified exact new native pair, zero restarts, preserved predecessors/proxy and unsigned401. Post-release native/database observations are running; all release effects are consumed and must not be replayed.
+
+
+## 2026-10-16T20:58:51.434527+00:00 — Completed release postflight and documentation handoff
+
+Postflight2dc84c88112d6a5a235ebceeede82312bb03658e4cbfc8fcba5347956fd422e3 at20:57:26.438Z confirms admission holder absent, current seven cards/four approvals accounted for, discarded rows unchanged, every prior READY market result unchanged, and exact retained label-request keys/hashes preserved. Native healthca255cf7f0638360c09f9857530cfb0f9d997d3e222a7ec18f316858650bd2cf at20:57:27.194552UTC confirms exact source/image, zero restarts, preserved predecessor/proxy settings and unsigned401. No release holder remains.
+
+Updated MASTER_PRODUCT_CONTEXT, DEPLOY_RUNBOOK, SET_OPS_RUNBOOK, HANDOFF_SET_OPS and both October16audits to distinguish the live50b59900/schema006 release from historical checkpoints. Imported final performance documentation from f821e585, preserving its fixture limitations. Runtime source remains50b59900; final handoff edits are documentation only. Fresh authenticated operator acceptance/production latency are not claimed.
+
+Final independent canonical review76a2fd4c3a0601a1e96db9c2107030f34fc0200b8523266b9119cb8149a8105e verified all52saved bodies, exact12manualJS files,13retained customer assets and source/helper/publication/admission chain. Publication receipt reviewa91355b06630012b962a74f4d39bab6d1b01cb54464b32b5e98a54ee05c60577 confirms original staff201 and read-only finalization without replay. All three final review tracks passed with no actionable findings. Final documentation commit/push preserves deployed source50b59900.
