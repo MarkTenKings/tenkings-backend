@@ -20,6 +20,7 @@ import { publishedMarketQuery } from '../src/presentation-market.mjs';
 import { EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { publicationFixture } from '../test/publication-fixture.mjs';
 import { validateMarketRuntimeConfiguration } from '../../../frontend/atlas-app/lib/server/connected-manual-runtime.mjs';
+import { qualifyMarketReliability } from './market-reliability-postgres.mjs';
 
 const output = process.env.ATLAS_MARKET_JOBS_EVIDENCE;
 assert(output && resolve(output) === output, 'Absolute owned evidence directory required');
@@ -282,6 +283,7 @@ try {
   assert.equal(providerCalls,beforePages+2);
   checks.push('actual staff grants persist afterPreviewId immutably; same-query page2 deduplicates rows and requests, retains raw choices, rejects exhausted/foreign parents, and publishes nothing before explicit human selection');
   await worker.stop();
+  await qualifyMarketReliability({fixture,machine,store,staff,principal,approve,approved,publication,artifacts:storeArtifacts,checks});
   const evidence={version:'atlas-market-jobs-postgres-v1',synthetic:true,fixtureDirectory:fixture.cluster.directory,providerCalls,checks,productionTouched:false,paidProviderCalls:0};
   await writeFile(join(output,'result.json'),JSON.stringify(evidence,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(evidence));

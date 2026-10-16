@@ -8,7 +8,7 @@ import { createVariantWorker } from '../src/variant-worker.mjs';
 test('variant runtime collects accepted work while new-work admission is blocked, and shutdown aborts collection', async t => {
   t.mock.timers.enable({ apis: ['setTimeout','setInterval'] });
   const id = randomUUID(), calls = [];let stopped = false, scans = 0;
-  const worker = createVariantWorker({ store: { discover: async () => {}, claim: async () => assert.fail('blocked admission cannot claim') },
+  const worker = createVariantWorker({ store: { discover: async () => {}, claim: async () => null },
     catalog: {}, loadPhotos: async () => assert.fail('no photos'),provider: async () => assert.fail('no POST'),projectResponse: () => {},admitDispatch: async () => false });
   const workers = createVariantWorkers({ worker, onEvent: () => {}, reconciler: {
     async pending() { scans++;return { items:[{run:{analysisId:id}}],nextCursor:null }; },

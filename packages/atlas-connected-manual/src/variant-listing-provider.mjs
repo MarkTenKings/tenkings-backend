@@ -172,7 +172,7 @@ export async function readRetainedListingPhoto(url, { cache, fetchImpl = globalT
   check(cache?.getRetained && cache?.put && isStaffInventoryResearchImageUrl(url), 'VARIANT_LISTING_IMAGE_URL');
   const saved = await cache.getRetained(imageKey(url));
   if (saved && Date.parse(saved.capturedAt) <= now()) return readImageEntry(saved, url, cache);
-  beforeFetch();
+  await beforeFetch();
   return boundedProviderOperation(signal, timeoutMs, async active => {
     const response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: active,
       headers: { Accept: 'image/jpeg,image/png,image/webp' } });
@@ -221,7 +221,7 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
           httpStatus: response.status, contentType, bodyText, sha256: hash(bytes), capturedAt: new Date(now()).toISOString() };
       });
     },
-    async acquireImages({ request, source }, { signal, imageLimit, retainedOnly = false } = {}) {
+    async acquireImages({ request, source }, { signal, imageLimit, retainedOnly = false, beforeFetch = () => {} } = {}) {
       requireCache();
       check(typeof retainedOnly === 'boolean', 'VARIANT_LISTING_READ_ONLY');
       imageLimit ??= Infinity;
@@ -243,8 +243,8 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
                   if (saved && Date.parse(saved.capturedAt) <= now()) media = await readImageEntry(saved, url, cache);
                 } else media = await readRetainedListingPhoto(url, { cache, fetchImpl, inspectImage, now, signal: active,
                   timeoutMs: Math.min(timeoutMs, VARIANT_LISTING_LIMITS.imageTimeoutMs),
-                  beforeFetch: () => { requests++; } });
-              } catch { active.throwIfAborted(); }
+                  beforeFetch: async () => { await beforeFetch(); requests++; } });
+              } catch(error) { active.throwIfAborted();if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error; }
               // The image reader has already retained the exact bytes. Keep
               // only descriptors here so a full result page does not retain
               // every decoded/downloaded image in worker memory.

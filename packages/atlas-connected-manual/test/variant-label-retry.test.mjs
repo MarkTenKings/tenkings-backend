@@ -16,7 +16,7 @@ async function fixture({photos=8,outcome='success'}={}){
  const row={key:variantJobKey(input),card_id:card.cardId,actor_id:principal.id,source_hash:binding.sourceHash,identity_revision:1,identity_hash:binding.identityHash,
   generation:input.generation,input:canonical(input),input_hash:digest(canonical(input)),state:'FAILED',attempts:6,claim_id:null,lease_until:null,
   catalog:canonical(catalog,{maxBytes:4194304}),catalog_hash:catalog.snapshotHash,audit:[],code:'VARIANT_PREPARATION_INTERRUPTED'};
- const rows=new Map(),writes=[],queries=[];let sends=0,retryCalls=0,failAfterResponse=false,projectionFailures=0,projectionAckFailures=0;
+ const rows=new Map(),writes=[],queries=[];let sends=0,retryCalls=0,failAfterResponse=false,projectionFailures=0,projectionAckFailures=0,changedRequest=false;
  const put=(key,value)=>{const snapshot=canonical(value,{maxBytes:8388608}),record={key,snapshot,snapshot_hash:digest(snapshot)};rows.set(key,[...(rows.get(key)??[]),record]);return record;};
  const latest=key=>JSON.parse(rows.get(key).at(-1).snapshot);
  const media=new Map(Array.from({length:photos},(_,i)=>labelPhoto(i,'fixture')).map(p=>[p.image.sha256,p.media]));
@@ -39,7 +39,7 @@ async function fixture({photos=8,outcome='success'}={}){
  const tx={async $queryRawUnsafe(sql,...args){queries.push(sql);
   if(sql.startsWith('SELECT atlas_manual_connected.retry_variant_labels')){
    retryCalls++;assert.equal(row.state,'FAILED');const[actorId,requestId,cardId,jobKey,sourceHash,identityRevision,identityHash,catalogHash,failedRequestKey,failedResponseHash]=args;
-   const receipt={schemaVersion:'variant-label-retry/v1',actorId,requestId,cardId,jobKey,sourceHash,identityRevision,identityHash,catalogHash,failedRequestKey,failedResponseHash,attemptKey:'variant-label-attempt:v1:'+requestId,requestKey:request.requestKey};
+   const receipt={schemaVersion:'variant-label-retry/v1',actorId,requestId,cardId,jobKey,sourceHash,identityRevision,identityHash,catalogHash,failedRequestKey,failedResponseHash,attemptKey:'variant-label-attempt:v1:'+requestId,requestKey:latest('variant-label-dispatch:v1:'+failedRequestKey).request.requestKey};
    assert(!rows.has('variant-label-retry-next:v1:'+failedRequestKey));put('variant-label-retry:v1:'+requestId,receipt);put('variant-label-retry-next:v1:'+failedRequestKey,receipt);
    row.audit.push({event:'LABEL_RETRY_REQUESTED',requestId,failedRequestKey,failedResponseHash,attemptKey:receipt.attemptKey,catalogHash});row.state='QUEUED';row.code='VARIANT_LABEL_RETRY_REQUESTED';return [{receipt}];
   }
@@ -49,7 +49,7 @@ async function fixture({photos=8,outcome='success'}={}){
   if(sql.includes('variant_job')){
    if(sql.includes('generation=$2'))return args[1]===row.generation?[row]:[];
    if(sql.includes('WHERE key=$1')&&args[0]!==row.key)return [];
-   if(sql.startsWith('SELECT key '))return args[0]===row.key&&args[1]===row.claim_id&&row.state==='RUNNING'?[{key:row.key}]:[];
+   if(/^SELECT (?:j\.)?key /.test(sql))return args[0]===row.key&&args[1]===row.claim_id&&row.state==='RUNNING'?[{key:row.key}]:[];
    return [row];
   }
   assert.fail(sql);
@@ -61,13 +61,14 @@ async function fixture({photos=8,outcome='success'}={}){
  }};
  const store=createVariantJobStore({boundary:{machineTransaction:async(_,work)=>work({tx}),transaction:async(_,work)=>work({tx,principal})}});
  const job=()=>({...row,input,catalog});
+ const workerProvider=Object.assign((...args)=>provider(...args),{labelRequest:provider.labelRequest,prepare:async args=>{const prepared=await provider.prepare(args);return changedRequest?{...prepared,evidence:{...prepared.evidence,requestSha256:digest('changed historical prompt')}}:prepared;}});
  const worker=createVariantWorker({store:{...store,discover:async()=>{},claim:async()=>{if(row.state!=='QUEUED')return null;row.state='RUNNING';row.claim_id=randomUUID();return job();},renew:async()=>true,
   saveLabelSource:async(...args)=>{const saved=await store.saveLabelSource(...args);if(failAfterResponse){failAfterResponse=false;throw Error('Lost saved response acknowledgement');}return saved;},
   publishLabelSource:async(...args)=>{if(projectionFailures>0){projectionFailures--;throw Error('Transient projection failure');}const result=await store.publishLabelSource(...args);if(projectionAckFailures>0){projectionAckFailures--;throw Error('Lost projection acknowledgement');}return result;},
   finish:(...args)=>store.finish(...args),
-  defer:async()=>{row.state='QUEUED';row.claim_id=null;return true;}},catalog:{prepare:()=>assert.fail('Retry must not reacquire SoldComps/catalog')},provider});
+  defer:async()=>{row.state='QUEUED';row.claim_id=null;return true;}},catalog:{prepare:()=>assert.fail('Retry must not reacquire SoldComps/catalog')},provider:workerProvider});
  const retryInput=()=>({requestId:randomUUID(),sourceHash:binding.sourceHash,identityRevision:1,identityHash:binding.identityHash,jobId:row.key,catalogManifestHash:catalog.snapshotHash,labelRequestKey:request.requestKey,labelResponseHash:rejection.snapshot_hash});
- return {store,worker,row,rows,queries,writes,card,request,reservation,rejection,prepared,provider,catalog,input,job,retryInput,latest,sends:()=>sends,retryCalls:()=>retryCalls,loseAcknowledgement:()=>{failAfterResponse=true;},failProjection:(count=1)=>{projectionFailures=count;},loseProjectionAcknowledgement:()=>{projectionAckFailures=1;}};
+ return {store,worker,row,rows,queries,writes,card,request,reservation,rejection,prepared,provider,catalog,input,job,retryInput,latest,put,sends:()=>sends,retryCalls:()=>retryCalls,loseAcknowledgement:()=>{failAfterResponse=true;},failProjection:(count=1)=>{projectionFailures=count;},loseProjectionAcknowledgement:()=>{projectionAckFailures=1;},changeRequest:()=>{changedRequest=true;}};
 }
 
 test('only an unmixed definite HTTP429 credit rejection authorizes retry',()=>{
@@ -88,7 +89,7 @@ test('explicit retry is idempotent, source-bound, and preserves the same job/gen
  const receipt=await f.store.retryLabels({},f.card.cardId,input);assert.equal(receipt.requestId,input.requestId);
  assert.deepEqual(await f.store.retryLabels({},f.card.cardId,input),receipt);assert.equal(f.retryCalls(),1);assert.equal(f.row.attempts,6);
  assert.deepEqual({key:f.row.key,generation:f.row.generation,catalog:f.row.catalog,card:f.card},before);
- const status=await f.store.read({},f.card.cardId);assert.equal(status.labelRetryRequestId,input.requestId);assert.equal(status.labelFailure.retryable,false);
+ const status=await f.store.read({},f.card.cardId);assert.equal(status.labelRetryRequestId,input.requestId);assert.equal(status.labelFailure,null);
  await assert.rejects(f.store.retryLabels({},f.card.cardId,{...input,labelResponseHash:digest('changed')}),{code:'VARIANT_LABEL_RETRY_CONFLICT'});
  await assert.rejects(f.store.retryLabels({},f.card.cardId,{...input,requestId:randomUUID()}),{code:'VARIANT_LABEL_RETRY_UNAVAILABLE'});
  const g=await fixture();for(const change of [{sourceHash:digest('other')},{identityRevision:2},{identityHash:digest('other')},{catalogManifestHash:digest('other')},{labelResponseHash:digest('other')}])await assert.rejects(g.store.retryLabels({},g.card.cardId,{...g.retryInput(),...change}));assert.equal(g.retryCalls(),0);
@@ -143,4 +144,31 @@ test('exhausted historical attempts retain bounded local projection continuation
  const f=await fixture();await f.store.retryLabels({},f.card.cardId,f.retryInput());f.failProjection(7);
  for(let n=0;n<7;n++)await f.worker.drainOnce();assert.equal(f.row.state,'FAILED');assert.equal(f.sends(),1);assert.equal(f.row.attempts,6);assert.equal(f.row.audit.filter(e=>e.event==='LABEL_RETRY_PROJECTION_CONTINUATION').length,6);
  await f.worker.drainOnce();assert.equal(f.sends(),1);
+});
+
+
+test('historical request mismatch terminates without provider dispatch or a misleading credit-exhaustion status',async()=>{
+ const f=await fixture();await f.store.retryLabels({},f.card.cardId,f.retryInput());f.changeRequest();
+ await f.worker.drainOnce();await f.worker.drainOnce();assert.equal(f.sends(),0);assert.equal(f.row.state,'FAILED');
+ assert.equal(f.row.code,'VARIANT_LABEL_RETRY_REQUEST_CHANGED');
+ const status=await f.store.read({},f.card.cardId);assert.equal(status.labelFailure,null);
+ assert.equal([...f.rows.keys()].filter(key=>key.startsWith('variant-label-dispatch:')).length,1,'no new paid reservation');
+});
+
+
+test('an unanswered authorized packet cannot hide a later independent definitive credit refusal',async()=>{
+ const f=await fixture({photos:16});await f.store.retryLabels({},f.card.cardId,f.retryInput());
+ const laterPhotos=f.catalog.referencePhotos.filter(p=>!f.request.photos.some(v=>v.sha256===p.sha256));
+ const request=prepareVariantLabelRequest(f.catalog,laterPhotos.map(p=>p.sha256)),prepared=await f.provider.prepare({catalog:f.catalog,photoShas:laterPhotos.map(p=>p.sha256)});
+ const reservation={...f.reservation,request,evidence:prepared.evidence,catalog:f.catalog};
+ f.put('variant-label-dispatch:v1:'+request.requestKey,reservation);
+ const rejection=f.put('variant-label-response:v1:'+request.requestKey,{schemaVersion:'variant-label-response/v1',reservationHash:digest(canonical(reservation)),version:request.policy,requestEvidence:prepared.evidence,...credit});
+ const {codexImageReservationKey}=await import('../src/variant-codex.mjs');
+ for(const p of request.photos)f.put(codexImageReservationKey(request,p.sha256),{schemaVersion:'atlas-codex-reservation/v1',requestKey:request.requestKey});
+ f.row.state='FAILED';f.row.code=VARIANT_LABEL_CREDIT_ERROR;
+ const status=await f.store.read({},f.card.cardId);
+ assert.deepEqual(status.labelFailure,{code:VARIANT_LABEL_CREDIT_ERROR,labelRequestKey:request.requestKey,labelResponseHash:rejection.snapshot_hash,retryable:true});
+ const receipt=await f.store.retryLabels({},f.card.cardId,{...f.retryInput(),labelRequestKey:request.requestKey,labelResponseHash:rejection.snapshot_hash});
+ assert.equal(receipt.requestKey,request.requestKey);assert.equal(f.retryCalls(),2);assert.equal(f.sends(),0);
+ assert.equal((await f.store.read({},f.card.cardId)).labelFailure,null);
 });

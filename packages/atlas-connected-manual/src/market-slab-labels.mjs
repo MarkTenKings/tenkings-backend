@@ -1,7 +1,7 @@
 import { validateVariantReviewSnapshot } from '@tenkings/card-catalog-evidence';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { digest, requireThat } from '@atlas/manual-service/contract';
-import { readBoundedProviderBody } from '../../card-catalog-evidence/src/provider-media.mjs';
+import { boundedProviderOperation, readBoundedProviderBody } from '../../card-catalog-evidence/src/provider-media.mjs';
 import { readRetainedListingPhoto, retainedListingImageBodyKey, validateRetainedListingImageBody } from './variant-listing-provider.mjs';
 import { CODEX_LABEL_MODEL, CODEX_LABEL_POLICY, codexReadingKey, variantCodexChoice } from './variant-codex.mjs';
 
@@ -77,8 +77,9 @@ function responseReadings(saved,request) {
 
 /** Existing append-only cache journals public photos/readings; no new queue/table.
  * The caller has already retained its sold-source response before entering here. */
-export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis.fetch, inspectImage, now=()=>Date.now() }={}) {
-  requireThat(typeof boundary?.machineTransaction==='function'&&typeof apiKey==='string'&&apiKey.length>=16&&!/\s/.test(apiKey)&&typeof fetchImpl==='function',503,'MARKET_LABEL_CONFIGURATION_INVALID');
+export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis.fetch, inspectImage, now=()=>Date.now(), modelTimeoutMs=300000 }={}) {
+  requireThat(typeof boundary?.machineTransaction==='function'&&typeof apiKey==='string'&&apiKey.length>=16&&!/\s/.test(apiKey)&&typeof fetchImpl==='function'
+    && Number.isSafeInteger(modelTimeoutMs)&&modelTimeoutMs>=10&&modelTimeoutMs<=300000,503,'MARKET_LABEL_CONFIGURATION_INVALID');
   const machine=work=>boundary.machineTransaction(null,work);let modelTail=Promise.resolve();
   async function lock(tx,key){await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1,721930))',`atlas-market-label:${key}`);}
   async function read(tx,key,latest=false){const rows=await tx.$queryRawUnsafe(`SELECT snapshot,snapshot_hash FROM ${TABLE} WHERE key=$1 ORDER BY created_at ${latest?'DESC':'ASC'} LIMIT ${latest?1:2}`,key);
@@ -153,7 +154,9 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
         const owner=await read(tx,`${readingKey(target,p.sha256)}:reservation`);if(owner){const original=await read(tx,`${owner.requestKey}:request`),saved=await read(tx,`${owner.requestKey}:response`);
           if(saved)return {state:'SAVED',request:original.request,response:saved,images:original.images};
           if(await read(tx,`${owner.requestKey}:failure`))return {state:'UNKNOWN',sha256:p.sha256,request:original.request,key:owner.requestKey};
-          if(original.owner?.requestId&&original.owner?.claimId){const [running]=await tx.$queryRawUnsafe("SELECT request_id FROM atlas_manual_connected.market_job WHERE request_id=$1::uuid AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()",original.owner.requestId,original.owner.claimId);if(running)return {state:'PENDING'};}
+          if(original.owner?.requestId&&original.owner?.claimId){const [running]=await tx.$queryRawUnsafe(`SELECT request_id FROM atlas_manual_connected.market_job j
+            WHERE request_id=$1::uuid AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()
+            AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id)`,original.owner.requestId,original.owner.claimId);if(running)return {state:'PENDING'};}
           return {state:'UNKNOWN',sha256:p.sha256,request:original.request,key:owner.requestKey};}}
       const record={request,owner:{requestId:job.request_id??null,claimId:job.claim_id??null},images:photos.map(({sha256,mimeType,width,height,url})=>({sha256,mimeType,width,height,url})),createdAt:new Date(now()).toISOString()};await write(tx,`${key}:request`,record);
       for(const p of request.photos)await write(tx,`${readingKey(target,p.sha256)}:reservation`,{requestKey:key});return {state:'RESERVED'};});
@@ -169,10 +172,13 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     const content=[{type:'input_text',text:stableJson({target})}];for(const p of request.photos){const image=photos.find(x=>x.sha256===p.sha256);
       content.push({type:'input_text',text:`Photograph SHA-256 ${p.sha256}`},{type:'input_image',image_url:`data:${image.mimeType};base64,${image.bytes.toString('base64')}`,detail:'high'});}
     let saved;
-    try {const dispatch=async()=>{const response=await fetchImpl(ENDPOINT,{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:CODEX_LABEL_MODEL,store:false,reasoning:{effort:'xhigh'},max_output_tokens:12000,input:[{role:'system',content:PROMPT},{role:'user',content}],text:{verbosity:'low',format:{type:'json_schema',name:'atlas_market_slab_labels',strict:true,schema:schema(request.photos)}}})});
-      requireThat(!response.redirected&&(!response.url||response.url===ENDPOINT),502,'MARKET_LABEL_REDIRECT');const bytes=await readBoundedProviderBody(response,new AbortController().signal,1024*1024),bodyText=bytes.toString('utf8');requireThat(!bodyText.includes(apiKey),502,'MARKET_LABEL_RESPONSE_INVALID');
-      saved={requestHash:hash(request),httpStatus:response.status,bodyText};};
-      const active=modelTail.then(dispatch);modelTail=active.catch(()=>{});await active;
+    try {const dispatch=()=>boundedProviderOperation(null,modelTimeoutMs,async signal=>{const response=await fetchImpl(ENDPOINT,{method:'POST',redirect:'error',signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:CODEX_LABEL_MODEL,store:false,reasoning:{effort:'xhigh'},max_output_tokens:12000,input:[{role:'system',content:PROMPT},{role:'user',content}],text:{verbosity:'low',format:{type:'json_schema',name:'atlas_market_slab_labels',strict:true,schema:schema(request.photos)}}})});
+      // Fetch implementations can ignore cancellation. A late response is not
+      // allowed to publish after the timeout released the serial model slot.
+      if(signal.aborted){void response.body?.cancel().catch(()=>{});signal.throwIfAborted();}
+      requireThat(!response.redirected&&(!response.url||response.url===ENDPOINT),502,'MARKET_LABEL_REDIRECT');const bytes=await readBoundedProviderBody(response,signal,1024*1024);signal.throwIfAborted();const bodyText=bytes.toString('utf8');requireThat(!bodyText.includes(apiKey),502,'MARKET_LABEL_RESPONSE_INVALID');
+      return {requestHash:hash(request),httpStatus:response.status,bodyText};});
+      const active=modelTail.then(dispatch);modelTail=active.catch(()=>{});saved=await active;
     }catch{await unknown(request,key);return;}// A reservation without a saved response is never redispatched.
     await machine(async({tx})=>{await lock(tx,key);const prior=await read(tx,`${key}:response`);requireThat(!prior||stableJson(prior)===stableJson(saved),503,'MARKET_LABEL_RESPONSE_CONFLICT');if(!prior)await write(tx,`${key}:response`,saved);});
     await published(request,saved,photos.map(({sha256,mimeType,width,height,url})=>({sha256,mimeType,width,height,url})));

@@ -5,7 +5,7 @@ import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
 import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION,retainedListingImageBodyKey,validateRetainedListingImageBody} from './variant-listing-provider.mjs';
 import {CODEX_ASSOCIATION_REVISION,variantCodexAliases,codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
-import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL,VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
+import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL,VARIANT_PHOTO_LIMITS,VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
 
 export const VARIANT_POLICY='atlas-independent-variant-v2';
 // Catalog discovery advances independently of immutable paid OCR requests.
@@ -14,7 +14,7 @@ const catalogDiscoveryRevision=identity=>'playerName'in identity?SPORTS_CATALOG_
 const table='atlas_manual_connected.variant_job';
 const listingDispatchKey=key=>`variant-listing-dispatch:v1:${key}`;
 const listingResponseKey=key=>`variant-listing-response:v1:${key}`;
-const listingJournalKey=key=>/^(?:variant-(?:listing|label)-(?:dispatch|response|retry|retry-next):v1:|atlas-codex-)/.test(key);
+const listingJournalKey=key=>/^(?:variant-(?:listing|label)-(?:dispatch|response|retry|retry-next):v1:|variant-dispatch-admission:|atlas-codex-)/.test(key);
 const labelDispatchKey=key=>`variant-label-dispatch:v1:${key}`;
 const labelResponseKey=key=>`variant-label-response:v1:${key}`;
 const labelRetryKey=id=>`variant-label-retry:v1:${id}`;
@@ -142,7 +142,7 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       const {schemaVersion,reservationHash,...response}=record.value;
       requireThat(schemaVersion==='variant-label-response/v1'&&reservationHash===digest(canonical(reservation))
         &&canonical(response.requestEvidence)===canonical(reservation.evidence),503,'VARIANT_LABEL_JOURNAL_CONFLICT');
-      if(!variantLabelCreditRejected(response))return {attemptKey,reservation,response,responseHash:record.hash,retry,failure:null};
+      if(!variantLabelCreditRejected(response))return {attemptKey,reservation,response,responseHash:record.hash,retry,failure:null,previous};
       failure={code:VARIANT_LABEL_CREDIT_ERROR,labelRequestKey:attemptKey,labelResponseHash:record.hash};
       const next=await listingRead(tx,labelRetryNextKey(attemptKey));
       if(!next)return {attemptKey,reservation,response,responseHash:record.hash,retry,failure};
@@ -152,6 +152,23 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       previous={reservation,response,responseHash:record.hash};retry=next;attemptKey=next.attemptKey;
     }
   }
+  async function labelOwnerLive(tx,reservation){
+    // A continuously renewed job is not evidence that a bounded paid request
+    // is still in flight. Expiry only stops waiting; it never permits replay.
+    const [owner]=await tx.$queryRawUnsafe(`SELECT j.key FROM ${table} j WHERE j.key=$1 AND j.claim_id=$2::uuid
+      AND j.state IN('RUNNING','REQUESTED') AND j.lease_until>clock_timestamp() AND ${current}
+      AND $3::timestamptz+(($4::integer+$5::integer)*interval '1 millisecond')>clock_timestamp()`,
+      reservation.jobKey,reservation.claimId,reservation.reservedAt,VARIANT_PHOTO_LIMITS.timeoutMs,leaseMs);
+    return Boolean(owner);
+  }
+  async function retryOwnerLive(tx,retry){
+    const [owner]=await tx.$queryRawUnsafe(`SELECT j.key FROM ${table} j WHERE j.key=$1
+      AND j.state IN('RUNNING','REQUESTED') AND j.lease_until>clock_timestamp() AND ${current}
+      AND EXISTS(SELECT 1 FROM atlas_manual_connected.variant_catalog_cache c WHERE c.key=$2
+        AND c.created_at+(($3::integer+$4::integer)*interval '1 millisecond')>clock_timestamp())`,
+      retry.jobKey,labelRetryKey(retry.requestId),VARIANT_PHOTO_LIMITS.timeoutMs,leaseMs);
+    return Boolean(owner);
+  }
   async function labelProblem(tx,job,readingKeys=null){
     if(!job?.catalog||job.result||job.catalog.problems.includes('REFERENCE_ACQUISITION_PENDING'))return null;
     const all=prepareVariantLabelRequest(job.catalog);if(!all.photos.length||!all.choices.length)return null;
@@ -160,15 +177,20 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       for(const row of rows){requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');read.add(row.key);}
     }
     const missing=all.photos.filter(p=>!read.has(codexReadingKey(all,p.sha256)));if(!missing.length)return null;
-    const request=prepareVariantLabelRequest(job.catalog,missing.slice(0,8).map(p=>p.sha256));let attempt=await labelAttempt(tx,request);
-    if(!attempt.reservation&&!attempt.retry)for(const photo of request.photos){
-      const existing=await listingRead(tx,codexImageReservationKey(request,photo.sha256));if(!existing)continue;
-      const owner=await listingRead(tx,labelDispatchKey(existing.requestKey));requireThat(owner,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
-      attempt=await labelAttempt(tx,owner.request);break;
+    // Failure may follow a reusable or uncertain photo, including in another
+    // eight-photo packet. Inspect each distinct shared request, not just batch 1.
+    const rows=await tx.$queryRawUnsafe('SELECT key,snapshot,snapshot_hash FROM atlas_manual_connected.variant_catalog_cache WHERE key=ANY($1::text[])',missing.map(p=>codexImageReservationKey(all,p.sha256)));
+    const keys=new Set([prepareVariantLabelRequest(job.catalog,missing.slice(0,8).map(p=>p.sha256)).requestKey]);for(const row of rows){requireThat(digest(row.snapshot)===row.snapshot_hash,503,'VARIANT_CACHE_CORRUPT');keys.add(JSON.parse(row.snapshot).requestKey);}
+    for(const key of keys){
+      const owner=await listingRead(tx,labelDispatchKey(key));if(!owner)continue;
+      const attempt=await labelAttempt(tx,owner.request);if(!attempt.failure)continue;
+      // An authorized successor supersedes the old refusal as current status.
+      // Until it has its own response, queued/unknown/preparation failure must
+      // not be presented as another exhausted-credit provider response.
+      if(attempt.retry&&!attempt.response)continue;
+      return {...attempt.failure,retryable:job.state==='FAILED'&&Boolean(attempt.response&&variantLabelCreditRejected(attempt.response)),attempt};
     }
-    if(!attempt.failure)return null;
-    return {...attempt.failure,retryable:job.state==='FAILED'&&attempt.reservation?.jobKey===job.key
-      &&Boolean(attempt.response&&variantLabelCreditRejected(attempt.response)),attempt};
+    return null;
   }
   async function retainPhotoPool(tx,catalog){
     if(!catalog.referencePhotos?.length)return;
@@ -322,42 +344,51 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       await listingLock(tx,request.requestKey);
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} FOR UPDATE`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');const catalog=unpack(live).catalog;
-      requireThat(catalog&&canonical(prepareVariantLabelRequest(catalog,request.photos.map(p=>p.sha256)))===canonical(request)&&request.photos.length>0&&request.photos.length<=8,409,'VARIANT_LABEL_REQUEST_CHANGED');
-      for(const photo of request.photos)await listingLock(tx,codexReadingKey(request,photo.sha256));
+      requireThat(catalog&&request.photos.length>0&&request.photos.length<=8,409,'VARIANT_LABEL_REQUEST_CHANGED');
+      const overlap=source=>source.photos.filter(p=>catalog.referencePhotos.some(v=>v.sha256===p.sha256)).map(p=>p.sha256);
       const attempt=await labelAttempt(tx,request);
+      // Explicit credit retries keep the original complete catalog/request even
+      // when the current physical card only shares part of that public batch.
+      const retryCatalog=attempt.retry&&attempt.previous?.reservation.catalog;
+      const bindingCatalog=retryCatalog??catalog;
+      requireThat(overlap(request).length>0&&canonical(prepareVariantLabelRequest(bindingCatalog,request.photos.map(p=>p.sha256),{
+        includeCatalogContext:Object.hasOwn(request,'catalogContext'),includeAssociationRevision:Object.hasOwn(request,'associationRevision')}))===canonical(request),409,'VARIANT_LABEL_REQUEST_CHANGED');
+      for(const photo of request.photos)await listingLock(tx,codexReadingKey(request,photo.sha256));
       if(attempt.response)return variantLabelCreditRejected(attempt.response)
-        ?{state:'CREDIT_REJECTED',failure:attempt.failure,attemptKey:attempt.attemptKey}
+        ?{state:'CREDIT_REJECTED',failure:attempt.failure,attemptKey:attempt.attemptKey,photoShas:overlap(request)}
         :{state:'REUSED',response:attempt.response,attemptKey:attempt.attemptKey};
-      if(attempt.reservation){
-        const [owner]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE key=$1 AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`,attempt.reservation.jobKey,attempt.reservation.claimId);
-        return {state:owner?'PENDING':'UNKNOWN'};
-      }
+      if(attempt.reservation)return {state:await labelOwnerLive(tx,attempt.reservation)?'PENDING':'UNKNOWN',photoShas:overlap(request)};
       if(attempt.retry){
-        // Only the exact explicitly resumed job may spend its one new attempt.
-        if(attempt.retry.jobKey!==job.key)return {state:'PENDING'};
-        requireThat(attempt.retry.catalogHash===catalog.snapshotHash&&live.audit?.some(e=>e.event==='LABEL_RETRY_REQUESTED'
-          &&e.requestId===attempt.retry.requestId&&e.attemptKey===attempt.attemptKey),409,'VARIANT_LABEL_RETRY_UNAVAILABLE');
+        if(attempt.retry.jobKey===job.key){
+          requireThat(attempt.retry.catalogHash===catalog.snapshotHash&&live.audit?.some(e=>e.event==='LABEL_RETRY_REQUESTED'
+            &&e.requestId===attempt.retry.requestId&&e.attemptKey===attempt.attemptKey),409,'VARIANT_LABEL_RETRY_UNAVAILABLE');
+        }else if(await retryOwnerLive(tx,attempt.retry))return {state:'PENDING',photoShas:overlap(request)};
+        // An authorized successor with no dispatch is unpaid. Its immutable
+        // authorization remains valid shared-reference work after owner loss.
+        // The request lock and current-card lease permit exactly one consumer.
       }else for(const photo of request.photos){
-        if(await listingRead(tx,codexReadingKey(request,photo.sha256)))return {state:'PENDING'};
+        if(await listingRead(tx,codexReadingKey(request,photo.sha256)))return {state:'PUBLISHED',photoShas:[photo.sha256]};
         const previous=await listingRead(tx,codexImageReservationKey(request,photo.sha256));
         if(previous){
           const owner=await listingRead(tx,labelDispatchKey(previous.requestKey));requireThat(owner,503,'VARIANT_LABEL_JOURNAL_CONFLICT');
-          const retained=await labelAttempt(tx,owner.request);
+          const retained=await labelAttempt(tx,owner.request),photoShas=overlap(owner.request);
           if(retained.response)return variantLabelCreditRejected(retained.response)
-            ?{state:'CREDIT_REJECTED',failure:retained.failure,attemptKey:retained.attemptKey}
+            ?{state:'CREDIT_REJECTED',failure:retained.failure,attemptKey:retained.attemptKey,photoShas}
             :{state:'RECOVER',request:owner.request,attemptKey:retained.attemptKey};
-          if(retained.retry&&!retained.reservation)return {state:'PENDING'};
-          const [running]=await tx.$queryRawUnsafe(`SELECT key FROM ${table} WHERE key=$1 AND claim_id=$2::uuid AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`,retained.reservation.jobKey,retained.reservation.claimId);
-          return {state:running?'PENDING':'UNKNOWN'};
+          if(retained.retry&&!retained.reservation){
+            if(retained.retry.jobKey!==job.key&&await retryOwnerLive(tx,retained.retry))return {state:'PENDING',photoShas};
+            return {state:'RESUME',request:owner.request,catalog:retained.previous.reservation.catalog,evidence:retained.previous.reservation.evidence,photoShas};
+          }
+          return {state:await labelOwnerLive(tx,retained.reservation)?'PENDING':'UNKNOWN',photoShas};
         }
       }
-      if(!evidence)return {state:'MISSING',attemptKey:attempt.attemptKey};
+      if(!evidence)return {state:'MISSING',attemptKey:attempt.attemptKey,...(attempt.retry?{catalog:retryCatalog,evidence:attempt.previous.reservation.evidence}:{})};
       requireThat(evidence.policy===VARIANT_LABEL_POLICY&&evidence.model===VARIANT_PHOTO_MODEL
         &&/^[a-f0-9]{64}$/.test(evidence.requestSha256)&&canonical(evidence.request)===canonical(request),400,'VARIANT_LABEL_REQUEST_CHANGED');
       if(attempt.retry)requireThat(canonical(evidence)===canonical(attempt.previous.reservation.evidence),409,'VARIANT_LABEL_RETRY_REQUEST_CHANGED');
       requireThat(live.state==='RUNNING'&&!live.dispatch_id&&!live.response,409,'VARIANT_PROVIDER_OUTCOME_UNKNOWN');
-      const batchCatalog={...catalog,referencePhotos:catalog.referencePhotos.filter(p=>request.photos.some(i=>i.sha256===p.sha256))};
-      batchCatalog.snapshotHash=variantSnapshotHash(batchCatalog);validateVariantReviewSnapshot(batchCatalog);
+      const batchCatalog=attempt.retry?retryCatalog:{...catalog,referencePhotos:catalog.referencePhotos.filter(p=>request.photos.some(i=>i.sha256===p.sha256))};
+      if(!attempt.retry)batchCatalog.snapshotHash=variantSnapshotHash(batchCatalog);validateVariantReviewSnapshot(batchCatalog);
       const created={schemaVersion:'variant-label-dispatch/v1',request,evidence,catalog:batchCatalog,jobKey:job.key,claimId:job.claim_id,reservedAt:new Date().toISOString(),
         ...(attempt.retry?{attemptKey:attempt.attemptKey,retryRequestId:attempt.retry.requestId}:{})};
       await listingWrite(tx,labelDispatchKey(attempt.attemptKey),canonical(created));

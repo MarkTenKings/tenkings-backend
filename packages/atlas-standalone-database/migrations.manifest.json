@@ -20,6 +20,11 @@
       "version": "atlas-standalone-005-photoroom-removal",
       "file": "sql/005-photoroom-removal.sql",
       "sqlSha256": "f76f882edb3bad6f36e423bf388380a16f8602de29eddb32a647dc8916763089"
+    },
+    {
+      "version": "atlas-standalone-006-variant-shared-label-retry",
+      "file": "sql/006-variant-shared-label-retry.sql",
+      "sqlSha256": "e073b918aa83aecc52453deb10ba6abbc603b167881fde347518dc12fd37d5b0"
     }
   ]
 }

@@ -112,7 +112,7 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
     } catch (error) {
       emit(error);
       const terminal = /^(MARKET_LABEL_(OUTCOME_UNKNOWN|RESPONSE_INVALID|RESPONSE_INCOMPLETE|RESPONSE_REJECTED|READING_INVALID|READING_MISSING)|MARKET_PHOTO_UNAVAILABLE|MARKET_PROVIDER_RESULT_INVALID|MARKET_PROVIDER_POLICY_INVALID|MARKET_RECLASSIFICATION_RETIRED)$/.test(error?.code ?? '');
-      const failure = providerFailed ?? (terminal ? { code: error.code, disposition: 'FAILED' } : error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'RETRY' } : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
+      const failure = providerFailed ?? (terminal ? { code: error.code, disposition: 'FAILED' } : error?.code === 'MARKET_LABEL_PENDING' ? { code: 'MARKET_LABEL_PENDING', disposition: 'WAIT' } : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
         : dispatched ? { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' }
         : { code: 'MARKET_PREPARATION_INTERRUPTED', disposition: 'RETRY' });
       try { await store.finish(job, failure); } catch (saveError) { emit(saveError); }

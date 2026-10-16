@@ -41,7 +41,7 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
   if (!Array.isArray(providers) || providers.length > 3 || providers.some(p => typeof p.prepare !== 'function')
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 45000) throw fail('VARIANT_CATALOG_CONFIGURATION');
   return Object.freeze({
-    async prepare(input, { signal, executeListingSource, priorCatalog = null, onCatalog = null } = {}) {
+    async prepare(input, { signal, executeListingSource, admitImageAcquisition = null, priorCatalog = null, onCatalog = null } = {}) {
       const localOnly = input.localOnly === true;
       // Initial preparation has a durable browser request ID, but it still
       // reuses ordinary paid journals. Only an explicit refresh of a prior
@@ -146,7 +146,12 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
         const hasReference=printing=>printing.members.every(candidate=>populated.has(variantCodexChoice(candidate).key));
         const acquireRetainedPhotos=async(request,saved,{retainedOnly=false}={})=>{
             if(!['SAVED','REUSED'].includes(saved.state)||!saved.source)throw fail('VARIANT_LISTING_SOURCE_INVALID');
-            const evidence=await listingProvider.acquireImages({request:saved.request??request,source:saved.source,catalogCandidates:named},{signal,retainedOnly});
+            // A new source's bounded image page shares its just-admitted dispatch.
+            // Reused pages can read cached bytes freely, but acquiring missing
+            // bytes requires one permission before the first actual download.
+            let acquisitionAdmitted=saved.state==='SAVED';
+            const evidence=await listingProvider.acquireImages({request:saved.request??request,source:saved.source,catalogCandidates:named},{signal,retainedOnly,
+              beforeFetch:async()=>{if(!acquisitionAdmitted&&admitImageAcquisition){await admitImageAcquisition();acquisitionAdmitted=true;}}});
             // These facts describe a retained source result, not global absence.
             // Keep empty searches distinct from listings without usable photos.
             if(Array.isArray(evidence.listings)&&evidence.listings.length===0)problems.push('LISTING_NO_RESULTS');

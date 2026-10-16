@@ -265,3 +265,20 @@ test('retained empty listing results and missing images project separate diagnos
   assert.deepEqual(snapshot.candidates,catalog.candidates);assert.deepEqual(snapshot.referencePhotos,[]);assert(dispatches>0);
  }
 });
+
+test('reused source pages acquire one allowance only when missing CDN bytes need fetching',async()=>{
+ const catalog=labelCatalog({photos:0}),generation='1c24bd7a-b4e6-4d79-97f0-b634d830a204',bytes=await png();
+ const cache=cacheFixture();let fetches=0,permissions=0,allow=false,state='REUSED';
+ const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:catalog.candidates,problems:[],truncated:false})}],
+  listingProvider:provider({cache,now,fetchImpl:async()=>{fetches++;return new Response(bytes,{headers:{'content-type':'image/png'}});}})});
+ const options={admitImageAcquisition:async()=>{permissions++;if(!allow)throw Object.assign(Error('busy'),{code:'VARIANT_GRADING_PRIORITY_DEFERRED'});},
+  executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>retainedOnly?{state:'MISSING'}:{state,source:source(request,[item(1),item(2)])}};
+ await assert.rejects(service.prepare({identity:variantIdentity,generation},options),{code:'VARIANT_GRADING_PRIORITY_DEFERRED'});
+ assert.equal(fetches,0);assert.equal(permissions,1,'refused acquisition neither fetches nor silently finalizes an incomplete page');
+ allow=true;const result=await service.prepare({identity:variantIdentity,generation},options);
+ assert.equal(fetches,2);assert.equal(permissions,2,'both page images share one granted allowance');assert.equal(result.referencePhotos.length,1);
+ allow=false;await service.prepare({identity:variantIdentity,generation},options);
+ assert.equal(fetches,2);assert.equal(permissions,2,'cached byte reads do not request a dispatch allowance');
+ cache.entries.clear();state='SAVED';await service.prepare({identity:variantIdentity,generation},options);
+ assert.equal(fetches,4);assert.equal(permissions,2,'a freshly admitted source includes its bounded acquisition page');
+});

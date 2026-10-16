@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import { variantReviewSettings, variantWorkerSettings, variantWorkerEnvironment, validateVariantRuntimeConfiguration } from '../../../frontend/atlas-app/lib/server/variant-runtime-settings.mjs';
 import { connectedGrantSQL } from '../src/details.mjs';
 import { variantJobGrantSQL } from '../src/variant-job-store.mjs';
@@ -63,4 +65,17 @@ test('retired catalog configuration and table grant are absent from main and wor
   assert.doesNotMatch(variantJobGrantSQL('atlas_fixture_role',{worker}),/variant_contribution/);
   await validateVariantRuntimeConfiguration({enabled:true,worker,client:{async $queryRawUnsafe(sql){assert.doesNotMatch(sql,/variant_contribution/);return [sql.includes('to_regclass')?{installed:true}:{allowed:true}];}}});
  }
+});
+
+
+test('enabled variant startup binds the exact additive006 function and existing immutable retry guards',async()=>{
+ const sql=await readFile(new URL('../../atlas-standalone-database/sql/006-variant-shared-label-retry.sql',import.meta.url),'utf8');
+ const body=sql.split('$function$')[1],hash=createHash('sha256').update(body).digest('hex');
+ for(const worker of [false,true])await validateVariantRuntimeConfiguration({enabled:true,worker,client:{async $queryRawUnsafe(query){
+  if(!query.includes('to_regclass'))return [{allowed:true}];
+  assert(query.includes(hash));assert.match(query,/p\.prosecdef/);assert.match(query,/search_path=pg_catalog/);
+  assert.match(query,/p\.proowner=/);assert.match(query,/t\.tgname='variant_label_retry_journal' AND t\.tgenabled='O'/);
+  assert.match(query,/t\.tgname='variant_job_guard' AND t\.tgenabled='O'/);
+  return [{installed:true}];
+ }}});
 });

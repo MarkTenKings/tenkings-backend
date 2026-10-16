@@ -8,7 +8,7 @@ import {photoCacheDatabase} from './variant-photo-retention-fixture.mjs';
 import {publicationFixture} from './publication-fixture.mjs';
 import {labelCatalog,labelPhoto} from './variant-label-fixture.mjs';
 import {CODEX_LABEL_POLICY,CODEX_LABEL_MODEL,codexReadingKey,variantCodexChoice} from '../src/variant-codex.mjs';
-async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,priorReferenceGrade,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false,responseMode=null,failBatches=[],unreadGrade=false,failImage=false,cacheDatabase=null,imageGate=null}={}){
+async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,priorReferenceGrade,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false,responseMode=null,failBatches=[],unreadGrade=false,failImage=false,cacheDatabase=null,imageGate=null,modelTimeoutMs=300000,modelTransport=null}={}){
  const f=await publicationFixture();await f.publication.publish({},f.cardId,f.actionId);const manifest=JSON.parse(f.row.manifest),packet=await f.artifacts.read(manifest.packet.ref,{cardId:f.cardId,kind:'PUBLIC_REPORT',sourceHash:manifest.packet.sourceHash});
  packet.report.cardProfile='POKEMON';packet.report.identity={cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:'Base'};
  packet.report.finalGrade=8.5;packet.report.grade.overall={rawGrade:8.5,displayGrade:8.5};
@@ -26,7 +26,8 @@ async function fixture({photos=2,failSend=false,failPublication=false,priorRefer
  const imageUrl=i=>`https://i.ebayimg.com/images/g/market${i}/s-l1600.jpg`;
  if(priorReference){const image=labelPhoto(0).media,key=codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},image.sha256),value={schemaVersion:'atlas-codex-reading/v1',policy:CODEX_LABEL_POLICY,reading:{sha256:image.sha256,candidateKey:variantCodexChoice(catalog.candidates[0]).key,gradingCompany:'PSA',labelText:'2020 POKEMON\nMAGIKARP\nAUTOGRAPH GEM MT 10\nMINT 9',...(priorReferenceGrade===undefined?{}:{numericGrade:priorReferenceGrade}),reason:'Matching base label'},responseHash:digest('prior response'),requestKey:'prior'};const snapshot=JSON.stringify(value);rows.set(key,[{snapshot,snapshot_hash:digest(snapshot)}]);}
  const fetchImpl=async(url,options)=>{if(url.startsWith('https://i.ebayimg.com/')){calls.images++;assert.equal(options.redirect,'error');if(failImage)throw Error('Image transport unavailable');if(imageGate)await imageGate();const i=Number(/market(\d+)/.exec(url)[1]);return new Response(labelPhoto(i).media.bytes,{headers:{'content-type':'image/png'}});}
-  assert.equal(url,'https://api.openai.com/v1/responses');calls.model++;requests.push(JSON.parse(options.body));onModel();if(modelGate)await modelGate;if(failSend||failBatches.includes(calls.model))throw Error('unknown network outcome');
+  assert.equal(url,'https://api.openai.com/v1/responses');calls.model++;requests.push(JSON.parse(options.body));onModel(options,calls.model);if(modelGate)await (typeof modelGate==='function'?modelGate(options,calls.model):modelGate);if(failSend||failBatches.includes(calls.model))throw Error('unknown network outcome');
+  if(modelTransport){const response=await modelTransport(options,calls.model);if(response)return response;}
   if(responseMode==='http')return Response.json({error:'synthetic rejected request'},{status:503});
   if(responseMode==='json')return new Response('malformed response');
   if(responseMode==='incomplete')return Response.json({model:'gpt-6-astra',status:'incomplete',incomplete_details:{reason:'max_output_tokens'}});
@@ -34,7 +35,7 @@ async function fixture({photos=2,failSend=false,failPublication=false,priorRefer
   const body=JSON.parse(options.body);assert.doesNotMatch(options.body,/private submitted/);assert.match(body.input[0].content,/Any grading company/);assert.match(body.input[0].content,/C\. Holo/);
   const shas=body.text.format.schema.properties.readings.items.properties.sha256.enum;
   return Response.json({model:'gpt-6-astra',status:'completed',output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({readings:shas.map((sha256,index)=>({sha256,gradingCompany:company,numericGrade:badPhoto&&index===0?'invalid':unreadGrade?null:8.5,labelText:literal,identityMatch:'MATCH',reason:'The visible card and abbreviated label are compatible.'}))})}]}]});};
- const label=createMarketSlabLabeler({boundary,apiKey:'synthetic-only-api-key',fetchImpl,inspectImage:async()=>({mimeType:'image/png',width:1,height:1})});
+ const label=createMarketSlabLabeler({boundary,apiKey:'synthetic-only-api-key',fetchImpl,modelTimeoutMs,inspectImage:async()=>({mimeType:'image/png',width:1,height:1})});
  const response={responsePolicy:'ATLAS_SLAB_V1',source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:publishedMarketQuery(source).query,retrievedAt:'2026-10-11T01:00:00.000Z',marketQueryContext:null,acquisitionDiagnostics:{returnedItemCount:photos,retainedItemCount:photos,missingImageCount:0},items:Array.from({length:photos},(_,i)=>({id:`atlas-sale:${i}`,sourceIndex:i,title:null,listingUrl:null,providerItemId:null,imageUrl:imageUrl(i),soldDate:'2026-10-10',reportedPrice:null,soldPriceCents:null,currency:null,priceBasis:'UNKNOWN'}))};
  const job={card_id:f.cardId,source_hash:'approved draft content hash',approval_action_id:f.actionId,request_id:f.actionId,claim_id:f.cardId};
  return {label,source,response,job,rows,calls,requests};
@@ -165,4 +166,51 @@ test('progress distinguishes failed and unknown label responses from still-pendi
     const final=checkpoints.at(-1);assert.equal(final.pending,0);assert.equal(final.completed,0);
     assert.equal(final.failed,options.responseMode?2:0);assert.equal(final.unknown,options.failSend?2:0);
   }
+});
+
+test('fetch deadline releases the serial tail, quarantines late completion, and never repeats an unknown batch', async () => {
+  let release, started, firstSignal, cancelledLateBody=false;
+  const gate=new Promise(resolve=>release=resolve), entered=new Promise(resolve=>started=resolve);
+  const f=await fixture({photos:10,modelTimeoutMs:100,
+    onModel:(options,call)=>{if(call===1){firstSignal=options.signal;started();}},
+    modelTransport:async(_options,call)=>{
+      if(call!==1)return;
+      await gate; // Deliberately ignores AbortSignal, as an uncooperative transport can.
+      return new Response(new ReadableStream({cancel(){cancelledLateBody=true;}}));
+    }});
+  const owner=f.label({...f,response:{...f.response,items:f.response.items.slice(0,8)}});
+  await entered;
+  const sibling=f.label({...f,job:{...f.job,request_id:'other physical copy'},response:{...f.response,items:f.response.items.slice(8)}});
+  const [unknown,complete]=await Promise.all([owner,sibling]);
+  assert.equal(firstSignal.aborted,true);assert.equal(unknown.imageMatch.counts.unknown,8);
+  assert.equal(complete.imageMatch.counts.completed,2);assert.equal(f.calls.model,2);
+  const receipts=[...f.rows].filter(([key])=>key.endsWith(':response'));
+  assert.equal(receipts.length,1);assert.equal([...f.rows.keys()].filter(key=>key.endsWith(':failure')).length,1);
+  release();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(cancelledLateBody,true);assert.deepEqual([...f.rows].filter(([key])=>key.endsWith(':response')),receipts);
+  const repeated=await f.label({...f,job:{...f.job,request_id:'later physical copy'}});
+  assert.equal(repeated.imageMatch.counts.unknown,8);assert.equal(repeated.imageMatch.counts.completed,2);
+  assert.equal(f.calls.model,2,'Neither late fulfillment nor a new physical copy resends the unknown batch');
+});
+
+test('body deadline cancels a stalled stream and allows the next clean batch to finish', async () => {
+  let signal, cancelled=false;
+  const f=await fixture({photos:10,modelTimeoutMs:100,modelTransport:async(options,call)=>{
+    if(call!==1)return;signal=options.signal;
+    return new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{'));},cancel(){cancelled=true;}}));
+  }});
+  const result=await f.label(f);
+  assert.equal(signal.aborted,true);assert.equal(cancelled,true);assert.equal(f.calls.model,2);
+  assert.equal(result.imageMatch.counts.unknown,8);assert.equal(result.imageMatch.counts.completed,2);
+  assert.deepEqual(await f.label({...f,job:{...f.job,request_id:'another physical copy'}}),result);
+  assert.equal(f.calls.model,2);
+});
+
+test('a live shared owner may outlast many pending observations before the second copy adopts its saved response', async () => {
+  let release,started;const gate=new Promise(resolve=>release=resolve),entered=new Promise(resolve=>started=resolve);
+  const f=await fixture({modelGate:gate,onModel:started});const owner=f.label(f);await entered;
+  for(let attempt=0;attempt<12;attempt++)await assert.rejects(f.label({...f,job:{...f.job,request_id:'second copy'}}),{code:'MARKET_LABEL_PENDING'});
+  release();const original=await owner;
+  assert.deepEqual(await f.label({...f,job:{...f.job,request_id:'second copy'}}),original);
+  assert.equal(f.calls.model,1);
 });

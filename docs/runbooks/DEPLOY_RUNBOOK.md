@@ -1,5 +1,15 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## Pending repeated-card reliability + review-performance release (October 16, 2026)
+
+No production effects have occurred for this candidate. Current live identities in the next section remain authoritative. Use only fresh plans under `~/.codex/atlas-handoffs/atlas-repeat-card-reliability-20261016/release-01`; all older effect intents are consumed historical evidence. `source.json` remains unset until the reviewed integration commit is frozen.
+
+The new native source requires additive schema006 (`e073b918aa83aecc52453deb10ba6abbc603b167881fde347518dc12fd37d5b0`) with exact retry function body `7e6af50e5ddaad5ad650eef013eac1c2ea8987bad54bac1781f437add3381a07`, while preserving schema005. Review and qualify the single procedure replacement, one ledger row and three web/control bindings in one stopped transaction. All other rows, functions, triggers, grants, controls and provider receipts must remain unchanged. Never run an old migration/release packet to accomplish this.
+
+The performance opt-in action-response header must be signed and forwarded by matching native/web versions. Start and verify the new native verifier before promoting the new staff client; old absent-header requests retain their exact signature format. Preserve the existing125-second startup fence, resource/network/security settings, main init, shared credentials and current physical-card data. Retain customer deployment. The reviewed baseline has19 retained containers/3 running; an additive replacement pair yields21 retained/3 running. Root owns coordinated deployment; the performance chat does not independently restart or publish.
+
+Release planning and initial read-only workload census are private. Native contract checks31/31 and the two owned PostgreSQL admission/diagnostic tests pass. No claim pause is held. Final combined build, candidate/source qualification, fresh exact workload/tombstone reconciliation, reviewed plans, planned/observed SESSION_LOG entries and post-release acceptance remain required.
+
 ## Current ATLAS sold-comps progress repair — live (October 16, 2026)
 
 Application source is frozen at `cfa40e80101cfeb60da3e4ab02f220a1c6a0a28a`; native image is `sha256:1b0c100e0b20350b7b6d827abdfac568db29750feef7fa64e0adbe55a7bb69d0` (291/291 Linux tests, zero skips). Release-02 native start/seal and data rebind are complete. Web publication and canonical-route/asset verification passed; the admission holder was explicitly released at 18:14:53.890 UTC. Do not replay an origin PATCH or promotion whose outcome is uncertain; reconcile it read-only.

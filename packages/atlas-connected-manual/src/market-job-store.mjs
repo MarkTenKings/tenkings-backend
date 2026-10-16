@@ -14,6 +14,26 @@ const live = `EXISTS(SELECT 1 FROM atlas_manual.publication p JOIN atlas_manual.
  AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=p.card_id))
  AND atlas_manual_connected.display_owner_current(j.actor_id,j.access_version)`;
 const active = `j.request_id=$1::uuid AND j.claim_id=$2::uuid AND j.state IN('RUNNING','REQUESTED') AND j.lease_until>clock_timestamp() AND ${live}`;
+// Old workers exhausted six claims while merely waiting on a shared label.
+// Recover only the exact, fully accounted-for case; never reinterpret another
+// failure, an expired lease, a manual retry, or an uncertain sold search.
+function pendingOnlyFailure(row) {
+  if (row.state !== 'FAILED' || row.code !== 'MARKET_LABEL_PENDING' || row.attempts !== 6 || row.recoveries !== 0
+    || !row.public_hash || !row.dispatch_id || !row.response || digest(row.response) !== row.response_hash || !Array.isArray(row.audit)) return false;
+  let response; try { response = JSON.parse(row.response); } catch { return false; }
+  if (response?.responsePolicy !== 'ATLAS_SLAB_V1' || !Array.isArray(response.items)) return false;
+  const waits = row.audit.filter(event => ['QUEUED','FAILED'].includes(event.event));
+  const dispatches = row.audit.filter(event => event.event === 'DISPATCH');
+  const responses = row.audit.filter(event => event.event === 'RESPONSE');
+  return waits.length === 6 && new Set(waits.map(event => event.claimId)).size === 6
+    && waits.every((event, index) => event.code === 'MARKET_LABEL_PENDING' && /^[a-f0-9-]{36}$/.test(event.claimId ?? '')
+      && event.event === (index === 5 ? 'FAILED' : 'QUEUED'))
+    && waits[0].claimId === row.dispatch_id && row.audit.at(-1) === waits[5]
+    && dispatches.length === 1 && dispatches[0].dispatchId === row.dispatch_id
+    && responses.length === 1 && responses[0].dispatchId === row.dispatch_id && responses[0].responseHash === row.response_hash
+    && row.audit.every(event => ['DISPATCH','RESPONSE','QUEUED','FAILED'].includes(event.event)
+      || event.event === 'LABEL_PROGRESS' && event.responseHash === row.response_hash);
+}
 // New unfiltered acquisition keeps every JSON field, including long provider
 // titles. The old canonical envelope remains exact for historical responses.
 function responseText(response) {
@@ -197,6 +217,44 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       requireThat(Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 16, 500, 'MARKET_WORKER_CONFIG_INVALID');
       return machine(async ({ tx, principal }) => {
         const [lock] = await tx.$queryRawUnsafe('SELECT pg_try_advisory_xact_lock(721930,76) AS locked'); if (!lock.locked) return null;
+        // Filter the complete audit shape in PostgreSQL before transferring a
+        // retained response (up to 5 MiB). Excluded history cannot occupy the
+        // bounded slot, and every recovered row leaves this candidate set.
+        const stranded = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j
+          CROSS JOIN LATERAL (SELECT
+            count(*) FILTER (WHERE a->>'event'='DISPATCH') AS dispatches,
+            count(*) FILTER (WHERE a->>'event'='RESPONSE') AS responses,
+            count(*) FILTER (WHERE a->>'event'='QUEUED') AS queued,
+            count(*) FILTER (WHERE a->>'event'='FAILED') AS failed,
+            count(DISTINCT a->>'claimId') FILTER (WHERE a->>'event' IN('QUEUED','FAILED')) AS claims,
+            jsonb_agg(a ORDER BY ordinal) FILTER (WHERE a->>'event' IN('QUEUED','FAILED')) AS waits,
+            bool_and(COALESCE(CASE a->>'event'
+              WHEN 'DISPATCH' THEN a->>'dispatchId'=j.dispatch_id::text
+              WHEN 'RESPONSE' THEN a->>'dispatchId'=j.dispatch_id::text AND a->>'responseHash'=j.response_hash
+              WHEN 'QUEUED' THEN a->>'code'='MARKET_LABEL_PENDING' AND a->>'claimId' ~ '^[a-f0-9-]{36}$'
+              WHEN 'FAILED' THEN a->>'code'='MARKET_LABEL_PENDING' AND a->>'claimId' ~ '^[a-f0-9-]{36}$'
+              WHEN 'LABEL_PROGRESS' THEN a->>'responseHash'=j.response_hash
+              ELSE false END,false)) AS valid
+            FROM jsonb_array_elements(j.audit) WITH ORDINALITY events(a,ordinal)) history
+          WHERE j.mode=$1 AND j.state='FAILED' AND j.code='MARKET_LABEL_PENDING' AND j.attempts=6 AND j.recoveries=0
+          AND j.response IS NOT NULL AND j.public_hash IS NOT NULL AND j.dispatch_id IS NOT NULL
+          AND history.valid AND history.dispatches=1 AND history.responses=1
+          AND history.queued=5 AND history.failed=1 AND history.claims=6
+          AND history.waits->0->>'claimId'=j.dispatch_id::text
+          AND history.waits->-1->>'event'='FAILED' AND j.audit->-1=history.waits->-1
+          AND j.response::jsonb->>'responsePolicy'='ATLAS_SLAB_V1' AND jsonb_typeof(j.response::jsonb->'items')='array'
+          AND ${live}
+          AND EXISTS(SELECT 1 FROM atlas_manual.presentation_market m WHERE m.card_id=j.card_id AND m.request_id=j.request_id AND m.state='STARTED')
+          AND NOT EXISTS(SELECT 1 FROM ${table} newer WHERE newer.card_id=j.card_id AND newer.approval_action_id=j.approval_action_id
+            AND (newer.created_at,newer.request_id)>(j.created_at,j.request_id))
+          ORDER BY j.created_at,j.request_id LIMIT 1 FOR UPDATE OF j SKIP LOCKED`, principal.mode);
+        for (const row of stranded) if (pendingOnlyFailure(row)) {
+          await tx.$executeRawUnsafe(`UPDATE ${table} SET state='QUEUED',attempts=0,recoveries=recoveries+1,
+            code='MARKET_LABEL_WAIT_RECOVERED',claim_id=NULL,lease_until=NULL,available_at=clock_timestamp(),updated_at=clock_timestamp(),
+            audit=audit||jsonb_build_array(jsonb_build_object('event','RECOVERY','kind','SHARED_LABEL_WAIT',
+              'priorAttempts',attempts,'responseHash',response_hash,'dispatchId',dispatch_id,'at',clock_timestamp()))
+            WHERE request_id=$1::uuid`, row.request_id);
+        }
         await tx.$executeRawUnsafe(`UPDATE ${table} SET state=CASE WHEN state='REQUESTED' AND response IS NULL THEN 'UNKNOWN' WHEN attempts>=6 THEN 'FAILED' ELSE 'QUEUED' END,
           code=CASE WHEN state='REQUESTED' AND response IS NULL THEN 'PROVIDER_OUTCOME_UNKNOWN' ELSE 'MARKET_LEASE_EXPIRED' END,
           claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE mode=$1 AND state IN('RUNNING','REQUESTED') AND lease_until<=clock_timestamp()`, principal.mode);
@@ -207,11 +265,14 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
           WHERE j.mode=$1 AND j.state='QUEUED' AND NOT (${live})`, principal.mode);
         const [count] = await tx.$queryRawUnsafe(`SELECT count(*)::int n FROM ${table} WHERE mode=$1 AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`, principal.mode);
         if (count.n >= concurrency) return null;
-        const [row] = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE j.mode=$1 AND j.state='QUEUED' AND j.attempts<6
+        const [row] = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE j.mode=$1 AND j.state='QUEUED'
+          AND (j.attempts<6 OR j.attempts=6 AND j.code='MARKET_LABEL_PENDING' AND j.response IS NOT NULL)
           AND j.available_at<=clock_timestamp() AND ${live} ORDER BY j.available_at,j.created_at,j.request_id LIMIT 1 FOR UPDATE OF j SKIP LOCKED`, principal.mode);
         if (!row) return null;
         return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET state='RUNNING',claim_id=$2::uuid,
-          lease_until=clock_timestamp()+$3*interval '1 millisecond',attempts=attempts+1,updated_at=clock_timestamp() WHERE request_id=$1::uuid RETURNING *`, row.request_id, randomUUID(), leaseMs))[0]);
+          lease_until=clock_timestamp()+$3*interval '1 millisecond',
+          attempts=attempts+CASE WHEN code='MARKET_LABEL_PENDING' AND response IS NOT NULL AND attempts>0 THEN 0 ELSE 1 END,
+          updated_at=clock_timestamp() WHERE request_id=$1::uuid RETURNING *`, row.request_id, randomUUID(), leaseMs))[0]);
       });
     },
     pageContext(job) {
@@ -262,10 +323,16 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
     },
     finish(job, { result = null, code = null, disposition = 'FAILED' } = {}) {
       requireThat(result?.state === 'READY' || /^[A-Z][A-Z0-9_]{0,100}$/.test(code ?? ''), 500, 'MARKET_RESULT_INVALID');
+      requireThat(disposition !== 'WAIT' || !result && code === 'MARKET_LABEL_PENDING', 500, 'MARKET_RESULT_INVALID');
+      requireThat(code !== 'MARKET_LABEL_PENDING' || disposition === 'WAIT', 500, 'MARKET_RESULT_INVALID');
       return machine(async ({ tx }) => {
         const [row] = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} FOR UPDATE OF j`, job.request_id, job.claim_id);
         if (!row) return false;
-        const state = result ? 'READY' : disposition === 'RETRY' && row.attempts < 6 ? 'QUEUED' : ['UNKNOWN','UNAVAILABLE'].includes(disposition) ? disposition : 'FAILED';
+        const waiting = disposition === 'WAIT';
+        requireThat(!waiting || row.response && JSON.parse(row.response).responsePolicy === 'ATLAS_SLAB_V1', 409, 'MARKET_RESPONSE_REQUIRED');
+        // A wait continues this logical attempt with a new lease. Monotonic
+        // attempts and the existing immutable-row trigger remain unchanged.
+        const state = result ? 'READY' : waiting || disposition === 'RETRY' && row.attempts < 6 ? 'QUEUED' : ['UNKNOWN','UNAVAILABLE'].includes(disposition) ? disposition : 'FAILED';
         if (result) {
           requireThat(row.response && row.public_hash, 409, 'MARKET_RESPONSE_REQUIRED');
           requireThat(!marketHasRetiredReclassification(row), 409, 'MARKET_RECLASSIFICATION_RETIRED');
@@ -275,8 +342,8 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
           requireThat(changed === 1, 409, 'MARKET_RESULT_CONFLICT');
         }
         return (await tx.$executeRawUnsafe(`UPDATE ${table} SET state=$3,code=$4,claim_id=NULL,lease_until=NULL,
-          available_at=clock_timestamp()+$5*interval '1 millisecond',audit=audit||jsonb_build_array(jsonb_build_object('event',$3::text,'code',$4::text,'claimId',$2::text,'at',clock_timestamp())),updated_at=clock_timestamp() WHERE request_id=$1::uuid AND claim_id=$2::uuid`,
-        row.request_id, row.claim_id, state, code, state === 'QUEUED' ? Math.min(60000, 2000 * 2 ** row.attempts) : 0)) === 1;
+          available_at=clock_timestamp()+$5*interval '1 millisecond',audit=audit||jsonb_build_array(jsonb_build_object('event',$6::text,'code',$4::text,'claimId',$2::text,'at',clock_timestamp())),updated_at=clock_timestamp() WHERE request_id=$1::uuid AND claim_id=$2::uuid`,
+        row.request_id, row.claim_id, state, code, waiting ? 2000 : state === 'QUEUED' ? Math.min(60000, 2000 * 2 ** row.attempts) : 0, waiting ? 'WAIT' : state)) === 1;
       });
     },
   });

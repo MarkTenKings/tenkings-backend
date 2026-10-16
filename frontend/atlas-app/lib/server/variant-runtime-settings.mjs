@@ -52,7 +52,16 @@ export async function validateVariantRuntimeConfiguration({ enabled, client, wor
     to_regclass('atlas_manual_connected.variant_job') IS NOT NULL AND
     to_regclass('atlas_manual_connected.variant_confirmation') IS NOT NULL AND
     to_regclass('atlas_manual_connected.variant_catalog_cache') IS NOT NULL AND
-    to_regprocedure('atlas_manual_connected.retry_variant_labels(uuid,uuid,uuid,text,text,integer,text,text,text,text)') IS NOT NULL AS installed`);
+    EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('atlas_manual_connected.retry_variant_labels(uuid,uuid,uuid,text,text,integer,text,text,text,text)')
+      AND p.prosecdef AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+      AND p.proowner=(SELECT proowner FROM pg_proc WHERE oid=to_regprocedure('atlas_manual_connected.variant_label_retry_journal_guard()'))
+      AND encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='7e6af50e5ddaad5ad650eef013eac1c2ea8987bad54bac1781f437add3381a07')
+    AND EXISTS(SELECT 1 FROM pg_trigger t WHERE t.tgrelid=to_regclass('atlas_manual_connected.variant_catalog_cache')
+      AND t.tgname='variant_label_retry_journal' AND t.tgenabled='O'
+      AND t.tgfoid=to_regprocedure('atlas_manual_connected.variant_label_retry_journal_guard()'))
+    AND EXISTS(SELECT 1 FROM pg_trigger t WHERE t.tgrelid=to_regclass('atlas_manual_connected.variant_job')
+      AND t.tgname='variant_job_guard' AND t.tgenabled='O'
+      AND t.tgfoid=to_regprocedure('atlas_manual_connected.variant_job_guard()')) AS installed`);
   requireThat(installed?.installed === true, 503, 'VARIANT_QUEUE_SCHEMA_REQUIRED');
   const [grants] = await client.$queryRawUnsafe(`SELECT
     has_table_privilege(current_user,'atlas_manual_connected.variant_job','SELECT') AND

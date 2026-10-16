@@ -58,7 +58,7 @@ for(const scenario of ['success','uncertain','saved_acknowledgement_lost','retai
  const events=[],row={key:'source-job',claim_id:'source-claim',input:{identity:{}}};let claimed=false,sourceCalls=0,finished;
  const source={bodyText:'retained raw provider body'},reservation={dispatchId:'source-dispatch'};
  const store={discover:async()=>{},claim:async()=>{if(claimed)return null;claimed=true;return row;},renew:async()=>true,
-  reserveListingSource:async()=>{events.push('reserve committed');return scenario==='retained'?{state:'REUSED',source}:{state:'RESERVED',reservation};},
+  reserveListingSource:async(_job,_request,{retainedOnly})=>{if(scenario==='retained')return {state:'REUSED',source};if(retainedOnly)return {state:'MISSING'};events.push('reserve committed');return {state:'RESERVED',reservation};},
   saveListingSource:async(r,s)=>{assert.equal(r,reservation);assert.equal(s,source);events.push('response committed');if(scenario==='saved_acknowledgement_lost')throw Error('acknowledgement lost');return true;},
   codexReadings:async()=>({readings:[]}),publishLabelSource:async()=>{},saveCatalog:async()=>true,finish:async(_job,result)=>{finished=result;return true;},defer:async()=>{events.push('deferred');return true;},
   dispatch:async()=>assert.fail('No photo-model dispatch for an empty reference snapshot')};
@@ -66,7 +66,7 @@ for(const scenario of ['success','uncertain','saved_acknowledgement_lost','retai
  let outcome,admissions=0;const worker=createVariantWorker({store,catalog:{prepare:async(_input,{executeListingSource})=>{
   outcome=await executeListingSource({requestKey:'public-identity'},async()=>{assert.equal(events[0],'reserve committed');events.push('HTTP');sourceCalls++;if(scenario==='uncertain')throw Error('transport lost');return source;});
   return labelCatalog({count:0,photos:0});}},loadPhotos:async()=>assert.fail('No private photos loaded'),provider:noModel,projectResponse:()=>assert.fail('No model projection'),
-  admitDispatch:async()=>scenario!=='priority'||++admissions<2});
+  admitDispatch:async()=>scenario!=='priority'});
  await worker.drainOnce();
  assert.equal(sourceCalls,['retained','priority'].includes(scenario)?0:1);
  if(scenario==='priority'){assert.deepEqual(events,['deferred']);assert.equal(finished,undefined);}

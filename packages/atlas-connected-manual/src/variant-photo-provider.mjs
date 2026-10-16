@@ -117,8 +117,10 @@ export function createVariantPhotoProvider({ apiKey, readReferenceImage, fetchIm
       requestId: requestId && /^[A-Za-z0-9_-]{1,160}$/.test(requestId) ? requestId : null };
   };
   send.labelRequest = prepareVariantLabelRequest;
-  send.prepare = async ({ catalog: raw, photoShas = null, signal }) => {
-    const catalog = validateVariantReviewSnapshot(raw), request = prepareVariantLabelRequest(catalog,photoShas);
+  send.prepare = async ({ catalog: raw, photoShas = null, request: retainedRequest = null, signal }) => {
+    const catalog = validateVariantReviewSnapshot(raw), request = prepareVariantLabelRequest(catalog,photoShas,retainedRequest ? {
+      includeCatalogContext:Object.hasOwn(retainedRequest,'catalogContext'),includeAssociationRevision:Object.hasOwn(retainedRequest,'associationRevision') } : {});
+    requireThat(!retainedRequest||canonicalJson(retainedRequest)===canonicalJson(request),409,'VARIANT_LABEL_RETRY_REQUEST_CHANGED');
     requireThat(request.photos.length > 0 && request.photos.length <= VARIANT_PHOTO_LIMITS.referenceImages && request.choices.length > 0, 409, 'VARIANT_DIAGNOSTIC_REFERENCE_REQUIRED');
     const content = [{ type: 'input_text', text: canonicalJson({ choices: request.choices, catalogContext: request.catalogContext }) }]; let totalBytes = 0;
     for (const ref of request.photos) {

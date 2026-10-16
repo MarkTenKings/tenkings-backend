@@ -55,7 +55,7 @@ test('running status shows saved partial readings without completing or changing
  assert.equal(status.result.referenceLabels.readings.filter(r=>r.candidateId).length,7);
  assert.deepEqual(status.labelProcessing,{total:581,read:8,unread:573});
  assert.equal(status.confirmation,null);assert.equal(status.approvalReady,false);assert.equal(status.refreshable,false);
- assert.equal(f.queries.filter(q=>q.sql.includes('ANY(')).length,2,'Two batched reads cover all 581 photos and printing libraries');
+ assert.equal(f.queries.filter(q=>q.sql.includes('ANY(')).length,3,'Three batched reads cover all 581 readings, printing libraries and shared reservations');
  assert.deepEqual({row:f.row,entries:[...f.entries],card:f.card},before);
  for(let i=8;i<16;i++)f.addReading(i);
  const next=await f.service.status({},f.card.cardId);
