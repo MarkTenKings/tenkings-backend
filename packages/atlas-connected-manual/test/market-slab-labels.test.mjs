@@ -146,3 +146,23 @@ test('unavailable photograph failures cannot be reported as a successful empty l
  assert.equal(f.calls.model,0);assert.equal(out.imageMatch.counts.failed,2);
  const preview=createPresentationMarket().project(f.source,out).preview;assert.equal(preview.candidates.length,2);assert.equal(preview.labelProcessing.failed,2);
 });
+
+test('durable progress reports completed batches, reused readings and missing photos without inventing review', async () => {
+  const f = await fixture({photos:10}), checkpoints = [];
+  f.response.items.push({...f.response.items[0], id:'atlas-sale:10', imageUrl:null});
+  const out = await f.label({...f, onProgress: async value => checkpoints.push(structuredClone(value))});
+  assert.deepEqual(checkpoints.map(p => [p.completed,p.unavailable,p.pending]), [[0,0,11],[8,0,3],[10,1,0]]);
+  assert(checkpoints.every(p => p.returned === 11 && p.failed === 0 && p.unknown === 0));
+  const reused = []; await f.label({...f, onProgress: async value => reused.push(value)});
+  assert.deepEqual(reused.map(p => [p.completed,p.unavailable,p.pending]), [[0,0,11],[8,0,3],[10,1,0]]);
+  assert.equal(f.calls.model,2); assert.equal(out.imageMatch.readings.length,11);
+});
+test('progress distinguishes failed and unknown label responses from still-pending photos', async () => {
+  for (const options of [{responseMode:'http'},{failSend:true}]) {
+    const f = await fixture(options), checkpoints=[];
+    await f.label({...f,onProgress: async value => checkpoints.push(value)});
+    assert.equal(checkpoints[0].pending,2); assert.equal(checkpoints[0].failed,0);
+    const final=checkpoints.at(-1);assert.equal(final.pending,0);assert.equal(final.completed,0);
+    assert.equal(final.failed,options.responseMode?2:0);assert.equal(final.unknown,options.failSend?2:0);
+  }
+});

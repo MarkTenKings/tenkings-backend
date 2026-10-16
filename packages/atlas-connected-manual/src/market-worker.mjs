@@ -90,7 +90,12 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       requireThat(!response.pagination || response.query === publishedMarketQuery(source).query && response.pagination.page === page, 502, 'MARKET_PROVIDER_RESULT_INVALID');
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
-      const evidence = await labelMarket({ source, response: structuredClone(response), job });
+      const evidence = await labelMarket({ source, response: structuredClone(response), job,
+        onProgress: async progress => {
+          // Progress is advisory. A failed checkpoint must not repeat a paid
+          // search or discard already journaled photograph readings.
+          try { await store.recordProgress?.(job, progress); } catch (error) { emit(error); }
+        } });
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       let result = market.project(source, evidence);
       if (previous) {

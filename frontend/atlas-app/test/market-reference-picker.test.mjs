@@ -13,6 +13,11 @@ const text = value => Array.isArray(value) ? value.map(text).join('') : value &&
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const ready = () => ({ state: 'READY', previewId: 'retained-source-one', preview: { query: 'Fixture card identity', atlasGrade: 9.5, retrievedAt: '2026-09-22T00:00:00Z',
   candidates: [{ sale: { id: 'ebay:123456789012', title: 'Fixture sold card', listingUrl: 'https://www.ebay.com/itm/123456789012', grader: 'PSA', grade: '9', soldAt: '2026-09-21T00:00:00Z', priceMinor: 4000, currency: 'USD', priceBasis: 'sold' }, match: 'UNKNOWN', requiresReview: true }], excluded: {} } });
+const readingPhotos = () => ({ state: 'SEARCHING', stage: 'READING_PHOTOS', refreshable: false, previewId: 'pending-source', progress: { returned: 240 },
+  retrieved: { query: 'Michael Jordan NNO', retrievedAt: '2026-10-16T03:00:00Z', candidates: [{ sale: {
+    id: 'pending-sale', title: 'Jordan sold listing', listingUrl: 'https://www.ebay.com/itm/123456789013',
+    imageUrl: 'https://i.ebayimg.com/images/g/pending/s-l1600.jpg', soldAt: '2026-10-15T00:00:00Z',
+    priceMinor: 1200, currency: 'USD', priceBasis: 'sold', reportedPrice: '$12.00' } }] } });
 function fixture() {
   const slots = [], effects = []; let cursor = 0, dirty, tree;
   const f = { searches: 0, saves: [], props: { scopeKey: 'card:approval-one', available: true } };
@@ -186,4 +191,55 @@ test('raw, unread, different and off-grade rows remain selectable; older pages r
   assert.equal(f.find(node => node.type === 'input' && node.props.checked).length, 1);
   f.button('Publish references').props.onClick(); await flush(); f.render();
   assert.deepEqual(f.saves, [{ previewId: 'page-two', selectedIds: ['raw'] }]);
+});
+
+test('saved listings appear during photo review without a lookup, inferred grade or publication controls', () => {
+  const f = fixture(); f.props.automatic = true; f.props.savedSource = readingPhotos(); f.render();
+  assert.match(f.text(), /240 sold listings saved · Astra is reviewing photos/);
+  assert.match(f.text(), /Jordan sold listing/); assert.match(f.text(), /Oct 15, 2026/); assert.match(f.text(), /\$12\.00/);
+  assert.match(f.text(), /Astra review in progress/); assert.doesNotMatch(f.text(), /0 photos checked|Unread · Grade not verified|Recommended comparison|selectable/);
+  assert.equal(f.find(node => node.type === 'img')[0].props.src, readingPhotos().retrieved.candidates[0].sale.imageUrl);
+  assert.equal(f.find(node => node.type === 'input').length, 0); assert.equal(f.button('Publish references'), undefined);
+  assert.equal(f.button('Reviewing photos…').props.disabled, true); assert.equal(f.searches, 0); assert.equal(f.saves.length, 0);
+});
+
+test('real photo progress updates independently of listings and final preview replaces provisional rows', () => {
+  const f = fixture(); f.props.savedSource = readingPhotos(); f.render();
+  f.props.savedSource = { ...readingPhotos(), progress: { returned: 240, completed: 16, failed: 1, unknown: 2, unavailable: 3, pending: 218 } }; f.render();
+  assert.match(f.text(), /16 photos checked · 218 awaiting review · 1 photo review failed · 2 review outcomes unconfirmed · 3 without a photo/);
+  assert.equal(f.find(node => node.type === 'input').length, 0); assert.equal(f.searches, 0);
+  f.props.savedSource = ready(); f.render();
+  assert.doesNotMatch(f.text(), /Jordan sold listing|Astra review in progress|218 awaiting review/);
+  assert.match(f.text(), /Fixture sold card/); assert.equal(f.find(node => node.type === 'input').length, 1);
+  assert.equal(f.find(node => node.type === 'input')[0].props.checked, false);
+});
+
+test('provisional listings retain missing photos, unavailable prices and failures without claiming active review', () => {
+  const f = fixture(), value = readingPhotos();
+  value.state = 'FAILED'; value.reason = 'MARKET_LABEL_RESPONSE_INVALID'; value.refreshable = true; value.refreshAction = 'RETRY_SAVED_RESPONSE';
+  Object.assign(value.retrieved.candidates[0].sale, { imageUrl: null, listingUrl: null, soldAt: null, priceMinor: null, currency: null, priceBasis: 'unknown' });
+  f.props.savedSource = value; f.render();
+  assert.match(f.text(), /label-reading response could not be used/); assert.match(f.text(), /Photo review not complete/);
+  assert.match(f.text(), /Date unavailable/); assert.match(f.text(), /Sold amount unavailable/);
+  assert.doesNotMatch(f.text(), /Astra review in progress|Astra is reviewing photos/);
+  assert.equal(f.find(node => node.type === 'img').length, 0); assert.equal(f.find(node => node.type === 'input').length, 0);
+  assert.equal(f.button('Publish references'), undefined); assert.ok(f.button('Retry saved results')); assert.equal(f.searches, 0);
+});
+
+test('provisional rows cannot change an existing final-preview selection or its publication binding', async () => {
+  const f = fixture(); f.props.savedSource = ready(); f.render();
+  f.find(node => node.type === 'input')[0].props.onChange({ target: { checked: true } }); f.render();
+  f.props.savedSource = readingPhotos(); f.render();
+  assert.match(f.text(), /Jordan sold listing/); assert.match(f.text(), /Fixture sold card/);
+  assert.equal(f.find(node => node.type === 'input').length, 1);
+  f.button('Publish references').props.onClick(); await flush(); f.render();
+  assert.deepEqual(f.saves, [{ previewId: 'retained-source-one', selectedIds: ['ebay:123456789012'] }]);
+});
+
+test('changing card scope removes provisional rows and cannot expose a selectable pending preview', () => {
+  const f = fixture(); f.props.savedSource = readingPhotos(); f.render();
+  f.props.scopeKey = 'another-card:approval'; f.props.savedSource = { state: 'QUEUED', refreshable: false }; f.render();
+  assert.doesNotMatch(f.text(), /Jordan sold listing|Michael Jordan NNO/);
+  assert.equal(f.find(node => node.type === 'table').length, 0); assert.equal(f.find(node => node.type === 'input').length, 0);
+  assert.equal(f.searches, 0); assert.equal(f.saves.length, 0);
 });

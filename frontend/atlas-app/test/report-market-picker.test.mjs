@@ -83,3 +83,19 @@ test('late polling for the previous approval cannot replace the new card saved r
   f.render(); await flush(); f.render(); finish({ revision: 0, marketSearch: { state: 'READY', previewId: 'old-card' } }); await pending; f.render();
   assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.previewId, 'next-card'); assert.equal(f.timers.size, 0);
 });
+
+test('polling surfaces retained listings and photo counters before READY without starting another search', async () => {
+  const f = fixture(); let marketSearch = { state: 'SEARCHING', previewId: 'saved', refreshable: false };
+  f.read = options => ({ revision: 0, approvalActionId: options.approvalActionId, marketSearch });
+  await flush(); f.render();
+  const poll = async () => { const tick = [...f.timers.values()][0]; assert.equal(typeof tick, 'function'); f.timers.clear(); await tick(); f.render(); };
+  marketSearch = { ...marketSearch, stage: 'READING_PHOTOS', progress: { returned: 240 }, retrieved: { query: 'Jordan', candidates: [{ sale: { id: 'one', title: 'Saved listing' } }] } };
+  await poll();
+  assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.retrieved.candidates[0].sale.id, 'one');
+  assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.progress.completed, undefined);
+  marketSearch = { ...marketSearch, progress: { returned: 240, completed: 8, pending: 232, failed: 0, unknown: 0, unavailable: 0 } };
+  await poll(); assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.progress.completed, 8);
+  marketSearch = { state: 'READY', previewId: 'saved', refreshable: true }; await poll();
+  assert.equal(f.find(node => node.type === 'picker')[0].props.savedSource.state, 'READY'); assert.equal(f.timers.size, 0);
+  assert.equal(f.clients[0].previews, 0); assert.equal(f.changes.length, 0);
+});

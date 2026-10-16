@@ -37,12 +37,23 @@ const stored = row => {
   requireThat(!row.response || digest(row.response) === row.response_hash, 503, 'MARKET_RESPONSE_CORRUPT');
   return { ...row, response: row.response ? JSON.parse(row.response) : null };
 };
+const progressKeys = ['returned','completed','failed','unknown','unavailable','pending'];
+const validProgress = value => value && Object.keys(value).length === progressKeys.length
+  && progressKeys.every(key => Number.isSafeInteger(value[key]) && value[key] >= 0)
+  && value.completed + value.failed + value.unknown + value.unavailable + value.pending === value.returned;
+const retainedProgress = row => [...(row.audit ?? [])].reverse().find(event => event.event === 'LABEL_PROGRESS'
+  && event.responseHash === row.response_hash && validProgress(event.progress)
+  && event.progress.returned === row.response?.items?.length)?.progress;
 export function marketJobStatus(row) {
   if (!row) return { state: 'NOT_REQUESTED', refreshable: true };
   const state = ['RUNNING','REQUESTED'].includes(row.state) ? 'SEARCHING' : row.state;
   const retired = state !== 'READY' && (marketHasRetiredReclassification(row) ? 'MARKET_RECLASSIFICATION_RETIRED'
     : row.response && row.response.responsePolicy !== 'ATLAS_SLAB_V1' ? 'MARKET_PROVIDER_POLICY_INVALID' : null);
+  const reviewing = state === 'SEARCHING' && !retired && Array.isArray(row.response?.items);
+  const progress = reviewing ? retainedProgress(row) : null;
   return { state, previewId: row.request_id, approvalActionId: row.approval_action_id,
+    ...(reviewing ? { stage: 'READING_PHOTOS', progress: progress ?? { returned: row.response.items.length } }
+      : state === 'SEARCHING' && !retired ? { stage: 'FINDING_LISTINGS' } : {}),
     updatedAt: new Date(row.updated_at ?? row.created_at).toISOString(), ...((retired ?? row.code) ? { reason: retired ?? row.code } : {}),
     refreshable: !['QUEUED','SEARCHING','UNKNOWN'].includes(state),
     ...(state === 'FAILED' && !retired && row.response ? { refreshAction: 'RETRY_SAVED_RESPONSE' } : {}) };
@@ -232,6 +243,22 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       // persisted dispatch can append it; immutable evidence cannot be replaced.
       return machine(async ({ tx, principal }) => (await tx.$executeRawUnsafe(`UPDATE ${table} SET response=$3,response_hash=$4,audit=audit||jsonb_build_array(jsonb_build_object('event','RESPONSE','dispatchId',$2::text,'responseHash',$4::text,'at',clock_timestamp())),updated_at=clock_timestamp()
         WHERE request_id=$1::uuid AND dispatch_id=$2::uuid AND mode=$5 AND response IS NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(audit) a WHERE a->>'event'='RECLASSIFY')`, job.request_id, job.claim_id, value, digest(value), principal.mode)) === 1);
+    },
+    recordProgress(job, progress) {
+      requireThat(validProgress(progress), 500, 'MARKET_PROGRESS_INVALID');
+      return machine(async ({ tx }) => {
+        const row = stored((await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} FOR UPDATE OF j`, job.request_id, job.claim_id))[0]);
+        if (!row) return false;
+        requireThat(row.response?.responsePolicy === 'ATLAS_SLAB_V1' && progress.returned === row.response.items?.length,
+          409, 'MARKET_PROGRESS_SOURCE_MISMATCH');
+        const previous = retainedProgress(row);
+        // Recovered workers can replay saved readings. Never rewind the visible
+        // count or append one event for every cached row on each retry.
+        if (previous && previous.pending <= progress.pending) return true;
+        return (await tx.$executeRawUnsafe(`UPDATE ${table} j SET audit=audit||jsonb_build_array(jsonb_build_object(
+          'event','LABEL_PROGRESS','claimId',$2::text,'responseHash',response_hash,'progress',$3::jsonb,'at',clock_timestamp()))
+          WHERE ${active}`, job.request_id, job.claim_id, JSON.stringify(progress))) === 1;
+      });
     },
     finish(job, { result = null, code = null, disposition = 'FAILED' } = {}) {
       requireThat(result?.state === 'READY' || /^[A-Z][A-Z0-9_]{0,100}$/.test(code ?? ''), 500, 'MARKET_RESULT_INVALID');

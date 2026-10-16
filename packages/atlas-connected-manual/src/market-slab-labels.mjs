@@ -177,20 +177,30 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     await machine(async({tx})=>{await lock(tx,key);const prior=await read(tx,`${key}:response`);requireThat(!prior||stableJson(prior)===stableJson(saved),503,'MARKET_LABEL_RESPONSE_CONFLICT');if(!prior)await write(tx,`${key}:response`,saved);});
     await published(request,saved,photos.map(({sha256,mimeType,width,height,url})=>({sha256,mimeType,width,height,url})));
   }
-  return async function labelMarket({source,response,job}) {
+  return async function labelMarket({source,response,job,onProgress=null}) {
     requireThat(response?.responsePolicy==='ATLAS_SLAB_V1'&&Array.isArray(response.items),409,'MARKET_LABEL_SOURCE_INVALID');
     const target=await targetFor(source,job),readings=[],mediaByUrl=new Map(),pending=[];
+    let checkpointed = -1;
+    async function checkpoint(force=false) {
+      if (typeof onProgress !== 'function' || readings.length === checkpointed
+        || !force && checkpointed >= 0 && readings.length - checkpointed < 8) return;
+      const progress = { returned: response.items.length, completed: 0, failed: 0, unknown: 0, unavailable: 0,
+        pending: response.items.length - readings.length };
+      for (const reading of readings) progress[{ COMPLETE:'completed',FAILED:'failed',UNKNOWN:'unknown',UNAVAILABLE:'unavailable' }[reading.outcome]]++;
+      await onProgress(progress); checkpointed = readings.length;
+    }
+    await checkpoint(true);
     async function flush(){if(!pending.length)return;const photos=[...new Map(pending.map(v=>[v.photo.sha256,v.photo])).values()];await batch(target,photos,job);
       for(const {row,photo} of pending){const r=readingOutcome(await retained(target,photo)??await unresolved(target,photo));readings.push({...r,rowId:row.id,imageUrl:row.imageUrl,
-        canonicalCardKey:r.identityMatch==='MATCH'?target.canonicalCardKey:null,canonicalPrintingKey:r.identityMatch==='MATCH'?target.canonicalPrintingKey:null});}pending.length=0;}
-    for(const row of response.items){if(!row.imageUrl){readings.push(emptyReading(row,'No usable public photograph was returned for this sale.'));continue;}
+        canonicalCardKey:r.identityMatch==='MATCH'?target.canonicalCardKey:null,canonicalPrintingKey:r.identityMatch==='MATCH'?target.canonicalPrintingKey:null});}pending.length=0;await checkpoint(true);}
+    for(const row of response.items){await checkpoint();if(!row.imageUrl){readings.push(emptyReading(row,'No usable public photograph was returned for this sale.'));continue;}
       let photo=mediaByUrl.get(row.imageUrl);
       if(photo===undefined){try{photo={...await readRetainedListingPhoto(row.imageUrl,{cache,fetchImpl,inspectImage,now}),url:row.imageUrl};}catch{photo=null;}mediaByUrl.set(row.imageUrl,photo);if(mediaByUrl.size>8)mediaByUrl.delete(mediaByUrl.keys().next().value);}
       if(!photo){readings.push(emptyReading(row,'The public listing photograph could not be read.','FAILED','MARKET_PHOTO_UNAVAILABLE'));continue;}
       const prior=await retained(target,photo);if(prior){readings.push({...readingOutcome(prior),rowId:row.id,imageUrl:row.imageUrl,canonicalCardKey:prior.identityMatch==='MATCH'?target.canonicalCardKey:null,canonicalPrintingKey:prior.identityMatch==='MATCH'?target.canonicalPrintingKey:null});continue;}
       pending.push({row,photo});if(new Set(pending.map(v=>v.photo.sha256)).size>=8)await flush();
     }
-    await flush();readings.sort((a,b)=>response.items.findIndex(r=>r.id===a.rowId)-response.items.findIndex(r=>r.id===b.rowId));
+    await flush();await checkpoint(true);readings.sort((a,b)=>response.items.findIndex(r=>r.id===a.rowId)-response.items.findIndex(r=>r.id===b.rowId));
     return {...response,imageMatch:{policy:MARKET_SLAB_POLICY,readings,counts:{returned:response.items.length,photographs:readings.filter(r=>r.sha256).length,
       read:readings.filter(r=>r.labelText!==null).length,matched:readings.filter(r=>r.identityMatch==='MATCH').length,uncertain:readings.filter(r=>r.identityMatch==='UNCERTAIN').length,different:readings.filter(r=>r.identityMatch==='DIFFERENT').length,
       completed:readings.filter(r=>r.outcome==='COMPLETE').length,failed:readings.filter(r=>r.outcome==='FAILED').length,unknown:readings.filter(r=>r.outcome==='UNKNOWN').length,unavailable:readings.filter(r=>r.outcome==='UNAVAILABLE').length}}};

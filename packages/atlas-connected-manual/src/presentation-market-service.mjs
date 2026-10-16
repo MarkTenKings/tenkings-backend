@@ -1,6 +1,7 @@
 import { digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
-import { marketJobStatus } from './market-job-store.mjs';
+import { marketHasRetiredReclassification, marketJobStatus } from './market-job-store.mjs';
 import { createPresentationMarket, marketPreviewHash, MARKET_UNAVAILABLE_REASONS } from './presentation-market.mjs';
+import { projectRetrievedMarketPool } from './market-retrieved-pool.mjs';
 
 // Automatic approval jobs and explicit staff refresh share saved previews.
 // Durable mode never calls a provider inside HTTP; ambiguous requests remain
@@ -23,6 +24,13 @@ export function createPresentationMarketService({ repository, approved, artifact
   const publicPreview = value => {
     const { sourceHash, ref, input, ...publicValue } = value; return publicValue;
   };
+  async function activeStatus(staff, cardId, job) {
+    const status = marketJobStatus(job);
+    if (status.state !== 'SEARCHING' || job.response?.responsePolicy !== 'ATLAS_SLAB_V1'
+      || marketHasRetiredReclassification(job)) return status;
+    const source = await approved.loadPacket(staff, cardId, job.approval_action_id);
+    return { ...status, stage: 'READING_PHOTOS', retrieved: projectRetrievedMarketPool(source, job) };
+  }
   return Object.freeze({
     enabled: Boolean(provider && jobs),
     async image(staff, cardId, previewId, sha256) {
@@ -38,7 +46,7 @@ export function createPresentationMarketService({ repository, approved, artifact
     async status(staff, cardId) {
       const job = jobs ? await jobs.latest(staff, cardId) : null;
       if (job) {
-        const status = marketJobStatus(job);
+        const status = await activeStatus(staff, cardId, job);
         if (status.state !== 'READY') return status;
         return { ...status, ...publicPreview(await saved(staff, cardId, status.previewId)) };
       }
@@ -53,7 +61,7 @@ export function createPresentationMarketService({ repository, approved, artifact
       requireThat(jobs, 503, 'MARKET_DURABLE_LABEL_WORKER_REQUIRED');
       const job = await jobs.reserve(staff, cardId, input);
       void worker?.wake();
-      return job.state === 'READY' ? { ...marketJobStatus(job), ...publicPreview(await saved(staff, cardId, job.request_id)), requestId: input.requestId } : { ...marketJobStatus(job), requestId: input.requestId };
+      return job.state === 'READY' ? { ...marketJobStatus(job), ...publicPreview(await saved(staff, cardId, job.request_id)), requestId: input.requestId } : { ...await activeStatus(staff, cardId, job), requestId: input.requestId };
     },
     async select(staff, cardId, input) {
       object(input, ['requestId','approvalActionId','expectedRevision','previewId','selectedIds']);

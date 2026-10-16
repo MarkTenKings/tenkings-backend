@@ -117,9 +117,24 @@ try {
   const lost = claims[0], saved = claims[1];
   const savedSource = await approved.loadPacket(staff, saved.card_id, saved.approval_action_id);
   const savedResult = { source:'EBAY_SOLD',engineVersion:EBAY_SOLD_COMPS_V2_ENGINE_VERSION,query:publishedMarketQuery(savedSource).query,retrievedAt:new Date().toISOString(),offset:0,nextOffset:0,requestedResultCount:240,hasMore:false,responsePolicy:'ATLAS_SLAB_V1',items:[],acquisitionDiagnostics:{returnedItemCount:0,retainedItemCount:0,missingImageCount:0} };
+  savedResult.items = [0,1].map(index => ({id:`atlas-sale:${index}`,title:'Synthetic retained sale',listingUrl:null,imageUrl:null,
+    soldDate:null,reportedPrice:null,soldPriceCents:null,currency:null,priceBasis:'UNKNOWN'}));
+  savedResult.acquisitionDiagnostics = {returnedItemCount:2,retainedItemCount:2,missingImageCount:2};
   assert(await store.recordResponse(saved, savedResult));
+  const progress = {returned:2,completed:1,failed:0,unknown:0,unavailable:0,pending:1};
+  await assert.rejects(async()=>store.recordProgress(saved,{...progress,pending:-1}),{code:'MARKET_PROGRESS_INVALID'});
+  await assert.rejects(store.recordProgress(saved,{...progress,returned:3,pending:2}),{code:'MARKET_PROGRESS_SOURCE_MISMATCH'});
+  assert.equal(await store.recordProgress({...saved,claim_id:randomUUID()},progress),false);
+  assert(await store.recordProgress(saved,progress));
+  assert.deepEqual((await service.status(staff,saved.card_id)).progress,progress);
+  assert(await store.recordProgress(saved,{...progress,completed:0,pending:2}));
+  assert.deepEqual((await service.status(staff,saved.card_id)).progress,progress);
+  assert.equal((await store.latest(staff,saved.card_id)).audit.filter(event=>event.event==='LABEL_PROGRESS').length,1);
+  assert.equal(providerCalls,1,'Progress and retained-pool status do not dispatch paid searches');
+  checks.push('restricted-role progress update is exact-response/claim-bound, monotonic, read-only on GET, and does not replace final preview');
   await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.market_job SET lease_until=clock_timestamp()-interval '1 second' WHERE request_id=ANY($1::uuid[])", claims.map(x=>x.request_id));
   assert.equal(await store.finish(lost,{code:'STALE',disposition:'RETRY'}),false);
+  assert.equal(await store.recordProgress(saved,{...progress,completed:2,pending:0}),false);
   const restart = createMarketJobStore({boundary:machine});
   const reclaimed = await restart.claim(2); assert.equal(reclaimed.request_id,saved.request_id); assert(reclaimed.response);
   assert.equal((await store.latest(staff,lost.card_id)).state,'UNKNOWN');

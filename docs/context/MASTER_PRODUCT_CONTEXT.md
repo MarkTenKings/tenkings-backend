@@ -1,5 +1,12 @@
 # Ten Kings Master Product Context
 
+## October 16 — Approved sold-comps progress repair (source validated; rollout pending)
+
+Final-grade approval already queues SoldComps automatically. The reported Jordan approval at17:01:02.506Z dispatched its query2.325seconds later and retained240 listings by17:01:16.038Z. The old UI waited for all Astra/xhigh listing-photo batches before exposing any listings, so a successful acquisition looked like an empty or stalled search. Real photo-reading progress was observed with no new quota error.
+
+The pending repair exposes safe retained listing photos/title/date/price immediately during photo review, separately from final selectable evidence, and reports durable per-listing review counts. Existing jobs without progress checkpoints show only the actual retrieved count. READY/public selection bindings remain unchanged. No new provider request is made by status polling; no schema migration or card-data repair is needed. SESSION_LOG records tests and rollout evidence; source validation alone is not a live deployment claim.
+
+
 ## Current ATLAS identity repair — live (October 15, 2026)
 
 Application source `f4e8fc8a6a54cb9366a8c9ca2333440eefa6655e` is live on native services and staff/public web. Publication and canonical verification are complete; fresh authenticated production upload acceptance remains pending. This checkpoint supersedes older identification policy and serving identities below. The Labels NFC handoff, Photoroom Plus HD removal/original-photo fallback, half-grade artwork, human approval rules and customer deployment remain preserved.

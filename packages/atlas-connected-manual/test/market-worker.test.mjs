@@ -7,7 +7,7 @@ import { marketJobStatus, marketJobGrantSQL, createMarketJobStore } from '../src
 import { publishedMarketQuery } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
-async function setup({ providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1, now, reclassify=false, legacyResponse=false, labelMarket=async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}}), queryContextResolver=null } = {}) {
+async function setup({ progressError = false, providerError = null, failArtifact = false, loseResponseReceipt = false, jobs = 1, now, reclassify=false, legacyResponse=false, labelMarket=async({response})=>({...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}}), queryContextResolver=null } = {}) {
   const fixture = await publicationFixture(); await fixture.publication.publish({}, fixture.cardId, fixture.actionId);
   const manifest = JSON.parse(fixture.row.manifest);
   const packet = await fixture.artifacts.read(manifest.packet.ref, { cardId: fixture.cardId, kind: 'PUBLIC_REPORT', sourceHash: manifest.packet.sourceHash });
@@ -24,6 +24,7 @@ async function setup({ providerError = null, failArtifact = false, loseResponseR
     async claim() { const row = rows.find(row => row.state === 'QUEUED'); if (!row) return null;
       row.state = 'RUNNING'; row.claim_id = randomUUID(); row.attempts++; return structuredClone(row); },
     async renew() { return true; }, async bind() { return true; },
+    async recordProgress() { if (progressError) throw Error("checkpoint unavailable"); return true; },
     async dispatch(job) { const row = rows.find(row => row.request_id === job.request_id); assert.equal(row.state, 'RUNNING'); assert.equal(row.response, null); row.state = 'REQUESTED'; return true; },
     async recordResponse(job, response) { const row = rows.find(row => row.request_id === job.request_id); row.response = structuredClone(response);
       if (loseResponseReceipt) { loseResponseReceipt = false; throw Error('Commit acknowledgement lost'); } return true; },
@@ -166,4 +167,27 @@ test('fresh provider cannot execute the historical title-only path while its exa
   await f.worker.drainOnce();
   assert.equal(f.rows[0].state, 'FAILED'); assert.equal(f.rows[0].code, 'MARKET_PROVIDER_POLICY_INVALID');
   assert.equal(f.calls(), 1); assert.equal(f.writes(), 0); assert.deepEqual(f.rows[0].response, f.original);
+});
+
+test('status separates provider retrieval from photo review and never invents old-run progress', () => {
+  const row={state:'REQUESTED',request_id:randomUUID(),approval_action_id:randomUUID(),created_at:'2026-10-16T00:00:00Z',response:null};
+  assert.equal(marketJobStatus(row).stage,'FINDING_LISTINGS');
+  row.response={responsePolicy:'ATLAS_SLAB_V1',items:[{id:'a'},{id:'b'}]};row.response_hash='a'.repeat(64);
+  assert.deepEqual(marketJobStatus(row).progress,{returned:2});
+  const progress={returned:2,completed:1,failed:0,unknown:0,unavailable:0,pending:1};
+  row.audit=[{event:'LABEL_PROGRESS',responseHash:row.response_hash,progress},
+    {event:'LABEL_PROGRESS',responseHash:'another response',progress:{...progress,completed:2,pending:0}},
+    {event:'LABEL_PROGRESS',responseHash:row.response_hash,progress:{...progress,pending:-1}}];
+  assert.equal(marketJobStatus(row).stage,'READING_PHOTOS');assert.deepEqual(marketJobStatus(row).progress,progress);
+  row.state='READY';assert.equal(marketJobStatus(row).progress,undefined);
+});
+test('progress receipt failure does not fail labeling or repeat the paid provider lookup', async () => {
+  const checkpoints=[];
+  const f=await setup({progressError:true,labelMarket:async({response,onProgress})=>{
+    assert.equal(f.rows[0].response.query,response.query);
+    await onProgress({returned:0,completed:0,failed:0,unknown:0,unavailable:0,pending:0});
+    checkpoints.push('continued');
+    return {...response,imageMatch:{policy:'atlas-market-slab-label-v1',readings:[],counts:{}}};
+  }});
+  await f.worker.drainOnce();assert.deepEqual(checkpoints,['continued']);assert.equal(f.calls(),1);assert.equal(f.rows[0].state,'READY');
 });

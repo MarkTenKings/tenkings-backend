@@ -52,6 +52,18 @@ export function marketSearchMessage(value) {
     PROVIDER_NOT_CONFIGURED: 'The sold-sales provider is not configured.',
     PROVIDER_OUTCOME_UNKNOWN: 'The provider outcome is not confirmed. Check the saved search; another lookup will not be purchased.' })[value?.reason];
   if (reason) return reason;
+  if (value?.stage === 'READING_PHOTOS' && ['SEARCHING', 'QUEUED'].includes(value.state)) {
+    const count = number => Number.isSafeInteger(number) && number >= 0;
+    const progress = value.progress ?? {}, parts = [count(progress.returned)
+      ? `${progress.returned} sold ${progress.returned === 1 ? 'listing' : 'listings'} saved` : 'Sold listings saved',
+    value.state === 'QUEUED' ? 'Astra photo review queued' : 'Astra is reviewing photos'];
+    if (count(progress.completed)) parts.push(`${progress.completed} ${progress.completed === 1 ? 'photo' : 'photos'} checked`);
+    if (count(progress.pending)) parts.push(`${progress.pending} awaiting review`);
+    if (count(progress.failed) && progress.failed) parts.push(`${progress.failed} photo ${progress.failed === 1 ? 'review' : 'reviews'} failed`);
+    if (count(progress.unknown) && progress.unknown) parts.push(`${progress.unknown} review ${progress.unknown === 1 ? 'outcome' : 'outcomes'} unconfirmed`);
+    if (count(progress.unavailable) && progress.unavailable) parts.push(`${progress.unavailable} without a photo`);
+    return `${parts.join(' · ')}. Results update automatically.`;
+  }
   return ({ NOT_REQUESTED: 'No saved search for this approval yet.', QUEUED: 'Sold comps queued · Results will appear automatically.',
     SEARCHING: 'Searching sold listings · Results will appear automatically.', UNKNOWN: 'The provider outcome is not confirmed. Check the saved search before another lookup.',
     FAILED: 'The saved search needs attention. Your approved grade is unchanged.', UNAVAILABLE: 'Sold-card search is currently unavailable.' })[value?.state] ?? '';

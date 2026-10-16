@@ -2,12 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { groupSoldReferences, marketSearchMessage, saleAmountLabel, saleDateLabel } from '@atlas/manual-workspace/sold-references';
 import styles from './MarketReferencePicker.module.css';
 
-const validSource = value => value?.state === 'READY' && typeof value.previewId === 'string' && value.previewId.length > 0
-  && Array.isArray(value.preview?.candidates)
-  && value.preview.candidates.every(candidate => typeof candidate.sale?.id === 'string'
+const validCandidates = candidates => Array.isArray(candidates)
+  && candidates.every(candidate => typeof candidate.sale?.id === 'string'
     && typeof candidate.sale.title === 'string'
     && ['sold', 'accepted_offer_unknown', 'unknown'].includes(candidate.sale.priceBasis))
-  && new Set(value.preview.candidates.map(candidate => candidate.sale.id)).size === value.preview.candidates.length;
+  && new Set(candidates.map(candidate => candidate.sale.id)).size === candidates.length;
+const validSource = value => value?.state === 'READY' && typeof value.previewId === 'string' && value.previewId.length > 0
+  && validCandidates(value.preview?.candidates);
 function message(error) {
   if (error?.code === 'MARKET_PUBLICATION_MISMATCH') return 'This selection no longer matches the current report. Check the saved result before starting another search.';
   return 'The result is not confirmed yet. Retry this saved selection.';
@@ -73,6 +74,12 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   if (!available) return null;
   const blocked = disabled || Boolean(busy) || pending, current = savedSource?.state === 'READY' ? source : savedSource ?? source;
   const waiting = ['QUEUED', 'SEARCHING', 'PENDING'].includes(current?.state), uncertain = current?.state === 'UNKNOWN';
+  const photoReviewLabel = waiting && current?.stage === 'READING_PHOTOS'
+    ? current.state === 'QUEUED' ? 'Photo review queued' : 'Reviewing photos…' : '';
+  // Saved source listings are visible while their photos are being read. They
+  // never become a selectable preview or replace a prior completed selection.
+  const retrieved = current?.state !== 'READY' && typeof current?.retrieved?.query === 'string'
+    && validCandidates(current.retrieved.candidates) ? current.retrieved : null;
   const slabComps = source?.preview.version === 'atlas-market-preview-v2';
   const groups = slabComps ? source.preview.candidates.length ? [{ key: 'recent', label: 'Sold listings',
     identityLabel: 'Raw, graded and unread cards · AI evidence assists your selection', needsReview: false,
@@ -90,12 +97,29 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   return <section className={styles.panel} aria-label="Grade report sales references">
     <div className={styles.heading}><div><p className={styles.eyebrow}>REPORT · MARKET REFERENCES</p><h3>{title}</h3></div>
       <button type="button" disabled={blocked || waiting || current?.refreshable === false && !uncertain}
-        onClick={() => { if ((uncertain || automatic && searchPending) && callbacks.current.onCheck) void callbacks.current.onCheck(); else void search(); }}>{uncertain || searchPending ? 'Check saved search' : current?.refreshAction === 'RETRY_SAVED_RESPONSE' ? 'Retry saved results' : source ? refreshLabel : searchLabel}</button></div>
+        onClick={() => { if ((uncertain || automatic && searchPending) && callbacks.current.onCheck) void callbacks.current.onCheck(); else void search(); }}>{photoReviewLabel || (uncertain || searchPending ? 'Check saved search' : current?.refreshAction === 'RETRY_SAVED_RESPONSE' ? 'Retry saved results' : source ? refreshLabel : searchLabel)}</button></div>
     {(cardName || cardImage) && <div className={styles.cardHeading}>{cardImage && <div className={styles.cardImage}>{cardImage}</div>}<div><h4>{cardName || 'Approved card'}{card?.cardNumber && <span> #{card.cardNumber}</span>}</h4>
       {card?.parallel && <span className={styles.variant}>{card.parallel}</span>}<p>{[card?.year, card?.manufacturer, card?.productSet].filter(Boolean).join(' · ')}</p><small>Approved ATLAS identity · Unrecorded variant details remain unconfirmed</small></div></div>}
     <p className={styles.note}>{note}</p>
     {notice && <p className={styles.searchStatus} role="status">{notice}</p>}
     {!notice && !error && <p className={styles.searchStatus} role="status">{source ? source.preview.candidates.length ? `${source.preview.candidates.length} sold ${source.preview.candidates.length === 1 ? 'comp' : 'comps'} ready for your review` : 'Search saved · No sales returned'  : automatic ? automaticEnabled ? 'Saved results appear here automatically after approval.' : 'Saved results appear here. Start a search when needed.' : 'Search when needed · no lookup starts from opening this tool'}</p>}
+    {retrieved && <div aria-label="Saved listings awaiting photo review">
+      <div className={styles.query}><span>Search: {retrieved.query}</span><span>Retrieved {saleDateLabel(retrieved.retrievedAt)}</span></div>
+      <div className={styles.groupHeading}><h4>Saved sold listings</h4><span>{retrieved.candidates.length} available to inspect</span></div>
+      <p className={styles.note}>You can inspect these listings now. Photo review must finish before you can select and publish these references.</p>
+      {retrieved.candidates.length ? <div className={styles.tableWrap}><table className={styles.retrievedTable}>
+        <caption className={styles.srOnly}>Saved sold listings · Photo review not complete</caption>
+        <thead><tr><th scope="col">Date</th><th scope="col">Sold listing</th><th scope="col">Sold price</th></tr></thead>
+        <tbody>{retrieved.candidates.map(({ sale }) => <tr key={sale.id}>
+          <td className={styles.soldDate}>{sale.soldAt ? <time dateTime={sale.soldAt}>{saleDateLabel(sale.soldAt)}</time> : 'Date unavailable'}</td>
+          <td className={styles.saleTitle}><strong>{waiting ? current.state === 'QUEUED' ? 'Astra photo review queued' : 'Astra review in progress' : 'Photo review not complete'}</strong>
+            {sale.imageUrl && <a href={sale.imageUrl} target="_blank" rel="noopener noreferrer" className={styles.compPhoto}><img src={sale.imageUrl} alt="Saved sold listing photograph · Photo review not complete" loading="lazy"/><span>Enlarge photo ↗</span></a>}
+            {sale.listingUrl ? <a href={sale.listingUrl} target="_blank" rel="noopener noreferrer">{sale.title}<span aria-hidden="true"> ↗</span></a> : <span>{sale.title}</span>}
+            <small>Listing title supplied by the seller · Card identity and grade have not been verified</small></td>
+          <td className={styles.money}>{saleAmountLabel(sale)}</td>
+        </tr>)}</tbody>
+      </table></div> : <div className={styles.empty}><strong>No sold listings returned</strong></div>}
+    </div>}
     {source && <><div className={styles.query}><span>Search: {source.preview.query}</span><span>ATLAS {source.preview.atlasGrade} · Retrieved {saleDateLabel(source.preview.retrievedAt)}</span></div>
       {!groups.length && <div className={styles.empty}><strong>No sold listings returned</strong><p>This page returned no sales. Try older sales when another page is available.</p></div>}
       {slabComps && source.preview.labelProcessing?.state === 'PARTIAL' && <p className={styles.error} role="status">Some label readings could not finish: {source.preview.labelProcessing.failed} failed · {source.preview.labelProcessing.unknown} unconfirmed. All returned listings remain available below.</p>}
