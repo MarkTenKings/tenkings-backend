@@ -4,3 +4,4 @@
 
 .compPhoto{display:flex;flex-direction:column;align-items:flex-start;gap:5px;margin:12px 0;max-width:230px}.compPhoto img{display:block;width:auto;max-width:100%;height:260px;object-fit:contain;background:#f6f6f5}.compPhoto span{font-size:11px}.slabLabel{white-space:pre-wrap;font-size:13px;line-height:1.45;color:#292a26;padding:10px;background:#f5f4ef;border-radius:6px}
 .panel .retrievedTable th:first-child{width:120px}.panel .retrievedTable th:nth-child(2){width:auto}
+@media(max-width:700px){.panel .retrievedTable tbody tr{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
