@@ -4,7 +4,11 @@ import { createManualClient } from '../src/client.mjs';
 
 const key = 'atlas-manual-pending:v1:staff:card';
 const initial = { actionId: 'old-action', expectedRevision: 1, action: { type: 'MEASURE_SIDE', side: 'FRONT' } };
-const current = revision => ({ card: { revision }, defects: { saved: revision } });
+const current = revision => ({ card: { cardId: 'card', revision, contentHash: String(revision).padStart(64, '0'), draft: {} }, defects: { saved: revision } });
+const committed = command => ({ card: current(command.expectedRevision + 1).card, receipt: {
+  actionId: command.actionId, actorId: 'staff', actorKind: 'HUMAN', expectedRevision: command.expectedRevision,
+  revision: command.expectedRevision + 1, requestHash: 'a'.repeat(64), recordedAt: '2026-10-16T19:00:00.000Z',
+} });
 const response = (value, status = 200) => ({ ok: status < 400, status, json: async () => value });
 function memory() {
   const values = new Map();
@@ -23,13 +27,13 @@ test('delayed old recovery finish cannot remove a new action from another recove
       if (++oldViews === 2) { oldFinishing.resolve(); await releaseOld.promise; }
       return response(current(2));
     }
-    return response({ state: 'COMMITTED' });
+    return response({ state: 'COMMITTED', result: committed(initial) });
   });
   const recovering = old.recover(); await oldFinishing.promise;
   const sent = [];
   const fresh = client(storage, async (url, options) => {
     if (url.endsWith('/view')) return response(current(2));
-    if (url.endsWith(`/actions/${initial.actionId}`)) return response({ state: 'COMMITTED' });
+    if (url.endsWith(`/actions/${initial.actionId}`)) return response({ state: 'COMMITTED', result: committed(initial) });
     if (options.method === 'POST') { sent.push(options.body); newPosted.resolve(); await releaseNew.promise; }
     throw Error('Synthetic uncertain new reply');
   });
@@ -44,7 +48,7 @@ test('delayed old recovery finish cannot remove a new action from another recove
   const resumed = client(storage, async (url, options) => {
     if (url.endsWith('/view')) return response(current(3));
     if (options.method !== 'POST') return response({ state: 'NOT_FOUND' });
-    sent.push(options.body); return response({ card: { revision: 3 } });
+    sent.push(options.body); return response(committed(JSON.parse(options.body)));
   });
   await resumed.recover();
   assert.equal(sent.length, 2); assert.equal(sent[1], sent[0]); assert.equal(sent[1], newPending);
@@ -83,13 +87,13 @@ test('definite recovery refusal resumes the latest view, preserving a newer jour
 });
 
 test('uncertain retries retain the originally journaled payload after the caller mutates its action object', async () => {
-  const storage = memory(), action = { type: 'MEASURE_SIDE', side: 'FRONT' }, sent = [];
+  const storage = memory(), action = { type: 'MEASURE_SIDE', side: 'FRONT' }, sent = []; let revision = 2;
   const c = client(storage, async (url, options) => {
-    if (url.endsWith('/view')) return response(current(2));
+    if (url.endsWith('/view')) return response(current(revision));
     if (options.method === 'POST') {
       sent.push(options.body);
       if (sent.length === 1) { action.side = 'BACK'; throw Error('Synthetic lost reply'); }
-      return response({ card: { revision: 2 } });
+      revision = 3; return response(committed(JSON.parse(options.body)));
     }
     return response({ state: 'NOT_FOUND' });
   });

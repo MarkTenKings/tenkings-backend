@@ -44,6 +44,7 @@ export function manualMessage(error){
     INTAKE_TEMPORARILY_UNAVAILABLE:'The photo service could not finish this step. Resume this side to check its saved upload. If it fails again, keep the upload for review. (INTAKE_TEMPORARILY_UNAVAILABLE)',
     REVIEW_DISPLAY_RETRY_STALE:'This photo preparation attempt changed. Reload the photo status before retrying.',REVIEW_DISPLAY_RETRY_STORAGE_UNAVAILABLE:'The browser could not retain this retry safely. Enable local storage and reload before retrying photo preparation.',
     MANUAL_DRAFT_STALE:'Another saved decision changed this card. Review the refreshed evidence before saving again.',MANUAL_REVISION_CONFLICT:'Another reviewer saved a newer version. Reload the current card before continuing.',MANUAL_EDIT_FORBIDDEN:'Your current access is read-only. A reviewer must save corrections.',
+    MANUAL_SAVED_REFRESH_REQUIRED:'Your edit is saved. Refresh the saved review before continuing.',
     MANUAL_PENDING_REQUEST:'Resume the saved request before starting another change.',
     MANUAL_STAFF_CHANGED:'The signed-in staff account changed. Reload this page before continuing.',
     REPORT_IMAGE_RETRY_UNAVAILABLE:'This image request has already changed. The current saved status is loaded below.',

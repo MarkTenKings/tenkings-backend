@@ -322,6 +322,12 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
     return result;
   } });
   return Object.freeze({ service, hydrate, provision, currentPreview: finalReviewPreview,
+    async assertViewCurrent(staff, card) {
+      const { principal } = await repository.load(staff, card.cardId);
+      if (assertCurrent) await assertCurrent({ card, principal, staff });
+      const { card: latest } = await repository.load(staff, card.cardId);
+      requireThat(latest.revision === card.revision && latest.contentHash === card.contentHash, 409, 'MANUAL_DRAFT_STALE');
+    },
     async readState(staff, cardId) {
       const { card, principal } = await repository.load(staff, cardId);
       if (assertCurrent) await assertCurrent({ card, principal, staff });

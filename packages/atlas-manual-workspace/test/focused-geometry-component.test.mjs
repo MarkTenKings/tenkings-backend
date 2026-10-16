@@ -13,13 +13,14 @@ const require=createRequire(new URL('../../../frontend/atlas-app/package.json',i
 const compiled=babel.transformSync(readFileSync(new URL('../src/FocusedGeometryWorkspace.jsx',import.meta.url),'utf8'),{filename:'FocusedGeometryWorkspace.jsx',presets:[[require.resolve('next/babel'),{'preset-env':{targets:{node:'current'}}}]],babelrc:false,configFile:false}).code;
 const text=node=>Array.isArray(node)?node.map(text).join(''):node&&typeof node==='object'?text(node.props?.children):node??'';
 const all=(node,predicate,out=[])=>{if(Array.isArray(node))node.forEach(n=>all(n,predicate,out));else if(node&&typeof node==='object'){if(predicate(node))out.push(node);all(node.props?.children,predicate,out);}return out;};
-function harness(extra={},load=image=>({url:image?.url})){const instances=new Map();let slots,cursor,dirty,effects=[],tree;
+function harness(extra={},load=image=>({url:image?.url})){const instances=new Map();let slots,cursor,dirty,effects=[],tree,prefetch=[];
   const effect=(fn,deps)=>{const i=cursor++,current=slots,old=current[i];if(!old||deps.some((v,n)=>!Object.is(v,old.deps[n]))){current[i]={deps,cleanup:old?.cleanup};effects.push(()=>{current[i].cleanup?.();current[i].cleanup=fn();});}};
   const react={Fragment:'fragment',createElement:(type,props,...children)=>({type,props:{...props,children}}),
     useState(initial){const i=cursor++,current=slots;if(!(i in current))current[i]=typeof initial==='function'?initial():initial;return[current[i],change=>{const next=typeof change==='function'?change(current[i]):change;if(!Object.is(next,current[i])){current[i]=next;dirty=true;}}];},
     useRef(value){const i=cursor++;if(!(i in slots))slots[i]={current:value};return slots[i];},useEffect:effect,useLayoutEffect:effect};
-  const exports={};vm.runInNewContext(compiled,{exports,require(name){if(name==='react')return react;if(name==='@atlas/grading-core/geometry')return core;if(name==='./geometry-actions.mjs')return geometry;if(name==='./geometry-focus.mjs')return focus;if(name==='./geometry-image.mjs')return{geometryImage};if(name==='./verified-image.mjs')return{useVerifiedImage:load,verifiedImageContentKey};if(name==='./gradient-snap')return{gradientMapFromImage:()=>null};return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);}});
+  const exports={};vm.runInNewContext(compiled,{exports,require(name){if(name==='react')return react;if(name==='@atlas/grading-core/geometry')return core;if(name==='./geometry-actions.mjs')return geometry;if(name==='./geometry-focus.mjs')return focus;if(name==='./geometry-image.mjs')return{geometryImage};if(name==='./verified-image.mjs')return{useVerifiedImage:load,verifiedImageContentKey};if(name==='./VerifiedImageCacheBoundary.jsx')return{usePrefetchVerifiedImages:images=>{prefetch=images;}};if(name==='./gradient-snap')return{gradientMapFromImage:()=>null};return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);}});
   const f={props:{...focusedFixture(),onApproveSide:async()=>{},...extra}};
+  f.prefetch=()=>prefetch;
   function expand(node,path='root'){if(Array.isArray(node))return node.map((n,i)=>expand(n,`${path}.${i}`));if(!node||typeof node!=='object')return node;if(typeof node.type==='function'){const id=`${path}:${node.type.name}:${node.props.key??''}`;if(!instances.has(id))instances.set(id,[]);slots=instances.get(id);cursor=0;return expand(node.type(node.props),`${id}.out`);}return{...node,props:{...node.props,children:expand(node.props.children,`${path}.children`)}};}
   f.render=()=>{let rounds=0;do{dirty=false;tree=expand({type:exports.FocusedGeometryWorkspace,props:f.props});const pending=effects;effects=[];pending.forEach(fn=>fn());assert.ok(++rounds<20);}while(dirty);return tree;};
   f.nodes=predicate=>all(tree,predicate);f.has=value=>text(tree).includes(value);f.button=label=>{const node=f.nodes(n=>n.type==='button'&&(text(n)===label||n.props['aria-label']===label))[0];assert.ok(node,label);return node;};
@@ -32,6 +33,34 @@ test('rapid geometry starts on one side with both outlines and exactly one Appro
   await f.ready();assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-handle')).length,8);assert.equal(f.button('Approve').props.disabled,false);
   assert.equal(f.nodes(n=>n.type==='input'&&n.props.type==='checkbox').length,0);assert.equal(f.nodes(n=>n.type==='button'&&text(n)==='Approve').length,1);
   assert.equal(f.has('Back is next'),true);
+});
+test('only a ready editable Front warms the exact Back geometry transport without giving Back approval readiness',async()=>{
+  const fixture=focusedFixture(),original=fixture.images.BACK.original;
+  original.display={url:'blob:back-lossless',sha256:'9'.repeat(64),byteCount:50,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:original.sha256,width:1600,height:2400};
+  const f=harness(fixture);assert.equal(f.prefetch().length,0);
+  await f.ready();assert.deepEqual(f.prefetch()[0],geometryImage(f.props.workspace,'BACK','PHYSICAL',f.props.images));
+  assert.equal(f.prefetch()[0].url,'blob:back-lossless');assert.equal(f.prefetch().length,1);
+  f.props.busy=true;f.render();assert.equal(f.prefetch().length,0);
+  f.props.busy=false;f.props.readOnly=true;f.render();assert.equal(f.prefetch().length,0);
+  f.props.readOnly=false;f.props.side='BACK';f.render();assert.equal(f.prefetch().length,0);
+  assert.ok(f.button('Approve').props.disabled,'Back must still decode and validate its own displayed dimensions');
+  await f.ready();assert.equal(f.button('Approve').props.disabled,false);
+});
+test('preload requires the current Back photograph and preserves unsaved Front geometry',async()=>{
+  const calls=[],f=harness({onApproveSide:async value=>calls.push(value)});await f.ready();
+  f.nudge('FRONT physical edge Top left');assert.ok(f.has('Unsaved adjustments'));
+  const expected=focus.focusedGeometryOutlines(f.props.workspace,'FRONT').physical[0].x+1/1600;
+  const back=f.props.images.BACK.original;
+  f.props.images={...f.props.images,BACK:{original:{...back,sha256:'8'.repeat(64)}}};f.render();
+  assert.equal(f.prefetch().length,0,'old frame metadata never warms a replacement photo');
+  f.props.images={...f.props.images,BACK:{original:{...back,url:null}}};f.render();assert.equal(f.prefetch().length,0);
+  f.props.images={...f.props.images,BACK:{original:{...back,url:'blob:renewed-back'}}};f.render();
+  assert.equal(f.prefetch()[0].url,'blob:renewed-back');assert.ok(f.has('Unsaved adjustments'));
+  await f.click('Approve');assert.equal(calls.length,1);assert.equal(calls[0].physical[0].x,expected);
+});
+test('a Front preview or wrong decoded dimensions cannot start speculative Back loading',async()=>{
+  const f=harness();await f.ready(800,1200);assert.equal(f.prefetch().length,0);
+  const pending=harness({},()=>({url:null,loading:true}));assert.equal(pending.prefetch().length,0);
 });
 test('missing Astra printed proposal shows its exact observation without a fabricated guide',async()=>{
  const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;

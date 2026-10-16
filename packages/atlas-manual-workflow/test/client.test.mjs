@@ -5,7 +5,11 @@ import { createManualClient } from '../src/client.mjs';
 const storage = () => { const values = new Map(); return { getItem: key => values.get(key) ?? null,
   setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key), values }; };
 const response = (value, status = 200) => ({ ok: status < 400, status, json: async () => value });
-const current = revision => ({ card: { revision }, defects: { saved: revision } });
+const current = revision => ({ card: { cardId: 'card', revision, contentHash: String(revision).padStart(64, '0'), draft: {} }, defects: { saved: revision } });
+const committed = command => ({ card: current(command.expectedRevision + 1).card, receipt: {
+  actionId: command.actionId, actorId: 'staff', actorKind: 'HUMAN', expectedRevision: command.expectedRevision,
+  revision: command.expectedRevision + 1, requestHash: 'a'.repeat(64), recordedAt: '2026-10-16T19:00:00.000Z',
+} });
 function client(store, fetchImpl, onView = () => {}) {
   return createManualClient({ cardId: 'card', staffId: 'staff', csrf: 'csrf', storage: store, fetchImpl, onView });
 }
@@ -14,7 +18,7 @@ test('lost reply reconciles the same action and reloads latest view rather than 
   const c = client(store, async (url, options) => {
     if (url.endsWith('/view')) return response(current(revision));
     if (options.method === 'POST') { posted.push(JSON.parse(options.body)); revision = 6; throw new Error('lost response after commit'); }
-    return response({ state: 'COMMITTED', result: { card: { revision: 4 } } });
+    return response({ state: 'COMMITTED', result: committed(posted[0]) });
   }, value => views.push(value));
   await c.load(); await c.execute({ type: 'INSPECT_SIDE' });
   assert.equal(posted.length, 1); assert.equal(posted[0].expectedRevision, 3);
@@ -33,7 +37,7 @@ test('unknown save blocks new edits and survives client recreation with exact sa
   const resumed = client(store, async (url, options) => {
     if (url.endsWith('/view')) return response(current(revision));
     if (!options.method) return response({ state: 'NOT_FOUND' });
-    posted.push(JSON.parse(options.body)); revision = 2; return response({ card: { revision } });
+    posted.push(JSON.parse(options.body)); revision = 2; return response(committed(posted.at(-1)));
   });
   await resumed.recover(); assert.equal(posted.length, 2); assert.deepEqual(posted[1], posted[0]);
   assert.equal(store.values.size, 0); assert.equal(resumed.current().card.revision, 2);
@@ -93,7 +97,7 @@ test('ordinary trace journals the exact saved artifact through unknown save and 
     if (url.endsWith('/view')) return response(current(revision));
     if (!options.method) return response({ state: 'NOT_FOUND' });
     assert.equal(url.endsWith('/trace'), false, 'recovery reuses the staged artifact');
-    posted.push(JSON.parse(options.body)); revision++; return response({ card: { revision } });
+    posted.push(JSON.parse(options.body)); revision++; return response(committed(posted.at(-1)));
   });
   await resumed.recover(); assert.deepEqual(posted[1], posted[0]); assert.equal(store.values.size, 0);
 });

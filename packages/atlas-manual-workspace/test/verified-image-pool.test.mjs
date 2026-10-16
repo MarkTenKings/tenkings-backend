@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createVerifiedImagePool } from '../src/verified-image-pool.mjs';
 import { createVerifiedImageResource, verifiedImageContentKey } from '../src/verified-image.mjs';
+import { geometryImage } from '../src/geometry-image.mjs';
+import { focusedFixture } from './focused-geometry-fixture.mjs';
 
 const image = { sha256: 'a'.repeat(64), byteCount: 10, width: 1350, height: 1858, url: '/a' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -33,6 +35,18 @@ test('report-to-editor resource unmount reuses verified bytes in the authorized 
   await second.update({ ...image, url: '/editor-grant' }, value => seen.push(value));
   assert.equal(f.loads.length, 1); assert.equal(seen.at(-1).url, 'blob:1');
   second.dispose(); f.pool.close();
+});
+test('a ready Front preload and visible Back geometry share the same qualified lossless transfer',async()=>{
+  const card=focusedFixture(),back=card.images.BACK.original;
+  back.display={url:'/back-lossless',sha256:'9'.repeat(64),byteCount:50,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:back.sha256,width:1600,height:2400};
+  const f=fixture(),descriptor=geometryImage(card.workspace,'BACK','PHYSICAL',card.images);
+  const warm=await f.pool.borrow(descriptor,{priority:0});warm.dispose();
+  back.display.url='/renewed-back-grant';
+  const resource=createVerifiedImageResource({load:(value,options)=>f.pool.borrow(value,options)}),seen=[];
+  await resource.update(geometryImage(card.workspace,'BACK','PHYSICAL',card.images),value=>seen.push(value));
+  assert.equal(f.loads.length,1);assert.equal(f.loads[0].descriptor.sourceSha256,back.sha256);
+  assert.equal(seen.at(-1).url,'blob:1');
+  resource.dispose();f.pool.close();
 });
 
 test('dimensions, source/policy and different authorization pools cannot share a lease', async () => {

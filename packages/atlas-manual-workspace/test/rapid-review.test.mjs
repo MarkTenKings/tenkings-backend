@@ -112,3 +112,46 @@ test('failed preparation publishes acknowledged compact geometry so the retained
  await approveRapidGeometrySide(mounted,input,execute,(_g,_s,q)=>q,checkpoint,refresh);
  assert.deepEqual(f.actions.map(a=>a.type),['GEOMETRY_EDIT','PREPARE_SIDE','GEOMETRY_EDIT']);
 });
+
+function committedFailureFixture(failAt){
+ const f=fixture(),checkpoint={},input={side:'FRONT',base:geometryBase(f.view.geometry,'FRONT','REVIEW'),physical:[{x:.01,y:.01},{x:.99,y:.01},{x:.99,y:.99},{x:.01,y:.99}],printedOriginal:[{x:.12,y:.13},{x:.88,y:.13},{x:.88,y:.87},{x:.12,y:.87}]};
+ f.view={...f.view,card:{cardId:f.view.geometry.cardId,revision:1,contentHash:'saved-1'}};
+ let failed=false,refreshes=0;
+ const execute=async(action,options)=>{
+  await f.execute(action);
+  const revision=f.view.card.revision+1;f.view={...f.view,card:{...f.view.card,revision,contentHash:`saved-${revision}`}};
+  if(!failed&&f.actions.length===failAt){failed=true;throw{code:'MANUAL_SAVED_REFRESH_REQUIRED',committed:true,committedRevision:revision,committedHash:f.view.card.contentHash};}
+  return f.view;
+ };
+ const refresh=async()=>{refreshes++;return f.view;};
+ return{f,input,checkpoint,execute,refresh,refreshes:()=>refreshes};
+}
+for(const [failAt,stage] of [[1,'physical edit'],[2,'preparation'],[3,'printed edit']])test(`known committed ${stage} with failed refresh resumes exact saved state without duplicate edits`,async()=>{
+ const{f,input,checkpoint,execute,refresh,refreshes}=committedFailureFixture(failAt),printed=structuredClone(input.printedOriginal);
+ await assert.rejects(approveRapidGeometrySide(f.view,input,execute,(_g,_s,q)=>q,checkpoint,refresh),{code:'MANUAL_SAVED_REFRESH_REQUIRED',committed:true});
+ assert.equal(refreshes(),1);assert.equal(checkpoint.saved.revision,f.view.card.revision);
+ assert.equal(checkpoint.step,failAt-1,'a committed error does not blindly advance the sequence');
+ await approveRapidGeometrySide(f.view,input,execute,(_g,_s,q)=>q,checkpoint,refresh);
+ assert.deepEqual(f.actions.map(a=>a.type),['GEOMETRY_EDIT','PREPARE_SIDE','GEOMETRY_EDIT']);
+ assert.deepEqual(f.actions[0].edit.quad,input.physical);assert.deepEqual(f.actions[2].edit.quad,printed);
+ assert.deepEqual(input.printedOriginal,printed);assert.equal(checkpoint.saved,undefined);assert.equal(checkpoint.step,3);
+});
+for(const drift of ['newer revision','different content','different card','older view'])test(`known-commit geometry recovery rejects ${drift} rather than rebasing the retained draft`,async()=>{
+ const{f,input,checkpoint,execute,refresh}=committedFailureFixture(1);
+ await assert.rejects(approveRapidGeometrySide(f.view,input,execute,(_g,_s,q)=>q,checkpoint,refresh));
+ const changed=structuredClone(f.view);
+ if(drift==='newer revision')changed.card.revision++;
+ if(drift==='different content')changed.card.contentHash='replacement-photos-or-other-edit';
+ if(drift==='different card')changed.geometry.cardId='other-card';
+ if(drift==='older view')changed.card.revision--;
+ await assert.rejects(approveRapidGeometrySide(changed,input,execute,(_g,_s,q)=>q,checkpoint,refresh),{code:'ATLAS_GEOMETRY_STALE'});
+ assert.equal(f.actions.length,1);assert.ok(checkpoint.saved);assert.equal(checkpoint.step,0);
+});
+test('an unknown geometry save does not authorize checkpoint rebasing from a changed view',async()=>{
+ const{f,input,checkpoint,execute,refresh}=committedFailureFixture(1);
+ const unknown=async(...args)=>{try{return await execute(...args);}catch{throw{code:'NETWORK_FAILED'};}};
+ await assert.rejects(approveRapidGeometrySide(f.view,input,unknown,(_g,_s,q)=>q,checkpoint,refresh),{code:'NETWORK_FAILED'});
+ assert.equal(checkpoint.saved,undefined);
+ await assert.rejects(approveRapidGeometrySide(f.view,input,execute,(_g,_s,q)=>q,checkpoint,refresh),{code:'ATLAS_GEOMETRY_STALE'});
+ assert.equal(f.actions.length,1);
+});

@@ -14,7 +14,7 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false, correctionFailure = null, needsSetup = false } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false, entryFailure = null, needsSetup = false } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
@@ -49,7 +49,10 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       return { jobs: f.approved ? [] : f.jobs };
     }
     if (url.endsWith(`/${key}`)) return packet;
-    if (url.endsWith(`/${packet.cardId}`)) return {manual:needsSetup?null:{current:true}};
+    if (url.endsWith(`/${packet.cardId}`)) {
+      if (entryFailure) { const failure = entryFailure; entryFailure = null; throw failure; }
+      return {manual:needsSetup?null:{current:true}};
+    }
     if (url.endsWith('/thumbnail')) return {images:{FRONT:{state:'READY',preview:{url:'/front-thumb.jpg'}},BACK:{state:'READY',preview:{url:'/back-thumb.jpg'}}}};
     if (url.endsWith(`/${key}/review`)) { f.approved = true; return response; }
     if (url.endsWith('/batch/resume')) {
@@ -79,10 +82,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/app' };
       if (name === '@atlas/manual-workspace/image-cache') return {usePrefetchVerifiedImages:()=>()=>()=>{}};
       if (name === '@atlas/manual-workspace/report-review') return { MachineReportReview };
-      if (name === '@atlas/manual-workflow/client') return { createManualClient: () => ({
-        recover: async () => correcting ? { finalReview: { reportHash: packet.reportHash } } : {},
-        execute: async action => { f.actions.push(action); if (correctionFailure) { const failure = correctionFailure; correctionFailure = null; throw failure; } },
-      }) };
+      if (name === '@atlas/manual-workflow/client') throw new Error('The dialog owns recovery; the queue must not create another command coordinator.');
       if (name === './ManualFinishing') return { __esModule: true, default: ManualFinishing, openManualLabelPrintWindow() {
         f.events.push('POPUP'); const popup = { closed: false, close() { this.closed = true; } }; f.popups.push(popup); return popup;
       } };
@@ -101,12 +101,16 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
   f.dispose = () => { f.disposed = true; slots.forEach(slot => slot?.cleanup?.()); };
   f.render(); await f.flush(); return f;
 }
-test('final corrections begin only on the explicit gesture and retain the exact displayed machine report binding', async () => {
+test('an explicit review gesture passes the selected card to its single workspace owner without a parent recovery', async () => {
   const f = await fixture();
   assert.equal(f.actions.length, 0);
   f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick();
   await f.flush();
-  assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
+  assert.equal(f.actions.length, 0);
+  const dialog = f.find(node=>node.type?.name==='RapidReviewDialog')[0];
+  assert.equal(dialog.props.job.key, f.packet.key); assert.equal(dialog.props.job.cardId, f.packet.cardId);
+  assert.equal(f.calls.filter(call=>call.url.endsWith(`/${f.packet.cardId}`)).length,1);
+  assert.equal(f.calls.filter(call=>call.url.endsWith('/view')).length,0);
   assert.deepEqual(f.routes, []); assert.ok(f.find(node=>node.type?.name==='RapidReviewDialog')[0]);
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
@@ -125,7 +129,9 @@ test('queue previews use the thumbnail-only projection without a full-photo prox
 });
 test('the contextual correction action retains the same explicit final-review binding', async () => {
   const f = await fixture(); f.reviews()[0].props.onCorrectFinding({ id: 'fixture-finding', side: 'BACK' }); await f.flush();
-  assert.equal(f.actions[0].type, 'BEGIN_FINAL_REVIEW'); assert.equal(f.actions[0].reportHash, f.packet.reportHash);
+  const dialog = f.find(node=>node.type?.name==='RapidReviewDialog')[0];
+  assert.equal(dialog.props.job.key,f.packet.key); assert.equal(dialog.props.job.initialInspection.side,'BACK');
+  assert.equal(f.actions.length,0);
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false); f.dispose();
 });
 test('a corrected report continues the current final review and cannot approve the old machine report', async () => {
@@ -179,14 +185,14 @@ test('partial batch report keeps evidence visible and gives geometry action inst
   const f=await fixture({partial:true});assert.equal(f.reviews().length,1);f.ready();
   assert.equal(f.find(node=>node.type==='button'&&/Approve/.test(text(node))).length,0);
   f.find(node=>node.type==='button'&&text(node)==='Review card →')[0].props.onClick();await f.flush();
-  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,0);assert.ok(f.find(node=>node.type?.name==='RapidReviewDialog')[0]);f.dispose();
+  assert.equal(f.actions.length,0);assert.equal(f.routes.length,0);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.key,f.packet.key);f.dispose();
 });
 
 test('old scoring policy explains the approval block and opens the bound final review only on an explicit gesture', async () => {
   const f = await fixture({ oldScoringPolicy: true }); f.ready();
   assert.equal(f.find(node=>node.type==='button'&&/Approve/.test(text(node))).length,0);
   f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick(); await f.flush();
-  assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
+  assert.equal(f.actions.length,0);
   assert.ok(f.find(node => node.type?.name === 'RapidReviewDialog')[0]);
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
@@ -204,7 +210,7 @@ test('label queue opens saved sheets without reopening a grade or dispatching fi
 });
 
  test('failed rapid entry exposes retry for the same card and intent without losing the report', async () => {
-  const f = await fixture({ correctionFailure: { code: 'MANUAL_TEMPORARILY_UNAVAILABLE' } });
+  const f = await fixture({ entryFailure: { code: 'MANUAL_TEMPORARILY_UNAVAILABLE' } });
   f.find(node => node.type === 'button' && text(node) === 'Start review →')[0].props.onClick();
   await f.flush();
   assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog').length, 0);
@@ -213,14 +219,15 @@ test('label queue opens saved sheets without reopening a grade or dispatching fi
   f.find(node => node.type === 'button' && text(node) === 'Retry opening review')[0].props.onClick();
   await f.flush();
   assert.ok(f.find(node => node.type?.name === 'RapidReviewDialog')[0]);
-  assert.deepEqual(f.actions[1], f.actions[0]);
+  assert.equal(f.actions.length,0);
+  assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.cardId,f.packet.cardId);
   assert.doesNotMatch(f.text(), /Retry opening review/); assert.equal(f.popups.length, 0); f.dispose();
 });
-test('a definitely stale machine binding resumes the current review without an extra recovery choice', async () => {
-  const f = await fixture({ correctionFailure: { code: 'BATCH_REVIEW_STALE' } });
+test('queue entry leaves exact report recovery to the mounted workspace', async () => {
+  const f = await fixture();
   f.find(node => node.type === 'button' && text(node) === 'Start review →')[0].props.onClick(); await f.flush();
   assert.doesNotMatch(f.text(), /Open saved card workspace|Retry opening review/);
-  await f.flush();assert.deepEqual(f.routes, []);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog').length,1);assert.equal(f.actions.length,1,'saved-work fallback never tries to adopt the stale report again'); assert.equal(f.popups.length, 0); f.dispose();
+  await f.flush();assert.deepEqual(f.routes, []);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog').length,1);assert.equal(f.actions.length,0);assert.equal(f.calls.filter(call=>call.url.endsWith('/view')).length,0);assert.equal(f.popups.length, 0); f.dispose();
 });
 
 

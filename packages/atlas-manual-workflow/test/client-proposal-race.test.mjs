@@ -9,11 +9,16 @@ const storage = () => { const values = new Map(); return { getItem: key => value
 const gate = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const input = action => ({ side: 'FRONT', base: { cardId: 'card', findingRevision: 3 }, analysisId: 'analysis', proposalId: 'proposal', action,
   ...(action === 'TRACE_SAVE' ? { trace: { id: 'trace', traceWire: { fixture: true } } } : {}) });
+const current = revision => ({ card: { cardId: 'card', revision, contentHash: String(revision).padStart(64, '0'), draft: {} } });
+const committed = command => ({ card: current(command.expectedRevision + 1).card, receipt: {
+  actionId: command.actionId, actorId: 'staff', actorKind: 'HUMAN', expectedRevision: command.expectedRevision,
+  revision: command.expectedRevision + 1, requestHash: 'a'.repeat(64), recordedAt: '2026-10-16T19:00:00.000Z',
+} });
 
 for (const waitAt of ['initial view', 'proposal-trace']) test(`a different uncertain save admitted during ${waitAt} cannot be overwritten by proposal review`, async () => {
   const store = storage(), started = gate(), release = gate(); let actionPosts = 0;
   const client = createManualClient({ cardId: 'card', staffId: 'staff', csrf: 'csrf', storage: store, fetchImpl: async (url, options) => {
-    if (url.endsWith('/view')) { if (waitAt === 'initial view') { started.resolve(); await release.promise; } return reply({ card: { revision: 3 } }); }
+    if (url.endsWith('/view')) { if (waitAt === 'initial view') { started.resolve(); await release.promise; } return reply(current(3)); }
     if (url.endsWith('/proposal-trace')) { started.resolve(); await release.promise;
       return reply({ type: 'ASTRA_PROPOSAL_REVIEW', side: 'FRONT', base: {}, analysisId: 'analysis', proposalId: 'proposal', action: 'TRACE_SAVE', traceRef: { key: 'exact' }, traceSourceHash: 'hash' }); }
     if (options.method === 'POST') actionPosts++; throw Error('unexpected action request');
@@ -29,11 +34,12 @@ for (const waitAt of ['initial view', 'proposal-trace']) test(`a different uncer
 test('a lost proposal action reply reconciles one journaled action without rerunning trace staging or choosing a new action id', async () => {
   const store = storage(), posts = [], stage = [];
   const client = createManualClient({ cardId: 'card', staffId: 'staff', csrf: 'csrf', storage: store, fetchImpl: async (url, options) => {
-    if (url.endsWith('/view')) return reply({ card: { revision: posts.length ? 4 : 3 } });
+    if (url.endsWith('/view')) return reply(current(posts.length ? 4 : 3));
     if (url.endsWith('/proposal-trace')) { stage.push(JSON.parse(options.body));
       return reply({ type: 'ASTRA_PROPOSAL_REVIEW', side: 'FRONT', base: {}, analysisId: 'analysis', proposalId: 'proposal', action: 'TRACE_SAVE', traceRef: { key: 'exact' }, traceSourceHash: 'hash' }); }
     if (url.endsWith('/actions')) { posts.push(options.body); throw Error('synthetic lost committed reply'); }
-    assert.equal(url.endsWith(`/actions/${JSON.parse(posts[0]).actionId}`), true); return reply({ state: 'COMMITTED' });
+    assert.equal(url.endsWith(`/actions/${JSON.parse(posts[0]).actionId}`), true);
+    return reply({ state: 'COMMITTED', result: committed(JSON.parse(posts[0])) });
   } });
   await client.reviewProposal(input('TRACE_SAVE'));
   assert.equal(stage.length, 1); assert.equal(posts.length, 1); assert.equal(store.getItem(key), null);
@@ -44,8 +50,8 @@ test('a lost proposal action reply reconciles one journaled action without rerun
 test('proposal acceptance strips browser actor assertions and leaves measurement as a separate later action', async () => {
   const store = storage(), posts = [];
   const client = createManualClient({ cardId: 'card', staffId: 'staff', csrf: 'csrf', storage: store, fetchImpl: async (url, options) => {
-    if (url.endsWith('/view')) return reply({ card: { revision: 3 + posts.length } });
-    posts.push(JSON.parse(options.body)); return reply({ committed: true });
+    if (url.endsWith('/view')) return reply(current(3 + posts.length));
+    posts.push(JSON.parse(options.body)); return reply(committed(posts.at(-1)));
   } });
   await client.reviewProposal({ ...input('ACCEPT'), actor: 'HUMAN', measurement: { areaMm2: 99 } });
   assert.equal(posts.length, 1); assert.equal(posts[0].action.type, 'ASTRA_PROPOSAL_REVIEW');

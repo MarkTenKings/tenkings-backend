@@ -11,7 +11,6 @@ import LabelSheets from './LabelSheets';
 import ManualCards, { ManualWorkspace } from './ManualCards';
 import { MachineReportReview } from '@atlas/manual-workspace/report-review';
 import { usePrefetchVerifiedImages } from '@atlas/manual-workspace/image-cache';
-import { createManualClient } from '@atlas/manual-workflow/client';
 import { createBatchReadQueue, mergeProcessingCards, queueProblemMessage, savedReviewName } from '../lib/batch-queue.mjs';
 
 const path = '/api/staff/manual-connected/cards/batch';
@@ -73,7 +72,7 @@ function RapidReviewDialog({ job, staff, csrf, busy, error, onClose, onQueued })
     <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">Review card <span>· {cardName}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></div></header>
     <div className={styles.rapidBody} data-review-scroll>
     {error&&<p className={styles.error} role="alert">{error}</p>}
-    {job.needsSetup?<ManualCards key={job.key} onNameChange={nameChanged} embedded staff={staff} cardId={job.cardId} reviewSession={reviewSession.current} onBusyChange={setLocked} onQueued={onQueued}/>:<ManualWorkspace key={job.key} onNameChange={nameChanged} initialInspection={job.initialInspection} initialReviewStage={job.initialInspection?'defects':null} reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>}
+    {job.needsSetup?<ManualCards key={job.key} onNameChange={nameChanged} embedded staff={staff} cardId={job.cardId} reviewSession={reviewSession.current} onBusyChange={setLocked} onQueued={onQueued}/>:<ManualWorkspace key={job.key} onNameChange={nameChanged} initialBatchReview={{key:job.key,cardId:job.cardId,state:job.state}} initialInspection={job.initialInspection} initialReviewStage={job.initialInspection?'defects':null} reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>}
     </div><footer id="atlas-rapid-actions" className="mc-rapid-actions" aria-label="Review controls"><div id="atlas-rapid-edits" className="mc-rapid-edit-dock"/></footer>
   </dialog>;
 }
@@ -165,23 +164,8 @@ export default function BatchGrading({ staff }) {
     try {
       const saved = await request(`/api/staff/manual-connected/cards/${job.cardId}`);
       const needsSetup = !saved.manual?.current;
-      if (!needsSetup) {
-        const client = createManualClient({ cardId: job.cardId, staffId: staff.id, csrf: session.current.csrf, storage: localStorage, basePath: STAFF_BASE_PATH, timeoutMs: 210000 });
-        const current = await client.recover();
-        if (lifetime.current !== owner) return;
-        // A completed machine report is adopted only with its exact saved hash.
-        // Partial preparation opens the same workspace without inventing one.
-        if (!current.finalReview && job.state === 'REVIEW') {
-          const detail = await readReview(job, true);
-          if (detail.state !== 'PENDING' && detail.reportHash) {
-            try { await client.execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: job.key, reportHash: detail.reportHash }); }
-            catch (failure) {
-              if (!['BATCH_REVIEW_STALE', 'MANUAL_REVISION_CONFLICT'].includes(failure.code)) throw failure;
-              await client.recover();
-            }
-          }
-        }
-      }
+      // The mounted workspace recovers and adopts its exact batch report with
+      // its own durable client. Opening must not load that workspace twice.
       if (lifetime.current === owner) {primeReviewAudio();reviewing.current=job.key;setRapidJob({...job,reviewName:savedReviewName(saved,job),initialInspection,needsSetup});}
     } catch (failure) { if (lifetime.current === owner) {
       setReviewError(messages[failure.code] ?? manualMessage(failure));

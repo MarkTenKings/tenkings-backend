@@ -3,6 +3,7 @@ import {sanitizeSpeedsterUnitQuad} from '@atlas/grading-core/geometry';
 import {geometryBase} from './geometry-actions.mjs';
 import {geometryImage} from './geometry-image.mjs';
 import {useVerifiedImage, verifiedImageContentKey} from './verified-image.mjs';
+import {usePrefetchVerifiedImages} from './VerifiedImageCacheBoundary.jsx';
 import {gradientMapFromImage, snapSpeedsterPoint} from './gradient-snap';
 import {focusedGeometryOutlines, geometryFocusBounds, geometryCamera, zoomGeometryAt, focusedCentering} from './geometry-focus.mjs';
 export {sourceQuadToPrepared} from './geometry-focus.mjs';
@@ -22,7 +23,7 @@ export function FocusedGeometryWorkspace({workspace,images,side='FRONT',readOnly
   return <FocusedSide key={identity} {...{workspace,images,side,readOnly,onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,reviewObservations,reviewRecovery,slot,label,image,hostBusy}} />;
 }
 
-function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,reviewObservations,reviewRecovery,slot,label,image,hostBusy}) {
+function FocusedSide({workspace,images,side,readOnly,onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,reviewObservations,reviewRecovery,slot,label,image,hostBusy}) {
   const verified=useVerifiedImage(typeof image?.url==='string'&&image.url.length?image:null,{cacheScope:JSON.stringify([workspace.cardId,side])});
   const preview=useVerifiedImage(verified.url?null:image?.preview);
   const contentKey=verifiedImageContentKey(image);
@@ -34,6 +35,11 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   const [size,setSize]=useState({width:640,height:680}),[view,setView]=useState({zoom:1,pan:{x:0,y:0}});
   const viewport=useRef(null),gradient=useRef(null),drag=useRef(null),panDrag=useRef(null),mounted=useRef(true),saving=useRef(false),loadGeneration=useRef(0);
   const ready=Boolean(verified.url&&contentKey&&readyKey===contentKey);
+  // Warm only the exact next geometry image, after the visible photo is ready.
+  // The pool verifies its bytes; Back still establishes its own display readiness.
+  const nextImage=ready&&side==='FRONT'&&!hostBusy&&!readOnly
+    ?geometryImage(workspace,'BACK','PHYSICAL',images):null;
+  usePrefetchVerifiedImages(nextImage?.url?[nextImage]:[]);
   const inactive=readOnly||hostBusy||busy||!ready;
   const camera=image&&bounds?geometryCamera(bounds,size,image,view):null;
   const needsPlacement=Boolean(placement)||outlines.needsPhysicalPlacement||(!outlines.printedAbsent&&outlines.needsPrintedPlacement);

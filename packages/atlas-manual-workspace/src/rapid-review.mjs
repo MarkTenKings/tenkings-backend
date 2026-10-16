@@ -16,6 +16,13 @@ export async function approveRapidGeometrySide(view, input, execute, sourceQuadT
   let current=view;
   const currentBase=()=>geometryBase(current.geometry,side,'REVIEW');
   if(checkpoint.target){
+    if(checkpoint.saved){
+      // A failed refresh can follow a proven commit. Rebase only onto the
+      // authoritative view of that exact receipt, never a later/other edit.
+      requireReview(current.geometry.cardId===checkpoint.saved.cardId
+        &&current.card?.revision===checkpoint.saved.revision&&current.card?.contentHash===checkpoint.saved.contentHash);
+      checkpoint.base=currentBase();delete checkpoint.saved;
+    }
     requireReview(same(checkpoint.base,currentBase()));
     if(checkpoint.target!==target){
       requireReview(same(input.base,checkpoint.inputBase)||same(input.base,currentBase()));
@@ -28,6 +35,11 @@ export async function approveRapidGeometrySide(view, input, execute, sourceQuadT
     try {
       current=await execute(action,{refresh});compact=refresh==='state';checkpoint.base=currentBase();
     } catch (error) {
+      if(error?.code==='MANUAL_SAVED_REFRESH_REQUIRED'&&error.committed===true
+        &&Number.isSafeInteger(error.committedRevision)&&error.committedRevision>0
+        &&typeof error.committedHash==='string'&&error.committedHash.length){
+        checkpoint.saved={cardId:current.geometry.cardId,revision:error.committedRevision,contentHash:error.committedHash};
+      }
       // A prior compact save can already be durable while the mounted editor
       // still shows its old base. Publish the saved state before returning a
       // failure; do not advance this checkpoint for an unacknowledged action.

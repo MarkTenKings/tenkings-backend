@@ -55,6 +55,36 @@ unknown transport/commit outcomes retain the pending command. A browser draft
 that has never been saved is not durable; the fixture blocks stage navigation
 and warns on unload while an outline or trace is being edited.
 
+Finding saves can opt in to a complete action response using
+`x-atlas-workspace: all` (or `inspection`). Only `DEFECT_EDIT`, `TRACE_SAVE`,
+`MEASURE_SIDE`, `INSPECT_SIDE` and `CONFIRM_FINDINGS` are enriched. The existing
+committed card and receipt are unchanged; optional `workspace` contains
+`version: atlas-manual-action-workspace-v1`, `imageScope`, and `view`, assembled
+through the same full view builder, including all metadata and verified image
+descriptors. Hydration reads the committed artifact references; a final
+authorization/photo/revision check excludes stale snapshots. The optional work
+gets at most five seconds, shortened by time already spent within a 200-second
+response budget; this does not change the action's existing execution deadline. The
+combined JSON must fit the existing 2 MiB private transport limit. Failure,
+expiry, concurrent change or oversized output returns the original receipt so
+the client can perform a full read. Timed-out hydration may finish later but
+cannot replace the returned receipt. No expiring grants enter the durable journal.
+
+The browser accepts the snapshot only with a matching committed receipt,
+revision, hash, complete state and metadata. It never replaces a full workspace
+with the geometry-only state endpoint. Unknown outcomes still reconcile the
+same command; a proven commit followed by a failed read clears only that exact
+journal, retains a revision/hash floor, and reports **Saved; refreshing**.
+Further mutations stay blocked until read recovery succeeds. Late reads cannot
+replace a newer saved view. Full report publication and post-confirmation work
+retain their existing execution order.
+
+The private transport signs this optional scope only when present, preserving
+legacy signatures without it. Release the compatible native verifier before
+the new web proxy forwards the header. For rollback to a native verifier that
+does not support it, restore the older web proxy first. No schema change is
+needed for this feature.
+
 ## Local verification
 
 Run `node --test test/*.test.mjs` for client, HTTP, workflow, and recovery

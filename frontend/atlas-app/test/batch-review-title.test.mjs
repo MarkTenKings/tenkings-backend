@@ -58,16 +58,20 @@ test('the actual persistent rapid dialog switches titles before the next workspa
   const f = harness(job('one', 'Jaxson Dart'));
   assert.equal(f.title(), 'Review card · Jaxson Dart');
   const first = f.child().props;
+  assert.deepEqual({...first.initialBatchReview},{key:'one',cardId:'card-one',state:undefined});
   first.onNameChange('Jaxson Dart corrected'); f.render();
   assert.equal(f.title(), 'Review card · Jaxson Dart corrected');
   f.changeJob(job('two', 'LaMelo Ball'));
   assert.equal(f.title(), 'Review card · LaMelo Ball');
   assert.equal(f.child().props.cardId, 'card-two');
+  assert.equal(f.child().props.initialBatchReview.cardId, 'card-two');
   assert.equal(f.child().props.reviewSession, first.reviewSession);
   assert.equal(f.modal.opens, 1, 'Advancing cards must not reopen the dialog or reset the review session');
   const nextCallback = f.child().props.onNameChange;
+  const workspaceKey = f.child().props.key;
   f.changeJob(job('two', 'LaMelo Ball', { revision: 2 }));
   assert.equal(f.child().props.onNameChange, nextCallback, 'Same-card title callback is stable across refreshed job objects');
+  assert.equal(f.child().props.key, workspaceKey, 'Queue refresh must not remount an open workspace');
   f.dispose();
 });
 

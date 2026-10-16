@@ -13,7 +13,9 @@ const LABEL_ITEM_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_
 const LABEL_ARTWORK_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/artwork\\?mode=(?:preview|print)$`);
 const VERSION = 'atlas-manual-private-v1';
 const PREFIX = 'x-atlas-manual-';
-const BOUND_HEADERS = ['cookie', 'x-atlas-csrf', 'origin', 'content-type', `${PREFIX}version`,
+const WORKSPACE_HEADER = 'x-atlas-workspace';
+const WORKSPACE_ACTION_PATH = /^\/api\/staff\/manual\/cards\/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\/actions$/;
+const BOUND_HEADERS = ['cookie', 'x-atlas-csrf', 'origin', 'content-type', WORKSPACE_HEADER, `${PREFIX}version`,
   `${PREFIX}timestamp`, `${PREFIX}nonce`, `${PREFIX}signature`];
 const PUBLIC_BASE = 'https://manual-route.invalid';
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -43,6 +45,13 @@ function header(req, name, max = 2048) {
     400, 'MANUAL_TRANSPORT_HEADER_INVALID');
   return value;
 }
+function workspaceScope(req) {
+  if (req.headers?.[WORKSPACE_HEADER] === undefined) return null;
+  const scope = header(req, WORKSPACE_HEADER, 10);
+  requireTransport(['all', 'inspection'].includes(scope) && req.method === 'POST' && WORKSPACE_ACTION_PATH.test(req.url),
+    400, 'MANUAL_TRANSPORT_HEADER_INVALID');
+  return scope;
+}
 
 /** Only the new card surfaces are transportable. Keep the exact path/query in
  * the signature; encoded path separators, dot normalization and absolute URLs
@@ -65,8 +74,13 @@ export function isManualServicePath(value) {
 function requestParts(req, bytes, timestamp, nonce) {
   requireTransport(isManualServicePath(req.url), 404, 'NOT_FOUND');
   requireTransport(req.method === 'GET' || req.method === 'POST', 405, 'MANUAL_METHOD_NOT_ALLOWED');
-  return [VERSION, req.method, req.url, sha256(bytes), sha256(header(req, 'cookie', 16384)),
+  const parts = [VERSION, req.method, req.url, sha256(bytes), sha256(header(req, 'cookie', 16384)),
     sha256(header(req, 'x-atlas-csrf', 512)), header(req, 'origin'), header(req, 'content-type', 256), timestamp, nonce];
+  const scope = workspaceScope(req);
+  // Keep legacy signatures byte-for-byte identical when this optional response
+  // contract is absent. When requested, bind its name and exact value too.
+  if (scope !== null) parts.push(WORKSPACE_HEADER, scope);
+  return parts;
 }
 function signature(key, parts) { return createHmac('sha256', key).update(JSON.stringify(parts)).digest('hex'); }
 function assertRequestShape(req, bytes, origin) {
@@ -233,7 +247,7 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
       const parts = requestParts(req, bytes, timestamp, nonce);
       const headers = { [`${PREFIX}version`]: VERSION, [`${PREFIX}timestamp`]: timestamp,
         [`${PREFIX}nonce`]: nonce, [`${PREFIX}signature`]: signature(signingKey, parts) };
-      for (const name of ['cookie', 'x-atlas-csrf', 'origin', 'content-type']) {
+      for (const name of ['cookie', 'x-atlas-csrf', 'origin', 'content-type', WORKSPACE_HEADER]) {
         const value = header(req, name, name === 'cookie' ? 16384 : 2048); if (value) headers[name] = value;
       }
       req.once?.('aborted', disconnected); res.once?.('close', disconnected);

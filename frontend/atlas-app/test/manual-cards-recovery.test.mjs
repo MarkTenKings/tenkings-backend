@@ -1,6 +1,7 @@
 import {reviewImagePreview} from '@atlas/manual-workspace';
 import * as reviewIdentity from '../lib/review-identity.mjs';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
+import * as reviewStartup from '../lib/manual-review-startup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -44,6 +45,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === 'react') return react;
       if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
+      if (name === '../lib/manual-review-startup.mjs') return reviewStartup;
       if (name === '../lib/review-identity.mjs') return reviewIdentity;
       if (name === './ReviewIdentityPanel') return {__esModule:true,default:'ReviewIdentityPanel'};
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};

@@ -3,6 +3,7 @@ import {reportAwardedGrade} from '../../../packages/atlas-manual-workspace/src/r
 import {reviewedMemoryState} from '../../../packages/atlas-manual-workspace/src/astra-review-ui.mjs';
 import * as reviewIdentity from '../lib/review-identity.mjs';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
+import * as reviewStartup from '../lib/manual-review-startup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -22,7 +23,7 @@ const base = Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { cardId: '
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
 const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(child => all(child, predicate, out));
   else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
-function harness({ journal, finalReview = false, rapid = false, initialGeometrySide = null, initialView = {}, recover, role = 'REVIEWER' } = {}) {
+function harness({ journal, finalReview = false, rapid = false, initialGeometrySide = null, initialBatchReview = null, initialView = {}, recover, role = 'REVIEWER' } = {}) {
   const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [], timers = new Map(), cleanups = [];
   let cursor = 0, tree, viewCallback, statusCallback;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
@@ -40,7 +41,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   f.respond = async (path, options) => path.endsWith('/view') ? f.current : { astra: f.current.astra };
   f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
     sourceHash: f.current.card.contentHash, canCertify: true, report: {}, review: {} });
-  const client = { recover: async () => { if(recover)await recover(f);viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
+  const client = { recover: async () => { f.recoveries=(f.recoveries??0)+1;if(recover)await recover(f);viewCallback(f.current); return f.current; }, hasPending: () => f.pending,needsRefresh:()=>Boolean(f.refreshNeeded),
     execute: async action => { f.actions.push(action); await f.onExecute?.(action);
       if (action.type === 'IDENTITY_EDIT') f.current = {...f.current,identity:action.identity,card:{...f.current.card,revision:f.current.card.revision+1,contentHash:`identity-${f.current.card.revision+1}`}};
       if (action.type === 'INSPECT_SIDE') f.current = {...f.current,defects:{...f.current.defects,inspected:[...(f.current.defects.inspected ?? []),action.side]}};
@@ -56,6 +57,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === 'react') return react;
       if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
+      if (name === '../lib/manual-review-startup.mjs') return reviewStartup;
       if (name === '../lib/review-identity.mjs') return reviewIdentity;
       if (name === './ReviewIdentityPanel') return {__esModule:true,default:'ReviewIdentityPanel'};
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
@@ -100,7 +102,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
   f.scroll = { top: 900, resets: 0, scrollTo({top}) { this.top = top; this.resets++; } };
-  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role }, cardId: f.cardId ?? 'card', csrf: 'csrf', initialReviewStage: !rapid&&!initialGeometrySide?'defects':null, initialGeometrySide, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;} });
+  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role }, cardId: f.cardId ?? 'card', csrf: 'csrf', initialReviewStage: !rapid&&!initialGeometrySide?'defects':null, initialGeometrySide, initialBatchReview:f.batchReview??initialBatchReview, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;} });
     const stage = all(tree,node=>node.props?.ref && /mc-rapid-stage|mc-complete/.test(node.props.className ?? ''))[0];
     if(stage)stage.props.ref.current={closest:selector=>selector==='[data-review-scroll]'?f.scroll:null};
     effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
@@ -124,6 +126,66 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   f.status = value => { statusCallback(value); f.render(); };
   f.render(); return f;
 }
+
+test('batch entry recovers once in the mounted owner and same-card updates preserve an active geometry edit',async()=>{
+  const batch={key:'batch',cardId:'card',state:'REVIEW'},f=harness({finalReview:true,rapid:true,initialBatchReview:batch});
+  await flush();f.render();assert.equal(f.recoveries,1);assert.equal(f.actions.length,0);
+  f.geometry().onEditingChange(true);f.render();assert.equal(f.locked,true);
+  f.batchReview={...batch,revision:2};f.render();await flush();f.render();
+  assert.equal(f.recoveries,1);assert.equal(f.actions.length,0);assert.equal(f.locked,true);
+  assert.equal(f.geometry().side,'FRONT');f.dispose();
+});
+test('the mounted batch workspace reads its fresh report and adopts it only after owned recovery',async()=>{
+  const f=harness({rapid:true,initialBatchReview:{key:'batch',cardId:'card',state:'REVIEW'}});
+  f.respond=async path=>path.endsWith('/batch/batch')?{state:'READY',reportHash:'current-machine-report'}:{astra:f.current.astra};
+  f.onExecute=async action=>{if(action.type==='BEGIN_FINAL_REVIEW')f.current={...f.current,finalReview:{reportHash:action.reportHash,report:{proposedGrade:9.5}}};};
+  await flush();f.render();assert.equal(f.recoveries,1);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)),[{type:'BEGIN_FINAL_REVIEW',batchKey:'batch',reportHash:'current-machine-report'}]);
+  assert.ok(f.geometry());assert.equal(f.popups.length,0);f.dispose();
+});
+test('a failed batch startup stays in the workspace retry state and never approves a grade',async()=>{
+  const f=harness({rapid:true,initialBatchReview:{key:'batch',cardId:'card',state:'REVIEW'}});
+  f.respond=async path=>{if(path.endsWith('/batch/batch'))throw{code:'MANUAL_TEMPORARILY_UNAVAILABLE',status:503};return{astra:f.current.astra};};
+  await flush();f.render();assert.equal(f.recoveries,1);assert.match(f.text(),/MANUAL_TEMPORARILY_UNAVAILABLE/);
+  assert.ok(f.button('Retry loading review'));assert.equal(f.actions.length,0);assert.equal(f.popups.length,0);
+  f.respond=async path=>path.endsWith('/batch/batch')?{state:'READY',reportHash:'current-machine-report'}:{astra:f.current.astra};
+  f.button('Retry loading review').props.onClick();await flush();f.render();
+  assert.equal(f.recoveries,2);assert.equal(f.actions.length,1);assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.ok(f.geometry());f.dispose();
+});
+test('authorization loss during batch startup shows sign-in recovery with no intermediate editor',async()=>{
+  const f=harness({rapid:true,initialBatchReview:{key:'batch',cardId:'card',state:'REVIEW'}});
+  f.respond=async()=>{throw{code:'SIGN_IN_REQUIRED',status:401};};
+  await flush();f.render();assert.equal(f.recoveries,1);assert.match(f.text(),/Sign in again/);
+  assert.equal(f.geometry(),undefined);assert.equal(f.actions.length,0);assert.equal(f.button('Retry loading review'),undefined);f.dispose();
+});
+test('known-commit recovery locks review, deduplicates clicks and preserves an active geometry draft',async()=>{
+  let release;
+  const f=harness({rapid:true,recover:async state=>{if(state.recoveries>1){await new Promise(resolve=>{release=resolve;});state.refreshNeeded=false;state.status('Saved');}}});
+  await flush();f.render();f.geometry().onEditingChange(true);f.render();
+  f.refreshNeeded=true;f.status('Saved; refreshing…');
+  assert.equal(f.geometry().busy,true);assert.equal(f.button('04Grade').props.disabled,true);
+  const recover=f.button('Refresh saved review').props.onClick,first=recover();
+  await recover();f.render();assert.equal(f.recoveries,2,'startup and one recovery only');
+  assert.equal(f.button('Refreshing saved review…').props.disabled,true);assert.equal(f.actions.length,0);
+  release();await first;await flush();f.render();
+  assert.equal(f.button('Refresh saved review'),undefined);assert.equal(f.geometry().busy,false);
+  assert.equal(f.locked,true,'unsaved geometry still prevents navigation');assert.equal(f.button('04Grade').props.disabled,true);
+  assert.doesNotMatch(f.text(),/already in progress|not confirmed/);assert.equal(f.actions.length,0);f.dispose();
+});
+test('expired authentication during a known-commit refresh exposes sign-in and keeps edits locked',async()=>{
+  const f=harness({rapid:true,recover:async state=>{if(state.recoveries>1)throw{status:401,code:'SIGN_IN_REQUIRED'};}});
+  await flush();f.render();f.refreshNeeded=true;f.status('Saved; refreshing…');
+  await f.button('Refresh saved review').props.onClick();await flush();f.render();
+  assert.match(f.text(),/Sign in again/);assert.equal(f.geometry().busy,true);assert.equal(f.button('04Grade').props.disabled,true);
+  assert.equal(f.button('Refresh saved review').props.disabled,false);assert.equal(f.actions.length,0);f.dispose();
+});
+test('a stale enabled geometry or navigation handler observes the current known-commit recovery lock',async()=>{
+  const f=harness({rapid:true});await flush();f.render();
+  const approve=f.geometry().onApproveSide,navigate=f.button('02Back').props.onClick;
+  f.refreshNeeded=true; // Before the status update can cause a new render.
+  navigate();await assert.rejects(approve({side:'FRONT'}),{code:'MANUAL_COMMAND_PENDING'});
+  f.render();assert.equal(f.geometry().side,'FRONT');assert.equal(f.actions.length,0);f.dispose();
+});
 
 test('final correction workspace shows the current computed grade and hides it while measurement is pending without creating human decisions', async () => {
   const f = harness({ finalReview: true }); await flush(); f.render();
