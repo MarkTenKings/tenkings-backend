@@ -937,6 +937,7 @@ test("rollback requires exact active hash and typed confirmation", async () => {
   input.dryRunEvidenceHash = preflight.dryRunEvidenceHash;
   input.typedConfirmation = preflight.requiredConfirmation;
   const activated = await runSpeedsterLearningActivation(store, input);
+  assert.ok(activated.activeRowHash);
   await assert.rejects(runSpeedsterLearningRollback(store, {
     typedConfirmation: "wrong",
     expectedActiveRowHash: activated.activeRowHash,

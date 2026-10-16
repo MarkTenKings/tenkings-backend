@@ -227,8 +227,8 @@ test("final capture joins the exact used lesson, scan ledger, source evidence, a
   assert.equal(diagnostics.sourceEvidenceId, source.id);
   assert.equal(diagnostics.lessonDraftChangedByOperator, false);
 
-  const forged = structuredClone(evaluated.learning);
-  forged.usedLesson!.evidenceId = "different-evidence";
+  const forged = { ...structuredClone(evaluated.learning),
+    usedLesson: { ...evaluated.learning.usedLesson!, evidenceId: "different-evidence" } };
   await assert.rejects(verify(forged), /missing or inconsistent|invalid|does not match/);
   await assert.rejects(
     verify(evaluated.learning, { ...source, sourceImageSha256: "b".repeat(64) }),

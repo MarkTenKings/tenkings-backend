@@ -355,6 +355,42 @@ test("legacy Pokémon layout choice is enabled before first save, then irreversi
   }
 });
 
+test("a missing Pokémon source year stays blank until the operator supplies a family year", async () => {
+  const missingYearSource: SpeedsterTrainSource = {
+    ...source,
+    cardProfile: "POKEMON",
+    familyLayoutType: "POKEMON",
+    identity: {
+      cardName: "Squirtle",
+      year: null,
+      productSet: "MEW EN",
+      parallel: "REVERSE HOLO",
+      cardNumber: "007/165",
+    },
+  };
+  const harness = await mount(loadedMap(), { body: { maps: dualSaveResult() }, status: 201 }, missingYearSource);
+  try {
+    const familyYear = harness.container.querySelector<HTMLInputElement>('[aria-label="Canonical Family map year"]');
+    const save = buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS");
+    assert.ok(familyYear);
+    assert.ok(save);
+    assert.equal(familyYear.value, "");
+    assert.equal(save.disabled, true);
+    assert.equal(harness.requests.length, 0);
+    await act(async () => {
+      Simulate.change(familyYear, { target: { value: "2023" } } as unknown as Parameters<typeof Simulate.change>[1]);
+    });
+    assert.equal(save.disabled, false);
+    await act(async () => fire(save, "click"));
+    await waitFor(() => harness.savedMaps.length === 1, "Missing-year Pokémon dual save did not settle");
+    const body = JSON.parse(String(harness.requests[0].init?.body));
+    assert.equal(body.familyYear, "2023");
+    assert.equal(missingYearSource.identity.year, null);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("locked Pokémon layout renders immutable authority provenance", async () => {
   const authoritativeSource: SpeedsterTrainSource = {
     ...source,

@@ -190,9 +190,9 @@ test("candidate-selection rejects coordinates and other extra authority", () => 
 });
 
 test("select requires an exact candidate and reject or unclear requires null", () => {
-  const selectWithoutCandidate = structuredClone(validDecisions);
+  const selectWithoutCandidate: Array<Record<string, unknown>> = structuredClone(validDecisions);
   selectWithoutCandidate[0]!.candidateId = null;
-  const rejectWithCandidate = structuredClone(validDecisions);
+  const rejectWithCandidate: Array<Record<string, unknown>> = structuredClone(validDecisions);
   rejectWithCandidate[7]!.decision = "reject_all";
 
   for (const invalid of [selectWithoutCandidate, rejectWithCandidate]) {

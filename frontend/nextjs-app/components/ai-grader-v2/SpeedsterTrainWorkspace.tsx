@@ -429,7 +429,7 @@ export function SpeedsterTrainWorkspace({
   const [familyLayoutType, setFamilyLayoutType] = useState<SpeedsterPokemonLayoutType | "">(
     speedsterPokemonLayoutType(source.identity) ?? source.familyLayoutType ?? "",
   );
-  const [familyYear, setFamilyYear] = useState(source.identity.year);
+  const [familyYear, setFamilyYear] = useState(source.identity.year ?? "");
   const [savedFamilyLayoutType, setSavedFamilyLayoutType] = useState<SpeedsterPokemonLayoutType | null>(null);
   const [message, setMessage] = useState(
     map.status === "LOADED"

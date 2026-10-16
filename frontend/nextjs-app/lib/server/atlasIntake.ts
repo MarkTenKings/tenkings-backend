@@ -34,7 +34,7 @@ export function atlasIntakeConfig(env: NodeJS.ProcessEnv = process.env) {
 export function atlasIntakeSourceTitle(source: SpeedsterReviewActionSession) {
     requireBridge(source.cardProfile === 'SPORTS' || source.cardProfile === 'POKEMON', 'INTAKE_IDENTITY_INVALID');
     const identity = canonicalizeSpeedsterSessionIdentity(source.cardProfile as 'SPORTS' | 'POKEMON', source.identity);
-    const clean = (value: string, limit: number) => value.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit).trim();
+    const clean = (value: string | null, limit: number) => (value ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit).trim();
     const title = clean('playerName' in identity ? identity.playerName : identity.cardName, 200);
     const subtitle = clean([identity.year, 'manufacturer' in identity ? identity.manufacturer : 'Pokémon', identity.productSet,
         'insert' in identity ? identity.insert : null, identity.parallel, identity.cardNumber ? `#${identity.cardNumber}` : null]

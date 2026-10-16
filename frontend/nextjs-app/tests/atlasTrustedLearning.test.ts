@@ -9,11 +9,11 @@ import { createAtlasTrustedLearningHandler } from '../lib/server/atlasTrustedLea
 import { harvestSpeedsterLearningCandidatesV2 } from '../lib/ai-grader-v2/learning-harvest-v2';
 import { SPEEDSTER_INSPECTION_DETECTOR_VERSION } from '../lib/ai-grader-v2/learning-articuno-dry-run-v2';
 import { SPEEDSTER_LEARNING_FINGERPRINT_VERSION } from '../lib/ai-grader-v2/learning-v2';
-import { atlasSpeedsterSourceEvidence, assertAtlasSpeedsterSourceAdmission } from '../lib/server/atlasGradingBridge';
+import { atlasGradingPolicyHash, atlasSpeedsterSourceEvidence, assertAtlasSpeedsterSourceAdmission } from '../lib/server/atlasGradingBridge';
 const phone='1'.repeat(64),key=Buffer.alloc(32,13);
 const settings=Object.freeze({...makeTrustedLearningConfig({mode:'PRODUCTION',origin:'https://learning.example.test',deploymentId:'dpl_private_fixture',
     releaseSha:'a'.repeat(40),key,gradingPolicyHash:'2'.repeat(64),phoneAllowlistHash:digest(canonical([phone])),otherKeyHashes:[]}),allowedPhoneHashes:Object.freeze([phone])});
-const environment={NODE_ENV:'production',VERCEL_ENV:'production',VERCEL_URL:'private-fixture.vercel.app',VERCEL_DEPLOYMENT_ID:'dpl_private_fixture',
+const environment: NodeJS.ProcessEnv={NODE_ENV:'production',VERCEL_ENV:'production',VERCEL_URL:'private-fixture.vercel.app',VERCEL_DEPLOYMENT_ID:'dpl_private_fixture',
     VERCEL_GIT_COMMIT_SHA:'a'.repeat(40),ATLAS_TRUSTED_LEARNING_ENABLED:'true',ATLAS_TRUSTED_LEARNING_ORIGIN:settings.origin,
     ATLAS_TRUSTED_LEARNING_KEY:key.toString('base64'),ATLAS_TRUSTED_LEARNING_ALLOWED_PHONE_HASHES_JSON:JSON.stringify([phone])};
 const frame={width:1350,height:1858,cardBounds:{x:40,y:40,width:1270,height:1778}};
@@ -28,14 +28,16 @@ function response(){const state={status:0,body:undefined as unknown,headers:{}as
         json(body:unknown){state.body=body;return this;},send(body:unknown){state.body=body;return this;}}as unknown as NextApiResponse;return{state,res};}
 
 test('private learning is disabled by default and caller pins cannot substitute actual deployment or compiled preparation policy',()=>{
-    assert.throws(()=>atlasTrustedLearningConfig({}),/LEARNING_NOT_ENABLED/);
-    for(const patch of [{ATLAS_TRUSTED_LEARNING_ENABLED:'false'},{NODE_ENV:'test'},{VERCEL_ENV:'preview'},{VERCEL_URL:'evil.example'},
+    assert.throws(()=>atlasTrustedLearningConfig({} as NodeJS.ProcessEnv),/LEARNING_NOT_ENABLED/);
+    for(const patch of [{ATLAS_TRUSTED_LEARNING_ENABLED:'false'},{NODE_ENV:'test' as const},{VERCEL_ENV:'preview'},{VERCEL_URL:'evil.example'},
         {VERCEL_DEPLOYMENT_ID:''},{VERCEL_DEPLOYMENT_ID:'has spaces'},{VERCEL_GIT_COMMIT_SHA:'0'.repeat(40)},{ATLAS_LOCAL_SYNTHETIC:'false'}])
         assert.throws(()=>atlasTrustedLearningConfig({...environment,...patch}),/LEARNING_NOT_ENABLED/);
     assert.throws(()=>atlasTrustedLearningConfig({...environment,VERCEL_DEPLOYMENT_ID:undefined,ATLAS_TRUSTED_LEARNING_DEPLOYMENT_ID:'dpl_caller_supplied'}),/LEARNING_NOT_ENABLED/);
-    // No environment value supplies the missing owner-reviewed compiled release.
-    assert.throws(()=>atlasTrustedLearningConfig({...environment,ATLAS_TRUSTED_LEARNING_GRADING_POLICY_HASH:'3'.repeat(64),
-        ATLAS_TRUSTED_LEARNING_RELEASE_SHA:'b'.repeat(40)}),/compatible release/);
+    const pinned = atlasTrustedLearningConfig({...environment,ATLAS_TRUSTED_LEARNING_GRADING_POLICY_HASH:'3'.repeat(64),
+        ATLAS_TRUSTED_LEARNING_RELEASE_SHA:'b'.repeat(40)});
+    assert.equal(pinned.gradingPolicyHash, atlasGradingPolicyHash());
+    assert.notEqual(pinned.gradingPolicyHash, '3'.repeat(64));
+    assert.equal(pinned.releaseSha, environment.VERCEL_GIT_COMMIT_SHA);
 });
 test('private learning roster and key are exact and independent of every existing HMAC purpose',()=>{
     for(const list of ['[]','{}','["bad"]',JSON.stringify([phone,phone]),'['+' '.repeat(8192)+']'])

@@ -1,22 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { atlasPublicMediaConfig } from '../lib/server/atlasPublicMedia';
-const env = { NODE_ENV: 'production', VERCEL_ENV: 'production', ATLAS_PUBLIC_MEDIA_RUNTIME: 's3',
-    VERCEL_URL: 'media-release.vercel.app', VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40), ATLAS_PUBLIC_MEDIA_ORIGIN: 'https://bridge.example.test',
-    ATLAS_PUBLIC_MEDIA_KEY: Buffer.alloc(32, 3).toString('base64'), ATLAS_PUBLIC_MEDIA_STORAGE_ENDPOINT: 'https://storage.example.test',
-    ATLAS_PUBLIC_MEDIA_STORAGE_BUCKET: 'atlas-images', ATLAS_PUBLIC_MEDIA_STORAGE_REGION: 'auto',
-    ATLAS_PUBLIC_MEDIA_STORAGE_ACCESS_KEY_ID: 'synthetic-read-key', ATLAS_PUBLIC_MEDIA_STORAGE_SECRET_ACCESS_KEY: 'synthetic-storage-key-only-000000000' };
-test('public media requires its own exact production release and dedicated storage credentials', () => {
-    const config = atlasPublicMediaConfig(env); assert.equal(config.clientKeyHash.length, 64);
-    for (const update of [{ NODE_ENV: 'development' }, { VERCEL_ENV: 'preview' }, { ATLAS_PUBLIC_MEDIA_RUNTIME: '' },
-        { ATLAS_LOCAL_POSTGRES: '1' }, { VERCEL_URL: 'bridge.example.test' }, { VERCEL_GIT_COMMIT_SHA: '' },
-        { ATLAS_PUBLIC_MEDIA_ORIGIN: 'http://bridge.example.test' }, { ATLAS_PUBLIC_MEDIA_STORAGE_ENDPOINT: 'https://storage.example.test/arbitrary/path' },
-        { ATLAS_PUBLIC_MEDIA_KEY: '' }, { ATLAS_PUBLIC_MEDIA_STORAGE_ACCESS_KEY_ID: '' }, { ATLAS_PUBLIC_MEDIA_STORAGE_SECRET_ACCESS_KEY: '' }])
-        assert.throws(() => atlasPublicMediaConfig({ ...env, ...update }));
-    const rotated = atlasPublicMediaConfig({ ...env, ATLAS_PUBLIC_MEDIA_STORAGE_SECRET_ACCESS_KEY: env.ATLAS_PUBLIC_MEDIA_STORAGE_SECRET_ACCESS_KEY + 'rotated' });
-    assert.notEqual(rotated.configHash, config.configHash);
-});
-test('public media cannot activate from legacy or ambient S3 credentials', () => {
-    assert.throws(() => atlasPublicMediaConfig({ ...env, ATLAS_PUBLIC_MEDIA_STORAGE_ACCESS_KEY_ID: undefined,
-        AWS_ACCESS_KEY_ID: 'ambient-should-not-be-used', S3_ACCESS_KEY_ID: 'legacy-should-not-be-used' }));
+import type { NextApiRequest, NextApiResponse } from 'next';
+import handler, { config } from '../pages/api/internal/atlas/public-media';
+
+test('the retired public-media endpoint refuses without reading any request or body', () => {
+    const request = new Proxy({} as NextApiRequest, {
+        get() { throw new Error('Retired public media must not inspect or consume the request.'); },
+    });
+    const state = { status: 0, body: undefined as unknown, headers: {} as Record<string, string> };
+    const response = {
+        setHeader(name: string, value: string) { state.headers[name] = value; return this; },
+        status(value: number) { state.status = value; return this; },
+        json(body: unknown) { state.body = body; return this; },
+    } as unknown as NextApiResponse;
+    handler(request, response);
+    assert.equal(config.api.bodyParser, false);
+    assert.equal(state.status, 503);
+    assert.deepEqual(state.body, { error: 'ATLAS_PUBLIC_IMAGE_UNAVAILABLE' });
+    assert.deepEqual(state.headers, { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
 });

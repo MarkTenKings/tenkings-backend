@@ -1015,8 +1015,10 @@ test("schema-valid Production-sized V0.3 report remains hydrated for exact Appro
     queue.activeReview?.manifest.productionRelease?.reportId,
     "math-v1-release-test",
   );
+  const hydratedRelease = queue.activeReview?.manifest.productionRelease;
+  assert.ok(hydratedRelease && "calibrationProfile" in hydratedRelease);
   assert.equal(
-    (queue.activeReview?.manifest.productionRelease?.calibrationProfile as any)
+    (hydratedRelease.calibrationProfile as any)
       ?.operationalAuthorization?.authorityId,
     "ten-kings-owner-operational-acceptance-math-cal-v1-test",
   );
@@ -1630,7 +1632,7 @@ test("background queue merge cannot collide colon-bearing exact card identities"
     ocr: {
       state: "eligible" as const,
       updatedAt,
-      attemptCount: 0,
+      attemptCount: 0 as const,
     },
   });
   const current = buildAiGraderLocalStationStatus();

@@ -42,7 +42,7 @@ function response() {
   return { state, res };
 }
 
-test("Production handler projects private capture timing before scanning the current 2.71 MiB create-card-from-report envelope", async () => {
+test("Production handler projects private capture timing in the 2.71 MiB envelope before linkage validation", async () => {
   assert.equal(AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, 4 * MEBIBYTE);
 
   const reportBundle = buildStrictAiGraderReportBundleV03Fixture();
@@ -108,9 +108,11 @@ test("Production handler projects private capture timing before scanning the cur
     async createCardFromReport(input) {
       createCardActionCalls += 1;
       projectedReportBundle = input.reportBundle;
+      assert.ok(input.productionRelease.gradingSessionId);
+      assert.ok(input.productionRelease.reportId);
       return {
         queueItemId: input.queueItemId,
-        gradingSessionId: input.reportBundle.gradingSessionId,
+        gradingSessionId: input.productionRelease.gradingSessionId,
         reportId: input.productionRelease.reportId,
         cardAssetId: "card-asset-payload-limit",
         itemId: "item-payload-limit",
@@ -131,9 +133,10 @@ test("Production handler projects private capture timing before scanning the cur
   await handler(request(body), res);
 
   assert.equal(createCardActionCalls, 1);
-  assert.equal(state.statusCode, 200, JSON.stringify(state.body));
-  assert.equal(state.body.result.queueItemId, body.queueItemId);
-  assert.equal(state.body.result.reportId, productionRelease.reportId);
+  // This strict V0.3 fixture has no source gradingSessionId. Reaching the
+  // service proves payload acceptance; a service result cannot bypass linkage.
+  assert.equal(state.statusCode, 400, JSON.stringify(state.body));
+  assert.equal(state.body.code, "AI_GRADER_PUBLISH_LINKAGE_MISMATCH");
   assert.doesNotMatch(String(state.body.message), /must be 1 MB or smaller/i);
   assert.equal(projectedReportBundle.captureTiming.schemaVersion, "ten-kings-ai-grader-capture-timing-v1");
   assert.equal(projectedReportBundle.captureTiming.captureProfile, "production_fast");

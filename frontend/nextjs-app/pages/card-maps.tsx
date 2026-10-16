@@ -973,12 +973,14 @@ export default function CardMapsPage() {
                 ...EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
                 cardType: source.cardProfile,
                 ...source.identity,
-                playerName: "playerName" in source.identity ? source.identity.playerName : "",
-                cardName: "cardName" in source.identity ? source.identity.cardName : "",
+                playerName: "playerName" in source.identity ? source.identity.playerName ?? "" : "",
+                cardName: "cardName" in source.identity ? source.identity.cardName ?? "" : "",
+                year: source.identity.year ?? "",
+                productSet: source.identity.productSet ?? "",
                 layoutType: source.cardProfile === "POKEMON"
                   ? speedsterPokemonLayoutType(source.identity) ?? source.familyLayoutType ?? ""
                   : "",
-                manufacturer: "manufacturer" in source.identity ? source.identity.manufacturer : "",
+                manufacturer: "manufacturer" in source.identity ? source.identity.manufacturer ?? "" : "",
                 insert: "insert" in source.identity ? source.identity.insert ?? "" : "",
                 parallel: source.identity.parallel ?? "",
                 cardNumber: source.identity.cardNumber ?? "",

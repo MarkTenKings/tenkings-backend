@@ -696,10 +696,13 @@ test("a late prior-admin mapped-list response cannot overwrite the current admin
   }
 });
 
-test("blank new-card identity shows exact field errors without making a request", async () => {
-  const requests: string[] = [];
+test("unknown new-card identity stays null and source errors remain visible", async () => {
+  const requests: Array<{ url: string; body: unknown }> = [];
   const page = await mountPage({
-    fetchImpl: async (request) => { requests.push(String(request)); throw new Error("unexpected fetch"); },
+    fetchImpl: async (request, init) => {
+      requests.push({ url: String(request), body: JSON.parse(String(init?.body)) });
+      return jsonResponse({ message: "Source creation unavailable.", fields: { playerName: "Review the printed name." } }, 422);
+    },
   });
   try {
     assert.match(page.container.textContent ?? "", /Family Card Map — all cards matching this Year, Set, and Parallel/);
@@ -713,11 +716,13 @@ test("blank new-card identity shows exact field errors without making a request"
     const submit = buttonByText(page.container, "CONTINUE TO FRONT + BACK");
     assert.ok(submit);
     await act(async () => submit.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
-    await waitFor(() => page.container.textContent?.includes("Player name is required.") ?? false, "Identity errors were not rendered");
-    assert.equal(requests.length, 0);
-    assert.match(page.container.textContent ?? "", /Year is required\./);
-    assert.match(page.container.textContent ?? "", /Manufacturer is required\./);
-    assert.match(page.container.textContent ?? "", /Product \/ set is required\./);
+    await waitFor(() => page.container.textContent?.includes("Review the printed name.") ?? false, "Source field errors were not rendered");
+    assert.deepEqual(requests, [{ url: "/api/admin/ai-grader-v2/sessions", body: {
+      cardProfile: "SPORTS", identity: { playerName: null, year: null, manufacturer: null,
+        productSet: null, parallel: null, insert: null, cardNumber: null },
+    } }]);
+    assert.match(page.container.textContent ?? "", /Source creation unavailable\./);
+    assert.equal(page.container.querySelector('[data-testid="card-map-workspace"]'), null);
   } finally {
     await page.cleanup();
   }
