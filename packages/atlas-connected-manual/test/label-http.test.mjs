@@ -11,10 +11,10 @@ const request = (url, method = 'GET', body) => ({ url, method, body, headers: { 
 
 test('only exact label paths and bounded SVG artwork enter the signed transport', () => {
   for (const path of [`${base}/label-sheets`, `${base}/label-sheets?cursor=20`, sheet, `${sheet}/exports`, `${sheet}/exports/${id}`,
-    `${sheet}/exports/${id}/download`, `${sheet}/print-confirmations`, `${item}/artwork?mode=preview`, `${item}/artwork?mode=print`,
+    `${sheet}/exports/${id}/download`, `${sheet}/print-confirmations`, ...['preview','print','preview-foil','print-foil'].map(mode=>`${item}/artwork?mode=${mode}`),
     `${item}/exports`, `${item}/exports/${id}`, `${item}/exports/${id}/download`, `${item}/reprints`, `${item}/layout-retries`]) assert.equal(isManualServicePath(path), true, path);
   for (const path of [`${base}/label-sheets?cursor=-1`, `${base}/label-sheets?cursor=20&cursor=40`, `${sheet}/delete`,
-    `${item}/artwork?mode=preview&url=https://evil.invalid`, `${item}/exports?mode=preview`, `${item}/layout-retries/${id}`, `${item}/layout-retries?force=true`, `${item}/artwork?mode=other`,
+    `${item}/artwork?mode=preview&url=https://evil.invalid`, `${item}/artwork?mode=print-foil&mode=preview-foil`, `${item}/artwork?mode=black-ink`, `${item}/exports?mode=preview`, `${item}/layout-retries/${id}`, `${item}/layout-retries?force=true`, `${item}/artwork?mode=other`,
     `${sheet}/exports/${id}/download?token=anything`]) assert.equal(isManualServicePath(path), false, path);
   assert.equal(manualResponsePolicy(`${item}/artwork?mode=preview`, 'image/svg+xml').limit, 1024 * 1024);
   assert.throws(() => manualResponsePolicy(`${sheet}/exports/${id}`, 'image/svg+xml'));
@@ -40,15 +40,18 @@ test('mutating label actions require current cookie and CSRF, wake processing an
 });
 
 test('preview is a bounded authenticated SVG response; reads do not start queue work', async () => {
-  const staff = {}, bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>');
+  const staff = {}, bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>');let expectedMode;
   const handle = createLabelSheetsHandler({ origin, boundary: { async authenticate(cookie, csrf) { assert.equal(cookie, 'session'); assert.equal(csrf, undefined); return staff; } },
-    connected: { labels: { async artwork(actual, input) { assert.equal(actual, staff); assert.deepEqual(input, { itemId: id, mode: 'print' }); return { bytes, contentType: 'image/svg+xml' }; } },
+    connected: { labels: { async artwork(actual, input) { assert.equal(actual, staff); assert.deepEqual(input, { itemId: id, mode: expectedMode }); return { bytes, contentType: 'image/svg+xml' }; } },
       labelWorker: { wake() { assert.fail('Read cannot process'); } } } });
-  const req = request(`${item}/artwork?mode=print`), res = response();
-  await handle(req, res, new URL(req.url, origin));
-  assert.equal(res.bytes, bytes);
-  assert.equal(res.headers['Content-Type'], 'image/svg+xml');
-  assert.match(res.headers['Content-Security-Policy'], /sandbox/);
+  for(const mode of ['preview','print','preview-foil','print-foil']) {
+    expectedMode=mode;const req = request(`${item}/artwork?mode=${mode}`), res = response();
+    await handle(req, res, new URL(req.url, origin));
+    assert.equal(res.bytes, bytes);
+    assert.equal(res.headers['Content-Type'], 'image/svg+xml');
+    assert.match(res.headers['Content-Security-Policy'], /sandbox/);
+    assert.equal(manualResponsePolicy(req.url,'image/svg+xml').limit,1024*1024);
+  }
   await assert.rejects(handle(request(`${item}/artwork?mode=print&mode=preview`), response(), new URL(`${item}/artwork?mode=print&mode=preview`, origin)), { code: 'LABEL_ARTWORK_MODE_INVALID' });
 });
 

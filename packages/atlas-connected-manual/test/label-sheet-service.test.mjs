@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
-import { createLabelService, LABEL_EXPORT_PROFILES } from '../src/label-sheet-service.mjs';
+import { createLabelService, LABEL_EXPORT_PROFILES, LABEL_BLACK_INK_EXPORT_PROFILES } from '../src/label-sheet-service.mjs';
 import { createManualFinishing } from '../src/finishing.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
-import { LABEL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
+import { LABEL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,
+  renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg } from '@atlas/finishing/label-sheet';
 import { LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 import { labelFailureHash } from '../src/label-sheet-repository.mjs';
@@ -50,6 +51,22 @@ test('download reauthorizes all source members after signing; no print event is 
   await assert.rejects(service.download({}, {exportId,sheetId,input:{requestId:randomUUID(),expectedExportSha256:sha256}}),{code:'MANUAL_CARD_NOT_FOUND'});assert.equal(printed,0);assert.equal(count,2);
 });
 
+test('downloads report the immutable saved format for legacy and foil requests after reauthorization',async()=>{
+  for(const profiles of [LABEL_EXPORT_PROFILES,LABEL_BLACK_INK_EXPORT_PROFILES])for(const kind of ['SINGLE','SHEET']) {
+    const exportId=randomUUID(),sourceId=randomUUID(),sha256=digest('saved-png'),row={id:exportId,kind,
+      ...(kind==='SINGLE'?{item_id:sourceId}:{sheet_id:sourceId}),profile_id:profiles[kind],state:'READY',sha256,
+      manifest_hash:digest('saved-manifest'),byte_count:100,content_type:'image/png',object_ref:'{}'};
+    const before=structuredClone(row),target={exportId,...(kind==='SINGLE'?{itemId:sourceId}:{sheetId:sourceId})};let reads=0;
+    const service=createLabelService({boundary:{machineOwner(){}},finishing:{loadPacket(){}},repository:{pendingCandidates(){},export:async()=>{reads++;return{row};}},
+      storage:{write(){assert.fail('Download never stores again');},download:async(binding,saved)=>{
+        assert.deepEqual(binding,{exportId,manifestHash:row.manifest_hash,kind});assert.equal(saved.sha256,sha256);
+        return{url:'https://example.invalid/saved',expiresAt:'2026-10-17T00:00:00Z',exportProfileId:'untrusted-storage-value'};
+      }}});
+    const result=await service.download({},{...target,input:{requestId:randomUUID(),expectedExportSha256:sha256}});
+    assert.equal(result.exportProfileId,profiles[kind]);assert.equal(result.url,'https://example.invalid/saved');assert.equal(reads,2);assert.deepEqual(row,before);
+  }
+});
+
 test('a denied machine owner cannot abort later eligible work in the same pass',async()=>{
   const f=await fixture(),bad=randomUUID(),owner=f.boundary.machineOwner;
   f.boundary.machineOwner=input=>{if(input.ownerId===bad)throw new Error('revoked fixture owner');return owner(input);};
@@ -90,6 +107,81 @@ test('queued current-profile sheet export reaches the real renderer and saves th
   assert.equal(finished.mapping.rasterReceipt.rasterizer,LABEL_EXPORT_PROFILE_V1.rasterizer);
   assert.equal(await f.service.runPending(),0);
   assert.throws(()=>f.service.prepareSheetExport({},sheetId,{requestId:randomUUID(),expectedSheetRevision:1,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v1'}),{code:'LABEL_PROFILE_INVALID'});
+});
+
+test('both black-ink exports render the immutable requested profile and save separate PNG bindings',async()=>{
+  const f=await fixture({cardProfile:'POKEMON'});assert.equal(await f.service.runPending(),1);
+  const artwork=f.saved[0],before=structuredClone(artwork),sheetId=randomUUID(),writes=[];let queued=null,finished=null,failures=0;
+  f.repository.prepareExport=async(_staff,{kind,id,input})=>{
+    const exportId=randomUUID();queued={id:exportId,kind,profile_id:input.exportProfileId,manifest_hash:digest('same-artwork-manifest'),
+      sheet_id:kind==='SHEET'?id:null,item_id:kind==='SINGLE'?id:null,state:'PREPARING'};
+    return{exportId,exportProfileId:queued.profile_id,state:'PREPARING'};
+  };
+  f.repository.pendingCandidates=async()=>queued&&!finished?[{id:queued.id,actor_id:f.item.actor_id,access_version:1,kind:'EXPORT'}]:[];
+  f.repository.claimExport=async()=>({row:queued,items:[{slot:1,print_svg:artwork.printSvg,artwork_hash:artwork.artworkHash}]});
+  f.repository.export=async()=>({row:queued});
+  f.repository.finishExport=async(_staff,_claim,result)=>{finished=result;};
+  f.repository.failExport=async()=>{failures++;};
+  f.storage.write=async(binding,bytes,{sha256,contentType})=>{
+    assert.equal(binding.exportId,queued.id);assert.equal(binding.kind,queued.kind);assert.equal(digest(bytes),sha256);assert.equal(contentType,'image/png');
+    writes.push({binding,sha256,width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)});
+    return{object:{key:`fixture/${binding.exportId}/${sha256}.png`},sha256,byteCount:bytes.length};
+  };
+  for(const kind of ['SINGLE','SHEET']) {
+    finished=null;
+    const profile=kind==='SINGLE'?LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1:LABEL_BLACK_INK_EXPORT_PROFILE_V1;
+    const input={requestId:randomUUID(),exportProfileId:LABEL_BLACK_INK_EXPORT_PROFILES[kind],
+      ...(kind==='SINGLE'?{expectedLabelHash:artwork.artworkHash}:{expectedSheetRevision:1})};
+    const result=await (kind==='SINGLE'?f.service.prepareIndividualExport({},f.item.id,input):f.service.prepareSheetExport({},sheetId,input));
+    assert.equal(result.exportProfileId,profile.id);assert.equal(await f.service.runPending(),1);
+    assert.equal(finished.mapping.exportProfileId,profile.id);assert.equal(finished.mapping.renderProfileHash,profile.hash);
+    assert.equal(finished.mapping.alphaPolicy,profile.alphaPolicy);
+    assert.equal(writes.at(-1).width,profile.pixelWidth);assert.equal(writes.at(-1).height,profile.pixelHeight);
+    assert.equal(await f.service.runPending(),0);
+  }
+  assert.equal(failures,0);assert.equal(writes.length,2);assert.notEqual(writes[0].binding.exportId,writes[1].binding.exportId);
+  assert.deepEqual(artwork,before);
+  assert.equal(LABEL_EXPORT_PROFILES.SHEET,'atlas-v4-sheet-800ppi-diagnostic-v2');
+  assert.equal(LABEL_EXPORT_PROFILES.SINGLE,'atlas-v4-individual-2400ppi-v1');
+});
+
+test('export kind allowlists reject cross-kind, unknown and omitted profiles before reservation',async()=>{
+  const f=await fixture();f.repository.prepareExport=()=>assert.fail('Invalid profiles cannot reserve or freeze');
+  for(const exportProfileId of [LABEL_EXPORT_PROFILES.SHEET,LABEL_BLACK_INK_EXPORT_PROFILES.SHEET,'black',undefined])
+    assert.throws(()=>f.service.prepareIndividualExport({},f.item.id,{requestId:randomUUID(),expectedLabelHash:digest('label'),exportProfileId}),{code:'LABEL_PROFILE_INVALID'});
+  for(const exportProfileId of [LABEL_EXPORT_PROFILES.SINGLE,LABEL_BLACK_INK_EXPORT_PROFILES.SINGLE,'black',undefined])
+    assert.throws(()=>f.service.prepareSheetExport({},randomUUID(),{requestId:randomUUID(),expectedSheetRevision:1,exportProfileId}),{code:'LABEL_PROFILE_INVALID'});
+});
+
+test('a renderer returning another profile fails before storage and cannot replace the queued black export',async()=>{
+  const id=randomUUID(),row={id,kind:'SINGLE',profile_id:LABEL_BLACK_INK_EXPORT_PROFILES.SINGLE,manifest_hash:digest('manifest')};
+  const printSvg='<svg/>',bytes=Buffer.from('wrong profile');let failures=0;
+  const repository={pendingCandidates:async()=>[{id,actor_id:randomUUID(),access_version:1,kind:'EXPORT'}],
+    claimExport:async()=>({row,items:[{print_svg:printSvg,artwork_hash:digest(printSvg)}]}),failExport:async()=>{failures++;},
+    export:()=>assert.fail('Invalid result cannot authorize storage'),finishExport:()=>assert.fail('Cannot finish')};
+  const service=createLabelService({repository,boundary:{machineOwner:value=>value},finishing:{loadPacket(){}},
+    storage:{write(){assert.fail('Cannot store mismatched format');},download(){}},
+    renderer:{label(){},sheet(){},individual:async(_item,options)=>{
+      assert.deepEqual(options,{exportProfileId:row.profile_id});return{bytes,sha256:digest(bytes),manifest:{exportProfileId:LABEL_EXPORT_PROFILES.SINGLE}};
+    }}});
+  assert.equal(await service.runPending(),0);assert.equal(failures,1);
+});
+
+test('foil artwork previews derive from verified saved print geometry and the saved material without mutation',async()=>{
+  for(const cardProfile of ['SPORTS','POKEMON']) {
+    const f=await fixture({cardProfile});await f.service.runPending();const out=f.saved[0];
+    const item={...f.item,state:'READY',print_svg:out.printSvg,preview_svg:out.previewSvg,artwork_hash:out.artworkHash,material_profile_id:out.materialProfileId};
+    const before=structuredClone(item),artwork={printSvg:out.printSvg,artworkHash:out.artworkHash};
+    f.repository.item=async()=>item;
+    for(const [mode,expected] of [['print',out.printSvg],['preview',out.previewSvg],['print-foil',renderLabelBlackInkSvg(artwork)],
+      ['preview-foil',renderLabelBlackInkPreviewSvg(artwork,{previewMaterial:cardProfile==='SPORTS'?'gold':'holo'})]]) {
+      const result=await f.service.artwork({},{itemId:item.id,mode});
+      assert.equal(result.bytes.toString(),expected);assert.equal(result.sha256,digest(expected));assert.equal(result.contentType,'image/svg+xml');
+    }
+    assert.deepEqual(item,before);
+    item.material_profile_id='unknown';await assert.rejects(f.service.artwork({},{itemId:item.id,mode:'preview-foil'}),{code:'LABEL_MATERIAL_UNCONFIGURED'});
+    item.artwork_hash=digest('tampered');await assert.rejects(f.service.artwork({},{itemId:item.id,mode:'print-foil'}),{code:'LABEL_ARTWORK_INVALID'});
+  }
 });
 
 

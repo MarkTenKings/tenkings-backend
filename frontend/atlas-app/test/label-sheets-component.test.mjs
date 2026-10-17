@@ -42,8 +42,8 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
         const successor = { ...parent, itemId: randomUUID(), originalItemId: parent.itemId, purpose: 'LAYOUT_RETRY', state: 'PENDING_RENDER', failureHash: null };
         f.pendingItems = [successor]; return successor;
       }
-      if (url.endsWith('/exports')) { const result = { exportId: randomUUID(), sheetId: sheet.sheetId, state: 'READY', sha256: 'c'.repeat(64), manifestHash: 'd'.repeat(64) }; sheet.state = 'SEALED'; sheet.exports = [result]; return result; }
-      if (url.endsWith('/download')) return { url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString() };
+      if (url.endsWith('/exports')) { const result = { exportId: randomUUID(), sheetId: sheet.sheetId, exportProfileId: options.body.exportProfileId, state: 'READY', sha256: 'c'.repeat(64), manifestHash: 'd'.repeat(64) }; sheet.state = 'SEALED'; sheet.exports = [result]; return result; }
+      if (url.endsWith('/download')) return { exportProfileId: sheet.exports.find(value => url.includes(value.exportId)).exportProfileId, url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString() };
       if (url.endsWith('/print-confirmations')) { const result = { eventId: randomUUID(), ...options.body }; sheet.printEvents.push(result); return result; }
     }
     if (sheet) return structuredClone(sheet);
@@ -95,7 +95,7 @@ test('partial export requires its explicit gesture and binds the sheet displayed
 test('download and physical print recording stay distinct and select the exact successful positions', async () => {
   const first = data(), f = await fixture({ sheets: [first] }); f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
   f.click('Download sheet PNG ↓'); await f.flush();
-  assert.equal(f.calls.filter(call => call.method === 'POST').length, 2); assert.equal(first.printEvents.length, 0); assert.match(f.text(), /Download saved PNG/);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 2); assert.equal(first.printEvents.length, 0); assert.match(f.text(), /Download Black ink \+ transparent foil PNG/);
   f.click('Record printed labels'); assert.equal(first.printEvents.length, 0); f.dialog().onSubmit({ slots: [2], reason: '' }); await f.flush();
   assert.equal(first.printEvents.length, 1); assert.deepEqual(first.printEvents[0].successfulSlots, [2]); assert.match(f.text(), /1 saved physical print confirmation/); f.dispose();
 });
@@ -229,7 +229,7 @@ test('superseded approvals remain visible as history but cannot export or record
 });
 test('saved individual exports from the item listing survive reload in the sheet inspector', async () => {
   const sheet = data(), f = await fixture({ sheets: [sheet] });
-  const output = { exportId: randomUUID(), itemId: sheet.items[0].itemId, state: 'READY', sha256: 'e'.repeat(64) };
+  const output = { exportId: randomUUID(), itemId: sheet.items[0].itemId, exportProfileId: api.LABEL_PRINT_FORMATS.foil.individual, state: 'READY', sha256: 'e'.repeat(64) };
   f.listItems = sheet.items.map((item, index) => ({ ...item, exports: index === 0 ? [output] : [] }));
   await f.tick();
   assert.equal(f.detail().individualOutput.exportId, output.exportId);
@@ -327,4 +327,20 @@ test('NFC refresh preserves deliberately unchecked cards and does not select new
   assert.deepEqual(boxes.map(node => node.props.checked), [false, true, false]);
   f.click('Download NFC batch CSV'); await f.flush(); const csv = await f.blobs.get(f.downloads[0].href).text();
   assert.ok(csv.includes(first.items[1].snapshot.reportHref)); assert.ok(!csv.includes(first.items[0].snapshot.reportHref)); assert.ok(!csv.includes(second.items[0].snapshot.reportHref)); f.dispose();
+});
+
+test('foil export is the default and saved original-ink exports never masquerade as black-only files', async () => {
+  const sheet = data(), original = { exportId: randomUUID(), exportProfileId: api.LABEL_PRINT_FORMATS.original.sheet, state: 'READY', sha256: 'c'.repeat(64) };
+  sheet.state = 'SEALED'; sheet.exports = [original];
+  const f = await fixture({ sheets: [sheet] });
+  assert.ok(f.button('Export this sheet')); assert.equal(f.button('Download sheet PNG ↓'), undefined);
+  const selector = f.find(node => node.type === 'select' && node.props.value === 'foil')[0]; assert.ok(selector);
+  f.click('Export this sheet'); assert.equal(f.dialog().printFormat, 'foil');
+  f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+  const post = f.calls.find(call => call.method === 'POST'); assert.equal(post.body.exportProfileId, api.LABEL_PRINT_FORMATS.foil.sheet);
+  // Both formats coexist; selecting original must select its own saved bytes.
+  sheet.exports.push(original); await f.tick();
+  selector.props.onChange({ target: { value: 'original' } }); f.render();
+  assert.ok(f.button('Download sheet PNG ↓')); f.click('Download sheet PNG ↓'); await f.flush();
+  assert.ok(f.calls.some(call => call.method === 'POST' && call.url.endsWith(`/${original.exportId}/download`))); f.dispose();
 });

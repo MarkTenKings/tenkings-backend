@@ -24,7 +24,7 @@ export function createLabelSheetsHandler({ connected, boundary, origin }) {
       cursor = Number(entries[0][1]);
     } else if (artwork) {
       const entries = [...url.searchParams];
-      requireThat(entries.length === 1 && entries[0][0] === 'mode' && ['preview', 'print'].includes(entries[0][1]), 400, 'LABEL_ARTWORK_MODE_INVALID');
+      requireThat(entries.length === 1 && entries[0][0] === 'mode' && ['preview', 'print', 'preview-foil', 'print-foil'].includes(entries[0][1]), 400, 'LABEL_ARTWORK_MODE_INVALID');
       mode = entries[0][1];
     } else requireThat(!url.search, 400, 'LABEL_QUERY_INVALID');
     if (write) {

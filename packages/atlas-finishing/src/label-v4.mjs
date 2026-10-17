@@ -290,7 +290,7 @@ export function renderLabelV4(input, { previewMaterial = 'gold', certificateLayo
   }
 }
 
-export async function renderLabelV4Png({ printSvg, artworkHash }) {
+export async function renderLabelV4Png({ printSvg, artworkHash }, options) {
   const { renderLabelV4Png: rasterize } = await import('./label-sheet.mjs');
-  return rasterize({ printSvg, artworkHash });
+  return rasterize({ printSvg, artworkHash }, options);
 }

@@ -1,11 +1,18 @@
 import { canonical, digest, object, requireThat, uuid, revision } from '@atlas/manual-service/contract';
 import { renderLabelV4, renderLabelV4Png, LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
-import { renderLabelSheetPng, LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
+import { renderLabelSheetPng, renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg,
+  LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1,
+  LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 import { labelFailureHash } from './label-sheet-repository.mjs';
 const jigHash = LABEL_JIG_V1.jigHash;
 
 export const LABEL_EXPORT_PROFILES = Object.freeze({ SHEET: LABEL_EXPORT_PROFILE_V1.id, SINGLE: LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id });
+export const LABEL_BLACK_INK_EXPORT_PROFILES = Object.freeze({ SHEET: LABEL_BLACK_INK_EXPORT_PROFILE_V1.id, SINGLE: LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1.id });
+const exportProfiles = Object.freeze({
+  SHEET: Object.freeze([LABEL_EXPORT_PROFILES.SHEET, LABEL_BLACK_INK_EXPORT_PROFILES.SHEET]),
+  SINGLE: Object.freeze([LABEL_EXPORT_PROFILES.SINGLE, LABEL_BLACK_INK_EXPORT_PROFILES.SINGLE]),
+});
 const hash = value => requireThat(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value), 400, 'LABEL_HASH_INVALID');
 const exact = (input, required, optional = []) => {
   requireThat(input && Object.getPrototypeOf(input) === Object.prototype && required.every(k => Object.hasOwn(input,k))
@@ -67,7 +74,8 @@ export function createLabelService({ boundary, repository, finishing, storage,
         requireThat(digest(item.print_svg) === item.artwork_hash, 503, 'LABEL_ARTWORK_INVALID');
         return { slot: claimed.row.kind === 'SHEET' ? item.slot : 1, artworkHash: item.artwork_hash, printSvg: item.print_svg };
       });
-      const result = claimed.row.kind === 'SHEET' ? await renderer.sheet(labels, { exportProfileId: claimed.row.profile_id }) : await renderer.individual(labels[0]);
+      const options = { exportProfileId: claimed.row.profile_id };
+      const result = claimed.row.kind === 'SHEET' ? await renderer.sheet(labels, options) : await renderer.individual(labels[0], options);
       requireThat(Buffer.isBuffer(result.bytes) && digest(result.bytes) === result.sha256
         && result.manifest?.exportProfileId === claimed.row.profile_id, 503, 'LABEL_PNG_INVALID');
       // Recheck source and authority before storage, and again on completion.
@@ -88,20 +96,27 @@ export function createLabelService({ boundary, repository, finishing, storage,
     sheet: (staff, sheetId) => repository.sheet(staff, uuid(sheetId)),
     reconciliation: (staff, input) => repository.reconciliation(staff, input),
     async artwork(staff, { itemId, mode = 'preview' }) {
-      requireThat(['preview','print'].includes(mode), 400, 'LABEL_ARTWORK_MODE_INVALID');
+      requireThat(['preview','print','preview-foil','print-foil'].includes(mode), 400, 'LABEL_ARTWORK_MODE_INVALID');
       const item = await repository.item(staff, uuid(itemId)); requireThat(item.state === 'READY', 409, 'LABEL_NOT_READY');
-      const svg = mode === 'print' ? item.print_svg : item.preview_svg;
-      requireThat(typeof svg === 'string' && Buffer.byteLength(svg) <= 1048576 && digest(item.print_svg) === item.artwork_hash, 503, 'LABEL_ARTWORK_INVALID');
+      requireThat(typeof item.print_svg === 'string' && digest(item.print_svg) === item.artwork_hash, 503, 'LABEL_ARTWORK_INVALID');
+      const artwork = { printSvg: item.print_svg, artworkHash: item.artwork_hash };
+      let svg;
+      if (mode === 'preview-foil') {
+        const material = Object.values(materials).find(value => value.id === item.material_profile_id);
+        requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+        svg = renderLabelBlackInkPreviewSvg(artwork, { previewMaterial: material.preview });
+      } else svg = mode === 'print-foil' ? renderLabelBlackInkSvg(artwork) : mode === 'print' ? item.print_svg : item.preview_svg;
+      requireThat(typeof svg === 'string' && Buffer.byteLength(svg) <= 1048576, 503, 'LABEL_ARTWORK_INVALID');
       return { bytes: Buffer.from(svg), contentType: 'image/svg+xml', sha256: digest(svg) };
     },
     prepareSheetExport(staff, sheetId, input) {
       exact(input, ['requestId','expectedSheetRevision','exportProfileId']); uuid(input.requestId); revision(input.expectedSheetRevision); uuid(sheetId);
-      requireThat(input.exportProfileId === LABEL_EXPORT_PROFILES.SHEET, 400, 'LABEL_PROFILE_INVALID');
+      requireThat(exportProfiles.SHEET.includes(input.exportProfileId), 400, 'LABEL_PROFILE_INVALID');
       return repository.prepareExport(staff, { kind: 'SHEET', id: sheetId, input });
     },
     prepareIndividualExport(staff, itemId, input) {
       exact(input, ['requestId','expectedLabelHash','exportProfileId']); uuid(input.requestId); hash(input.expectedLabelHash); uuid(itemId);
-      requireThat(input.exportProfileId === LABEL_EXPORT_PROFILES.SINGLE, 400, 'LABEL_PROFILE_INVALID');
+      requireThat(exportProfiles.SINGLE.includes(input.exportProfileId), 400, 'LABEL_PROFILE_INVALID');
       return repository.prepareExport(staff, { kind: 'SINGLE', id: itemId, input });
     },
     async exportStatus(staff, target) { return (await checkedExport(staff, target, false)).view; },
@@ -110,8 +125,8 @@ export function createLabelService({ boundary, repository, finishing, storage,
       const { row } = await checkedExport(staff, target);
       requireThat(row.state === 'READY' && row.sha256 === input.expectedExportSha256, 409, 'LABEL_EXPORT_NOT_READY');
       const result = await storage.download(binding(row), { object: JSON.parse(row.object_ref), sha256: row.sha256, byteCount: row.byte_count, contentType: row.content_type });
-      const after = await checkedExport(staff, target); requireThat(after.row.sha256 === row.sha256, 409, 'LABEL_EXPORT_CHANGED');
-      return result;
+      const after = await checkedExport(staff, target); requireThat(after.row.sha256 === row.sha256 && after.row.profile_id === row.profile_id, 409, 'LABEL_EXPORT_CHANGED');
+      return { ...result, exportProfileId: row.profile_id };
     },
     async confirmPrint(staff, sheetId, input) {
       exact(input, ['requestId','exportId','exportSha256','manifestHash','successfulSlots'], ['failedSlots']);

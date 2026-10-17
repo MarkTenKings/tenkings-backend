@@ -14,6 +14,7 @@ import { createLabelRepository, labelFailureHash } from '../src/label-sheet-repo
 import { createLabelService } from '../src/label-sheet-service.mjs';
 import { LABEL_JIG_V1 } from '../../atlas-finishing/src/label-sheet-geometry.mjs';
 import { renderLabelV4, LABEL_V4_RENDERER_PROFILE_HASH } from '../../atlas-finishing/src/label-v4.mjs';
+import { LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 } from '../../atlas-finishing/src/label-sheet.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const output = process.env.ATLAS_LABEL_AUTO_RECOVERY_EVIDENCE;
@@ -217,6 +218,36 @@ try {
   const reserved = await reservation; await discard(overlap); await drain(3);
   const tombstoned = await readItem(reserved.itemId); assert.notEqual(tombstoned.state, 'READY'); assert.equal(tombstoned.print_svg, null); assert.equal(tombstoned.sheet_id, null); assert.equal(await visibleItem(reserved.itemId), undefined);
   checks.push('real intake SHARE lock prevents concurrent deletion from crossing reservation; after deletion commits the child cannot render or assign');
+
+  // DB qualification uses clearly marked local bytes; real PNG semantics are
+  // qualified separately by the native finishing and service raster suites.
+  const readExport = async id => (await admin.query('SELECT * FROM atlas_manual_connected.label_export WHERE id=$1', [id])).rows[0];
+  async function completeFixtureExport(prepared) {
+    const claimed = await repo.claimExport(staff, prepared.exportId), bytes = Buffer.from(`OWNED_DISPOSABLE_NOT_PRINTABLE:${prepared.exportProfileId}`);
+    await repo.finishExport(staff, claimed, { object: { fixtureBase64: bytes.toString('base64') }, sha256: digest(bytes), byteCount: bytes.length, mapping: { exportProfileId: prepared.exportProfileId, fixtureOnly: true } });
+    return readExport(prepared.exportId);
+  }
+  const singleOldInput = { requestId: randomUUID(), expectedLabelHash: readyBefore.artwork_hash, exportProfileId: LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id };
+  const singleBlackInput = { ...singleOldInput, requestId: randomUUID(), exportProfileId: LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1.id };
+  const singleOld = await service.prepareIndividualExport(staff, existing.id, singleOldInput), singleOldReady = await completeFixtureExport(singleOld);
+  const singleBlack = await service.prepareIndividualExport(staff, existing.id, singleBlackInput); await completeFixtureExport(singleBlack);
+  assert.notEqual(singleOld.exportId, singleBlack.exportId); assert.equal(singleOld.manifestHash, singleBlack.manifestHash);
+  for (const [input, prepared] of [[singleOldInput, singleOld], [singleBlackInput, singleBlack]]) {
+    const replay = await service.prepareIndividualExport(staff, existing.id, input); assert.equal(replay.exportId, prepared.exportId); assert.equal(replay.state, 'READY');
+  }
+  await assert.rejects(service.prepareIndividualExport(staff, existing.id, { ...singleOldInput, exportProfileId: singleBlackInput.exportProfileId }), { code: 'LABEL_REQUEST_CONFLICT' });
+  assert.deepEqual(await readExport(singleOld.exportId), singleOldReady);
+  const currentSheet = async () => (await admin.query('SELECT * FROM atlas_manual_connected.label_sheet WHERE id=$1', [readyBefore.sheet_id])).rows[0];
+  const sheetOldInput = { requestId: randomUUID(), expectedSheetRevision: (await currentSheet()).revision, exportProfileId: LABEL_EXPORT_PROFILE_V1.id };
+  const sheetOld = await service.prepareSheetExport(staff, readyBefore.sheet_id, sheetOldInput), sheetOldReady = await completeFixtureExport(sheetOld);
+  const frozenSheet = await currentSheet(); assert.equal(frozenSheet.state, 'SEALED');
+  const sheetBlackInput = { requestId: randomUUID(), expectedSheetRevision: frozenSheet.revision, exportProfileId: LABEL_BLACK_INK_EXPORT_PROFILE_V1.id };
+  const sheetBlack = await service.prepareSheetExport(staff, readyBefore.sheet_id, sheetBlackInput); await completeFixtureExport(sheetBlack);
+  assert.notEqual(sheetOld.exportId, sheetBlack.exportId); assert.equal(sheetOld.manifestHash, sheetBlack.manifestHash);
+  for (const [input, prepared] of [[sheetOldInput, sheetOld], [sheetBlackInput, sheetBlack]]) assert.equal((await service.prepareSheetExport(staff, readyBefore.sheet_id, input)).exportId, prepared.exportId);
+  assert.deepEqual(await readExport(sheetOld.exportId), sheetOldReady); assert.deepEqual(await currentSheet(), frozenSheet);
+  assert.equal((await admin.query('SELECT count(*)::int n FROM atlas_manual_connected.label_export')).rows[0].n, 4);
+  checks.push('legacy and black-only exports coexist as four immutable profile-specific records for the same READY item and frozen sheet; exact request replays preserve old bytes and reject changed semantics');
 
   assert.deepEqual(await readItem(existing.id), readyBefore); assert.equal(storageCalls, 0);
   const approvalRows = await approveRows(); assert(approvalBefore.every(old => approvalRows.some(row => canonical(row) === canonical(old))));

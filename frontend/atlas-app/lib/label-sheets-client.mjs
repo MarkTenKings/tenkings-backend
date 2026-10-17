@@ -4,6 +4,10 @@ export const LABEL_SHEETS_PATH = '/api/staff/manual-connected/label-sheets';
 export const LABEL_ITEMS_PATH = '/api/staff/manual-connected/labels';
 export const LABEL_INDIVIDUAL_PROFILE = 'atlas-v4-individual-2400ppi-v1';
 export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v2';
+export const LABEL_PRINT_FORMATS = Object.freeze({
+  foil: Object.freeze({ label: 'Black ink + transparent foil', sheet: 'atlas-v4-sheet-800ppi-black-ink-transparent-v1', individual: 'atlas-v4-individual-2400ppi-black-ink-transparent-v1' }),
+  original: Object.freeze({ label: 'Original black, gray + white', sheet: LABEL_EXPORT_PROFILE, individual: LABEL_INDIVIDUAL_PROFILE }),
+});
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const fail = code => Object.assign(new Error(code), { code });
@@ -11,7 +15,7 @@ const check = (value, code = 'LABEL_REPLY_INVALID') => { if (!value) throw fail(
 export const labelName = item => item?.snapshot?.identity?.playerName || item?.snapshot?.identity?.cardName || item?.identity?.playerName || item?.identity?.cardName || 'Approved card';
 export const labelSheetName = sheet => sheet?.number == null ? 'Saved sheet' : `Sheet ${String(sheet.number).padStart(3, '0')}`;
 export function labelArtworkHref(item, basePath = '', mode = 'preview') {
-  if (!uuid(item?.itemId) || !['preview', 'print'].includes(mode) || item?.state !== 'READY') return null;
+  if (!uuid(item?.itemId) || !['preview', 'print', 'preview-foil', 'print-foil'].includes(mode) || item?.state !== 'READY') return null;
   return `${basePath}${LABEL_ITEMS_PATH}/${item.itemId}/artwork?mode=${mode}`;
 }
 export function labelSheetMessage(error) {
@@ -118,17 +122,19 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
       check(new Set(slots).size === slots.length && slots.every(slot => Number.isInteger(slot) && slot >= 1 && slot <= 50));
       return result;
     },
-    exportSheet: sheet => {
+    exportSheet: (sheet, exportProfileId = LABEL_EXPORT_PROFILE) => {
       check(uuid(sheet?.sheetId) && Number.isInteger(sheet.revision));
-      return mutate('export', `${LABEL_SHEETS_PATH}/${sheet.sheetId}/exports`, { expectedSheetRevision: sheet.revision, exportProfileId: LABEL_EXPORT_PROFILE });
+      check(Object.values(LABEL_PRINT_FORMATS).some(format => format.sheet === exportProfileId), 'LABEL_PROFILE_INVALID');
+      return mutate('export', `${LABEL_SHEETS_PATH}/${sheet.sheetId}/exports`, { expectedSheetRevision: sheet.revision, exportProfileId });
     },
     downloadSheet: (sheet, output) => {
       check(uuid(sheet?.sheetId) && uuid(output?.exportId) && output.state === 'READY' && hash(output.sha256));
       return mutate('download', `${LABEL_SHEETS_PATH}/${sheet.sheetId}/exports/${output.exportId}/download`, { expectedExportSha256: output.sha256 });
     },
-    exportLabel: item => {
+    exportLabel: (item, exportProfileId = LABEL_INDIVIDUAL_PROFILE) => {
       check(uuid(item?.itemId) && item.state === 'READY' && hash(item.labelHash));
-      return mutate('individual-export', `${LABEL_ITEMS_PATH}/${item.itemId}/exports`, { expectedLabelHash: item.labelHash, exportProfileId: LABEL_INDIVIDUAL_PROFILE });
+      check(Object.values(LABEL_PRINT_FORMATS).some(format => format.individual === exportProfileId), 'LABEL_PROFILE_INVALID');
+      return mutate('individual-export', `${LABEL_ITEMS_PATH}/${item.itemId}/exports`, { expectedLabelHash: item.labelHash, exportProfileId });
     },
     readLabelExport: async (itemId, exportId) => {
       check(uuid(itemId) && uuid(exportId)); const result = await request(`${LABEL_ITEMS_PATH}/${itemId}/exports/${exportId}`);
@@ -173,8 +179,9 @@ function validateResult(saved, result) {
   if (saved.kind.endsWith('download') || saved.kind === 'download') {
     let url; try { url = new URL(result?.url); } catch { throw fail('LABEL_DOWNLOAD_INVALID'); }
     check(url.protocol === 'https:' && !url.username && !url.password && Number.isFinite(Date.parse(result.expiresAt)) && Date.parse(result.expiresAt) > Date.now(), 'LABEL_DOWNLOAD_INVALID');
+    check(Object.values(LABEL_PRINT_FORMATS).some(format => format[saved.kind === 'individual-download' ? 'individual' : 'sheet'] === result.exportProfileId), 'LABEL_DOWNLOAD_INVALID');
   } else if (saved.kind === 'export' || saved.kind === 'individual-export') {
-    check(uuid(result?.exportId) && ['PREPARING', 'READY', 'FAILED'].includes(result.state));
+    check(uuid(result?.exportId) && ['PREPARING', 'READY', 'FAILED'].includes(result.state) && result.exportProfileId === saved.body.exportProfileId);
   } else if (saved.kind === 'print') {
     check(result && (uuid(result.eventId) || uuid(result.printEventId)) && result.exportId === saved.body.exportId);
   } else if (saved.kind === 'reprint') check(uuid(result?.itemId));

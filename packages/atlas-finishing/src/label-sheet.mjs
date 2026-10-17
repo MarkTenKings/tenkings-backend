@@ -20,6 +20,11 @@ export const LABEL_EXPORT_PROFILE_V1 = Object.freeze({ ...sheet, hash: hash(stab
 const individual = { ...profile, id: 'atlas-v4-individual-2400ppi-v1', widthMm: 68.342, heightMm: 20.082,
   ppi: 2400, pixelWidth: 6458, pixelHeight: 1898, maxPngBytes: 32 * 1024 * 1024 };
 export const LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 = Object.freeze({ ...individual, hash: hash(stable(individual)) });
+const blackInk = { printMode: 'BLACK_INK_TRANSPARENT', artworkConversion: 'white-and-gray-vector-knockouts-v1', rgbPolicy: 'black-rgb-zero-v1' };
+const blackSheet = { ...sheet, ...blackInk, id: 'atlas-v4-sheet-800ppi-black-ink-transparent-v1', version: 1 };
+const blackIndividual = { ...individual, ...blackInk, id: 'atlas-v4-individual-2400ppi-black-ink-transparent-v1', version: 1 };
+export const LABEL_BLACK_INK_EXPORT_PROFILE_V1 = Object.freeze({ ...blackSheet, hash: hash(stable(blackSheet)) });
+export const LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 = Object.freeze({ ...blackIndividual, hash: hash(stable(blackIndividual)) });
 
 export function validateLabelV4Artwork({ printSvg, artworkHash }) {
   if (typeof printSvg !== 'string' || Buffer.byteLength(printSvg) > 1024 * 1024 || hash(printSvg) !== artworkHash
@@ -30,13 +35,37 @@ export function validateLabelV4Artwork({ printSvg, artworkHash }) {
   return printSvg;
 }
 
-export function renderLabelSheetSvg(items) {
+// Derive an export from the immutable PRINT artwork. White metadata and gray
+// fingerprint strokes become foil reveals; their outlined geometry is retained.
+// Never reinterpret mask paints or flatten the gray strokes into the black body.
+export function renderLabelBlackInkSvg(item) {
+  const svg = validateLabelV4Artwork(item);
+  const parts = svg.match(/^(<svg[^>]*>)(<title>[^]*?<\/title>)<defs>([^]*?)<\/defs><g clip-path="url\(#body\)" mask="url\(#ink\)">(<rect width="68\.342" height="20\.082" fill="#000000"\/>)([^]*?)<g data-part="metadata" fill="white">([^]*)<\/g><\/g><\/svg>$/);
+  if (!parts || svg.includes('black-ink-detail-knockouts')) throw new Error('LABEL_BLACK_INK_ARTWORK_INVALID');
+  const [, root, title, defs, body, gray, metadata] = parts;
+  if (!gray.includes('color="#353535"') || [...gray.matchAll(/\b(fill|stroke|color)="([^"]+)"/g)]
+    .some(([, name, value]) => !({ fill: ['none'], stroke: ['currentColor'], color: ['#353535'] }[name].includes(value)))) throw new Error('LABEL_BLACK_INK_ARTWORK_INVALID');
+  const detail = gray.replaceAll('color="#353535"', 'color="black"');
+  const knockout = `<mask id="black-ink-detail-knockouts" maskUnits="userSpaceOnUse" x="0" y="0" width="68.342" height="20.082"><rect width="68.342" height="20.082" fill="white"/>${detail}<g data-part="metadata" fill="black">${metadata}</g></mask>`;
+  return `${root.replace(' role="img"', ' data-print-mode="BLACK_INK_TRANSPARENT" role="img"')}${title}<defs>${defs}${knockout}</defs><g clip-path="url(#body)" mask="url(#ink)"><g mask="url(#black-ink-detail-knockouts)">${body}</g></g></svg>`;
+}
+
+export function renderLabelBlackInkPreviewSvg(item, { previewMaterial = 'gold' } = {}) {
+  if (!['gold', 'holo'].includes(previewMaterial)) throw new Error('LABEL_PREVIEW_MATERIAL_INVALID');
+  const svg = renderLabelBlackInkSvg(item);
+  const colors = previewMaterial === 'gold' ? ['#c99c3d', '#ecd296', '#b78b32'] : ['#7ddfe7', '#c8a4ec', '#f1b6d4'];
+  const foil = `<linearGradient id="black-ink-preview-foil">${colors.map((color, i) => `<stop offset="${i / 2}" stop-color="${color}"/>`).join('')}</linearGradient>`;
+  return svg.replace('data-atlas-artwork="PRINT"', 'data-atlas-artwork="PREVIEW_ONLY"')
+    .replace('</defs>', `${foil}</defs><g clip-path="url(#body)"><rect width="68.342" height="20.082" fill="url(#black-ink-preview-foil)"/></g>`);
+}
+
+export function renderLabelSheetSvg(items, { blackInkTransparent = false } = {}) {
   if (!Array.isArray(items) || items.length < 1 || items.length > 50) throw new Error('LABEL_SHEET_ITEMS_INVALID');
   const seen = new Set();
   const content = [...items].sort((a, b) => a.slot - b.slot).map(item => {
     if (!Number.isInteger(item.slot) || item.slot < 1 || item.slot > 50 || seen.has(item.slot)) throw new Error('LABEL_SLOT_INVALID');
     seen.add(item.slot);
-    const original = validateLabelV4Artwork(item);
+    const original = blackInkTransparent ? renderLabelBlackInkSvg(item) : validateLabelV4Artwork(item);
     const inner = original.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '').replace(/<title>[^]*?<\/title>/g, '');
     // Each label owns its mask/clip IDs. Prefix both definitions and references;
     // never let one card's dynamic grade mask alter another card's artwork.
@@ -60,6 +89,7 @@ function mappingFor(exportProfile, calibrationProfile) {
     rotationDeg: 0, effectivePpiX: exportProfile.pixelWidth * 25.4 / exportProfile.widthMm,
     effectivePpiY: exportProfile.pixelHeight * 25.4 / exportProfile.heightMm, alphaPolicy: exportProfile.alphaPolicy,
     renderProfileHash: exportProfile.hash, exportProfileId: exportProfile.id, contentType: 'image/png',
+    ...(exportProfile.printMode ? { printMode: exportProfile.printMode, artworkConversion: exportProfile.artworkConversion, rgbPolicy: exportProfile.rgbPolicy } : {}),
     qualification: exportProfile.qualification, transparentMarginsVerified: false };
 }
 
@@ -99,16 +129,19 @@ async function raster(svg, exportProfile) {
 }
 
 export async function renderLabelSheetPng(items, { calibrationProfile = null, exportProfileId = LABEL_EXPORT_PROFILE_V1.id } = {}) {
-  if (exportProfileId !== LABEL_EXPORT_PROFILE_V1.id) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
-  const mapping = mappingFor(LABEL_EXPORT_PROFILE_V1, calibrationProfile);
-  const svg = renderLabelSheetSvg(items), result = await raster(svg, LABEL_EXPORT_PROFILE_V1);
+  const exportProfile = [LABEL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1].find(value => value.id === exportProfileId);
+  if (!exportProfile) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
+  const mapping = mappingFor(exportProfile, calibrationProfile);
+  const svg = renderLabelSheetSvg(items, { blackInkTransparent: exportProfile.printMode === 'BLACK_INK_TRANSPARENT' }), result = await raster(svg, exportProfile);
   return { bytes: result.bytes, sha256: result.sha256, manifest: { version: 'atlas-label-png-manifest-v1', ...mapping,
     sha256: result.sha256, byteCount: result.bytes.length, orderedArtwork: [...items].sort((a, b) => a.slot - b.slot).map(({ slot, artworkHash }) => ({ slot, artworkHash })),
     rasterReceipt: result.rasterReceipt } };
 }
 
-export async function renderLabelV4Png(item) {
-  const svg = validateLabelV4Artwork(item), exportProfile = LABEL_INDIVIDUAL_EXPORT_PROFILE_V1;
+export async function renderLabelV4Png(item, { exportProfileId = LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id } = {}) {
+  const exportProfile = [LABEL_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1].find(value => value.id === exportProfileId);
+  if (!exportProfile) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
+  const svg = exportProfile.printMode === 'BLACK_INK_TRANSPARENT' ? renderLabelBlackInkSvg(item) : validateLabelV4Artwork(item);
   const result = await raster(svg, exportProfile), mapping = mappingFor(exportProfile, null);
   return { bytes: result.bytes, sha256: result.sha256, manifest: { version: 'atlas-label-png-manifest-v1', ...mapping,
     jigHash: null, sha256: result.sha256, byteCount: result.bytes.length, artworkHash: item.artworkHash, rasterReceipt: result.rasterReceipt } };

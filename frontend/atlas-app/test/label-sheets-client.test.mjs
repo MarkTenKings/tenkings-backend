@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { LABEL_JIG_V1 } from '../../../packages/atlas-finishing/src/label-sheet-geometry.mjs';
 import { LABEL_EXPORT_PROFILE_V1 } from '../../../packages/atlas-finishing/src/label-sheet.mjs';
-import { createLabelSheetsClient, labelArtworkHref, LABEL_SHEETS_PATH, LABEL_EXPORT_PROFILE } from '../lib/label-sheets-client.mjs';
+import { createLabelSheetsClient, labelArtworkHref, LABEL_SHEETS_PATH, LABEL_EXPORT_PROFILE, LABEL_PRINT_FORMATS } from '../lib/label-sheets-client.mjs';
 const sheetId = randomUUID(), itemId = randomUUID(), exportId = randomUUID(), staffId = randomUUID();
 const hash = 'a'.repeat(64), sheet = { sheetId, revision: 8, jigHash: LABEL_JIG_V1.jigHash, items: [{ itemId, slot: 1 }] }, output = { exportId, sheetId, state: 'READY', sha256: hash, manifestHash: 'b'.repeat(64) };
 const item = { itemId, state: 'READY', labelHash: hash };
 function fixture(request, shared = new Map()) {
   const calls = [], storage = { getItem: key => shared.get(key) ?? null, setItem: (key, value) => shared.set(key, value), removeItem: key => shared.delete(key) };
-  const options = { staffId, csrf: 'actual-csrf', storage, cryptoImpl: { randomUUID }, request: async (path, options) => { calls.push({ path, ...options }); return request(path, options); } };
+  const options = { staffId, csrf: 'actual-csrf', storage, cryptoImpl: { randomUUID }, request: async (path, options) => { calls.push({ path, ...options }); const result = await request(path, options); return result && typeof result === 'object' ? { ...(path.endsWith('/exports') ? { exportProfileId: options.body.exportProfileId } : path.endsWith('/download') ? { exportProfileId: path.includes('/label-sheets/') ? LABEL_PRINT_FORMATS.original.sheet : LABEL_PRINT_FORMATS.original.individual } : {}), ...result } : result; } };
   return { calls, shared, options, client: createLabelSheetsClient(options) };
 }
 test('partial export binds current sheet revision and preserves the same request after a lost reply and reload', async () => {
@@ -20,7 +20,7 @@ test('partial export binds current sheet revision and preserves the same request
   assert.equal(original.body.exportProfileId, LABEL_EXPORT_PROFILE_V1.id);
   assert.equal(f.calls[0].csrf, 'actual-csrf');
   await assert.rejects(f.client.recordPrint(sheet, output, [1]), { code: 'LABEL_REQUEST_PENDING' });
-  const next = createLabelSheetsClient({ ...f.options, request: async (path, options) => { assert.equal(path, f.calls[0].path); assert.deepEqual(options.body, original.body); return output; } });
+  const next = createLabelSheetsClient({ ...f.options, request: async (path, options) => { assert.equal(path, f.calls[0].path); assert.deepEqual(options.body, original.body); return { ...output, exportProfileId: original.body.exportProfileId }; } });
   await next.resume(); assert.equal(next.pending(), null);
 });
 test('a sheet download issues only the exact saved-export request and never records physical printing', async () => {
@@ -148,4 +148,28 @@ test('an unverified layout successor does not consume the saved retry intent', a
   const failed = { itemId, state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', failureHash: hash };
   const f = fixture(async () => ({ itemId: randomUUID(), originalItemId: randomUUID(), purpose: 'LAYOUT_RETRY', state: 'READY' }));
   await assert.rejects(f.client.retryLayout(failed, hash), { code: 'LABEL_REPLY_INVALID' }); assert.ok(f.client.pending());
+});
+
+test('black-only profiles are explicit, kind-bound and retained in an uncertain request', async () => {
+  const f = fixture(async () => { throw { status: 503, code: 'UNKNOWN' }; });
+  await assert.rejects(f.client.exportLabel(item, LABEL_PRINT_FORMATS.foil.individual));
+  assert.equal(f.client.pending().body.exportProfileId, LABEL_PRINT_FORMATS.foil.individual);
+  assert.throws(() => f.client.exportLabel(item, LABEL_PRINT_FORMATS.foil.sheet), { code: 'LABEL_PROFILE_INVALID' });
+  assert.throws(() => f.client.exportSheet(sheet, LABEL_PRINT_FORMATS.foil.individual), { code: 'LABEL_PROFILE_INVALID' });
+  const wrong = fixture(async () => ({ ...output, exportProfileId: LABEL_PRINT_FORMATS.original.sheet }));
+  await assert.rejects(wrong.client.exportSheet(sheet, LABEL_PRINT_FORMATS.foil.sheet), { code: 'LABEL_REPLY_INVALID' });
+  assert.equal(wrong.client.pending().body.exportProfileId, LABEL_PRINT_FORMATS.foil.sheet);
+});
+test('foil preview and print URLs are exact authenticated modes', () => {
+  assert.equal(labelArtworkHref(item, '/admin', 'print-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=print-foil`);
+  assert.equal(labelArtworkHref(item, '/admin', 'preview-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview-foil`);
+  assert.equal(labelArtworkHref(item, '/admin', 'unrecognized'), null);
+});
+
+test('a saved legacy download identifies its original ink format and wrong-kind profiles are refused', async () => {
+  const response = { url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString(), exportProfileId: LABEL_PRINT_FORMATS.original.sheet };
+  const f = fixture(async () => response); const reply = await f.client.downloadSheet(sheet, output);
+  assert.equal(reply.result.exportProfileId, LABEL_PRINT_FORMATS.original.sheet);
+  const wrong = fixture(async () => ({ ...response, exportProfileId: LABEL_PRINT_FORMATS.foil.individual }));
+  await assert.rejects(wrong.client.downloadSheet(sheet, output), { code: 'LABEL_DOWNLOAD_INVALID' }); assert.ok(wrong.client.pending());
 });

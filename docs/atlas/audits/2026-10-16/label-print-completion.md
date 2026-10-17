@@ -1,6 +1,20 @@
 # Sports and Pokémon label recovery
 
-Status: released at 82e9aacf on October 17, 2026 at 03:39:12 UTC. Native/web/canonical/postflight checks passed. Authenticated Pokémon recovery/download acceptance awaits fresh owner sign-in. Physical printer/material qualification remains open.
+Status: original recovery release82e9aacf is live; the automatic preparation and true black/transparent export follow-up is qualified and awaiting fresh release-02. The owner deleted all cards; they remain deleted. Physical qualification and a genuine new approval remain open.
+
+## Automatic labels and black/transparent foil export — qualified, release pending (October 17 UTC)
+
+The owner deleted all current cards while this work continued. Fresh database evidence confirms zero visible cards; no card or approval is to be restored. Grade approval already invokes report publication and label preparation automatically. Historical Pokémon metadata overflow and a missing retry ingress route caused the reported stalled labels; deletion alone was not a general fix.
+
+The qualified application follow-up removes staff layout gestures, automatically recovers eligible renderer failures, excludes discarded sources and reconciles saved retry requests with their original identity. Real preparation failures remain truthful system errors. Approved grades, grading calculations, existing READY artwork and physical geometry are unchanged.
+
+The default new print format is **Black ink + transparent foil** for both individual and sheet downloads. Exact vector-derived openings reveal the substrate in lettering and fingerprint details. Every output pixel is solid black or fully transparent; there is no white, gray or simulated foil ink. The original black/gray/white format remains a separately identified export. Material previews match the selected format; stored exports cannot be confused across formats. Individual dimensions remain68.342×20.082mm/6458×1898px; sheets310×400mm/9764×12598px,50positions.
+
+Finishing22/22, backend37/37, frontend56/56 and15 actual Prisma/PostgreSQL qualification groups pass, with independent source/UI review. Full/partial jig, every-pixel binary ink, physical cuts, strip seams, pHYs and unchanged legacy bytes are verified. Synthetic browser proofs are distinct from live-card acceptance. Actual E1 scale/origin/material adhesion and fine-detail qualification still require a physical print sample.
+
+Both narrow proxy corrections completed. Current config checksumd3825349ebd6d3dedbc70992a06f9c5f7a6396cce32ce61a7ae7b131cdf71a38 admits existing POST layout-retries and exact GET artwork preview-foil/print-foil modes with all other routes/security preserved. Final proxy receipt271b6fe860d582bf183b89cfc1ce152d88e5f7d47a3e8b1c6d68ccb6c2e49752 confirms startup and unchanged application containers. Both intents are consumed; never replay. Application source is being frozen for fresh release-02. No migration is needed; installed005/006/007 and all seven ledger rows must remain unchanged.
+
+## Prior release evidence (historical)
 
 ## Observed problem
 

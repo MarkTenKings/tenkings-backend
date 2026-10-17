@@ -22,6 +22,8 @@ const { svg, exportProfile: p, outputPath } = JSON.parse(input); input = '';
 if (!Number.isInteger(p.pixelWidth) || !Number.isInteger(p.pixelHeight) || p.pixelWidth > 12800 || p.pixelHeight > 12800
     || ![800, 2400].includes(p.ppi) || p.stripRows !== 256) throw new Error('LABEL_RASTER_PROFILE_INVALID');
 const tiled = p.rasterizer === 'sharp-0.33.5-clipped-strip-png-v2';
+const blackInk = p.printMode === 'BLACK_INK_TRANSPARENT';
+if (p.printMode != null && (!blackInk || p.artworkConversion !== 'white-and-gray-vector-knockouts-v1' || p.rgbPolicy !== 'black-rgb-zero-v1')) throw new Error('LABEL_RASTER_PROFILE_INVALID');
 if (tiled && (p.pixelWidth !== 9764 || p.pixelHeight !== 12598 || p.widthMm !== 310 || p.heightMm !== 400
     || p.ppi !== 800 || p.tileHaloPixels !== 1 || p.maxTileWidth !== 640)) throw new Error('LABEL_RASTER_PROFILE_INVALID');
 const started = performance.now(), output = await open(outputPath, 'wx', 0o600), sha = createHash('sha256');
@@ -96,6 +98,7 @@ try {
       const offset = row * (stride + 1); scanlines[offset] = 0;
       for (let x = 0; x < stride; x += 4) {
         const source = row * stride + x, target = offset + 1 + x, opaque = data[source + 3] >= 128;
+        if (blackInk && opaque && (data[source] !== 0 || data[source + 1] !== 0 || data[source + 2] !== 0)) throw new Error('LABEL_BLACK_INK_PIXEL_INVALID');
         scanlines[target] = opaque ? data[source] : 0; scanlines[target + 1] = opaque ? data[source + 1] : 0;
         scanlines[target + 2] = opaque ? data[source + 2] : 0; scanlines[target + 3] = opaque ? 255 : 0;
       }
@@ -107,5 +110,6 @@ try {
   await output.sync();
   process.stdout.write(JSON.stringify({ sha256: sha.digest('hex'), byteCount, pixelWidth: p.pixelWidth, pixelHeight: p.pixelHeight,
     peakRssBytes, elapsedMs: Math.round(performance.now() - started), sharpVersions: sharp.versions, alphaBinary: true, stripRows: p.stripRows,
-    rasterizer: p.rasterizer, rasterizedTiles, maxRasterTileBytes }));
+    rasterizer: p.rasterizer, rasterizedTiles, maxRasterTileBytes,
+    ...(blackInk ? { printMode: p.printMode, blackInkOnly: true } : {}) }));
 } finally { await output.close(); }
