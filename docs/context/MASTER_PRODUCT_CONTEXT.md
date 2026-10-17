@@ -1,5 +1,14 @@
 # Ten Kings Master Product Context
 
+## Automatic label follow-up — qualified locally, release pending (October 16 Pacific)
+
+The owner requires automatic label preparation after approval and deleted all current cards while this work continued. Those deletions are authoritative; no card or label is to be restored. Approval already invokes publication and label generation automatically. The missing Pokémon output came from historical metadata overflow; the subsequent manual retry also encountered an omitted ingress route. A saved unknown retry then disabled new label actions.
+
+The qualified follow-up removes staff layout gestures, automatically recovers eligible failures after a renderer change, and reconciles existing saved retry requests with their original identity. Unchanged failures stop with a truthful system preparation error. Deleted sources are excluded at discovery, reservation and rendering boundaries. Print geometry, existing READY artwork, approved grades and scoring are unchanged. Backend43/43, frontend52/52 and14 real-Prisma/PostgreSQL groups pass, including deletion races and bounded failures. The actual component browser fixture confirms automatic Preparing→Ready selection with unchanged8.5/8grades; it is synthetic evidence, not a new live approval.
+
+A separate narrow ingress correction admits the existing authenticated POST label layout-retry route. Its one write/restart was dispatched; the route file now has checksum2167882589d9d9f9f61c1f49cc15a4e9d5e0cddb654449e5e5121a2432787f11. Post-restart assertion stopped on Docker's regenerated dynamic MAC address; no operation was replayed. Supplemental read-only startup/network/route verification is pending. Application automatic recovery is not live yet. Follow fresh release-02 receipts, never replay consumed release-01 intents. Physical E1 qualification remains pending an actual print sample.
+
+
 ## Current Sports/Pokémon label recovery — live (October 16, 2026 Pacific)
 
 Source `82e9aacf66e06c5d540c15f2605443b44245abec` is live on native main/worker and staff/public web. Publication completed October 17 at **03:39:12 UTC**, 52 canonical route/asset checks passed, and the temporary claim pause was explicitly released at **03:40:17.172 UTC**. Postflight confirms seven visible cards/five approvals, discarded rows, prior READY market responses and retained label requests preserved. Subsequent release sections are historical checkpoints; the sold-comp photograph repair remains included.

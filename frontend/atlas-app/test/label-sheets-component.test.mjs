@@ -15,7 +15,7 @@ function data(number = 1, count = 3) {
   const sheetId = randomUUID(); const items = Array.from({ length: count }, (_, index) => ({ itemId: randomUUID(), sheetId, cardId: randomUUID(), approvalActionId: randomUUID(), approvalVersion: 2, purpose: 'ORIGINAL', originalItemId: null, slot: index + 1, state: 'READY', labelHash: 'a'.repeat(64), snapshot: { identity: { playerName: `Saved Player ${number}-${index + 1}`, year: '2024', productSet: 'Saved Set' }, grade: 9.5, reportNumber: `ATLAS-${number}-${index + 1}`, approvalVersion: 2, reportHref: `https://atlasgrading.com/reports/ar_${String(number * 50 + index).padStart(24, '0')}?v=2` } }));
   return { sheetId, number, state: 'OPEN', revision: count, occupied: count, capacity: 50, materialProfileId: 'atlas-v4-gold-v1', jigHash: geometry.LABEL_JIG_V1.jigHash, items, exports: [], printEvents: [] };
 }
-async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUUID(), role: 'REVIEWER' }, error = null, saved = new Map(), hold = null, initialCardId = null, pendingItems = [] } = {}) {
+async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUUID(), role: 'REVIEWER' }, error = null, saved = new Map(), hold = null, initialCardId = null, pendingItems = [], postError = null } = {}) {
   let staff = initialStaff, cursor = 0, dirty = false, tree, exports = {};
   const slots = [], effects = [], calls = [], timers = new Set();
   const changed = (a, b) => !a || b.some((value, i) => value !== a[i]);
@@ -25,7 +25,7 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
     useCallback(fn, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) slots[id] = { deps, value: fn }; return slots[id].value; },
     useEffect(fn, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) { const old = slots[id]; slots[id] = { deps, cleanup: old?.cleanup }; effects.push(() => { old?.cleanup?.(); slots[id].cleanup = fn(); }); } },
   };
-  const f = { sheets, calls, saved, error, hold, initialCardId, pendingItems, postError: null, downloads: [], blobs: new Map() };
+  const f = { sheets, calls, saved, error, hold, initialCardId, pendingItems, postError, downloads: [], blobs: new Map() };
   const request = async (url, options = {}) => {
     calls.push({ url, ...options });
     if (url === '/api/staff/session') return { staff: { ...staff, ...f.sessionStaff }, csrf: 'csrf' };
@@ -112,31 +112,67 @@ test('individual list uses exact approved identity and shows layout failures wit
   assert.equal(f.detail().item.state, 'NEEDS_LAYOUT'); assert.equal(api.labelArtworkHref(f.detail().item), null); f.dispose();
 });
 
-test('explicit layout retry follows its new attempt without changing the saved grade or exporting', async () => {
-  const failed = { itemId: randomUUID(), cardId: randomUUID(), state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', failureHash: 'b'.repeat(64),
-    code: 'METADATA_OVERFLOW', snapshot: { grade: 8.5, identity: { cardName: 'Sylveon ex' }, reportNumber: 'ATLAS-RETRY-TEST' } };
+test('new and recovering labels need no layout gesture or browser mutation', async () => {
+  const failed = { itemId: randomUUID(), cardId: randomUUID(), state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', automaticLayoutRecoveryEligible: true,
+    snapshot: { grade: 8.5, identity: { cardName: 'Sylveon ex' } } };
   const f = await fixture({ pendingItems: [failed], initialCardId: failed.cardId });
-  assert.equal(f.detail().canRetryLayout, true); assert.equal(f.calls.some(call => call.method), false);
-  f.detail().onLayoutRetry(failed); await f.flush();
-  const posts = f.calls.filter(call => call.method === 'POST'); assert.equal(posts.length, 1);
-  assert.equal(posts[0].url, `${api.LABEL_ITEMS_PATH}/${failed.itemId}/layout-retries`);
-  assert.equal(posts[0].body.expectedFailureHash, failed.failureHash);
-  assert.equal(posts[0].body.expectedRendererProfileHash, 'f'.repeat(64));
-  assert.equal(f.detail().item.purpose, 'LAYOUT_RETRY'); assert.equal(f.detail().item.originalItemId, failed.itemId);
-  assert.equal(f.detail().item.snapshot.grade, 8.5); assert.equal(f.detail().item.state, 'PENDING_RENDER');
-  assert.equal(f.detail().canRetryLayout, false); assert.match(f.text(), /Layout retry saved/);
-  assert.equal(f.downloads.length, 0); f.dispose();
+  assert.equal(f.detail().onLayoutRetry, undefined);
+  assert.equal(f.detail().item.automaticLayoutRecoveryEligible, true);
+  assert.match(f.text(), /Preparing label/); assert.doesNotMatch(f.text(), /Needs layout|Retry label layout/);
+  await f.tick(); assert.equal(f.calls.some(call => call.method), false);
+  const ready = { ...failed, state: 'READY', automaticLayoutRecoveryEligible: false, labelHash: 'a'.repeat(64) };
+  f.pendingItems = [ready]; await f.tick();
+  assert.equal(f.detail().item.state, 'READY'); assert.equal(f.detail().item.snapshot.grade, 8.5);
+  assert.equal(f.calls.some(call => call.method), false); f.dispose();
 });
-
-test('lost layout reply retains the exact retry and suppresses a second layout gesture', async () => {
-  const failed = { itemId: randomUUID(), cardId: randomUUID(), state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', failureHash: 'b'.repeat(64) };
+test('the selected preparing label follows automatic recovery into its printable successor', async () => {
+  const failed = { itemId: randomUUID(), cardId: randomUUID(), state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', automaticLayoutRecoveryEligible: true, snapshot: { grade: 8 } };
   const f = await fixture({ pendingItems: [failed], initialCardId: failed.cardId });
-  f.postError = { status: 503, code: 'NETWORK_LOST' }; f.detail().onLayoutRetry(failed); await f.flush();
-  const before = f.calls.find(call => call.method === 'POST'); assert.equal(f.detail().busy, true);
-  assert.match(f.text(), /saved layout retry request/);
-  f.postError = null; f.click('Retry saved request'); await f.flush();
-  const posts = f.calls.filter(call => call.method === 'POST'); assert.equal(posts.length, 2);
-  assert.deepEqual(posts[1].body, before.body); assert.equal(f.button('Retry saved request'), undefined); f.dispose();
+  const ready = { ...failed, itemId: randomUUID(), originalItemId: failed.itemId, purpose: 'LAYOUT_RETRY', state: 'READY', labelHash: 'a'.repeat(64), automaticLayoutRecoveryEligible: false };
+  f.pendingItems = [{ ...failed, state: 'SUPERSEDED', supersededReason: 'LAYOUT_RETRIED', layoutRetryItemId: ready.itemId }, ready];
+  await f.tick(); assert.equal(f.detail().item.itemId, ready.itemId); assert.equal(f.detail().item.snapshot.grade, 8);
+  assert.equal(f.calls.some(call => call.method), false); f.dispose();
+});
+function legacyLayoutIntent(staff, failed) {
+  return { version: 1, staffId: staff.id, kind: 'layout-retry', path: `${api.LABEL_ITEMS_PATH}/${failed.itemId}/layout-retries`,
+    body: { requestId: randomUUID(), expectedFailureHash: 'b'.repeat(64), expectedRendererProfileHash: 'f'.repeat(64) } };
+}
+test('an existing saved layout request reconciles automatically with its exact original intent', async () => {
+  const staff = { id: randomUUID(), role: 'REVIEWER' }, failed = { itemId: randomUUID(), cardId: randomUUID(), state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', snapshot: { grade: 8.5 } };
+  const saved = new Map(), key = `atlas-label-sheets:${staff.id}:pending`, intent = legacyLayoutIntent(staff, failed);
+  saved.set(key, JSON.stringify(intent));
+  const f = await fixture({ staff, saved, pendingItems: [failed], initialCardId: failed.cardId });
+  const posts = f.calls.filter(call => call.method === 'POST'); assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, intent.path); assert.deepEqual(posts[0].body, intent.body);
+  assert.equal(saved.has(key), false); await f.tick();
+  assert.equal(f.detail().item.purpose, 'LAYOUT_RETRY'); assert.equal(f.detail().item.snapshot.grade, 8.5);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 1); assert.equal(f.downloads.length, 0); f.dispose();
+});
+test('deleted-card and already-recovered layout replies release only the exact saved intent', async () => {
+  for (const [status, code] of [[404, 'LABEL_ITEM_NOT_FOUND'], [410, 'INTAKE_CARD_DELETED'], [409, 'LABEL_LAYOUT_ALREADY_RETRIED']]) {
+    const staff = { id: randomUUID(), role: 'REVIEWER' }, failed = { itemId: randomUUID() }, saved = new Map();
+    const key = `atlas-label-sheets:${staff.id}:pending`, intent = legacyLayoutIntent(staff, failed); saved.set(key, JSON.stringify(intent));
+    const f = await fixture({ staff, saved, postError: { status, code } });
+    assert.equal(saved.has(key), false); assert.equal(f.button('Export this sheet').props.disabled, false);
+    await f.tick(); assert.equal(f.calls.filter(call => call.method === 'POST').length, 1); f.dispose();
+  }
+});
+test('unknown legacy layout outcomes remain saved and automatic reconciliation is bounded', async () => {
+  const staff = { id: randomUUID(), role: 'REVIEWER' }, failed = { itemId: randomUUID() }, saved = new Map();
+  const key = `atlas-label-sheets:${staff.id}:pending`, intent = legacyLayoutIntent(staff, failed), raw = JSON.stringify(intent); saved.set(key, raw);
+  const f = await fixture({ staff, saved, postError: { status: 502, code: 'MANUAL_SERVICE_RESPONSE_INVALID' } });
+  assert.equal(f.button('Export this sheet').props.disabled, true);
+  await f.tick(); await f.tick(); await f.tick(); await f.tick();
+  const posts = f.calls.filter(call => call.method === 'POST'); assert.equal(posts.length, 3);
+  for (const post of posts) { assert.equal(post.url, intent.path); assert.deepEqual(post.body, intent.body); }
+  assert.equal(saved.get(key), raw); assert.ok(f.button('Check connection again'));
+  assert.doesNotMatch(f.text(), /Needs layout|Retry label layout/); f.dispose();
+});
+test('read-only staff never reconcile a saved layout mutation automatically', async () => {
+  const staff = { id: randomUUID(), role: 'VIEWER' }, saved = new Map(), intent = legacyLayoutIntent(staff, { itemId: randomUUID() });
+  saved.set(`atlas-label-sheets:${staff.id}:pending`, JSON.stringify(intent));
+  const f = await fixture({ staff, saved }); await f.tick();
+  assert.equal(f.calls.some(call => call.method), false); f.dispose();
 });
 test('a late sheet read never replaces the newly selected sheet', async () => {
   const first = data(1), second = data(2), f = await fixture({ sheets: [first, second] }); let resolve;

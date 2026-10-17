@@ -2,6 +2,7 @@ import { canonical, digest, object, requireThat, uuid, revision } from '@atlas/m
 import { renderLabelV4, renderLabelV4Png, LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
 import { renderLabelSheetPng, LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
+import { labelFailureHash } from './label-sheet-repository.mjs';
 const jigHash = LABEL_JIG_V1.jigHash;
 
 export const LABEL_EXPORT_PROFILES = Object.freeze({ SHEET: LABEL_EXPORT_PROFILE_V1.id, SINGLE: LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id });
@@ -19,7 +20,8 @@ export function createLabelService({ boundary, repository, finishing, storage,
     && renderer?.label && renderer?.sheet && renderer?.individual, 500, 'LABEL_CONFIGURATION_INVALID');
   let running = null;
   async function renderItem(staff, id) {
-    const claimed = await repository.claimItem(staff, id); if (!claimed) return false;
+    let attemptedProfile = { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, jigHash, materialProfileId: null };
+    const claimed = await repository.claimItem(staff, id, attemptedProfile); if (!claimed) return false;
     try {
       // This adapter proves exact approval/action/draft lineage and reauthenticates
       // after the immutable public packet is read from object storage.
@@ -33,15 +35,30 @@ export function createLabelService({ boundary, repository, finishing, storage,
       } else {
         const report = packet.report, material = materials[report.cardProfile];
         requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+        attemptedProfile = { ...attemptedProfile, materialProfileId: material.id };
         const rendered = await renderer.label({ identity: report.identity, finalGrade: report.finalGrade,
           reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, cardProfile: report.cardProfile }, { previewMaterial: material.preview });
-        result = { ...rendered, code: rendered.diagnostics?.code ?? 'LABEL_NEEDS_LAYOUT', materialProfileId: material.id, jigHash,
+        result = { ...rendered, rendererProfileHash: rendered.rendererProfileHash ?? LABEL_V4_RENDERER_PROFILE_HASH,
+          code: rendered.diagnostics?.code ?? 'LABEL_NEEDS_LAYOUT', materialProfileId: material.id, jigHash,
           snapshot: { identity: report.identity, grade: report.finalGrade, finalGrade: report.finalGrade, cardProfile: report.cardProfile,
             reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, reportHref: `https://atlasgrading.com/reports/${packet.publicToken}?v=${packet.approvalVersion}`,
             previewMaterial: material.preview, source: rendered.source, diagnostics: rendered.diagnostics ?? [] } };
       }
       await repository.finishItem(staff, claimed, { ...result, row }); return true;
-    } catch (error) { await repository.failItem(staff, claimed); throw error; }
+    } catch (error) { await repository.failItem(staff, claimed, attemptedProfile); throw error; }
+  }
+  async function recoverLayout(staff, id) {
+    const item = await repository.item(staff, id);
+    // item() verifies the immutable snapshot hash and current published approval.
+    // Reserve first; ordinary rendering verifies the public packet and owns its
+    // bounded attempts. A storage failure cannot create repeated generations.
+    const snapshot = item.snapshot ? JSON.parse(item.snapshot) : null, material = materials[snapshot?.cardProfile];
+    requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+    const key = digest(canonical({ operation: 'automatic-layout-recovery/v1', itemId: id, rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }));
+    const requestId = `${key.slice(0,8)}-${key.slice(8,12)}-4${key.slice(13,16)}-${((parseInt(key[16],16)&3)|8).toString(16)}${key.slice(17,20)}-${key.slice(20,32)}`;
+    await repository.retryLayout(staff, id, { requestId, expectedFailureHash: labelFailureHash(item), expectedRendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH },
+      { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, materialProfileId: material.id, jigHash }, { automatic: true });
+    return true;
   }
   async function renderExport(staff, id) {
     const claimed = await repository.claimExport(staff, id); if (!claimed) return false;
@@ -67,7 +84,7 @@ export function createLabelService({ boundary, repository, finishing, storage,
     return result;
   }
   return Object.freeze({
-    list: async (staff, options) => ({ ...await repository.list(staff, options), rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }),
+    list: async (staff, options) => ({ ...await repository.list(staff, { ...options, rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }), rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }),
     sheet: (staff, sheetId) => repository.sheet(staff, uuid(sheetId)),
     reconciliation: (staff, input) => repository.reconciliation(staff, input),
     async artwork(staff, { itemId, mode = 'preview' }) {
@@ -121,10 +138,11 @@ export function createLabelService({ boundary, repository, finishing, storage,
     runPending({ limit = 4 } = {}) {
       if (running) return running;
       running = (async () => {
-        const candidates = await repository.pendingCandidates(limit); let count = 0;
+        const candidates = await repository.pendingCandidates(limit, { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }); let count = 0;
         for (const candidate of candidates) {
           try { const staff = boundary.machineOwner({ ownerId: candidate.actor_id, accessVersion: candidate.access_version });
-            if (await (candidate.kind === 'ITEM' ? renderItem(staff, candidate.id) : renderExport(staff, candidate.id))) count++; }
+            if (await (candidate.kind === 'ITEM' ? renderItem(staff, candidate.id)
+              : candidate.kind === 'LAYOUT_RECOVERY' ? recoverLayout(staff, candidate.id) : renderExport(staff, candidate.id))) count++; }
           catch { /* Durable bounded state records failure; never emit SVG, identity, URL or native errors. */ }
         }
         return count;

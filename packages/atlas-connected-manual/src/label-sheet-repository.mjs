@@ -4,6 +4,7 @@ import { canonical, digest, requireThat, uuid } from '@atlas/manual-service/cont
 const S = 'atlas_manual_connected';
 const stored = (text, hash) => { requireThat(typeof text === 'string' && digest(text) === hash, 503, 'LABEL_STORED_CONTENT_INVALID'); return JSON.parse(text); };
 const reviewer = p => requireThat(p.role === 'REVIEWER', 403, 'LABEL_ACCESS_DENIED');
+export const LABEL_LAYOUT_FAILURE_CODES = Object.freeze(['NAME_OVERFLOW','METADATA_OVERFLOW','UNSUPPORTED_GLYPH','EMPTY_GLYPH_OUTLINE','CERTIFICATE_OVERFLOW']);
 export const labelFailureHash = r => digest(canonical({ itemId:r.id,cardId:r.card_id,actionId:r.action_id,approvalVersion:r.approval_version,
   sourceRevision:r.source_revision,sourceHash:r.source_hash,reportHash:r.report_hash,publicHash:r.public_hash,
   snapshotHash:r.snapshot_hash,code:r.code,attempts:r.attempts,rendererProfileHash:r.renderer_profile_hash,materialProfileId:r.material_profile_id,jigHash:r.jig_hash }));
@@ -13,6 +14,7 @@ const itemView = r => ({ itemId: r.id, cardId: r.card_id, approvalActionId: r.ac
   supersededReason: r.current === false ? 'APPROVAL_CHANGED' : r.state === 'SUPERSEDED' && r.layout_retry_item_id ? 'LAYOUT_RETRIED' : null, purpose: r.purpose, originalItemId: r.original_item_id, sheetId: r.sheet_id, slot: r.slot,
   labelHash: r.artwork_hash, materialProfileId: r.material_profile_id, code: r.code,
   failureHash: r.state === 'NEEDS_LAYOUT' && r.current !== false ? labelFailureHash(r) : null,
+  automaticLayoutRecoveryEligible: r.current !== false && r.automatic_layout_recovery_eligible === true,
   snapshot: r.snapshot ? stored(r.snapshot, r.snapshot_hash) : null,
   previewHref: r.artwork_hash ? `/api/staff/manual-connected/labels/${r.id}/artwork?mode=preview` : null });
 const exportView = r => ({ exportId: r.id, kind: r.kind, sheetId: r.sheet_id, itemId: r.item_id, state: r.state,
@@ -25,10 +27,33 @@ const eventView = r => ({ eventId: r.id, exportId: r.export_id, exportSha256: r.
 const successorProjection = `(SELECT successor.id FROM ${S}.label_item successor WHERE successor.original_item_id=i.id AND successor.purpose='LAYOUT_RETRY') AS layout_retry_item_id`;
 const summaryColumns = 'id,actor_id,card_id,action_id,approval_version,state,purpose,original_item_id,sheet_id,slot,artwork_hash,material_profile_id,code,snapshot,snapshot_hash,source_revision,source_hash,report_hash,public_hash,renderer_profile_hash,jig_hash,attempts'.split(',').map(c=>'i.'+c).join(',')
   + `,${successorProjection},(SELECT latest.action_id=i.action_id FROM atlas_manual.publication latest WHERE latest.card_id=i.card_id ORDER BY latest.version DESC LIMIT 1) AS current`;
+// Used verbatim for worker discovery and the read-only UI projection. Rendering
+// and the successor transaction still reauthorize and validate immutable source.
+const layoutRecoveryPredicate = (profile, codes) => `(${profile}::text IS NOT NULL AND i.state='NEEDS_LAYOUT' AND i.purpose IN ('ORIGINAL','LAYOUT_RETRY')
+  AND i.renderer_profile_hash IS DISTINCT FROM ${profile} AND i.code=ANY(${codes}::text[]) AND i.snapshot IS NOT NULL
+  AND i.snapshot::jsonb->>'cardProfile' IN ('SPORTS','POKEMON')
+  AND i.print_svg IS NULL AND i.preview_svg IS NULL AND i.artwork_hash IS NULL AND i.sheet_id IS NULL AND i.slot IS NULL
+  AND i.previous_assignment IS NULL AND i.claim_id IS NULL AND i.lease_until IS NULL
+  AND EXISTS(SELECT 1 FROM atlas_manual_intake.card c JOIN atlas_manual.card approved ON approved.id=c.id
+    WHERE c.id=i.card_id AND (approved.owner_id=i.actor_id OR i.actor_id=ANY(approved.approvers))
+    AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d
+      WHERE d.card_id=c.id OR (d.owner_id=c.owner_id AND d.create_request_id=c.create_request_id)))
+  AND EXISTS(SELECT 1 FROM atlas_manual.publication p JOIN atlas_manual.approval a USING(card_id,action_id)
+    WHERE p.card_id=i.card_id AND p.action_id=i.action_id AND p.state='PUBLISHED' AND p.mode='PRODUCTION'
+    AND p.version=i.approval_version AND p.public_hash=i.public_hash AND a.source_revision=i.source_revision
+    AND a.source_hash=i.source_hash AND a.report_hash=i.report_hash)
+  AND NOT EXISTS(SELECT 1 FROM ${S}.label_export e WHERE e.item_id=i.id)
+  AND NOT EXISTS(SELECT 1 FROM ${S}.label_item successor WHERE successor.original_item_id=i.id AND successor.purpose='LAYOUT_RETRY')
+  AND NOT EXISTS(SELECT 1 FROM atlas_manual.publication p WHERE p.card_id=i.card_id AND p.version>i.approval_version)
+  AND (i.purpose='ORIGINAL' OR (WITH RECURSIVE ancestry AS (
+    SELECT i.id,i.original_item_id,i.purpose,ARRAY[i.id] AS path,1 AS depth,false AS cycle
+    UNION ALL SELECT p.id,p.original_item_id,p.purpose,a.path||p.id,a.depth+1,p.id=ANY(a.path)
+    FROM ancestry a JOIN ${S}.label_item p ON p.id=a.original_item_id WHERE a.purpose='LAYOUT_RETRY' AND NOT a.cycle AND a.depth<17)
+    SELECT COALESCE(bool_or(purpose='ORIGINAL') AND NOT bool_or(cycle) AND max(depth)<=16,false) FROM ancestry)))`;
 
 export function createLabelRepository({ boundary, validateAccess = null, validateAccessMany = null }) {
   requireThat(boundary?.transaction, 500, 'LABEL_CONFIGURATION_INVALID');
-  const discovery = { ITEM: null, EXPORT: null };
+  const discovery = { ITEM: null, EXPORT: null, LAYOUT_RECOVERY: null };
   const lock = (tx, id) => tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(721941,hashtext($1))', id);
   async function access(tx, principal, cardId) {
     reviewer(principal);
@@ -130,8 +155,9 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       randomUUID(), principal.id, principal.accessVersion, cardId, actionId, row.version, row.source_revision, row.source_hash, row.report_hash, row.public_hash);
       return item?.id ?? null;
     },
-    async list(staff, { cursor = 0 } = {}) {
+    async list(staff, { cursor = 0, rendererProfileHash = null } = {}) {
       requireThat(Number.isSafeInteger(cursor) && cursor >= 0, 400, 'LABEL_CURSOR_INVALID');
+      requireThat(rendererProfileHash === null || /^[a-f0-9]{64}$/.test(rendererProfileHash), 500, 'LABEL_CONFIGURATION_INVALID');
       return boundary.transaction(staff, async ({ tx, principal }) => {
         reviewer(principal);
         const sheets = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_sheet WHERE actor_id=$1::uuid ORDER BY number DESC LIMIT 21 OFFSET $2`, principal.id, cursor);
@@ -143,7 +169,9 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
             summaries.push({ ...sheetView(sheet), occupied: items.length, containsSuperseded: items.some(i => i.state === 'SUPERSEDED' || i.current === false), exports: exports.map(exportView) });
           } catch (error) { if (![403,404].includes(error.status)) throw error; }
         }
-        const rows = await tx.$queryRawUnsafe(`SELECT ${summaryColumns} FROM ${S}.label_item i WHERE actor_id=$1::uuid ORDER BY created_at DESC,id LIMIT 201 OFFSET $2`, principal.id, cursor * 10);
+        const rows = await tx.$queryRawUnsafe(`SELECT ${summaryColumns},${layoutRecoveryPredicate('$3','$4')} AS automatic_layout_recovery_eligible
+          FROM ${S}.label_item i WHERE actor_id=$1::uuid ORDER BY created_at DESC,id LIMIT 201 OFFSET $2`,
+        principal.id, cursor * 10, rendererProfileHash, [...LABEL_LAYOUT_FAILURE_CODES]);
         const visible = rows.slice(0,200), allowed = await accessible(tx, principal, visible.map(i => i.card_id), false);
         const items = visible.filter(i => allowed.has(i.card_id)).map(itemView);
         const single = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_export WHERE actor_id=$1::uuid AND item_id=ANY($2::uuid[])`, principal.id, items.map(i => i.itemId));
@@ -159,13 +187,15 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       return { ...sheetView(sheet), occupied: items.length, containsSuperseded: items.some(i => i.state === 'SUPERSEDED' || i.current === false), items: items.map(itemView), exports: exports.map(exportView), printEvents: events.map(eventView) };
     }); },
     item(staff, id, latest = true) { return boundary.transaction(staff, async ({ tx, principal }) => scopedItem(tx, principal, id, latest)); },
-    async pendingCandidates(limit = 4) {
+    async pendingCandidates(limit = 4, { rendererProfileHash = null } = {}) {
       requireThat(Number.isInteger(limit) && limit > 0 && limit <= 16);
+      requireThat(rendererProfileHash === null || /^[a-f0-9]{64}$/.test(rendererProfileHash), 500, 'LABEL_CONFIGURATION_INVALID');
       return boundary.machineTransaction(null, async ({ tx }) => {
         const discover = async kind => {
           const table = kind === 'ITEM' ? 'label_item' : 'label_export', state = kind === 'ITEM' ? 'PENDING_RENDER' : 'PREPARING';
           const query = cursor => tx.$queryRawUnsafe(`SELECT id,actor_id,access_version,created_at::text AS cursor_time FROM ${S}.${table}
             WHERE state=$1 AND (lease_until IS NULL OR lease_until<clock_timestamp())
+            ${kind === 'ITEM' ? `AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=${S}.${table}.card_id)` : ''}
             AND ($2::timestamptz IS NULL OR (created_at,id)>($2::timestamptz,$3::uuid)) ORDER BY created_at,id LIMIT $4`,
           state, cursor?.time ?? null, cursor?.id ?? null, limit);
           let rows = await query(discovery[kind]);
@@ -175,14 +205,34 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
         };
         // Fair bounded discovery advances even when an owner's authorization is
         // revoked or a source changed before claim. No unauthorized row changes.
-        return [...await discover('ITEM'), ...await discover('EXPORT')];
+        const candidates = [...await discover('ITEM'), ...await discover('EXPORT')];
+        if (rendererProfileHash) {
+          // One old layout per pass, after ordinary work. The cursor advances even
+          // when access was revoked; no browser gesture or storage read is needed.
+          const query = cursor => tx.$queryRawUnsafe(`SELECT i.id,i.actor_id,i.access_version,i.created_at::text AS cursor_time FROM ${S}.label_item i
+            WHERE ${layoutRecoveryPredicate('$1','$2')}
+            AND ($3::timestamptz IS NULL OR (i.created_at,i.id)>($3::timestamptz,$4::uuid)) ORDER BY i.created_at,i.id LIMIT 1`,
+          rendererProfileHash, [...LABEL_LAYOUT_FAILURE_CODES], cursor?.time ?? null, cursor?.id ?? null);
+          let rows = await query(discovery.LAYOUT_RECOVERY);
+          if (!rows.length && discovery.LAYOUT_RECOVERY) rows = await query(null);
+          const last = rows.at(-1); discovery.LAYOUT_RECOVERY = last ? { time: last.cursor_time, id: last.id } : null;
+          candidates.push(...rows.map(({ cursor_time, ...row }) => ({ ...row, kind: 'LAYOUT_RECOVERY' })));
+        }
+        return candidates;
       });
     },
-    claimItem(staff, id) { return boundary.transaction(staff, async ({ tx, principal }) => {
+    claimItem(staff, id, attemptedProfile = null) { return boundary.transaction(staff, async ({ tx, principal }) => {
       await lock(tx, principal.id); const item = await scopedItem(tx, principal, id);
       if (item.state !== 'PENDING_RENDER' || (item.lease_until && new Date(item.lease_until) > new Date())) return null;
-      if (item.attempts >= 5) { await tx.$executeRawUnsafe(`UPDATE ${S}.label_item SET state='NEEDS_LAYOUT',code='LABEL_RENDER_FAILED',claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid`, id); return null; }
-      const [claimed] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET claim_id=$2::uuid,lease_until=clock_timestamp()+interval '2 minutes',attempts=attempts+1,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING *`, id, randomUUID());
+      if (item.attempts >= 5) { await tx.$executeRawUnsafe(`UPDATE ${S}.label_item SET state='NEEDS_LAYOUT',code='LABEL_RENDER_FAILED',claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp(),
+        renderer_profile_hash=COALESCE(renderer_profile_hash,$2),jig_hash=COALESCE(jig_hash,$3) WHERE id=$1::uuid`,
+      id, attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.jigHash ?? null); return null; }
+      // Record the attempted recipe before storage/rendering, including a process
+      // crash. A successor's target remains immutable across deployments.
+      const [claimed] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET claim_id=$2::uuid,lease_until=clock_timestamp()+interval '2 minutes',attempts=attempts+1,updated_at=clock_timestamp(),
+        renderer_profile_hash=CASE WHEN purpose='LAYOUT_RETRY' THEN renderer_profile_hash ELSE COALESCE($3,renderer_profile_hash) END,
+        jig_hash=CASE WHEN purpose='LAYOUT_RETRY' THEN jig_hash ELSE COALESCE($4,jig_hash) END WHERE id=$1::uuid RETURNING *`,
+      id, randomUUID(), attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.jigHash ?? null);
       return claimed;
     }); },
     finishItem(staff, claimed, result) { return boundary.transaction(staff, async ({ tx, principal }) => {
@@ -213,10 +263,12 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       } else await tx.$executeRawUnsafe(`UPDATE ${S}.label_sheet SET revision=revision+1 WHERE id=$1::uuid`, sheet.id);
       return itemView(updated);
     }); },
-    failItem(staff, claimed) { return boundary.transaction(staff, async ({ tx, principal }) => {
+    failItem(staff, claimed, attemptedProfile = null) { return boundary.transaction(staff, async ({ tx, principal }) => {
       await lock(tx, principal.id);
-      await tx.$executeRawUnsafe(`UPDATE ${S}.label_item SET state=CASE WHEN attempts>=5 THEN 'NEEDS_LAYOUT' ELSE state END,code='LABEL_RENDER_FAILED',claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp()
-        WHERE id=$1::uuid AND actor_id=$2::uuid AND claim_id=$3::uuid AND state='PENDING_RENDER'`, claimed.id, principal.id, claimed.claim_id);
+      await tx.$executeRawUnsafe(`UPDATE ${S}.label_item SET state=CASE WHEN attempts>=5 THEN 'NEEDS_LAYOUT' ELSE state END,code='LABEL_RENDER_FAILED',claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp(),
+        renderer_profile_hash=COALESCE(renderer_profile_hash,$4),material_profile_id=COALESCE(material_profile_id,$5),jig_hash=COALESCE(jig_hash,$6)
+        WHERE id=$1::uuid AND actor_id=$2::uuid AND claim_id=$3::uuid AND state='PENDING_RENDER'`, claimed.id, principal.id, claimed.claim_id,
+      attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.materialProfileId ?? null, attemptedProfile?.jigHash ?? null);
     }); },
     prepareExport(staff, { kind, id, input }) { return boundary.transaction(staff, async ({ tx, principal }) => {
       reviewer(principal); await lock(tx, principal.id); const requestHash = digest(canonical({ kind, id, ...input }));
@@ -280,7 +332,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       const [event] = await tx.$queryRawUnsafe(`INSERT INTO ${S}.label_print_event(id,actor_id,request_id,request_hash,export_id,export_sha256,manifest_hash,successful_slots,failed_slots)
         VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8::integer[],$9::integer[]) RETURNING *`, randomUUID(), principal.id, input.requestId, requestHash, row.id, row.sha256, row.manifest_hash, input.successfulSlots, input.failedSlots ?? []); return eventView(event);
     }); },
-    retryLayout(staff, id, input, target) { return boundary.transaction(staff, async ({ tx, principal }) => {
+    retryLayout(staff, id, input, target, { automatic = false } = {}) { return boundary.transaction(staff, async ({ tx, principal }) => {
       reviewer(principal); await lock(tx, principal.id); const original = await scopedItem(tx, principal, id);
       const requestHash = digest(canonical({ operation:'layout-retry/v1', itemId:id, ...input }));
       const [prior] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_item WHERE actor_id=$1::uuid AND request_id=$2::uuid`, principal.id, input.requestId);
@@ -291,7 +343,11 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       requireThat(!successor, 409, 'LABEL_LAYOUT_ALREADY_RETRIED');
       requireThat(original.state === 'NEEDS_LAYOUT' && ['ORIGINAL','LAYOUT_RETRY'].includes(original.purpose)
         && !original.print_svg && !original.preview_svg && !original.artwork_hash && !original.sheet_id && !original.slot
-        && !original.claim_id && !original.lease_until, 409, 'LABEL_LAYOUT_RETRY_UNAVAILABLE');
+        && !original.previous_assignment && !original.claim_id && !original.lease_until, 409, 'LABEL_LAYOUT_RETRY_UNAVAILABLE');
+      requireThat(!(await tx.$queryRawUnsafe(`SELECT 1 FROM ${S}.label_export WHERE item_id=$1::uuid LIMIT 1`, id)).length, 409, 'LABEL_LAYOUT_RETRY_UNAVAILABLE');
+      if (automatic) requireThat((await tx.$queryRawUnsafe(`SELECT i.id FROM ${S}.label_item i
+        WHERE i.id=$1::uuid AND ${layoutRecoveryPredicate('$2','$3')}`, id, target.rendererProfileHash, [...LABEL_LAYOUT_FAILURE_CODES])).length === 1,
+      409, 'LABEL_LAYOUT_RETRY_UNAVAILABLE');
       requireThat(labelFailureHash(original) === input.expectedFailureHash, 409, 'LABEL_FAILURE_CHANGED');
       requireThat(target.rendererProfileHash === input.expectedRendererProfileHash, 409, 'LABEL_RENDERER_CHANGED');
       const [chain] = await tx.$queryRawUnsafe(`WITH RECURSIVE ancestry AS (

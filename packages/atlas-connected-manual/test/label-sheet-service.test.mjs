@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { digest } from '@atlas/manual-service/contract';
+import { canonical, digest } from '@atlas/manual-service/contract';
 import { createLabelService, LABEL_EXPORT_PROFILES } from '../src/label-sheet-service.mjs';
 import { createManualFinishing } from '../src/finishing.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 import { LABEL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
+import { LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
+import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
+import { labelFailureHash } from '../src/label-sheet-repository.mjs';
 
 async function fixture({ cardProfile = 'SPORTS' } = {}) {
   const identity = cardProfile === 'SPORTS' ? { playerName:'Nick Smith Jr',year:'2023',manufacturer:'Panini',productSet:'Prizm',cardNumber:'1' } : { cardName:'Mewtwo',year:'1999',manufacturer:'Wizards',productSet:'Base Set',cardNumber:'10/102' };
@@ -103,4 +106,56 @@ test('a layout generation renders its same approved packet without copying faile
   const f=await fixture();f.item.purpose='LAYOUT_RETRY';f.item.original_item_id=randomUUID();
   f.repository.item=()=>assert.fail('Layout retry must render exact approved report, not copy failed artwork');
   assert.equal(await f.service.runPending(),1);assert.deepEqual(f.saved[0].snapshot.identity,f.f.full.identity);assert.equal(f.saved[0].snapshot.grade,f.f.full.finalGrade);
+});
+
+test('automatic recovery reserves one deterministic successor from a verified old snapshot before any storage read',async()=>{
+  const id=randomUUID(),actor=randomUUID(),snapshot=canonical({cardProfile:'POKEMON',grade:8.5,identity:{cardName:'Sylveon ex'}});
+  const item={id,actor_id:actor,access_version:1,card_id:randomUUID(),action_id:randomUUID(),approval_version:1,
+    source_revision:1,source_hash:digest('source'),report_hash:digest('report'),public_hash:digest('public'),
+    purpose:'ORIGINAL',state:'NEEDS_LAYOUT',snapshot,snapshot_hash:digest(snapshot),code:'METADATA_OVERFLOW',attempts:1,
+    renderer_profile_hash:null,material_profile_id:null,jig_hash:null};
+  const captured=[],discovery=[],before=structuredClone(item);
+  const repository={pendingCandidates:async(...args)=>{discovery.push(args);return[{id,actor_id:actor,access_version:1,kind:'LAYOUT_RECOVERY'}];},
+    item:async()=>item,retryLayout:async(...args)=>{captured.push(args);return{state:'PENDING_RENDER'};}};
+  const service=createLabelService({repository,boundary:{machineOwner:input=>input},
+    finishing:{loadPacket(){assert.fail('Storage is read only by bounded successor rendering');}},
+    storage:{write(){assert.fail('No export');},download(){assert.fail('No download');}}});
+  assert.equal(await service.runPending(),1);assert.equal(await service.runPending(),1);
+  assert.deepEqual(discovery,[[4,{rendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH}],[4,{rendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH}]]);
+  assert.deepEqual(captured[0],captured[1]);assert.deepEqual(captured[0][2],{
+    requestId:captured[0][2].requestId,expectedFailureHash:labelFailureHash(item),expectedRendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH});
+  assert.match(captured[0][2].requestId,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  assert.deepEqual(captured[0][3],{rendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH,materialProfileId:'atlas-v4-holo-v1',jigHash:LABEL_JIG_V1.jigHash});
+  assert.deepEqual(captured[0][4],{automatic:true});assert.deepEqual(item,before);
+});
+
+test('automatic recovery requires explicit saved card category and never infers stock from a name',async()=>{
+  let writes=0;
+  const repository={pendingCandidates:async()=>[{id:randomUUID(),actor_id:randomUUID(),access_version:1,kind:'LAYOUT_RECOVERY'}],
+    item:async()=>({snapshot:canonical({identity:{cardName:'Sylveon ex'}})}),retryLayout:async()=>{writes++;}};
+  const service=createLabelService({repository,boundary:{machineOwner:input=>input},finishing:{loadPacket(){assert.fail('No storage read');}},storage:{write(){},download(){}}});
+  assert.equal(await service.runPending(),0);assert.equal(writes,0);
+});
+
+test('failed layout output always records its attempted profile, material and jig even if a renderer omits the hash',async()=>{
+  const f=await fixture({cardProfile:'POKEMON'}),finishing=createManualFinishing({repository:f.f.repository,artifacts:f.f.artifacts});
+  const service=createLabelService({repository:f.repository,boundary:f.boundary,finishing,storage:f.storage,
+    renderer:{label:()=>({state:'NEEDS_LAYOUT',diagnostics:{code:'METADATA_OVERFLOW'}}),sheet(){},individual(){}}});
+  assert.equal(await service.runPending(),1);
+  const result=f.saved[0];assert.equal(result.state,'NEEDS_LAYOUT');assert.equal(result.rendererProfileHash,LABEL_V4_RENDERER_PROFILE_HASH);
+  assert.equal(result.materialProfileId,'atlas-v4-holo-v1');assert.equal(result.jigHash,LABEL_JIG_V1.jigHash);
+  assert.equal(result.snapshot.cardProfile,'POKEMON');assert.equal(result.snapshot.grade,f.f.full.finalGrade);
+});
+
+test('render exceptions retain the attempted profile while a storage failure never guesses a material',async()=>{
+  const f=await fixture({cardProfile:'POKEMON'}),failures=[];
+  f.repository.failItem=async(...args)=>failures.push(args);
+  const finishing=createManualFinishing({repository:f.f.repository,artifacts:f.f.artifacts});
+  const service=createLabelService({repository:f.repository,boundary:f.boundary,finishing,storage:f.storage,
+    renderer:{label(){throw new Error('local renderer failure');},sheet(){},individual(){}}});
+  assert.equal(await service.runPending(),0);
+  assert.deepEqual(failures[0][2],{rendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH,jigHash:LABEL_JIG_V1.jigHash,materialProfileId:'atlas-v4-holo-v1'});
+  const unavailable=createLabelService({repository:f.repository,boundary:f.boundary,finishing:{loadPacket(){throw new Error('storage unavailable');}},storage:f.storage});
+  assert.equal(await unavailable.runPending(),0);
+  assert.deepEqual(failures[1][2],{rendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH,jigHash:LABEL_JIG_V1.jigHash,materialProfileId:null});
 });
