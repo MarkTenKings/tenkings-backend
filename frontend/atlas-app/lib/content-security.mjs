@@ -4,8 +4,9 @@ export function staffContentSecurityPolicy({development=false,uploadOrigins=[]}=
     if(url.origin!==value||url.protocol!=='https:'||url.username||url.password||!/^[a-z0-9][a-z0-9.-]+$/.test(url.hostname))throw new Error('Invalid private upload origin');
     return value;
   });
-  // Public catalog artwork is displayed directly; retained diagnostic photos stay
-  // on authenticated same-origin routes. Catalog origins grant image access only.
+  // Public catalog artwork and pending/fallback sold-listing photos display directly.
+  // Permit only the observed eBay photo host; retained diagnostic photos still use
+  // authenticated same-origin routes. These origins grant image access only.
   // Saved label SVGs embed the original logo; only image sources allow data URLs.
-  return `default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${development?" 'unsafe-eval'":''}; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https://images.scrydex.com https://assets.tcgdex.net${origins.map(value=>` ${value}`).join('')}; media-src 'self' blob:; connect-src 'self' http://127.0.0.1:47662 http://127.0.0.1:47664${origins.map(value=>` ${value}`).join('')}; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+  return `default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${development?" 'unsafe-eval'":''}; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https://images.scrydex.com https://assets.tcgdex.net https://i.ebayimg.com${origins.map(value=>` ${value}`).join('')}; media-src 'self' blob:; connect-src 'self' http://127.0.0.1:47662 http://127.0.0.1:47664${origins.map(value=>` ${value}`).join('')}; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
 }

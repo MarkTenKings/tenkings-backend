@@ -11,6 +11,9 @@ const ORDER_DESK_PHOTO_PATH = new RegExp(`^/api/staff/manual-connected/order-des
 const LABEL_SHEET_PATH = new RegExp(`^/api/staff/manual-connected/label-sheets(?:/${ORDER_DESK_ID}(?:/exports(?:/${ORDER_DESK_ID}(?:/download)?)?|/print-confirmations)?)?$`);
 const LABEL_ITEM_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/(?:artwork|reprints|exports(?:/${ORDER_DESK_ID}(?:/download)?)?)$`);
 const LABEL_ARTWORK_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/artwork\\?mode=(?:preview|print)$`);
+// Retained sold photos share the market status endpoint. Admit raster bytes
+// only for its exact preview UUID/image digest query, in either parameter order.
+const MARKET_IMAGE_PATH = new RegExp(`^/api/staff/manual-connected/cards/${ORDER_DESK_ID}/presentation/market\\?(?:preview=${ORDER_DESK_ID}&image=[a-f0-9]{64}|image=[a-f0-9]{64}&preview=${ORDER_DESK_ID})$`);
 const VERSION = 'atlas-manual-private-v1';
 const PREFIX = 'x-atlas-manual-';
 const WORKSPACE_HEADER = 'x-atlas-workspace';
@@ -172,7 +175,7 @@ export function manualResponsePolicy(path, contentType) {
     limit: 4 * 1024 * 1024, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
   if (LABEL_ARTWORK_PATH.test(path) && contentType === 'image/svg+xml') return {
     limit: 1024 * 1024, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
-  requireTransport((/\/(?:images|preview-image)\//.test(path) || ORDER_DESK_PHOTO_PATH.test(path))
+  requireTransport((/\/(?:images|preview-image)\//.test(path) || ORDER_DESK_PHOTO_PATH.test(path) || MARKET_IMAGE_PATH.test(path))
     && /^image\/(?:png|jpeg|webp)$/.test(contentType), 502, 'MANUAL_SERVICE_RESPONSE_INVALID');
   return { limit: MANUAL_TRANSPORT_LIMITS.imageResponseBytes, overflow: 'MANUAL_IMAGE_DIRECT_REQUIRED' };
 }
