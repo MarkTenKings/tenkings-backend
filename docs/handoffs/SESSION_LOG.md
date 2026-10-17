@@ -45640,6 +45640,61 @@ Staff img-src adds only https://i.ebayimg.com. No other CSP directive or wildcar
 
 No production mutation, provider search, model request, grade approval, restart, migration or deployment has occurred in this repair. Fresh coordinated native/web release is being prepared with schema005/006 retained and only the three existing release-control bindings updated. Authenticated live thumbnail/enlargement verification remains pending staff sign-in and deployment.
 
+
+## 2026-10-16 Pacific — Planned additive photo-release qualification
+
+Frozen sourcec41f0ebd8b675c888bf30924782a19e54b5b4bc5 on codex/atlas-repeat-card-reliability is pushed with remote parity. Staff production build/boundary and728/728staff tests pass;86related native transport/market tests pass. Independent review of web plan256c48ddffc72456e92e224f95527bf730afb08e7773564f0529e538a529e3ee and native buildplan1a75021b8bb2b964673ecaefc70a6ae18c1ae4b4dd64efd1a1a6e2b88d8b2e19passed. Root will upload exactly2changed web inputs, create unpromoted staff/public candidates, and build/test one additive native image overlaying only transport.mjs on qualifiedaecf20828. Canonical targets, serving containers, database and customer deployment remain unchanged during this stage. No provider calls. Fresh one-use intents and observations are stored in atlas-sold-comp-photo-fix-20261016/release-01; prior releases are never replayed.
+
+
+## 2026-10-16 Pacific — Additive native image qualified; web candidates staging
+
+Native overlayc41f0ebd passed Linux qualification in image sha256:ef30299a4828a5480a21b1c8c5fa0e801bc592087a6c1549c5b8bad2fd77e434. Exact result67514c5c3d7e51f7bd6a3a81935a1c34f1c4074f80432756241ee0d6abe94672 records{"tests": 261, "pass": 261, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0}; serving pair unchanged, no database/provider access. Only transport.mjs runtime bytes overlay qualified50b59900base; existing compiled modules and1858catalog files preserved. Two web input files uploaded; unpromoted staff candidate dpl_94pwK34cvcoicbo5skdhCtZVfiRz / atlas-grading-staff-c4og0xkya-ten-kings.vercel.app reached READY. Staff source/served qualification and public candidate build follow. No canonical/control/runtime cutover yet.
+
+
+## 2026-10-16 Pacific — Planned native configuration staging
+
+Exact runtimeplan659388736cee3ca9cb99f67b23ffa30f21c50b0bf965704cf687ab1fb8072d2c passed independent review09703980and stage dryrun45b2f739. Root will stage its reviewed remote configuration files once. Only existing WEB_DEPLOYMENT/WEB_RELEASE_SHA bindings change; sourcec41f0ebd, imageef30299a, staffc4og0xkya. No container stop/start or database update occurs in this staging step. Staff candidate passed source and served-byte qualification573cdd5f. Public candidate dpl_7CVLfDhjaWmnggjZd8AjEs8za3aL / atlas-grading-public-723baxmj8-ten-kings.vercel.app is building without canonical promotion.
+
+Native configuration stage observed PASS020eae241a52e3dfec6d85e812f9019c955c766a1f9302dcb0f44283e3d1e2de. Independent result review confirms all21containers/proxy unchanged and no database/provider calls. Public candidate reached READY; qualification/combined proof are running.
+
+
+## 2026-10-16 Pacific — Planned coordinated photo repair cutover
+
+Branch codex/atlas-repeat-card-reliability and HEAD/origin c41f0ebd are in parity; only current release documentation remains uncommitted. Both candidates and full source/served-byte proofs passed independent review955a7160. Final data plan9f570ca76abd1a8f7cebf062c86f544c6aaca48d812dad82458443448404a21e passed independent review95fe7967: Staff130→131,PublicReader90→91,STAFF-SMS98→99, zero DDL/ledger writes, six migration rows and105protected tables preserved. Publication planf5840759443a78758283cde75a48d7a11eb393f30923851a4e9a50273a42ec8e passed independent review076fe981.
+
+Root will acquire admissionplan30dd010d01b28e194b8f1b619123977023f62a71b7d7501cd3712274b9189fa9 once, collect fresh held workload/historical evidence, gracefully stop/disconnect only predecessor pair under runtimeplan659388736cee3ca9cb99f67b23ffa30f21c50b0bf965704cf687ab1fb8072d2c, apply the exact three controls atomically, start and seal the qualified image, obtain fresh native/database readiness, patch the existing public staff-origin and promote exact staff/public candidates in order. Canonical route/assets and CSP verification precede explicit holder release and read-only preservation postflight. No migration, credential change, SIGKILL, grade approval, card deletion, historical reset, diagnostic paid request or customer deployment change. Uncertain outcomes are reconciled without replay.
+
+Admission holder caf01d89-e53f-480c-aa8e-33a16ec92d15 acquired, fixed expiry2026-10-17T04:13:59.405Z, zero row writes. First quiesce dry-run refused WORKLOAD_PREFLIGHT_CHANGED before any effect: root workload referenced a fresh observation file, while the reviewed runtime plan pins its exact runtime-preimage file. The new observation confirms unchanged containers; root is taking a fresh read-only workload against the correct pinned identity. No helper/plan change, consumed runtime intent, container stop or data write occurred. Original failed dry-run evidence retained.
+
+Quiesce dry-run02 passed36a3cd8e; execute observed PASS853bdf5da6b3a0373667600848b19e52eff82701cb82952f04d7f9082d501f82. Exact predecessor main/worker exited0 and disconnected gracefully, no SIGKILL, zero DB/provider writes, same admission transaction retained. Root now applies the reviewed no-DDL data plan9f570ca7 once: exactly three release-control bindings, full protected row/object/grant/ledger preservation.
+
+Atomic data apply observed PASS9169325fadcb32f964ba21c50a817c9f2d129d73a6e232789f4834d57e25e0f0: exactly3control writes,0ledger/DDL/provider writes, schema005/006 and all protected rows/objects/grants preserved. Root now dry-runs and starts the exact qualified native main/worker once under runtimeplan65938873 and same admission holder, retaining the125-second startup fence.
+
+Native start observed PASS77b25081a87662a6b3edf6a514ed645b044ac2e121ad23a539eed3f638c5229f after the full125-second startup fence. Independent data reviewe2ce9f39passed. Root now seals the qualified pair to the existing unless-stopped policy, then takes fresh read-only native/database readiness before any web publication.
+
+Native seal PASS43c6d13159c90a6ec3a3649a38bf6039ba214331fa73088e2ca79e8fdaf1166b and fresh health726f7010 confirm exact source/image, healthy new pair with zero restarts, retired predecessors/proxy preserved and unsigned401. Root obtains current native/database readiness, then executes origin,staff,public publication in that order under reviewed planf5840759443a78758283cde75a48d7a11eb393f30923851a4e9a50273a42ec8e. Customer remains retained. Any alias propagation lag is resolved read-only without replay. Authenticated Chrome staff workspace is now available for final visual acceptance.
+
+Public staff-origin update observed02:55:06.304UTC under planf5840759, observation14e7ed2b; only the existing origin binding changes to staffc4og0xkya. Customer and all other settings/env preserved. Native start/seal independently reviewed PASS0d41d9ae. Root now promotes the exact qualified staff candidate once with fresh-enough readiness187f68b5.
+
+Staff promotion returned a captured successful response and production target changed to dpl_94pwK34cvcoicbo5skdhCtZVfiRz; strict observation stopped because atlas-grading-staff.vercel.app still referenced the predecessor while the other staff alias had advanced. Original request/response/lagged observation retained. Root uses the pre-reviewed read-only finalize path with readiness02/15be2164 and the same holder, with no promotion replay.
+
+Staff alias/target settlement verified02:56:22.742UTC, observation1555d126, finalized read-only with requestsSent0; original201/intent preserved. All staff aliases match qualifieddpl_94pwK34cvcoicbo5skdhCtZVfiRz. Root now promotes exact public candidate under original planf5840759 with readiness02, followed by canonical route/asset/CSP checks.
+
+Public publication observed02:56:59.420UTC,c2a2df6e: exactdpl_7CVLfDhjaWmnggjZd8AjEs8za3aL / atlas-grading-public-723baxmj8-ten-kings.vercel.app, aliases/target and customer preservation confirmed under same holder. Ordinary canonical52route/asset checks and independent full CSP verification now run before explicit admission release.
+
+Canonical verification PASS139ac8fa848133c37b01ec18d6afa1a72a1e29cebeed03e13aac3dd6076428a0 for52ordinary route/asset reads, exact served builds and retained grading/comps/review-performance/customer bytes. Three canonical staff routes passed full CSP comparison with onlyi.ebayimg.com added, receipte288145f; independent publication review3dec4fcapassed. Root now takes current native health and explicitly releases holdercaf01d89-e53f-480c-aa8e-33a16ec92d15 under admissionplan30dd010d, then verifies holder absence and retained card/approval/market evidence. No automatic reacquisition. Reload of the new staff release returned the earlier authenticated tab to sign-in; owner asked for fresh login before actual photo acceptance.
+
+Admission explicitly released 2026-10-17T02:58:15.633Z, receipt5b71c19b4ad29820218b9a6df0ad936f6012471acbb446d2a4178e0a315db191. Holder process exited0 without reacquisition; pre-release healthdcde7067confirmed exact healthy pair. Read-only postflight starts; user confirms fresh staff sign-in, enabling actual photograph acceptance.
+
+
+## 2026-10-16 Pacific — Photo repair live; authenticated acceptance completed
+
+Postflight0aecfb87 at02:58:35.325UTC confirms holder absent, seven visible cards/five approvals preserved, discarded rows unchanged and exact prior READY market/label evidence retained. Post-release native health59ea5a56 confirms healthy exact new source/image,zero restarts and unsigned401. All release effects are consumed.
+
+Owner signed in normally after publication. Root navigated actual canonical staff cards and clicked real Enlarge photo links: Articuno raw527×708, Sylveon raw1200×1600 and PSA slab1600×1600 all decode, both thumbnails and WebP image documents. Actual screenshots+DOM evidence saved under private acceptance/, receipt689a4924d57027e6372c266e72ec51b5458bf0548723341c8cf0bbadf5c65330. No selections, grade/approval actions, refresh/older-sales requests, provider requests or session bypass. Existing Sylveon slab row remains Unread; classification preserved. Completed pools exposed no direct external rows, so that path is qualified with the real-picker fixture+live complete CSP rather than a manufactured pending search.
+
+Updated MASTER_PRODUCT_CONTEXT, DEPLOY_RUNBOOK, SET_OPS_RUNBOOK, HANDOFF_SET_OPS and new sold-comp photograph audit to distinguish this livec41f0ebd repair from historical releases and scope authenticated acceptance accurately. Final handoff changes are documentation only; source remainsc41f0ebd. The original dirty/conflicted checkout is untouched.
+
 ## 2026-10-16 Pacific — Sports/Pokémon print investigation and layout recovery candidate
 
 Owner requests completion of Sports on gold foil and Pokémon on holographic foil using the existing eufyMake E1, metal blanks and 310 × 400 mm, 50-position jig. Work is isolated in `codex/atlas-label-print-completion` from c41f0ebd; the original dirty/conflicted checkout is preserved. Two Astra Ultra specialists audit artwork and the label pipeline. The supplied V4 SVG/specification files match the vendored assets, including 68.342 × 20.082 mm label geometry and a 10.2 mm NFC opening. Preview colors simulate substrate. Print output retains transparent foil openings, black/dark-gray detail and opaque white metadata; it is not exclusively binary black/clear ink.
