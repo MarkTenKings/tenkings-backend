@@ -181,6 +181,7 @@ test('numbered photo buttons select exact findings and keyboard navigation never
 
 test('stale report frame, revision, missing projection or changed source suppress the approval slot', () => {
   for (const alter of [f => { delete f.props.preview.review; }, f => { f.props.current = false; },
+    f => { f.props.preview.review.explanation.policy.finalGradePolicy = 'atlas-final-half-point-v1'; },
     f => { f.props.workspace.sides.FRONT.findingRevision++; }, f => { f.props.workspace.sides.FRONT.frame.inspectionImageSha256 = 'f'.repeat(64); }]) {
     const f = harness(); alter(f); f.render(); assert.equal(f.has('SEPARATE_APPROVAL_SLOT'), false); assert.equal(f.readyValues.at(-1), false); assert.equal(f.has('Return to Findings'), true);
   }
@@ -203,7 +204,8 @@ test('trace hit testing preserves holes and outside-card clicks do not select a 
   assert.equal(presentation.reportFindingAt([{ ...finding, reviewResult: 'REMOVED' }], point), null);
 });
 
-test('new final grade uses the authoritative half-point field and historical reports retain their original grade', () => {
+test('final grade uses the recorded whole or half-point award and historical reports retain their original grade', () => {
+  assert.equal(presentation.reportAwardedGrade({ version: 'atlas-manual-draft-report-v2', finalGradePolicy: 'atlas-final-whole-point-v1', finalGrade: 8, grade: { overall: { displayGrade: 8.5 } } }), 8);
   assert.equal(presentation.reportAwardedGrade({ version: 'atlas-manual-draft-report-v2', finalGradePolicy: 'atlas-final-half-point-v1', finalGrade: 9.5, grade: { overall: { displayGrade: 9.7 } } }), 9.5);
   assert.equal(presentation.reportAwardedGrade({ version: 'atlas-manual-draft-report-v1', finalGrade: 10, grade: { overall: { displayGrade: 9.8 } } }), 9.8);
   assert.equal(presentation.reportAwardedGrade({ version: 'atlas-manual-draft-report-v2', finalGradePolicy: 'unknown', finalGrade: 10 }), null);
@@ -221,8 +223,8 @@ test('new final grade uses the authoritative half-point field and historical rep
 });
 
 test('award reader accepts saved service snapshots and never substitutes tenth detail for an invalid current award', () => {
-  for (const version of ['atlas-manual-draft-report-v2', 'atlas-manual-report-snapshot-v2']) {
-    const saved = { version, finalGradePolicy: 'atlas-final-half-point-v1', finalGrade: 8,
+  for (const version of ['atlas-manual-draft-report-v2', 'atlas-manual-report-snapshot-v2']) for (const finalGradePolicy of ['atlas-final-half-point-v1', 'atlas-final-whole-point-v1']) {
+    const saved = { version, finalGradePolicy, finalGrade: 8,
       grade: { overall: { rawGrade: 8.24, displayGrade: 8.2 } } };
     const before = JSON.stringify(saved);
     assert.equal(presentation.reportAwardedGrade(saved), 8);
@@ -230,11 +232,54 @@ test('award reader accepts saved service snapshots and never substitutes tenth d
       assert.equal(presentation.reportAwardedGrade({ ...saved, finalGrade }), null);
     }
     assert.equal(presentation.reportAwardedGrade({ ...saved, finalGradePolicy: 'unknown' }), null);
+    assert.equal(presentation.reportAwardedGrade({ ...saved, finalGrade: 8.5 }), finalGradePolicy === 'atlas-final-half-point-v1' ? 8.5 : null);
     assert.equal(JSON.stringify(saved), before);
   }
   const historical = { version: 'atlas-manual-report-snapshot-v1', grade: { overall: { displayGrade: 8.2 } } };
   assert.equal(presentation.reportAwardedGrade(historical), 8.2, 'historical approved awards retain their original policy');
   assert.equal(presentation.reportAwardedGrade({ ...historical, version: 'unknown' }), null);
+});
+
+test('new whole and saved half-point policies explain the saved award consistently on staff, public and printed reports', () => {
+  for (const finalGradePolicy of ['atlas-final-whole-point-v1', 'atlas-final-half-point-v1']) {
+    const props = fixture(), report = props.preview.review.report;
+    const whole = finalGradePolicy === 'atlas-final-whole-point-v1';
+    report.finalGradePolicy = finalGradePolicy;
+    report.finalGrade = whole ? 10 : 9.5; // Fixture subgrades 10,10,10,8 give raw 9.5.
+    assert.deepEqual(report.grade.subgrades, { centering: 10, corners: 10, edges: 10, surface: 8 });
+    props.preview.review.explanation = explainAtlasManualReport(report);
+    const before = JSON.stringify(props.preview), copy = whole ? 'whole number' : 'half point';
+    const f = harness(props); f.ready();
+    assert.equal(f.has(`Final ATLAS grade, rounded to the nearest ${copy}`), true);
+    assert.equal(f.has(whole ? 'Whole-number award' : 'Whole & half-point award'), true);
+    assert.equal(f.has('a 10 does not mean zero imperfections'), whole);
+    assert.equal(f.readyValues.at(-1), true);
+    f.listeners.get('beforeprint')(); f.render();
+    assert.equal(f.has(`Final ATLAS grade, rounded to the nearest ${copy}`), true);
+    assert.equal(JSON.stringify(props.preview), before); f.unmount();
+    const publicProps = { report, explanation: props.preview.review.explanation, images: props.images,
+      publication: { version: 1, reportHash: props.preview.reportHash, reportNumber: 'ATLAS-SYNTHETIC' } };
+    const publicView = harness(publicProps, { publicView: true }); publicView.ready(); publicView.click('Grade science');
+    assert.equal(publicView.has(`Final ATLAS grade, rounded to the nearest ${copy}`), true);
+    publicView.listeners.get('beforeprint')(); publicView.render();
+    assert.equal(publicView.has(`Final ATLAS grade, rounded to the nearest ${copy}`), true);
+    assert.equal(JSON.stringify(props.preview), before); publicView.unmount();
+  }
+});
+
+test('provisional award readers recognize both recorded policies without rounding or approving saved proposals', () => {
+  for (const [version, authority] of [['atlas-machine-provisional-report-v1', 'MACHINE_PROPOSAL'], ['atlas-review-provisional-report-v1', 'HUMAN_REVIEW_DRAFT']]) {
+    for (const [finalGradePolicy, proposedGrade] of [['atlas-final-half-point-v1', 7.5], ['atlas-final-whole-point-v1', 8]]) {
+      const report = { version, authority, certification: null, finalGradePolicy, proposedGrade,
+        grade: { overall: { rawGrade: 7.64684128229908, displayGrade: 7.6 } } };
+      const before = JSON.stringify(report);
+      assert.equal(presentation.reportAwardedGrade(report), proposedGrade);
+      assert.equal(JSON.stringify(report), before);
+      assert.equal(presentation.reportAwardedGrade({ ...report, proposedGrade: undefined }), null);
+      assert.equal(presentation.reportAwardedGrade({ ...report, finalGradePolicy: 'unknown' }), null);
+      assert.equal(presentation.reportAwardedGrade({ ...report, finalGradePolicy: 'atlas-final-whole-point-v1', proposedGrade: 7.5 }), null);
+    }
+  }
 });
 
 test('finding filters and next/previous retain side numbering and never change approval evidence', () => {

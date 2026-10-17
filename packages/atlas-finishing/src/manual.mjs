@@ -18,9 +18,12 @@ export function createManualFinishingPlan({ cardId, approvalActionId, sourceRevi
   assert(packet?.version === 'atlas-public-manual-report-v2' && SHA.test(publicHash)
     && hash(JSON.stringify(packet)) === publicHash, 'MANUAL_FINISHING_PUBLIC_HASH_MISMATCH');
   assert(SHA.test(packet.reportHash) && packet.report?.version === 'atlas-manual-draft-report-v2'
-    && packet.report.finalGradePolicy === 'atlas-final-half-point-v1'
     && Number.isFinite(packet.report.grade?.overall?.rawGrade)
-    && packet.report.finalGrade === Math.round(packet.report.grade.overall.rawGrade * 2) / 2);
+    && (packet.report.finalGradePolicy === 'atlas-final-half-point-v1'
+      ? packet.report.finalGrade === Math.round(packet.report.grade.overall.rawGrade * 2) / 2
+      : packet.report.finalGradePolicy === 'atlas-final-whole-point-v1'
+        && packet.report.grade.overall.rawGrade >= 1 && packet.report.grade.overall.rawGrade <= 10
+        && packet.report.finalGrade === Math.round(packet.report.grade.overall.rawGrade)));
   const label = validateManualLabel({ version: 'atlas-manual-label-v1', layoutVersion: CURRENT_LABEL_LAYOUT, design: { ...DEFAULT_LABEL_DESIGN }, mode: packet.mode,
     cardProfile: packet.report.cardProfile, identity: structuredClone(packet.report.identity), finalGrade: packet.report.finalGrade,
     finalGradePolicy: packet.report.finalGradePolicy, publicToken: packet.publicToken, reportNumber: packet.reportNumber,

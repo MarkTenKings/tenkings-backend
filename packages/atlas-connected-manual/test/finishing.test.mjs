@@ -8,6 +8,7 @@ import { validateManualFinishingPlan } from '@atlas/finishing/manual';
 import { renderManualLabel, validateManualLabel } from '@atlas/finishing/label';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { publishedMarketQuery } from '../src/presentation-market.mjs';
+import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 
 async function fixture(options) {
   const f = await publicationFixture(options); await f.publication.publish({}, f.cardId, f.actionId);
@@ -23,6 +24,25 @@ test('authenticated immutable approval becomes exact repeatable label and paired
   assert.equal(plan.label.finalGrade, f.approval.finalGrade, 'the immutable human approval is the printed award authority');
   assert.equal(reportAwardedGrade(f.approval), plan.label.finalGrade, 'completion snapshot and immutable printed label agree');
   assert.equal(JSON.stringify(plan).includes('private/'), false); assert.equal(JSON.stringify(plan).includes('actorId'), false);
+});
+test('both recorded policies survive full approval, public serialization, finishing and market bindings without rerounding', async () => {
+  for (const finalGradePolicy of [ATLAS_HALF_POINT_FINAL_GRADE_POLICY, ATLAS_FINAL_GRADE_POLICY]) {
+    const f = await fixture({ finalGradePolicy }), before = structuredClone(f.row);
+    const { packet, publicHash } = await f.loader.loadPacket({}, f.cardId, f.actionId);
+    const wire = JSON.stringify(packet), parsed = parsePublicManualReport(JSON.parse(wire));
+    assert.equal(JSON.stringify(parsed), wire); assert.equal(digest(JSON.stringify(parsed)), publicHash);
+    assert.equal(parsed.report.finalGradePolicy, finalGradePolicy); assert.deepEqual(parsed.report.grade, f.full.grade);
+    assert.equal(parsed.report.finalGrade, f.approval.finalGrade);
+    assert.equal(explainAtlasManualReport(parsed.report).overall.finalGrade, f.full.finalGrade);
+    const market = publishedMarketQuery({ packet, publicHash });
+    assert.equal(market.atlasGrade, f.approval.finalGrade); assert.equal(market.binding.publicHash, publicHash);
+    assert.equal(market.binding.approvalVersion, packet.approvalVersion);
+    const plan = await f.loader.load({}, f.cardId, f.actionId);
+    assert.equal(plan.label.finalGradePolicy, finalGradePolicy); assert.equal(plan.label.finalGrade, f.approval.finalGrade);
+    assert.equal(plan.binding.publicHash, publicHash); assert.equal(plan.nfc.url, `https://atlasgrading.com/reports/${packet.publicToken}?v=${packet.approvalVersion}`);
+    assert.deepEqual(await f.loader.load({}, f.cardId, f.actionId), plan); assert.deepEqual(f.row, before);
+    assert.match(renderManualLabel({ label: plan.label, measureText: (value, size) => value.length * size * .45 }).front, /<svg/);
+  }
 });
 test('approved unknown metadata publishes, renders a label and prepares sales without inventing identity or reapproving', async () => {
   for (const [cardProfile, identity, query] of [

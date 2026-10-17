@@ -75,3 +75,4 @@
 
 .rapidDialog :global(.ad-review-toolbar h2),
 .rapidDialog :global(.ad-finding-details h3) { color: #24333b; }
+.policyNotice{padding:12px 14px;border:1px solid currentColor;border-radius:8px;font-size:13px;line-height:1.5}

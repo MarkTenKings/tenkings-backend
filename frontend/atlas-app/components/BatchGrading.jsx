@@ -33,6 +33,7 @@ const messages = {
   BATCH_REVIEW_BINDING_CHANGED: 'The saved report or photographs changed. Open the current card workspace before continuing.',
   MANUAL_TEMPORARILY_UNAVAILABLE: 'ATLAS could not finish this request. Your saved report and decisions are retained. Try again shortly.',
   BATCH_SCORING_POLICY_UPDATED: 'This draft uses an earlier scoring policy. Open final review to recalculate its saved measurements with the current policy before approval.',
+  BATCH_FINAL_ROUNDING_UPDATED: 'This saved proposal uses earlier final-grade rounding. Final review applies whole-number rounding to the precise score; the saved measurements and findings are retained.',
   BATCH_FINAL_GEOMETRY_REQUIRED: 'Defect analysis and measurements are saved. Review the physical outlines and printed borders in final review; centering and the overall grade remain unavailable until supported geometry is saved.',
 };
 function QueuePhoto({ job, side = 'FRONT', readPreview, eager = false }) {
@@ -262,6 +263,7 @@ export default function BatchGrading({ staff }) {
               <button type="button" disabled={busy} onClick={() => void correct(reviewRetry.job, reviewRetry.initialInspection)}>Retry opening review</button>
             </div>}
           </div>}
+          {packet?.key === focused.key && packet.reviewRequiredReason === 'BATCH_FINAL_ROUNDING_UPDATED' && <p className={styles.policyNotice} role="status">{messages.BATCH_FINAL_ROUNDING_UPDATED}</p>}
           {packet?.key === focused.key && packet.state !== 'PENDING' ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} onCorrectFinding={(finding,context) => { if (!busy) void correct(focused,context??{side:finding.side,findingId:finding.id,imageSha256:packet?.report?.geometry?.[finding.side]?.frame?.inspectionImageSha256}); }} onAddFinding={context=>{if(!busy)void correct(focused,{...context,intent:'ADD'});}} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
             <div className={styles.reviewActions}><button className={styles.primary} disabled={busy} onClick={() => void correct(focused)}>Review card →</button></div>
           </MachineReportReview> : <div className={styles.empty}><p>{reviewError ? 'Open the current card to continue.' : packet?.state === 'PENDING' ? 'Preparation or measurement is incomplete. Open the card workspace to retry preparation, finish its geometry and findings.' : 'Loading the exact grading evidence…'}</p><button onClick={() => open(focused)}>Open card workspace</button></div>}

@@ -1,6 +1,6 @@
 import { digest, requireThat } from '@atlas/manual-service/contract';
 import { batchActionId } from '@atlas/batch-grading';
-import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { ATLAS_FINAL_GRADE_POLICY, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import { ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 
 const SIDES = ['FRONT', 'BACK'];
@@ -84,7 +84,8 @@ export function createBatchReview({ connected, repository, artifacts }) {
       const explanation = geometryUnresolved ? null : explainAtlasManualReport({ ...report, version: 'atlas-manual-draft-report-v2', finalGrade: report.proposedGrade });
       await repository.readReview(staff, key);
       const reviewRequiredReason = geometryUnresolved ? 'BATCH_FINAL_GEOMETRY_REQUIRED'
-        : report.ruleVersion !== ATLAS_RULE_VERSION && complete < STEPS.length ? 'BATCH_SCORING_POLICY_UPDATED' : null;
+        : report.ruleVersion !== ATLAS_RULE_VERSION && complete < STEPS.length ? 'BATCH_SCORING_POLICY_UPDATED'
+        : report.finalGradePolicy !== ATLAS_FINAL_GRADE_POLICY && complete < STEPS.length ? 'BATCH_FINAL_ROUNDING_UPDATED' : null;
       return { key, cardId: job.cardId, reportHash: job.evidence.reportHash, report, explanation, images,
         canCertify: false, reviewRequiredReason,
         resumeAvailable: Boolean(review), approved: complete === STEPS.length };

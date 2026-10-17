@@ -13,7 +13,8 @@ export function validateManualLabel(label) {
     || !Number.isSafeInteger(label.approvalVersion) || label.approvalVersion < 1 || label.approvalVersion > 2147483647
     || label.url !== `https://atlasgrading.com/reports/${label.publicToken}?v=${label.approvalVersion}`
     || !Number.isFinite(label.finalGrade) || label.finalGrade < 0 || label.finalGrade > 10 || !Number.isInteger(label.finalGrade * 2)
-    || label.finalGradePolicy !== 'atlas-final-half-point-v1') fail('MANUAL_LABEL_INVALID');
+    || !(label.finalGradePolicy === 'atlas-final-half-point-v1'
+      || label.finalGradePolicy === 'atlas-final-whole-point-v1' && label.finalGrade >= 1 && Number.isInteger(label.finalGrade))) fail('MANUAL_LABEL_INVALID');
   const identity = label.identity, sports = label.cardProfile === 'SPORTS';
   const required = sports ? ['playerName', 'productSet'] : ['cardName', 'productSet'];
   const nullableMetadata = sports ? ['year', 'manufacturer'] : ['year'];

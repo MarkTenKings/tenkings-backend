@@ -1,5 +1,13 @@
 ## Owner-directed ATLAS recognition and nonblocking identity — October 15, 2026
 
+## Owner-directed whole-number final awards — October 17, 2026
+
+New and still-unapproved ATLAS reviews must award the nearest whole number directly from the precise overall score. Exact halfway scores round upward: **8.35 → 8; 8.50 → 9; 9.50 → 10**. Policy `atlas-final-whole-point-v1` changes only final rounding. Defect measurements, bands, type/category factors, centering, Front 70% / Back 30%, equal category averaging and raw scores are unchanged. Category scores and calculation details may still contain decimals. Do not round an already rounded displayed grade to obtain the new award.
+
+Previously approved reports, labels and NFC versions retain their recorded policy, values, bytes and hashes. Historical half-point and tenth-point readers remain supported. Saved pending proposals remain evidence; current final review computes the whole-number award without repeating paid analysis. Final human approval remains a separate action. This supersedes earlier half-point requirements only for newly computed, unapproved ATLAS awards; Ten Kings Speedster is unchanged.
+
+Implementation and local qualification are complete; coordinated native/staff/public/customer deployment is pending. Source, release evidence and actual serving status are recorded in SESSION_LOG and DEPLOY_RUNBOOK. Do not describe the new policy as live before those checks complete.
+
 Mark reports that Astra previously identified cards and filled their details automatically, and explicitly directs restoring that behavior. ATLAS identification must use gpt-6-astra with xhigh reasoning, both saved photographs, Google Vision OCR and the model’s card-recognition knowledge. Product/set, maker, release year and number need not be literally printed in the image. Remove the ATLAS printed-only/no-catalog-knowledge restriction. Do not substitute a manual field-filling workaround for automatic recognition or claim that the old restriction was a newly introduced regression without evidence.
 
 Every new completed recognition must consult the retained ATLAS CODEX catalog to confirm or refine the proposal, including when set or number is missing. Preserve the actual model output and catalog source provenance separately. A catalog miss, unavailable lookup, unresolved printing or genuinely absent descriptive field must not veto physical condition grading. Keep uncertain details editable/null rather than inventing facts; recognized model values are not erased because catalog coverage is incomplete. The supported physical card family and actual photograph/measurement evidence still determine the grading tools.

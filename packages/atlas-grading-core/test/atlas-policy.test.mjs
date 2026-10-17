@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ATLAS_RULE_VERSION, ATLAS_CATEGORY_DAMAGE_MULTIPLIERS, calculateAtlasConditionScore,
   calculateAtlasReview, calculateAtlasScoringDamagePercent } from '../dist/atlas-policy.js';
-import { calculateAtlasFinalGrade } from '../dist/manual-report.js';
+import { calculateAtlasFinalGrade, ATLAS_HALF_POINT_FINAL_GRADE_POLICY } from '../dist/manual-report.js';
 import { calculateSpeedsterReview } from '../dist/review.js';
 
 const centering = score => {
@@ -82,5 +82,6 @@ test('removed findings remain excluded and side weighting uses each unrounded ca
   assert.deepEqual(grade.subgrades, { centering: 10, corners: 10, edges: 9.3, surface: 9.4 });
   assert.equal(grade.overall.rawGrade, 9.675);
   assert.equal(grade.overall.displayGrade, 9.7);
-  assert.equal(calculateAtlasFinalGrade(grade.overall.rawGrade), 9.5);
+  assert.equal(calculateAtlasFinalGrade(grade.overall.rawGrade), 10);
+  assert.equal(calculateAtlasFinalGrade(grade.overall.rawGrade, ATLAS_HALF_POINT_FINAL_GRADE_POLICY), 9.5);
 });

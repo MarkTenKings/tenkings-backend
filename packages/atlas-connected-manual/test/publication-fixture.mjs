@@ -7,8 +7,10 @@ import { defectBase, markDefectSideInspected, confirmDefectFindings, previewDefe
 import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 import { createManualPublication } from '../src/publication.mjs';
 import { publicationStatus } from '../src/publication-repository.mjs';
+import { ATLAS_HALF_POINT_FINAL_GRADE_POLICY, calculateAtlasFinalGrade } from '@atlas/grading-core/manual-report';
 export const sides = ['FRONT','BACK'];
-export async function publicationFixture({ withPreview = false, cardProfile = 'SPORTS', identity = {playerName:'Synthetic report',year:'2026',manufacturer:'Fixture',productSet:'Local only'}, onError } = {}) {
+export async function publicationFixture({ withPreview = false, cardProfile = 'SPORTS', identity = {playerName:'Synthetic report',year:'2026',manufacturer:'Fixture',productSet:'Local only'}, onError,
+  finalGradePolicy = ATLAS_HALF_POINT_FINAL_GRADE_POLICY } = {}) {
   const cardId=randomUUID(), actionId=randomUUID(), actorId=randomUUID(), records=new Map();
   const bytes=Object.fromEntries(sides.map(side=>[side,Buffer.from(`synthetic inspection ${side}`)]));
   let failRead=false, corruptBytes=false, loseWriteReply=false, completeCalls=0;
@@ -45,6 +47,9 @@ export async function publicationFixture({ withPreview = false, cardProfile = 'S
   for(const side of sides){defects=markDefectSideInspected(defects,{side,base:defectBase(defects,side),actor:'HUMAN',inspected:true}).state;}
   defects=confirmDefectFindings(defects,{base:Object.fromEntries(sides.map(side=>[side,defectBase(defects,side)])),actor:'HUMAN',reviewed:true}).state;
   const full=previewDefectReport(defects,{identity,centeringQuads:{FRONT:printed,BACK:printed},draftRevision:10});
+  // Existing immutable publication/reprint fixtures intentionally represent
+  // historical approvals; new-policy cases opt in without rewriting them.
+  full.finalGradePolicy=finalGradePolicy;full.finalGrade=calculateAtlasFinalGrade(full.grade.overall.rawGrade,finalGradePolicy);
   const report=await save('REPORT',full), draft={version:'test-approved-source-v1',geometry:await save('GEOMETRY',geometry),source:{prepared,uploads:{FRONT:{side:'FRONT'},BACK:{side:'BACK'}}}};
   const approval={version:'atlas-manual-report-snapshot-v2',report,identity:full.identity,grade:full.grade,finalGrade:full.finalGrade,finalGradePolicy:full.finalGradePolicy,findingCounts:full.findingCounts,ruleVersion:full.ruleVersion};
   const reportText=canonical(approval),sourceHash=digest(canonical(draft));

@@ -96,17 +96,22 @@ function buildAtlasManualReportV1(source: AtlasManualReportSource) {
   };
 }
 
-export const ATLAS_FINAL_GRADE_POLICY = 'atlas-final-half-point-v1' as const;
-/** Half and quarter points are binary-exact; adding an epsilon would cross a
- * legitimate just-below-quarter raw value at the lower end of the scale. */
-export function calculateAtlasFinalGrade(rawGrade: number): number {
+export const ATLAS_FINAL_GRADE_POLICY = 'atlas-final-whole-point-v1' as const;
+export const ATLAS_HALF_POINT_FINAL_GRADE_POLICY = 'atlas-final-half-point-v1' as const;
+export type AtlasFinalGradePolicy = typeof ATLAS_FINAL_GRADE_POLICY | typeof ATLAS_HALF_POINT_FINAL_GRADE_POLICY;
+/** Round directly from the raw overall. Exact ties round upward. No epsilon,
+ * intermediate tenth-point rounding or additional cap may cross a boundary.
+ * The recorded half-point policy remains executable for saved reports. */
+export function calculateAtlasFinalGrade(rawGrade: number, policy: AtlasFinalGradePolicy = ATLAS_FINAL_GRADE_POLICY): number {
   if (!Number.isFinite(rawGrade) || rawGrade < 1 || rawGrade > 10) throw new RangeError('ATLAS_FINAL_GRADE_INVALID');
-  return Math.round(rawGrade * 2) / 2;
+  if (policy === ATLAS_FINAL_GRADE_POLICY) return Math.round(rawGrade);
+  if (policy === ATLAS_HALF_POINT_FINAL_GRADE_POLICY) return Math.round(rawGrade * 2) / 2;
+  throw new Error('ATLAS_FINAL_GRADE_POLICY_INVALID');
 }
 
-/** New ATLAS reports award a half-point final grade directly from the raw
+/** New ATLAS reports award a whole-number final grade directly from the raw
  * overall. The unchanged Speedster grade retains its tenth-point detail.
- * Historical V1 report artifacts are read under their original policy.
+ * Historical V1 and half-point V2 artifacts retain their recorded policy.
  */
 export function previewAtlasManualReport(source: AtlasManualReportSource) {
   const report = buildAtlasManualReportV1(source);
@@ -115,7 +120,8 @@ export function previewAtlasManualReport(source: AtlasManualReportSource) {
 }
 
 type AtlasManualReport = (Omit<ReturnType<typeof buildAtlasManualReportV1>, 'ruleVersion'>
-  | Omit<ReturnType<typeof previewAtlasManualReport>, 'ruleVersion'>) & { ruleVersion: string };
+  | (Omit<ReturnType<typeof previewAtlasManualReport>, 'ruleVersion' | 'finalGradePolicy'>
+    & { finalGradePolicy: AtlasFinalGradePolicy })) & { ruleVersion: string };
 
 // Read-only historical descriptors remain exact for already approved reports.
 // New report creation cannot select this retired rule.
@@ -154,8 +160,8 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
       ? ATLAS_CONDITION_BANDS.find(band => band.upperPercent === null || scoringDamagePercent(weighted, zone) <= band.upperPercent)!.score
       : calculateConditionScore(weighted);
   const conditionBands = isScaledPolicy ? ATLAS_CONDITION_BANDS : LEGACY_CONDITION_BANDS;
-  const isHalfPointReport = report.version === 'atlas-manual-draft-report-v2';
-  if (isHalfPointReport ? report.finalGradePolicy !== ATLAS_FINAL_GRADE_POLICY
+  const hasFinalGrade = report.version === 'atlas-manual-draft-report-v2';
+  if (hasFinalGrade ? ![ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY].includes(report.finalGradePolicy)
     : 'finalGrade' in report || 'finalGradePolicy' in report) throw new Error('ATLAS_REPORT_EXPLANATION_INVALID');
   const findings = parsePersistedSpeedsterReviewFindings(report.findings);
   if (new Set(findings.map(finding => finding.id)).size !== findings.length) throw new Error('ATLAS_REPORT_FINDING_ID_CONFLICT');
@@ -213,9 +219,9 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
   }));
   const overall = calculateOverallGrade(report.grade.subgrades);
   requireEqual(report.grade.overall.rawGrade, overall.rawGrade); requireEqual(report.grade.overall.displayGrade, overall.displayGrade);
-  const finalGrade = isHalfPointReport ? calculateAtlasFinalGrade(overall.rawGrade) : overall.displayGrade;
-  if (isHalfPointReport) requireEqual(report.finalGrade, finalGrade);
-  const finalGradePolicy = isHalfPointReport ? ATLAS_FINAL_GRADE_POLICY : 'atlas-historical-tenth-v1';
+  const finalGrade = hasFinalGrade ? calculateAtlasFinalGrade(overall.rawGrade, report.finalGradePolicy) : overall.displayGrade;
+  if (hasFinalGrade) requireEqual(report.finalGrade, finalGrade);
+  const finalGradePolicy = hasFinalGrade ? report.finalGradePolicy : 'atlas-historical-tenth-v1';
   return structuredClone({
     version: 'atlas-manual-grade-explanation-v1' as const,
     ruleVersion: report.ruleVersion,
@@ -233,9 +239,11 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
       overallFormula: '(centering + corners + edges + surface) ÷ 4',
       rounding: 'Nearest tenth; category scores and the raw overall remain unrounded',
       finalGradePolicy, finalGradeRoundingInput: 'rawGrade',
-      finalGradeFormula: isHalfPointReport
-        ? 'Round the raw overall directly to the nearest 0.5; exact quarter-point ties round upward. The tenth-point detail is not an intermediate input.'
-        : 'Historical V1 report: the original nearest-tenth display grade remains the final grade.',
+      finalGradeFormula: finalGradePolicy === ATLAS_FINAL_GRADE_POLICY
+        ? 'Round the raw overall directly to the nearest whole number; exact .5 ties round upward. The tenth-point detail is not an intermediate input.'
+        : finalGradePolicy === ATLAS_HALF_POINT_FINAL_GRADE_POLICY
+          ? 'Round the raw overall directly to the nearest 0.5; exact quarter-point ties round upward. The tenth-point detail is not an intermediate input.'
+          : 'Historical V1 report: the original nearest-tenth display grade remains the final grade.',
       measurementNormalizationDecimals: 12, scoreMinimum: 1, scoreMaximum: 10, additionalCaps: null,
       marginalEffectsAdditive: false,
       marginalEffectMeaning: 'Removing this measured region from the current totals may cross a score band. These effects are not additive; overlap ownership is not remeasured.',

@@ -9,11 +9,12 @@ import { defectBase, reviewedDefectFindingIds, runDefectMeasurement } from '../.
 import { traceAction } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 import { decodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
+import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY, calculateAtlasFinalGrade } from '@atlas/grading-core/manual-report';
 
 const SIDES = ['FRONT', 'BACK'], hash = letter => letter.repeat(64), clone = value => structuredClone(value);
 const physical = [{ x: .125, y: .1 }, { x: .875, y: .1 }, { x: .875, y: .9 }, { x: .125, y: .9 }];
 const printed = [{ x: .04, y: .06 }, { x: .94, y: .06 }, { x: .94, y: .96 }, { x: .04, y: .96 }];
-function geometry(cardId) {
+function geometry(cardId, printedQuad = printed) {
   let state = createGeometryWorkspace({ cardId, profile: 'SPORTS', sides: Object.fromEntries(SIDES.map((side, i) => [side, {
     image: { version: 1, originalSha256: hash(i ? 'a' : 'b'), frameId: `${side}-decoded`, frameSha256: hash(i ? 'c' : 'd'),
       width: 1600, height: 2400, coordinateSpace: 'ORIENTED_DECODED' }, cornerShape: 'SQUARE', matColor: 'BLACK',
@@ -26,36 +27,43 @@ function geometry(cardId) {
       inspection: { sha256: hash(side === 'FRONT' ? '1' : '2'), width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
       sourceToRectified: [sx, 0, -200 * sx, 0, sy, -240 * sy, 0, 0, 1],
     } }).state;
-    state = applyGeometryEdit(state, { side, kind: 'PRINTED', base: geometryBase(state, side, 'PRINTED'), quad: printed, actor: 'HUMAN', proposal: null }).state;
+    state = applyGeometryEdit(state, { side, kind: 'PRINTED', base: geometryBase(state, side, 'PRINTED'), quad: printedQuad, actor: 'HUMAN', proposal: null }).state;
   }
   return confirmBothGeometry(state, { actor: 'HUMAN', reviewed: true, base: Object.fromEntries(SIDES.map(side => [side, geometryBase(state, side, 'REVIEW')])) }).state;
 }
-async function fixture({resolveVariantConfirmation=null,actorKind=null}={}) {
+async function fixture({resolveVariantConfirmation=null,actorKind=null,printedQuad=printed}={}) {
   const cardId = randomUUID(), staff = { id: randomUUID() }, principal = { id: staff.id, canCertify: true, ...(actorKind?{actorKind}:{}) };
   let card;
   const commands = new Map(), objects = new Map(), proposals = new Map(), f = { commits: [], measured: [], publications: [], publisher: async () => {}, resolve: null,
     artifactPuts: [], artifactGets: [], corruptNextWrite: false, corruptKey: null };
-  const authorize = (actor, id) => { requireThat(actor === staff && id === cardId, 403, 'SYNTHETIC_ACCESS_DENIED'); };
+  const authorize = (actor, id) => { requireThat(!f.accessRevoked && actor === staff && id === cardId, 403, 'SYNTHETIC_ACCESS_DENIED'); };
   const repository = {
     async provision(actor, input) { authorize(actor, input.cardId); const document = stateDocument(input.draft);
       card = { cardId, revision: 1, contentHash: document.hash, draft: document.draft }; return clone(card); },
     async load(actor, id) { authorize(actor, id); return { card: clone(card), principal: clone(principal) }; },
+    async latestApproval(actor, id) { authorize(actor, id); return clone(f.approval ?? null); },
     async authorizeEdit(actor, id) { return this.load(actor, id); },
     async findAction(actor, id, command) { authorize(actor, id); const prior = commands.get(command.actionId); if (!prior) return null;
       requireThat(prior.requestHash === inputCommand(command).requestHash, 409, 'MANUAL_ACTION_CONFLICT'); return clone(prior.result); },
     async commit(actor, input) { authorize(actor, input.cardId);
       requireThat(input.input.expectedRevision === card.revision && input.baseHash === card.contentHash, 409, 'MANUAL_DRAFT_STALE');
+      if (input.approval) f.approval = { actionId: input.input.actionId, sourceRevision: card.revision,
+        sourceHash: card.contentHash, reportHash: stateDocument(input.approval).hash, report: clone(input.approval) };
       const document = stateDocument(input.draft); card = { ...card, revision: card.revision + 1, draft: document.draft, contentHash: document.hash };
       const result = { card: clone(card), actionId: input.input.actionId };
-      commands.set(input.input.actionId, { requestHash: inputCommand(input.input).requestHash, result }); f.commits.push(clone(input)); return clone(result);
+      commands.set(input.input.actionId, { requestHash: inputCommand(input.input).requestHash, result }); f.commits.push(clone(input));
+      if (f.loseReply) { f.loseReply = false; throw Error('reply lost after durable commit'); }
+      return clone(result);
     },
   };
   const artifacts = createManualArtifactStore({ transport: {
     async putIfAbsent({ key, bytes, contentType, lineageSha256 }) { f.artifactPuts.push(key); if (objects.has(key)) throw Error('immutable existing object');
       objects.set(key, { bytes: Buffer.from(bytes), contentType, lineageSha256 }); if (f.corruptNextWrite) f.corruptKey = key; },
-    async read({ key }) { f.artifactGets.push(key); return key === f.corruptKey ? { ...objects.get(key), bytes: Buffer.from('corrupt') } : objects.get(key); },
+    async read({ key }) { f.artifactGets.push(key); if (f.onArtifactRead) await f.onArtifactRead(key);
+      return key === f.corruptKey ? { ...objects.get(key), bytes: Buffer.from('corrupt') } : objects.get(key); },
   } });
   const workflow = createManualWorkflow({ repository, artifacts, resolveVariantConfirmation,
+    assertCurrent: async () => { requireThat(!f.photosChanged, 409, 'MANUAL_PHOTOS_CHANGED'); },
     resolveProposal: async ({ staff: actor, card: current, analysisId, proposalId }) => { authorize(actor, current.cardId); const found = proposals.get(`${analysisId}:${proposalId}`);
       requireThat(found, 404, 'MANUAL_PROPOSAL_NOT_FOUND'); return f.resolve ? f.resolve(clone(found)) : clone(found); },
     // A synthetic measured-result adapter isolates action/persistence behavior.
@@ -72,7 +80,7 @@ async function fixture({resolveVariantConfirmation=null,actorKind=null}={}) {
     afterConfirm: async (actor, id, actionId) => { authorize(actor, id); assert.ok(commands.has(actionId), 'publication starts only after actual commit');
       f.publications.push(actionId); return f.publisher(actionId); },
   });
-  await workflow.provision(staff, { geometry: geometry(cardId), identity: { playerName: 'Synthetic Player', year: '2026', manufacturer: 'Fixture', productSet: 'Action test' } });
+  await workflow.provision(staff, { geometry: geometry(cardId, printedQuad), identity: { playerName: 'Synthetic Player', year: '2026', manufacturer: 'Fixture', productSet: 'Action test' } });
   const initial = await workflow.hydrate(card), analysisId = randomUUID();
   for (let index = 0; index < 3; index++) {
     const id = `${analysisId}:${index + 1}`, x = .2 + index * .1;
@@ -80,7 +88,7 @@ async function fixture({resolveVariantConfirmation=null,actorKind=null}={}) {
       canonicalContour: [{ x, y: .2 }, { x: x + .02, y: .2 }, { x: x + .02, y: .22 }, { x, y: .22 }],
       observation: 'Synthetic proposal', uncertainty: 'MEDIUM', reviewStatus: 'UNREVIEWED', provenance: { analysisId }, areaMm2: 999999 } });
   }
-  Object.assign(f, { workflow, staff, cardId, analysisId, proposals, card: () => clone(card), state: () => workflow.hydrate(card),
+  Object.assign(f, { workflow, artifacts, staff, cardId, analysisId, proposals, card: () => clone(card), state: () => workflow.hydrate(card),
     execute: (action, actionId = randomUUID()) => workflow.service.execute(staff, cardId, { actionId, expectedRevision: card.revision, action }),
     async review(action = 'ACCEPT', index = 1, extra = {}) { const state = await f.state(); return f.execute({ type: 'ASTRA_PROPOSAL_REVIEW', side: 'FRONT',
       base: defectBase(state.defects, 'FRONT'), analysisId, proposalId: `${analysisId}:${index}`, action, ...extra }); },
@@ -91,6 +99,82 @@ async function fixture({resolveVariantConfirmation=null,actorKind=null}={}) {
   });
   return f;
 }
+
+async function historicalApprovalFixture() {
+  // Identical measured category arithmetic yields raw 8.35: old award 8.5,
+  // current award 8. No provider, production record or historical rewrite.
+  const f = await fixture({ printedQuad: [{ x: .088, y: .04 }, { x: .988, y: .04 }, { x: .988, y: .96 }, { x: .088, y: .96 }] });
+  await f.inspect(); await f.confirm();
+  const current = await f.workflow.service.previewReport(f.staff, f.cardId), full = clone(current.review.report);
+  full.finalGradePolicy = ATLAS_HALF_POINT_FINAL_GRADE_POLICY;
+  full.finalGrade = calculateAtlasFinalGrade(full.grade.overall.rawGrade, full.finalGradePolicy);
+  const sourceHash = digest(JSON.stringify(full));
+  const report = { ...current.report, report: { ref: await f.artifacts.write(full, { cardId: f.cardId, kind: 'REPORT', sourceHash }), sourceHash },
+    finalGrade: full.finalGrade, finalGradePolicy: full.finalGradePolicy };
+  f.approval = { actionId: randomUUID(), sourceRevision: f.card().revision, sourceHash: f.card().contentHash,
+    reportHash: stateDocument(report).hash, report };
+  return { f, current, full };
+}
+
+test('unchanged historical approval opens the original full report, compact hash and half award without writing a new artifact', async () => {
+  const { f, current, full } = await historicalApprovalFixture(), before = clone(f.approval), card = f.card(), writes = f.artifactPuts.length;
+  assert.ok(Math.abs(full.grade.overall.rawGrade - 8.35) < 1e-12);
+  assert.equal(full.finalGrade, 8.5); assert.equal(current.report.finalGrade, 8);
+  const preview = await f.workflow.service.previewReport(f.staff, f.cardId);
+  assert.equal(preview.reportHash, before.reportHash); assert.deepEqual(preview.report, before.report);
+  assert.deepEqual(preview.review.report, full); assert.equal(preview.review.explanation.overall.finalGrade, 8.5);
+  assert.equal(preview.sourceHash, card.contentHash); assert.equal(preview.sourceRevision, card.revision);
+  assert.equal(f.artifactPuts.length, writes); assert.deepEqual(f.approval, before); assert.deepEqual(f.card(), card);
+  // A deliberate source correction creates a fresh current-policy preview;
+  // the saved historical approval and its artifact are retained unchanged.
+  await f.execute({ type: 'IDENTITY_EDIT', identity: { ...card.draft.identity, playerName: 'Corrected identity' } });
+  const corrected = await f.workflow.service.previewReport(f.staff, f.cardId);
+  assert.equal(corrected.report.finalGradePolicy, ATLAS_FINAL_GRADE_POLICY); assert.equal(corrected.report.finalGrade, 8);
+  assert.notEqual(corrected.reportHash, before.reportHash); assert.deepEqual(f.approval, before);
+});
+
+test('saved approval viewing still refuses corrupt compact/full evidence, changed photos, revoked access and concurrent edits', async () => {
+  for (const scenario of ['compact', 'artifact', 'images', 'photos', 'access', 'edit']) {
+    const { f, full } = await historicalApprovalFixture();
+    let code;
+    if (scenario === 'compact') {
+      f.approval.report.finalGrade = 9;
+      f.approval.reportHash = stateDocument(f.approval.report).hash; code = 'MANUAL_APPROVED_REPORT_INVALID';
+    } else if (scenario === 'artifact') {
+      f.corruptKey = f.approval.report.report.ref.key; code = 'MANUAL_ARTIFACT_UNVERIFIED';
+    } else if (scenario === 'images') {
+      const changed = clone(full); changed.inspection.front.imageSha256 = 'f'.repeat(64);
+      const sourceHash = digest(JSON.stringify(changed));
+      f.approval.report.report = { ref: await f.artifacts.write(changed, { cardId: f.cardId, kind: 'REPORT', sourceHash }), sourceHash };
+      f.approval.reportHash = stateDocument(f.approval.report).hash; code = 'MANUAL_APPROVED_REPORT_IMAGE_MISMATCH';
+    } else if (scenario === 'photos') { f.photosChanged = true; code = 'MANUAL_PHOTOS_CHANGED'; }
+    else if (scenario === 'access') {
+      f.onArtifactRead = () => { f.accessRevoked = true; }; code = 'SYNTHETIC_ACCESS_DENIED';
+    } else {
+      f.onArtifactRead = async () => { f.onArtifactRead = null;
+        await f.execute({ type: 'IDENTITY_EDIT', identity: { ...f.card().draft.identity, playerName: 'Concurrent correction' } }); };
+      code = 'MANUAL_DRAFT_STALE';
+    }
+    await assert.rejects(f.workflow.service.previewReport(f.staff, f.cardId), { code }, scenario);
+  }
+});
+
+test('an uncommitted old-policy preview cannot approve after cutover and a committed current approval survives a lost reply once', async () => {
+  const { f, current } = await historicalApprovalFixture(), oldHash = f.approval.reportHash, before = f.commits.length;
+  f.approval = null;
+  const stale = { actionId: randomUUID(), expectedRevision: f.card().revision,
+    action: { type: 'APPROVE_REPORT', reviewed: true, reportHash: oldHash } };
+  await assert.rejects(f.workflow.service.execute(f.staff, f.cardId, stale), { code: 'MANUAL_REPORT_STALE' });
+  assert.equal(f.commits.length, before); assert.equal(f.approval, null);
+  const command = { ...stale, actionId: randomUUID(), action: { ...stale.action, reportHash: current.reportHash } };
+  f.loseReply = true;
+  await assert.rejects(f.workflow.service.execute(f.staff, f.cardId, command), /reply lost after durable commit/);
+  const approval = clone(f.approval), writes = f.artifactPuts.length;
+  const replay = await f.workflow.service.execute(f.staff, f.cardId, command);
+  assert.equal(replay.actionId, command.actionId); assert.equal(f.commits.length, before + 1);
+  assert.equal(f.artifactPuts.length, writes); assert.deepEqual(f.approval, approval);
+  assert.equal(approval.report.finalGrade, 8); assert.equal(approval.report.finalGradePolicy, ATLAS_FINAL_GRADE_POLICY);
+});
 
 test('identity-only saves retain verified geometry/defect refs without repeat PUT/readback and preserve exact replay', async () => {
   const f = await fixture(), before = f.card(); f.artifactPuts.length = 0; f.artifactGets.length = 0;

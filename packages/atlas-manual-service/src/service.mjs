@@ -1,11 +1,11 @@
 import { canonical, immutable, inputCommand, object, requireThat, stateDocument } from './contract.mjs';
 
-/** reduce and buildReport are trusted server adapters, never browser callbacks.
+/** reduce, buildReport and loadApprovedReport are trusted server adapters, never browser callbacks.
  * They may decode/measure/store/hydrate, but execute with NO DB transaction.
  * Only compact refs and deterministic content reach CAS; conflicting results
  * remain immutable unreferenced artifacts, never overwrites of newer work.
  */
-export function createManualService({ repository, reduce, buildReport = null, beforeCommit = null }) {
+export function createManualService({ repository, reduce, buildReport = null, loadApprovedReport = null, beforeCommit = null }) {
   requireThat(repository && typeof reduce === 'function', 500, 'MANUAL_SERVICE_INVALID');
   return Object.freeze({
     authorizeEdit: (staff, cardId) => repository.authorizeEdit(staff, cardId),
@@ -16,6 +16,20 @@ export function createManualService({ repository, reduce, buildReport = null, be
     async previewReport(staff, cardId) {
       requireThat(typeof buildReport === 'function', 503, 'MANUAL_REPORT_UNAVAILABLE');
       const { card, principal } = await repository.load(staff, cardId);
+      if (loadApprovedReport) {
+        const approval = await repository.latestApproval(staff, cardId);
+        if (approval?.sourceHash === card.contentHash) {
+          // Viewing unchanged approved work uses its immutable recorded policy.
+          // Approval commands below always rebuild under the current policy.
+          const saved = await loadApprovedReport({ card, principal, approval }, staff);
+          const report = stateDocument(saved.report);
+          requireThat(report.hash === approval.reportHash, 503, 'MANUAL_STORED_CONTENT_INVALID');
+          const latest = await repository.load(staff, cardId);
+          requireThat(latest.card.revision === card.revision && latest.card.contentHash === card.contentHash, 409, 'MANUAL_DRAFT_STALE');
+          return { report: report.draft, reportHash: approval.reportHash, sourceRevision: card.revision, sourceHash: card.contentHash,
+            canCertify: latest.principal.canCertify === true, review: saved.review };
+        }
+      }
       const report = stateDocument(await buildReport({ card, principal }, staff));
       // Display availability separately from the immutable report. Approval
       // still reauthenticates and checks certification when it is committed.

@@ -40,6 +40,7 @@ async function fixture({ confirmation = false, confirmationTimeoutMs, identity }
     async provision(actor, input) { authorize(actor, input.cardId); const document = stateDocument(input.draft);
       card = { cardId, revision: 1, contentHash: document.hash, draft: document.draft }; return clone(card); },
     async load(actor, id) { authorize(actor, id); return { card: clone(card), principal: clone(principal) }; },
+    async latestApproval() { return null; },
     async authorizeEdit(actor, id) { return this.load(actor, id); },
     async findAction(actor, id, command) { authorize(actor, id); const prior = commands.get(command.actionId); if (!prior) return null;
       requireThat(prior.requestHash === inputCommand(command).requestHash, 409, 'MANUAL_ACTION_CONFLICT'); return clone(prior.result); },
@@ -545,19 +546,21 @@ test('ordinary findings confirmation never reads a broken historical model artif
   assert.equal(f.measured.length, 0);
 });
 
-test('new report approval binds the half-point final grade and refuses a previous-policy preview hash', async () => {
+test('new report approval binds the whole-point final grade and refuses previous-policy preview hashes', async () => {
   const f = await savedAnalysisFixture({ confirmation: true }); await decideSavedProposal(f, 0, 'REJECT'); await f.inspect(); await f.confirm();
   const preview = await f.workflow.service.previewReport(f.staff, f.cardId);
   assert.equal(preview.report.version, 'atlas-manual-report-snapshot-v2');
   assert.equal(preview.review.report.version, 'atlas-manual-draft-report-v2');
-  assert.equal(preview.report.finalGradePolicy, 'atlas-final-half-point-v1');
-  assert.equal(preview.report.finalGrade, Math.round((preview.report.grade.overall.rawGrade + Number.EPSILON) * 2) / 2);
+  assert.equal(preview.report.finalGradePolicy, 'atlas-final-whole-point-v1');
+  assert.equal(preview.report.finalGrade, Math.round(preview.report.grade.overall.rawGrade));
   assert.equal(preview.report.finalGrade, preview.review.report.finalGrade);
   assert.equal(reportAwardedGrade(preview.report), preview.report.finalGrade, 'completion reads the actual service snapshot');
   assert.equal(reportAwardedGrade(preview.review.report), reportAwardedGrade(preview.report), 'full review and completion agree');
   const old = structuredClone(preview.report); old.version = 'atlas-manual-report-snapshot-v1'; delete old.finalGrade; delete old.finalGradePolicy;
+  const half = { ...preview.report, finalGradePolicy: 'atlas-final-half-point-v1', finalGrade: Math.round(preview.report.grade.overall.rawGrade * 2) / 2 };
   const before = f.card();
-  await assert.rejects(f.execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: digest(canonical(old)) }), { code: 'MANUAL_REPORT_STALE' });
+  for (const historical of [old, half]) await assert.rejects(f.execute({ type: 'APPROVE_REPORT', reviewed: true,
+    reportHash: digest(canonical(historical)) }), { code: 'MANUAL_REPORT_STALE' });
   assert.deepEqual(f.card(), before);
   await f.execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: preview.reportHash });
   assert.deepEqual(f.commits.at(-1).approval, preview.report);

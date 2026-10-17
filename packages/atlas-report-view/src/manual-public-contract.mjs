@@ -36,7 +36,7 @@ const finding = z.union([
 ]);
 const report = z.strictObject({ version: z.literal('atlas-manual-draft-report-v2'), ruleVersion: text, cardProfile: z.enum(['SPORTS', 'POKEMON']), identity,
   draftRevision: z.number().int().positive(), inspection: z.strictObject({ method: z.literal('HUMAN'), front: inspection, back: inspection }), grade,
-  finalGrade: score.refine(value => Number.isInteger(value * 2)), finalGradePolicy: z.literal('atlas-final-half-point-v1'),
+  finalGrade: score.refine(value => Number.isInteger(value * 2)), finalGradePolicy: z.enum(['atlas-final-half-point-v1', 'atlas-final-whole-point-v1']),
   findings: z.array(finding).max(400), findingCounts: z.strictObject({ total: z.number().int().nonnegative(), included: z.number().int().nonnegative(), removed: z.literal(0), unreviewed: z.literal(0) }) });
 const image = z.strictObject({ sha256: hash, byteCount: z.number().int().positive().max(50 * 1024 * 1024), width: z.literal(1350), height: z.literal(1858), contentType: z.literal('image/webp') });
 const geometry = z.strictObject({ physicalQuad: quad, printedQuad: quad });
@@ -46,10 +46,16 @@ export const publicManualReportSchema = z.strictObject({ version: z.literal('atl
   images: z.strictObject({ FRONT: image, BACK: image }), geometry: z.strictObject({ FRONT: geometry, BACK: geometry }) });
 export function parsePublicManualReport(value) {
   const packet = publicManualReportSchema.parse(value), report = packet.report;
+  const rawGrade = report.grade.overall.rawGrade;
+  // Preserve historical half-point admission and serialization exactly. New
+  // whole-number awards additionally require the authoritative 1..10 domain.
+  const validFinalGrade = report.finalGradePolicy === 'atlas-final-whole-point-v1'
+    ? rawGrade >= 1 && report.finalGrade >= 1 && Number.isInteger(report.finalGrade) && report.finalGrade === Math.round(rawGrade)
+    : report.finalGrade === Math.round(rawGrade * 2) / 2;
   if (report.findingCounts.total !== report.findings.length || report.findingCounts.included !== report.findings.length
     || new Set(report.findings.map(f => f.id)).size !== report.findings.length
     || (report.cardProfile === 'SPORTS') !== Object.hasOwn(report.identity, 'playerName')
-    || report.finalGrade !== Math.round(report.grade.overall.rawGrade * 2) / 2) throw new Error('PUBLIC_MANUAL_REPORT_INVALID');
+    || !validFinalGrade) throw new Error('PUBLIC_MANUAL_REPORT_INVALID');
   for (const name of ['FRONT', 'BACK']) if (packet.images[name].sha256 !== report.inspection[name.toLowerCase()].imageSha256) throw new Error('PUBLIC_MANUAL_IMAGE_INVALID');
   for (const finding of report.findings) {
     const mask = finding.finalTrace ?? finding.detectorMask;

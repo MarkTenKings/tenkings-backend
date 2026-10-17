@@ -125,3 +125,19 @@ test('report preview exposes certification availability without changing report 
   }
   assert.equal(commits, 0);
 });
+
+test('a committed historical approval replays its original lost response before the new policy can build or commit', async () => {
+  const card = { revision: 4, contentHash: digest('draft'), draft: { refs: 'unchanged' } }, principal = { canCertify: true };
+  let report = { finalGrade: 8.5, finalGradePolicy: 'atlas-final-half-point-v1' }, result, builds = 0, commits = 0;
+  const repository = { async findAction() { return result ?? null; }, async load() { return { card, principal }; },
+    async commit(_staff, input) { commits++; result = { approval: input.approval }; throw Error('lost response'); } };
+  const service = createManualService({ repository, reduce() { assert.fail('approval never reduces'); },
+    buildReport: async () => { builds++; return report; } });
+  const command = { actionId: randomUUID(), expectedRevision: 4,
+    action: { type: 'APPROVE_REPORT', reviewed: true, reportHash: digest(canonical(report)) } };
+  await assert.rejects(service.execute({}, randomUUID(), command), /lost response/);
+  report = { finalGrade: 8, finalGradePolicy: 'atlas-final-whole-point-v1' };
+  assert.deepEqual(await service.execute({}, randomUUID(), command),
+    { approval: { finalGrade: 8.5, finalGradePolicy: 'atlas-final-half-point-v1' } });
+  assert.equal(builds, 1); assert.equal(commits, 1);
+});

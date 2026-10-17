@@ -1,5 +1,13 @@
 # Ten Kings Master Product Context
 
+## Owner-directed whole-number final awards — October 17, 2026
+
+New and still-unapproved ATLAS reviews must award the nearest whole number directly from the precise overall score. Exact halfway scores round upward: **8.35 → 8; 8.50 → 9; 9.50 → 10**. Policy `atlas-final-whole-point-v1` changes only final rounding. Defect measurements, bands, type/category factors, centering, Front 70% / Back 30%, equal category averaging and raw scores are unchanged. Category scores and calculation details may still contain decimals. Do not round an already rounded displayed grade to obtain the new award.
+
+Previously approved reports, labels and NFC versions retain their recorded policy, values, bytes and hashes. Historical half-point and tenth-point readers remain supported. Saved pending proposals remain evidence; current final review computes the whole-number award without repeating paid analysis. Final human approval remains a separate action. This supersedes earlier half-point requirements only for newly computed, unapproved ATLAS awards; Ten Kings Speedster is unchanged.
+
+Implementation and local qualification are complete; coordinated native/staff/public/customer deployment is pending. Source, release evidence and actual serving status are recorded in SESSION_LOG and DEPLOY_RUNBOOK. Do not describe the new policy as live before those checks complete.
+
 ## Automatic labels and black/transparent foil export — live (October 17, 2026)
 
 Source `b784deee2a1b99fd0d9049c800af705bbf67c278` is live on native main/worker and staff/public web. Publication completed at **07:04:31.971 UTC**; all **52 canonical route and asset checks** passed. The temporary claim pause was explicitly released at **07:05:43.166 UTC**. Postflight confirms healthy services, holder absence, unchanged visible-card state and preservation of discarded rows, prior READY market results and retained label requests. All later release sections are historical checkpoints unless explicitly stated otherwise.

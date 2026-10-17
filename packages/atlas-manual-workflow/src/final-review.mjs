@@ -2,7 +2,7 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { adoptDefectProposals, createDefectWorkspace, parseDefectWorkspace, defectBase } from '@atlas/manual-workspace/defect-actions';
 import { calculateAtlasReview, ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
-import { calculateAtlasFinalGrade, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { ATLAS_FINAL_GRADE_POLICY, calculateAtlasFinalGrade, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import { geometryMeasurementFrame } from '@atlas/manual-workspace/geometry-actions';
 
 const SIDES = ['FRONT', 'BACK'];
@@ -103,7 +103,7 @@ export function finalReviewPreview(card, state) {
       && review.proposalId === proposal.id));
   const report = { ...state.finalReview.report, version: 'atlas-review-provisional-report-v1', authority: 'HUMAN_REVIEW_DRAFT',
     originalMachineReportHash: state.finalReview.reportHash, manualRevision: card.revision, manualContentHash: card.contentHash,
-    identity: state.identity, ruleVersion: ATLAS_RULE_VERSION,
+    identity: state.identity, ruleVersion: ATLAS_RULE_VERSION, finalGradePolicy: ATLAS_FINAL_GRADE_POLICY,
     grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
     calculationState: calculated.grade ? 'COMPLETE' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry, geometryReview,
     // Original receipts and warnings remain bound to the immutable machine

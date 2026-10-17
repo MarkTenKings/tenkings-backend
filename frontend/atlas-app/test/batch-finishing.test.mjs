@@ -14,13 +14,14 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false, entryFailure = null, needsSetup = false } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false, oldRoundingPolicy = false, entryFailure = null, needsSetup = false } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
   } };
   if (partial) Object.assign(packet,{canCertify:false,reviewRequiredReason:'BATCH_FINAL_GEOMETRY_REQUIRED',explanation:null,report:{...packet.report,calculationState:'GEOMETRY_UNRESOLVED',grade:null,proposedGrade:null}});
   if (oldScoringPolicy) Object.assign(packet, { canCertify: false, reviewRequiredReason: 'BATCH_SCORING_POLICY_UPDATED' });
+  if (oldRoundingPolicy) Object.assign(packet, { canCertify: false, reviewRequiredReason: 'BATCH_FINAL_ROUNDING_UPDATED' });
   if (correcting) { packet.correctionAvailable = true; packet.canCertify = false; }
   const result = { cardId: packet.cardId, actionId: plan.binding.approvalActionId, publication: {
     state: pending ? 'PENDING' : 'PUBLISHED', actionId: plan.binding.approvalActionId,
@@ -198,6 +199,18 @@ test('old scoring policy explains the approval block and opens the bound final r
   f.dispose();
 });
 
+
+test('earlier rounding is identified before opening current review without rewriting the saved proposal', async () => {
+  const f = await fixture({ oldRoundingPolicy: true });
+  assert.match(f.text(), /whole-number rounding to the precise score/);
+  assert.equal(f.jobs[0].evidence.proposedGrade, 9.5);
+  assert.equal(f.find(node => node.type === 'button' && /Approve/.test(text(node))).length, 0);
+  f.find(node => node.type === 'button' && text(node) === 'Review card →')[0].props.onClick();
+  await f.flush();
+  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog')[0].props.job.key, f.packet.key);
+  assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
+  f.dispose();
+});
 
 test('label queue opens saved sheets without reopening a grade or dispatching finishing', async () => {
   const f = await fixture();

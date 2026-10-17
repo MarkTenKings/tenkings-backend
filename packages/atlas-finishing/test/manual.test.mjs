@@ -19,6 +19,21 @@ test('exact immutable publication generates one deterministic pair of independen
   const changed = structuredClone(a); changed.binding.publicHash = 'd'.repeat(64); assert.throws(() => validateManualFinishingPlan(changed));
   assert.ok(!JSON.stringify(a).includes('certificate')); assert.ok(!JSON.stringify(a).includes('owner'));
 });
+test('whole-policy labels use the exact saved raw-to-final award and retain historical half plans', () => {
+  const historical = samplePlan(), historicalBytes = JSON.stringify(historical);
+  for (const [rawGrade, finalGrade] of [[1, 1], [8.35, 8], [8.45, 8], [8.5, 9], [9.49, 9], [9.5, 10], [10, 10]]) {
+    const plan = samplePlan({ rawGrade, finalGrade, finalGradePolicy: 'atlas-final-whole-point-v1' });
+    assert.equal(plan.label.finalGrade, finalGrade); assert.equal(validateManualFinishingPlan(plan), plan);
+    assert.match(renderManualLabel({ label: plan.label, measureText, qr }).front, new RegExp(`>${finalGrade}</text>`));
+  }
+  for (const [rawGrade, finalGrade] of [[8.35, 9], [8.35, 8.5], [0.9, 1], [10.01, 10]]) {
+    assert.throws(() => samplePlan({ rawGrade, finalGrade, finalGradePolicy: 'atlas-final-whole-point-v1' }));
+  }
+  assert.throws(() => samplePlan({ finalGradePolicy: 'atlas-final-unknown-v1' }));
+  const invalid = structuredClone(historical.label); invalid.finalGradePolicy = 'atlas-final-whole-point-v1';
+  assert.throws(() => renderManualLabel({ label: invalid, measureText, qr }), /MANUAL_LABEL_INVALID/);
+  assert.equal(JSON.stringify(samplePlan()), historicalBytes); assert.equal(samplePlan().label.finalGrade, 9.5);
+});
 test('label is exact-size escaped vector art and never truncates identity to fit', () => {
   const plan = samplePlan({ mode: 'LOCAL_FIXTURE' }); const rendered = renderManualLabel({ label: plan.label, measureText, qr });
   assert.match(rendered.front, /width="2.73in" height="0.83in"/); assert.match(rendered.front, /EXAMPLE/);

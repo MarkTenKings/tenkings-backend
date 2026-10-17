@@ -290,11 +290,36 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       finalGrade: full.finalGrade, finalGradePolicy: full.finalGradePolicy,
       findingCounts: full.findingCounts, ruleVersion: full.ruleVersion };
   }
+  async function loadApprovedReport({ card, principal, approval }, staff) {
+    if (assertCurrent) await assertCurrent({ card, principal, staff });
+    const snapshot = approval.report;
+    requireThat(['atlas-manual-report-snapshot-v1', 'atlas-manual-report-snapshot-v2'].includes(snapshot?.version)
+      && snapshot.report?.ref && /^[a-f0-9]{64}$/.test(snapshot.report.sourceHash), 503, 'MANUAL_APPROVED_REPORT_INVALID');
+    const [full, state] = await Promise.all([
+      read(card.cardId, 'REPORT', snapshot.report.ref, snapshot.report.sourceHash), hydrate(card),
+    ]);
+    const v2 = snapshot.version === 'atlas-manual-report-snapshot-v2';
+    const expected = { version: snapshot.version, report: snapshot.report, identity: full.identity, grade: full.grade,
+      ...(v2 ? { finalGrade: full.finalGrade, finalGradePolicy: full.finalGradePolicy } : {}),
+      findingCounts: full.findingCounts, ruleVersion: full.ruleVersion };
+    requireThat(full.version === (v2 ? 'atlas-manual-draft-report-v2' : 'atlas-manual-draft-report-v1')
+      && equal(snapshot, expected) && equal(full.identity, state.identity)
+      && state.defects && geometryStatus(state.geometry).confirmed && state.geometry.profile === full.cardProfile
+      && full.draftRevision === state.geometry.reportRevision + state.defects.draftRevision + card.draft.identityRevision,
+    503, 'MANUAL_APPROVED_REPORT_INVALID');
+    for (const side of SIDES) requireThat(full.inspection?.[side.toLowerCase()]?.imageSha256
+      === state.geometry.sides[side].prepared?.frame.inspection.sha256, 503, 'MANUAL_APPROVED_REPORT_IMAGE_MISMATCH');
+    const explanation = explainAtlasManualReport(full); // Verify its recorded policy without creating a new award.
+    if (assertCurrent) await assertCurrent({ card, principal, staff });
+    return { report: snapshot, review: { report: full, explanation } };
+  }
   const ordinaryService = createManualService({ repository, reduce: domain((context, staff) => context.action.type === 'CONFIRM_FINDINGS'
-    ? confirmationBudget(context.startedAt, confirmationTimeoutMs).run(() => reduce(context, staff)) : reduce(context, staff)), buildReport: domain(buildReport) });
+    ? confirmationBudget(context.startedAt, confirmationTimeoutMs).run(() => reduce(context, staff)) : reduce(context, staff)),
+    buildReport: domain(buildReport), loadApprovedReport: domain(loadApprovedReport) });
   const service = Object.freeze({ ...ordinaryService,
     async previewReport(staff, cardId) {
       const preview = await ordinaryService.previewReport(staff, cardId);
+      if (preview.review) return preview;
       const full = await read(cardId, 'REPORT', preview.report.report.ref, preview.report.report.sourceHash);
       return { ...preview, review: { report: full, explanation: explainAtlasManualReport(full) } };
     }, async execute(staff, cardId, input) {

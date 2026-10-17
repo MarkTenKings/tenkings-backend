@@ -12,13 +12,13 @@ import { SPEEDSTER_RULE_VERSION } from '@atlas/grading-core/contracts';
 import { ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { calculateSpeedsterReview } from '@atlas/grading-core/review';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
-import { calculateAtlasFinalGrade } from '@atlas/grading-core/manual-report';
+import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY, calculateAtlasFinalGrade } from '@atlas/grading-core/manual-report';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 import { geometryBase } from '@atlas/manual-workspace/geometry-actions';
 import { proposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { batchActionId } from '@atlas/batch-grading';
 const sides = ['FRONT', 'BACK'], clone = structuredClone;
-async function fixture({ count = 2, native = false, unmeasurable = false, outside = false, missingPrinted = false, historicalMachine = false, withoutSavedProposals = false } = {}) {
+async function fixture({ count = 2, native = false, unmeasurable = false, outside = false, missingPrinted = false, historicalMachine = false, halfPointMachine = false, withoutSavedProposals = false } = {}) {
   const p = await publicationFixture(), staff = { id: p.actorId }, principal = { id: p.actorId, canCertify: true };
   const records = new Map(), approvals = new Map(), commits = [], lessons = [];
   const publishedLessons = new Set();
@@ -35,6 +35,7 @@ async function fixture({ count = 2, native = false, unmeasurable = false, outsid
     async findAction(actor, id, input) { const prior = records.get(input.actionId); if (!prior) return null;
       requireThat(prior.requestHash === inputCommand(input).requestHash, 409, 'MANUAL_ACTION_CONFLICT'); return clone(prior.result); },
     async readApproval(actor, id, actionId) { return clone(approvals.get(actionId)); },
+    async latestApproval() { return null; },
     async commit(actor, input) {
       requireThat(actor === staff && !replaced, 409, 'BATCH_PHOTOS_CHANGED');
       requireThat(input.input.expectedRevision === card.revision && input.baseHash === card.contentHash, 409, 'MANUAL_DRAFT_STALE');
@@ -90,6 +91,10 @@ async function fixture({ count = 2, native = false, unmeasurable = false, outsid
   const analysis = { status: 'READY', analysisId, proposals, proposalReview: offer };
   const report = await buildMachineReport({ card: clone(card), state: initial, analysis, measure });
   if (withoutSavedProposals) delete report.proposals;
+  if (halfPointMachine) {
+    report.finalGradePolicy = ATLAS_HALF_POINT_FINAL_GRADE_POLICY;
+    report.proposedGrade = calculateAtlasFinalGrade(report.grade.overall.rawGrade, report.finalGradePolicy);
+  }
   if (historicalMachine) {
     const capture = Object.fromEntries(sides.map(side => [side.toLowerCase(), {
       centeringBorders: measureSpeedsterCenteringBorders(initial.geometry.sides[side].printed.quad),
@@ -258,6 +263,23 @@ test('retained machine report under the old rule is readable but requires a new 
   assert.equal(current.report.ruleVersion, ATLAS_RULE_VERSION);
   assert.equal(current.report.originalMachineReportHash, f.input.reportHash);
   assert.equal(current.explanation.ruleVersion, ATLAS_RULE_VERSION);
+});
+test('retained half-point proposal opens current whole-number review without rewriting its precise evidence', async () => {
+  const f = await fixture({ halfPointMachine: true });
+  const original = clone(f.report), view = await f.review.detail(f.staff, f.job.key);
+  assert.equal(view.reviewRequiredReason, 'BATCH_FINAL_ROUNDING_UPDATED');
+  assert.equal(view.report.finalGradePolicy, ATLAS_HALF_POINT_FINAL_GRADE_POLICY);
+  assert.equal(view.canCertify, false);
+  assert.equal(f.commits.length, 0);
+  await f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
+    action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } });
+  const state = await f.workflow.hydrate(f.card), preview = f.workflow.currentPreview(f.card, state);
+  assert.deepEqual(state.finalReview.report, original);
+  assert.equal(preview.report.finalGradePolicy, ATLAS_FINAL_GRADE_POLICY);
+  assert.equal(preview.report.proposedGrade, Math.round(original.grade.overall.rawGrade));
+  assert.deepEqual(preview.report.grade, original.grade);
+  assert.deepEqual(preview.report.findings, original.findings);
+  assert.equal(f.approvals.size, 0);
 });
 test('each interrupted historical approval prefix can explicitly reopen unchanged evidence for fresh current-policy review', async () => {
   for (const steps of [0, 1, 2, 3, 4]) {

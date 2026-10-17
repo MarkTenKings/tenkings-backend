@@ -51,6 +51,7 @@ export function syntheticPublicEntry(key = 'crowded') {
     const reviewed = calculateSpeedsterReview(capture, findings);
     Object.assign(report, { identity: { playerName: `Synthetic ${key} UI fixture`, year:'2026', manufacturer:'Authored', productSet:'Test geometry only' },
         ruleVersion:SPEEDSTER_RULE_VERSION, grade:reviewed.grade, findings:reviewed.defects, finalGrade:Math.round(reviewed.grade.overall.rawGrade*2)/2,
+        finalGradePolicy:'atlas-final-half-point-v1',
         findingCounts:{total:count,included:count,removed:0,unreviewed:0} });
     for(const side of ['FRONT','BACK']) {
         const bytes=syntheticImages[side],sha256=digest(bytes);
