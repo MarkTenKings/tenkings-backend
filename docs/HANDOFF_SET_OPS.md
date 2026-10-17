@@ -1,6 +1,16 @@
 # Set Ops Handoff (Living)
 
-## Current sold-comp photograph repair — live and authenticated (October 16, 2026 Pacific)
+## Current Sports/Pokémon label recovery — live (October 16, 2026 Pacific)
+
+Source `82e9aacf66e06c5d540c15f2605443b44245abec` is live on native main/worker and staff/public web. Publication completed October 17 at **03:39:12 UTC**, 52 canonical route/asset checks passed, and the temporary claim pause was explicitly released at **03:40:17.172 UTC**. Postflight confirms seven visible cards/five approvals, discarded rows, prior READY market responses and retained label requests preserved. Subsequent release sections are historical checkpoints; the sold-comp photograph repair remains included.
+
+Pokémon design assets already existed. Two current Pokémon labels could not fit their complete approved metadata on one line. The renderer now uses bounded semantic wrapping only when needed, preserving every identity field, physical cuts, grade styling and existing short-label bytes. Eligible NEEDS_LAYOUT items expose **Retry label layout**, creating one linked successor from the same immutable approval and retaining the failed predecessor. Current recovered labels remain eligible for NFC handoff. No grade, scoring math, approval or existing READY artwork is rewritten.
+
+Individual canvas is **68.342 × 20.082 mm**; 50-position sheet is **310 × 400 mm**, 10 columns × 5 rows. PRINT uses black, intentional dark gray and opaque white metadata, with transparent foil openings. Gold/holographic colors are material previews. The owner confirms the same eufyMake E1, blanks and jig. Physical scale, origin, white-ink setup, adhesion and repeatability still require actual printed samples; no physical print or success record was made. The separate whole-number final-rounding investigation is read-only and is not part of this release.
+
+Authenticated live recovery/download acceptance is pending a fresh owner sign-in: the post-deployment security binding signed out the previously authenticated staff tab. Root requested reauthentication and has not represented the synthetic component proofs as live acceptance. See `docs/atlas/audits/2026-10-16/label-print-completion.md` and the retained packet `~/.codex/atlas-handoffs/atlas-labels-20261016/`.
+
+## Prior sold-comp photograph repair — live and authenticated (October 16, 2026 Pacific)
 
 Source `c41f0ebd8b675c888bf30924782a19e54b5b4bc5` is live on the native main/worker and staff/public web. Public publication completed October 17 at **02:56:59 UTC** (October 16 Pacific); 52 canonical route/asset checks passed. The temporary claim pause was explicitly released at **02:58:15.633 UTC**. Postflight confirms seven visible cards and five approvals preserved, discarded rows unchanged, and prior READY market responses and retained label requests unchanged. Subsequent sections are historical checkpoints.
 

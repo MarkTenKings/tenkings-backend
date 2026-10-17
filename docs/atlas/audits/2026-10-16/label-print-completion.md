@@ -1,6 +1,6 @@
 # Sports and Pokémon label recovery
 
-Status: locally implemented and qualified; not yet released. Physical printer/material qualification remains open.
+Status: released at 82e9aacf on October 17, 2026 at 03:39:12 UTC. Native/web/canonical/postflight checks passed. Authenticated Pokémon recovery/download acceptance awaits fresh owner sign-in. Physical printer/material qualification remains open.
 
 ## Observed problem
 
@@ -34,6 +34,10 @@ The owner confirms the same eufyMake E1, metal blanks and 310 × 400 mm,50-posit
 
 The owner requested an investigation of integer final rounding only, leaving precise scores, measurements, bands and weights untouched. That read-only audit is saved in `whole-grade-rounding-audit.txt`. No scoring policy or approved grade changes are part of this label candidate, and no new half-grade styling was adopted.
 
-## Release requirements
+## Observed release
 
-Preserve the now-live c41f0ebd sold-photo repair and its documentation-only successor. Prepare fresh native,007/control and web publication plans from current evidence. Never replay prior consumed release intents. Qualify the exact native candidate, apply007 before new main startup, publish compatible staff/public bindings, then verify ordinary authenticated retry and downloads for the two existing failed Pokémon items. These actions must retain their approved grades and report identities; no reapproval or provider request is required.
+The exact native image passed 323/323 isolated Linux checks. Additive 007 plus one ledger row and three control bindings committed atomically; 105 protected-table commitments, historical ledger rows and schema/grants were preserved. Updated native main/worker are healthy with zero restarts and the original 125-second startup fence. Qualified staff/public candidates were published at 03:39:12 UTC; all 52 canonical route/asset checks passed, including new retry/NFC bytes and retained identity/comps/review/customer behavior.
+
+The same claim holder remained live through cutover and was explicitly released at 03:40:17.172 UTC. Postflight confirms holder absence and preservation of seven visible cards/five approvals, discarded rows, prior READY market responses and retained label requests. The sold-comp photograph fix and its documentation remain included. No grading change or provider request was part of the release.
+
+Fresh reload of the canonical staff tab reached sign-in because its security binding changed with deployment. Root requested owner reauthentication; live retries of Sylveon ex and Articuno and their post-release downloads remain pending. The earlier synthetic browser proof is not substituted for this acceptance. Evidence is in `release-01/`, with canonical SHA `b75702c30045b965de9a86c89b1e10302456aef7db604a49462b5c1bed40fe89` and postflight SHA `ff0e528015cbe156eca7301bf17396add83b41acf1734edfdae6150306d01028`. Consumed release intents must never be replayed.

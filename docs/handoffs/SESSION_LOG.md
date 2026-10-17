@@ -45714,3 +45714,63 @@ Renderer fallback keeps every approved field and uses up to three semantic metad
 Root's actual Chrome verification of the real component against an explicitly synthetic local service shows full-identity Sylveon recovery to a Holographic sheet, the same8.5approval, a retained Layout retried predecessor and an enabled individual export. Screenshots and the fixture bundle provenance are under `atlas-labels-20261016/browser/`. This browser fixture does not substitute for a live authenticated retry or physical printing. The separate sold-comp photograph repair is now observed live atc41f0ebd with admission released; this branch already includes that application source. Its release records remain owned by the separate photo task and will be preserved in integration.
 
 The separate whole-number audit is complete and read-only. A distinct final-rounding policy can leave raw scores, measurements, bands and weights unchanged. Existing approved-preview regeneration and policy-specific public validation require compatibility handling; no grading code or saved grade has changed. Report: `atlas-labels-20261016/whole-grade-rounding-audit.txt`. Root proceeds with local dependency setup and the staff production build before any fresh label release planning or effects.
+
+
+## 2026-10-17T03:15:23.638993+00:00 — ATLAS labels: planned isolated qualification
+
+- Frozen and pushed application candidate `82e9aacf66e06c5d540c15f2605443b44245abec` on `codex/atlas-label-print-completion`; retained live photo repair `c41f0ebd`. Git deployment remains disabled in both Vercel projects.
+- Fresh release packet: `/Users/markthomas/.codex/atlas-handoffs/atlas-labels-20261016/release-01`. Fresh read-only web baseline confirms live staff `dpl_94pwK34cvcoicbo5skdhCtZVfiRz`, public `dpl_7CVLfDhjaWmnggjZd8AjEs8za3aL`, retained customer `dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB`. Native baseline remains image `ef30299a...`, 23 containers / 3 running.
+- Planned next effects: one additive native image build/isolated Linux qualification under reviewed plan `fbbf9fb99268cba963d08aa155c396ad3f6d0033e8aed7653469627fc527a193`; upload nine reviewed source deltas and build unpromoted staff/public candidates under web plan `d0253b1af35631337b807f9e9ac1a14dae4e5886b1f3d0b6271c73896b012825` after independent review. Preserve serving containers, database, production targets and existing customer deployment during qualification.
+- Native plan contains exactly six runtime overlays, inherited dependencies/compiled grading, 1,858 catalog-file checks, finishing golden and label retry tests. Local native contracts 41 pass; web helper checks 34 pass with one inapplicable unfrozen-input case skipped; admission disposable 2 pass; historical workload classifier 25 pass.
+- No migration, admission hold, native cutover, promotion, grading changes, approval rewrites or hardware print is authorized by these qualification receipts themselves. Later effect plans will be reviewed and logged separately.
+
+
+## 2026-10-17T03:19:24.000155+00:00 — ATLAS labels: qualification result and planned staging
+
+- Additive native image `sha256:6dc2d0bcd810dd1c507ae901adf114cbe3c210ea2040b5d0f9e9ee39df695cfc` passed 323/323 isolated Linux tests with zero skips/failures. Exact six source overlays and 1,858 catalog files verified; serving containers unchanged, no database connections or provider calls. Receipt `release-01/native/image-qualification.json`, SHA `b719d723793261361b3c6b74f22d107d3bfba2e293efbc1cd9aac887b5ffda56`.
+- Uploaded exactly nine new web files; 2,593 retained source proofs verified. Unpromoted staff `dpl_D5B66vPcw8cB9GLuG1ghLtZ8Utip` (`atlas-grading-staff-pmgsjgysx-ten-kings.vercel.app`) is READY and fully qualified, including new label retry and retained NFC/identity/comps/review markers; qualification SHA `aefcbb1857527e13d14a9c0ee4c5db201f872a6ab941316eb730b545cdf4863e`. Public candidate creation is underway. Production targets remain unchanged.
+- Planned native staging only: reviewed runtime plan `d8895e70c49bc1e526d8e835d4afb92404a695b50f70026d3ab466b6e58438b0` writes the new release files under `/opt/atlas/labels-82e9aacf66e0-01`, with existing secrets and only the two web binding environment keys changed. Main/worker Init remains true/unset. Stage does not stop or start serving containers.
+- Data helper review and local PostgreSQL qualification passed 9 scenario groups; contracts 13/13. Exact additive007 plus ledger1/control3, rollback and105 protected-table preservation proofs prepared. Native cutover and database apply still await final exact-plan review and fresh held workload.
+
+
+## 2026-10-17T03:26:50.961706+00:00 — ATLAS labels: planned native/schema/web cutover
+
+- Native stage completed at03:19:59Z with all23 container snapshots/proxy unchanged; receipt SHA `a0c04bc19b4e8807f048f5c7eba66ffb51ab3aeafc6634ce03aceece83489ac9`. Both exact82e9aacf web candidates are READY/qualified: staff `dpl_D5B66vPcw8cB9GLuG1ghLtZ8Utip`, public `dpl_8AdspqaaipAeAVrvFUAYJ6Y1CRQE`; candidate-proof SHA `12427446bcd50d20c01b7d379a8c006cb2fb3caf2f37b1cad4919b9622b2976f`.
+- Before any live cutover, independent review corrected new-index proof to normalize only `indcheckxmin`, the PostgreSQL MVCC/HOT visibility flag (PG17 pg_index documentation), while retaining every structural/security/validity predicate. Exact007 SQL is unchanged. Corrected rehearsal10 groups and contracts13/13 pass; expected metadata differs solely by that field. Earlier unused data/publication plans are preserved as superseded evidence; no effect intent was deleted or replayed.
+- Reviewed final plans: runtime `d8895e70c49bc1e526d8e835d4afb92404a695b50f70026d3ab466b6e58438b0`; admission `ea97e3823e0c47216faa9310c78bfacc5ce77fefdc4ae12395b5f035f482aabc`; data `f7378aa2aead29745e1ab3cb45821b5ce843d3d0316c9a0d8c1d5926a862bc6a`; publication `766e5ab98ac1b31d7fbc3d8ca479b4223bc75188ea19f1ad203274a2e2954dc1`.
+- Planned effects after fresh held workload and final independent review: acquire one fixed90-minute read-only claim holder; gracefully quiesce exact oldmain/worker without SIGKILL; apply committed007(checksum4ff9745a5553fe8252f37b1c311ea8b63c1f4b1f4c5636bed4ada92924ad26e3)+oneledgerrow+three release-control bindings atomically; start/seal qualifiedimage6dc2d0bc with125-second startup fence. Controls131/91/99→132/92/100, preserving all105 non-control/ledger tables, six historical ledger rows and unrelated schema/grants.
+- After current native/data readiness, patch only the existing public staff-origin environment value; promote exact qualified staff then public; run canonical byte/route checks; explicitly release the same holder; verify preservation postflight. Retain customer deployment, proxy, secrets, grades, approvals, existing label artifacts and stopped predecessor containers.
+- Authenticated recovery of the two existing current Pokémon NEEDS_LAYOUT labels and individual PNG downloads follows as normal application work after release. No regrading, reapproval, provider request, sheet freeze, physical-print event or NFC writing is part of cutover qualification.
+
+
+## 2026-10-17T03:28:54.151877+00:00 — ATLAS labels: observed graceful quiesce
+
+- Admission holder `df590dd8-5ec0-4065-b8de-5cea31c26b6e`, PID1729837, one read-only transaction, expires04:57:00.981Z. Fresh held workload proof retained seven current cards/five approvals; no unfinished current paid label requests. Exact historical discarded unresolved dispatch is preserved without retry/adoption or invented response.
+- Quiesce dry-run passed. One execute completed03:28:19.518Z: oldmain exited0 in0.281s, oldworker exited0 in0.845s; both stopped/network-detached, no SIGKILL/OOM or database/provider effects. Receipt SHA `0926cd9c7d24be8d67a328918e553783ed179d0532e53900417ca838357d258e`; same-holder continuity verified.
+- Exact reviewed data apply dispatched once; outcome pending. Do not replay its intent. Postflight is bound to fresh held workload-02 SHA `5f2e1afb0f945225ac5236dc76aaf1ba15fceb674a5ce1e2d46e384de4691621`.
+
+## 2026-10-17T03:33:29.124303+00:00 — ATLAS labels: database apply observed
+
+- One exact reviewed transaction committed at03:32:06Z: migration007 plus one ledger row and three control bindings, revisions132/92/100. Receipt `release-01/data/data-result.json`, SHA `18842db7c5a01f6597ac49031d81be96b7fb8fff285038e93a9566bf4c037b09`. All105 protected tables, existing objects/grants, historical ledger rows, enabled states and unrelated controls preserved; zero provider calls. Schema005/006/007 verified. Proceeding with previously reviewed native start/seal and web publication; admission holder remains continuous.
+
+
+## 2026-10-17T03:36:29.598270+00:00 — ATLAS labels: native start and seal observed
+
+- Start passed03:35:44Z, receipt `71c30e69d0a48d6b7f12c4a80b49aebd62ae27594b96b9e9d3be128108aec5fa`. Main `f96e99cd6cb877df5658b4c8756a5a714411ce44d536c9c2e643285d45a2daff` and worker `ab1246aac7b82b68593806d5cc1db45deca53a1c1171f34a7d76513561335e31` are ready on qualified image6dc2d0bc, zero restarts,125-second startup fence and unsigned401. Seal passed without restart, receipt `5f8fb7ba3cb34e3b1b1a182b34cfe597bafa5562d09154e121b2066dbaaff329`; restart policy unless-stopped, predecessor/unrelated containers retained, same admission holder verified. Fresh native/data readiness follows before the already planned exact publication steps.
+
+
+## 2026-10-17T03:38:28.756111+00:00 — ATLAS labels: publication progress
+
+- Origin update observed03:37:17Z with customer preserved. Staff promotion returned HTTP201 at03:37:42Z; immediate readback still showed the prior staff production alias. Its original response/body/intent remain retained. No promotion replay: root refreshed native/database readiness and dispatched read-only finalize for the already accepted staff operation. Public promotion has not yet been dispatched.
+
+
+## 2026-10-17T03:39:20.822669+00:00 — ATLAS labels: web publication observed
+
+- Staff alias settlement verified read-only03:38:42Z with zero repeated effect requests. Public promotion observed03:39:12Z. Exact qualified staff `dpl_D5B66vPcw8cB9GLuG1ghLtZ8Utip` and public `dpl_8AdspqaaipAeAVrvFUAYJ6Y1CRQE` are published at source82e9aacf; retained customer unchanged. Same original holder verified through all three operations. Canonical route/asset verification is now running before explicit holder release.
+
+
+## 2026-10-17T03:41:19.968319+00:00 — ATLAS labels: canonical verification and release completed
+
+- All52 canonical route/asset checks passed (`b75702c3...`), including new label retry/NFC and retained identity/comps/review/customer bytes. Original holder explicitly released03:40:17.172Z with exit0, zero row writes, no reacquisition; receipt `96e1a92a...`.
+- Postflight03:40:22Z (`ff0e5280...`) confirms holder absent, seven visible cards/five approvals preserved, discarded rows unchanged, prior READY market results and label request rows retained. Native health03:40:23Z (`6727d590...`) remains exact, ready, zero restarts/errors and unsigned401.
+- Fresh canonical staff reload signed the owner out because release binding changed. Reauthentication requested; live Pokémon retries/downloads remain pending. Current context/runbooks/handoff and label audit now distinguish completed deployment from this authenticated acceptance and from physical E1 qualification. No grading math or historical grades changed.

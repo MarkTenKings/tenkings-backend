@@ -1,6 +1,24 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current sold-comp photograph repair — live and authenticated (October 16, 2026 Pacific)
+## Current Sports/Pokémon label recovery — live (October 16, 2026 Pacific)
+
+Source `82e9aacf66e06c5d540c15f2605443b44245abec` is live on native main/worker and staff/public web. Publication completed October 17 at **03:39:12 UTC**, 52 canonical route/asset checks passed, and the temporary claim pause was explicitly released at **03:40:17.172 UTC**. Postflight confirms seven visible cards/five approvals, discarded rows, prior READY market responses and retained label requests preserved. Subsequent release sections are historical checkpoints; the sold-comp photograph repair remains included.
+
+Pokémon design assets already existed. Two current Pokémon labels could not fit their complete approved metadata on one line. The renderer now uses bounded semantic wrapping only when needed, preserving every identity field, physical cuts, grade styling and existing short-label bytes. Eligible NEEDS_LAYOUT items expose **Retry label layout**, creating one linked successor from the same immutable approval and retaining the failed predecessor. Current recovered labels remain eligible for NFC handoff. No grade, scoring math, approval or existing READY artwork is rewritten.
+
+Individual canvas is **68.342 × 20.082 mm**; 50-position sheet is **310 × 400 mm**, 10 columns × 5 rows. PRINT uses black, intentional dark gray and opaque white metadata, with transparent foil openings. Gold/holographic colors are material previews. The owner confirms the same eufyMake E1, blanks and jig. Physical scale, origin, white-ink setup, adhesion and repeatability still require actual printed samples; no physical print or success record was made. The separate whole-number final-rounding investigation is read-only and is not part of this release.
+
+Authenticated live recovery/download acceptance is pending a fresh owner sign-in: the post-deployment security binding signed out the previously authenticated staff tab. Root requested reauthentication and has not represented the synthetic component proofs as live acceptance. See `docs/atlas/audits/2026-10-16/label-print-completion.md` and the retained packet `~/.codex/atlas-handoffs/atlas-labels-20261016/`.
+
+### Label release identities and consumed evidence
+
+- Staff `dpl_D5B66vPcw8cB9GLuG1ghLtZ8Utip` / `atlas-grading-staff-pmgsjgysx-ten-kings.vercel.app`; public `dpl_8AdspqaaipAeAVrvFUAYJ6Y1CRQE` / `atlas-grading-public-7nt63xp6o-ten-kings.vercel.app`. Customer `dpl_E1tefRPZ6Hc8b639P6mT2EtorUDB` remains retained.
+- Native image `sha256:6dc2d0bcd810dd1c507ae901adf114cbe3c210ea2040b5d0f9e9ee39df695cfc`, main `f96e99cd6cb877df5658b4c8756a5a714411ce44d536c9c2e643285d45a2daff`, worker `ab1246aac7b82b68593806d5cc1db45deca53a1c1171f34a7d76513561335e31`. Both ready, zero restarts, unless-stopped, main Init=true/worker unset, 125-second startup fence preserved. Inventory 25 retained / 3 running; proxy and retired generations retained.
+- Additive migration007 checksum `4ff9745a5553fe8252f37b1c311ea8b63c1f4b1f4c5636bed4ada92924ad26e3`; 005/006 retained. Atomic ledger 1/control 3 writes advanced Staff 132/PublicReader 92/STAFF-SMS 100, preserving 105 protected-table commitments, historical ledger rows and existing schema/grants. Data receipt `18842db7c5a01f6597ac49031d81be96b7fb8fff285038e93a9566bf4c037b09`.
+- Exact native image passed 323/323 Linux tests, zero skips/failures. Canonical receipt `b75702c30045b965de9a86c89b1e10302456aef7db604a49462b5c1bed40fe89`; explicit holder release `96e1a92a3fb79bc3ca8f483f36eeb5cdba92ce748c33e570c9636dcaa421bcf4`; postflight `ff0e528015cbe156eca7301bf17396add83b41acf1734edfdae6150306d01028`; postflight native health `6727d59056d9ff9489ce250cbc03cfb95457308a0f09ec3e2b580aae9355a443`.
+- Packet `atlas-labels-20261016/release-01`: native runtime plan `d8895e70...`, final data plan `f7378aa2...`, publication plan `766e5ab9...`. All effect intents are consumed. Staff promotion HTTP201 alias lag was finalized read-only; no effect was replayed. Earlier unused data/publication plans remain explicitly superseded. Never replay completed release helpers.
+
+## Prior sold-comp photograph repair — live and authenticated (October 16, 2026 Pacific)
 
 Source `c41f0ebd8b675c888bf30924782a19e54b5b4bc5` is live on the native main/worker and staff/public web. Public publication completed October 17 at **02:56:59 UTC** (October 16 Pacific); 52 canonical route/asset checks passed. The temporary claim pause was explicitly released at **02:58:15.633 UTC**. Postflight confirms seven visible cards and five approvals preserved, discarded rows unchanged, and prior READY market responses and retained label requests unchanged. Subsequent sections are historical checkpoints.
 
