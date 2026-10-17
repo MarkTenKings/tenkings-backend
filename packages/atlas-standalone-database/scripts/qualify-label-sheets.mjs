@@ -8,7 +8,9 @@ import { disposablePostgres } from '../../../frontend/atlas-app/scripts/disposab
 import { applyStandaloneBaseline, applyStandaloneMigrations } from '../migrate.mjs';
 import { standaloneRoleSQL } from '../grants.mjs';
 import { canonical, digest } from '../../atlas-manual-service/src/contract.mjs';
-import { createLabelRepository } from '../../atlas-connected-manual/src/label-sheet-repository.mjs';
+import { registeredMigrations } from '../registered-migrations.mjs';
+import { validateLabelRuntimeConfiguration } from '../../../frontend/atlas-app/lib/server/connected-manual-runtime.mjs';
+import { createLabelRepository, labelFailureHash } from '../../atlas-connected-manual/src/label-sheet-repository.mjs';
 
 const args = process.argv.slice(2), output = process.env.ATLAS_LABEL_EVIDENCE;
 assert(output && resolve(output) === output); await mkdir(output, { recursive:true,mode:0o700 });
@@ -18,10 +20,11 @@ try {
   await cluster.sql('CREATE DATABASE atlas_labels'); admin = new Client({ connectionString:cluster.url('atlas_labels') }); await admin.connect();
   assert.equal((await applyStandaloneBaseline(admin)).status,'APPLIED');
   const before = (await admin.query('SELECT * FROM atlas_staff._standalone_migrations')).rows;
-  assert.equal((await applyStandaloneMigrations(admin)).applied.length,3);
-  assert.equal((await applyStandaloneMigrations(admin)).status,'NO_OP'); assert.equal((await applyStandaloneBaseline(admin)).status,'NO_OP');
+  const migrations=await registeredMigrations(),retryMigration=migrations.at(-1);assert.equal(retryMigration.version,'atlas-standalone-007-label-layout-retry');
+  for(const migration of migrations.slice(0,-1)){await admin.query(migration.sql);await admin.query('INSERT INTO atlas_staff._standalone_migrations(version,checksum) VALUES($1,$2)',[migration.version,migration.sqlSha256]);}
+  assert.equal((await applyStandaloneBaseline(admin)).status,'NO_OP');
   assert.deepEqual((await admin.query('SELECT * FROM atlas_staff._standalone_migrations WHERE version=$1',[before[0].version])).rows,before);
-  checks.push('registered baseline→004; repeated migration/baseline no-op; baseline receipt unchanged');
+  checks.push('registered baseline→006 fixture; baseline no-op and receipt unchanged');
   const roles={staff:'atlas_labels_staff',manual:'atlas_labels_main',variant:'atlas_labels_variant',customer:'atlas_labels_customer',customerPrivate:'atlas_labels_private'};
   await admin.query(standaloneRoleSQL(roles)); const password=randomBytes(24).toString('hex'); await admin.query(`ALTER ROLE ${roles.manual} LOGIN PASSWORD '${password}'`);
   const url = new URL(cluster.url('atlas_labels')); url.username=roles.manual; url.password=password; pool=new Pool({connectionString:url.href,max:6});
@@ -127,5 +130,82 @@ try {
   assert.equal(eligible,5);assert(denied>0);
   assert.deepEqual((await admin.query('SELECT * FROM atlas_manual_connected.label_item WHERE id=ANY($1::uuid[]) ORDER BY created_at,id',[blocked.map(i=>i.id)])).rows,blocked);
   checks.push('bounded keyset discovery advances past unchanged unclaimable oldest sources; later eligible jobs run without unauthorized mutation');
+  // Upgrade a real006 database containing READY/printed/exported and failed labels.
+  const failedSource=await seed();const failedId=await enqueue(failedSource),failedClaim=await repo.claimItem(staff,failedId);
+  const failedSnapshot={identity:{cardName:'Sylveon ex',productSet:'A complete long approved metadata fixture'},grade:8.5,finalGrade:8.5,cardProfile:'POKEMON'};
+  await repo.finishItem(staff,failedClaim,{row:failedSource.row,state:'NEEDS_LAYOUT',code:'METADATA_OVERFLOW',snapshot:failedSnapshot,
+    rendererProfileHash:null,materialProfileId:null,jigHash:null});
+  const readItem=async id=>(await admin.query('SELECT * FROM atlas_manual_connected.label_item WHERE id=$1',[id])).rows[0];
+  const beforeRetry=await readItem(failedId),protectedTables=['atlas_manual.card','atlas_manual.approval','atlas_manual.publication',...['label_item','label_sheet','label_export','label_print_event'].map(t=>'atlas_manual_connected.'+t)];
+  const protectedBefore=await Promise.all(protectedTables.map(async table=>(await admin.query(`SELECT to_jsonb(t) value FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows));
+  await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:txFor(admin)}),{code:'LABEL_SCHEMA_REQUIRED'});
+  assert.deepEqual((await applyStandaloneMigrations(admin)).applied,[{version:retryMigration.version,checksum:retryMigration.sqlSha256}]);
+  assert.equal((await applyStandaloneMigrations(admin)).status,'NO_OP');
+  for(let i=0;i<protectedTables.length;i++)assert.deepEqual((await admin.query(`SELECT to_jsonb(t) value FROM ${protectedTables[i]} t ORDER BY to_jsonb(t)::text`)).rows,protectedBefore[i]);
+  const main=await pool.connect();try{await validateLabelRuntimeConfiguration({enabled:true,client:txFor(main)});}finally{main.release();}
+  checks.push('006→007 and repeated no-op preserve all existing card/approval/publication/label/sheet/export/print bytes;006 startup refused and007 runtime admitted');
+  const target={rendererProfileHash:digest('fixed renderer'),materialProfileId:'atlas-v4-holo-v1',jigHash:digest('jig')};
+  const layoutRetryInput={requestId:randomUUID(),expectedFailureHash:labelFailureHash(beforeRetry),expectedRendererProfileHash:target.rendererProfileHash};
+  await assert.rejects(repo.retryLayout(foreign,failedId,layoutRetryInput,target),{code:'LABEL_ITEM_NOT_FOUND'});
+  await assert.rejects(repo.retryLayout(observer,failedId,layoutRetryInput,target),{code:'LABEL_ACCESS_DENIED'});
+  const retryRace=await Promise.all([repo.retryLayout(staff,failedId,layoutRetryInput,target),repo.retryLayout(staff,failedId,layoutRetryInput,target)]);
+  assert.deepEqual(retryRace[0],retryRace[1]);const retriedItem=retryRace[0];assert.equal(retriedItem.purpose,'LAYOUT_RETRY');assert.equal(retriedItem.originalItemId,failedId);
+  const afterRetry=await readItem(failedId);assert.equal(afterRetry.state,'SUPERSEDED');assert.deepEqual({...afterRetry,state:beforeRetry.state,updated_at:beforeRetry.updated_at},beforeRetry);
+  assert.deepEqual(await repo.retryLayout(staff,failedId,layoutRetryInput,{...target,rendererProfileHash:digest('later deployment')}),retriedItem);
+  await assert.rejects(repo.retryLayout(staff,failedId,{...layoutRetryInput,expectedRendererProfileHash:digest('changed intent')},target),{code:'LABEL_REQUEST_CONFLICT'});
+  await assert.rejects(repo.retryLayout(staff,failedId,{...layoutRetryInput,requestId:randomUUID()},target),{code:'LABEL_LAYOUT_ALREADY_RETRIED'});
+  const retiredView=(await repo.list(staff)).items.find(i=>i.itemId===failedId);assert.equal(retiredView.supersededReason,'LAYOUT_RETRIED');assert.equal(retiredView.layoutRetryItemId,retriedItem.itemId);
+  const newClaim=await repo.claimItem(staff,retriedItem.itemId);
+  const finalResult={row:failedSource.row,state:'READY',snapshot:failedSnapshot,printSvg,previewSvg:printSvg,artworkHash,...target};
+  await assert.rejects(repo.finishItem(staff,newClaim,{...finalResult,rendererProfileHash:digest('unrequested renderer')}),{code:'LABEL_RENDERER_CHANGED'});
+  const readyRetry=await repo.finishItem(staff,newClaim,finalResult);assert.equal(readyRetry.state,'READY');assert.deepEqual((await readItem(readyRetry.itemId)).snapshot,canonical(failedSnapshot));
+  assert.equal((await repo.retryLayout(staff,failedId,layoutRetryInput,target)).itemId,readyRetry.itemId);
+  await assert.rejects(repo.retryLayout(staff,readyRetry.itemId,{...layoutRetryInput,requestId:randomUUID()},target),{code:'LABEL_LAYOUT_RETRY_UNAVAILABLE'});
+  assert.equal((await repo.finishItem(staff,failedClaim,finalResult)).state,'SUPERSEDED');
+  for(const [table,index] of [['atlas_manual.card',0],['atlas_manual.approval',1],['atlas_manual.publication',2],['atlas_manual_connected.label_export',5],['atlas_manual_connected.label_print_event',6]])
+    assert.deepEqual((await admin.query(`SELECT to_jsonb(t) value FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows,protectedBefore[index]);
+  checks.push('one concurrent retry generation; same semantic replay survives rendering/deployment, changed request conflicts; exact failed history retained, grade/source unchanged and no export/print implied');
+  for(const sql of [`UPDATE atlas_manual_connected.label_item SET renderer_profile_hash='${digest('tamper')}' WHERE id='${readyRetry.itemId}'`,
+    `UPDATE atlas_manual_connected.label_item SET snapshot='{}' WHERE id='${failedId}'`])await assert.rejects(admin.query(sql),/immutable/);
+  const failure=async(options)=>{const f=await seed(options),id=await enqueue(f),claim=await repo.claimItem(staff,id);await repo.finishItem(staff,claim,{row:f.row,state:'NEEDS_LAYOUT',code:'METADATA_OVERFLOW',snapshot:failedSnapshot,...target});return{...f,id};};
+  const failedAgain=await failure(),failureRow=await readItem(failedAgain.id),nextInput={requestId:randomUUID(),expectedFailureHash:labelFailureHash(failureRow),expectedRendererProfileHash:target.rendererProfileHash};
+  await assert.rejects(repo.retryLayout(staff,failedAgain.id,{...nextInput,expectedFailureHash:digest('stale')},target),{code:'LABEL_FAILURE_CHANGED'});
+  await assert.rejects(repo.retryLayout(staff,failedAgain.id,{...nextInput,expectedRendererProfileHash:digest('stale')},target),{code:'LABEL_RENDERER_CHANGED'});
+  assert.deepEqual(await readItem(failedAgain.id),failureRow);
+  let generation=await repo.retryLayout(staff,failedAgain.id,nextInput,target);
+  for(let depth=1;depth<=16;depth++){
+    const claim=await repo.claimItem(staff,generation.itemId);await repo.finishItem(staff,claim,{row:failedAgain.row,state:'NEEDS_LAYOUT',code:'METADATA_OVERFLOW',snapshot:failedSnapshot,...target});
+    const predecessor=await readItem(generation.itemId),input={requestId:randomUUID(),expectedFailureHash:labelFailureHash(predecessor),expectedRendererProfileHash:target.rendererProfileHash};
+    if(depth===16){await assert.rejects(repo.retryLayout(staff,generation.itemId,input,target),{code:'LABEL_LAYOUT_RETRY_LIMIT'});assert.deepEqual(await readItem(generation.itemId),predecessor);}
+    else generation=await repo.retryLayout(staff,generation.itemId,input,target);
+  }
+  const competing=await failure(),competingRow=await readItem(competing.id),intent={expectedFailureHash:labelFailureHash(competingRow),expectedRendererProfileHash:target.rendererProfileHash};
+  const contenders=await Promise.allSettled([randomUUID(),randomUUID()].map(requestId=>repo.retryLayout(staff,competing.id,{...intent,requestId},target)));
+  assert.equal(contenders.filter(r=>r.status==='fulfilled').length,1);assert.equal(contenders.find(r=>r.status==='rejected').reason.code,'LABEL_LAYOUT_ALREADY_RETRIED');
+  const revoked=await failure({owner:other}),revokedRow=await readItem(revoked.id);
+  await admin.query('UPDATE atlas_manual.card SET approvers=$2,revision=revision+1 WHERE id=$1',[revoked.cardId,[]]);
+  await assert.rejects(repo.retryLayout(staff,revoked.id,{requestId:randomUUID(),expectedFailureHash:labelFailureHash(revokedRow),expectedRendererProfileHash:target.rendererProfileHash},target),{code:'MANUAL_CARD_NOT_FOUND'});
+  assert.deepEqual(await readItem(revoked.id),revokedRow);
+  const newerApproval=await seed({cardId:failedSource.cardId,version:2});await enqueue(newerApproval);
+  const changedView=(await repo.list(staff)).items.find(i=>i.itemId===failedId);assert.equal(changedView.supersededReason,'APPROVAL_CHANGED');assert.equal(changedView.layoutRetryItemId,null);
+  await assert.rejects(repo.retryLayout(staff,failedId,layoutRetryInput,target),{code:'LABEL_SOURCE_SUPERSEDED'});
+  checks.push('stale failure/profile cannot mutate state; later failure can retry with immutable predecessors;16 generation ceiling refuses without retiring final failure');
+  await admin.query('ALTER TABLE atlas_manual_connected.label_item DISABLE TRIGGER label_layout_retry_guard');
+  await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:txFor(admin)}),{code:'LABEL_SCHEMA_REQUIRED'});
+  await admin.query('ALTER TABLE atlas_manual_connected.label_item ENABLE TRIGGER label_layout_retry_guard');
+  await admin.query('BEGIN');try{
+    await admin.query("CREATE OR REPLACE FUNCTION atlas_manual_connected.guard_label_layout_retry() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $$ BEGIN RETURN NEW; END $$");
+    await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:txFor(admin)}),{code:'LABEL_SCHEMA_REQUIRED'});
+  }finally{await admin.query('ROLLBACK');}
+  await admin.query('BEGIN');try{
+    await admin.query('ALTER FUNCTION atlas_manual_connected.guard_label_layout_retry() RESET search_path');
+    await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:txFor(admin)}),{code:'LABEL_SCHEMA_REQUIRED'});
+  }finally{await admin.query('ROLLBACK');}
+  await admin.query('BEGIN');try{
+    await admin.query("SET LOCAL session_replication_role='replica'");
+    await assert.rejects(validateLabelRuntimeConfiguration({enabled:true,client:txFor(admin)}),{code:'LABEL_SCHEMA_REQUIRED'});
+  }finally{await admin.query('ROLLBACK');}
+  await validateLabelRuntimeConfiguration({enabled:true,client:txFor(admin)});
+  checks.push('runtime gate refuses disabled insert guard, changed procedure missing restricted search_path or a replication bypass session; immutable artwork/target guards remain enforced');
   const proof={status:'PASS',checks,fixtureDirectory:cluster.directory};await writeFile(resolve(output,'result.json'),JSON.stringify(proof,null,2)+'\n',{mode:0o600});console.log(JSON.stringify(proof));
 } finally {await pool?.end();await admin?.end();await cluster.stop();}

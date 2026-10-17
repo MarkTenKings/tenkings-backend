@@ -3,7 +3,7 @@ import { requireThat } from '@atlas/manual-service/contract';
 const base = '/api/staff/manual-connected';
 const id = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
 const sheets = new RegExp(`^${base}/label-sheets(?:/(${id})(?:/(exports)(?:/(${id})(?:/(download))?)?|/(print-confirmations))?)?$`);
-const items = new RegExp(`^${base}/labels/(${id})/(artwork|reprints|exports)(?:/(${id})(?:/(download))?)?$`);
+const items = new RegExp(`^${base}/labels/(${id})/(artwork|reprints|layout-retries|exports)(?:/(${id})(?:/(download))?)?$`);
 
 /** The parent has already checked the signed ingress. This adapter retains
  * ordinary staff-session and CSRF authority for every label operation. */
@@ -15,7 +15,7 @@ export function createLabelSheetsHandler({ connected, boundary, origin }) {
     const artwork = item?.[2] === 'artwork';
     requireThat(!item || !item[3] || item[2] === 'exports', 404, 'NOT_FOUND');
     const write = Boolean(sheet?.[5] || sheet?.[4] || sheet?.[2] && !sheet[3]
-      || item?.[4] || item?.[2] === 'reprints' || item?.[2] === 'exports' && !item[3]);
+      || item?.[4] || ['reprints','layout-retries'].includes(item?.[2]) || item?.[2] === 'exports' && !item[3]);
     requireThat(req.method === (write ? 'POST' : 'GET'), 405, 'METHOD_NOT_ALLOWED');
     let cursor = 0, mode;
     if (list && url.search) {
@@ -57,7 +57,8 @@ export function createLabelSheetsHandler({ connected, boundary, origin }) {
       else result = await service.sheet(staff, sheetId);
     } else {
       const itemId = item[1], exportId = item[3];
-      if (item[2] === 'reprints') result = await service.reprint(staff, itemId, req.body);
+      if (item[2] === 'layout-retries') result = await service.retryLayout(staff, itemId, req.body);
+      else if (item[2] === 'reprints') result = await service.reprint(staff, itemId, req.body);
       else if (item[4]) result = await service.download(staff, { itemId, exportId, input: req.body });
       else if (exportId) result = await service.exportStatus(staff, { itemId, exportId });
       else result = await service.prepareIndividualExport(staff, itemId, req.body);

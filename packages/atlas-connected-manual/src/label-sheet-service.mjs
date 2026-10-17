@@ -1,5 +1,5 @@
 import { canonical, digest, object, requireThat, uuid, revision } from '@atlas/manual-service/contract';
-import { renderLabelV4, renderLabelV4Png } from '@atlas/finishing/label-v4';
+import { renderLabelV4, renderLabelV4Png, LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
 import { renderLabelSheetPng, LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 const jigHash = LABEL_JIG_V1.jigHash;
@@ -67,7 +67,7 @@ export function createLabelService({ boundary, repository, finishing, storage,
     return result;
   }
   return Object.freeze({
-    list: (staff, options) => repository.list(staff, options),
+    list: async (staff, options) => ({ ...await repository.list(staff, options), rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }),
     sheet: (staff, sheetId) => repository.sheet(staff, uuid(sheetId)),
     reconciliation: (staff, input) => repository.reconciliation(staff, input),
     async artwork(staff, { itemId, mode = 'preview' }) {
@@ -103,6 +103,15 @@ export function createLabelService({ boundary, repository, finishing, storage,
         && (input.failedSlots === undefined || Array.isArray(input.failedSlots) && input.failedSlots.length <= 50), 400, 'LABEL_PRINT_SLOTS_INVALID');
       await checkedExport(staff, { exportId: input.exportId, sheetId: uuid(sheetId) });
       return repository.confirmPrint(staff, input);
+    },
+    async retryLayout(staff, itemId, input) {
+      exact(input, ['requestId','expectedFailureHash','expectedRendererProfileHash']); uuid(input.requestId); uuid(itemId);
+      hash(input.expectedFailureHash); hash(input.expectedRendererProfileHash);
+      const item = await repository.item(staff, itemId);
+      const { packet } = await finishing.loadPacket(staff, item.card_id, item.action_id);
+      const material = materials[packet.report.cardProfile];
+      requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+      return repository.retryLayout(staff, itemId, input, { rendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH,materialProfileId:material.id,jigHash });
     },
     reprint(staff, itemId, input) {
       exact(input, ['requestId','expectedLabelHash','reason']); uuid(input.requestId); uuid(itemId); hash(input.expectedLabelHash);

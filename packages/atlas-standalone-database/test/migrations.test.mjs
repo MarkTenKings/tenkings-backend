@@ -4,7 +4,10 @@ import {readFile} from 'node:fs/promises';
 import {registeredMigrations,validateLedger} from '../registered-migrations.mjs';
 const baseline=JSON.parse(await readFile(new URL('../baseline.manifest.json',import.meta.url),'utf8'));
 test('registered additive suffix seals SQL independently of original baseline',async()=>{
- const migrations=await registeredMigrations();assert.equal(migrations.length,5);
+ const migrations=await registeredMigrations();assert.equal(migrations.length,6);
+ assert.equal(migrations[5].version,'atlas-standalone-007-label-layout-retry');
+ assert.match(migrations[5].sql,/label_item_layout_successor/);
+ assert.doesNotMatch(migrations[5].sql,/CREATE TABLE|DELETE FROM|TRUNCATE|UPDATE atlas_manual\./i);
  assert.equal(migrations[0].version,'atlas-standalone-002-variant-label-retry');
  assert.match(migrations[0].sql,/SECURITY DEFINER/);assert.doesNotMatch(migrations[0].sql,/CREATE TABLE|ALTER TABLE|DROP TABLE|DELETE FROM|TRUNCATE/i);
  assert.equal(migrations[1].version,'atlas-standalone-003-report-image-retry');

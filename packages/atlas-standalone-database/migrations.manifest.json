@@ -25,6 +25,11 @@
       "version": "atlas-standalone-006-variant-shared-label-retry",
       "file": "sql/006-variant-shared-label-retry.sql",
       "sqlSha256": "e073b918aa83aecc52453deb10ba6abbc603b167881fde347518dc12fd37d5b0"
+    },
+    {
+      "version": "atlas-standalone-007-label-layout-retry",
+      "file": "sql/007-label-layout-retry.sql",
+      "sqlSha256": "4ff9745a5553fe8252f37b1c311ea8b63c1f4b1f4c5636bed4ada92924ad26e3"
     }
   ]
 }

@@ -28,6 +28,15 @@ export function labelSheetMessage(error) {
     LABEL_EXPORT_RETRY_LIMIT: 'This export needs staff attention after repeated failures. Its frozen sheet remains saved.',
     LABEL_EXPORT_CHANGED: 'The saved export changed. Refresh its status before downloading.',
     LABEL_REPRINT_SOURCE_INVALID: 'The original label is no longer ready for a replacement. Refresh its saved status.',
+    LABEL_LAYOUT_ALREADY_RETRIED: 'A new layout attempt already exists. Refresh labels to view its progress.',
+    LABEL_LAYOUT_RETRY_UNAVAILABLE: 'This label cannot be retried from its current state. Refresh its saved status.',
+    LABEL_LAYOUT_RETRY_LIMIT: 'This label still needs a layout correction after repeated attempts. Its approved report is retained.',
+    LABEL_FAILURE_CHANGED: 'This label changed. Refresh before retrying its layout.',
+    LABEL_RENDERER_CHANGED: 'The label layout was updated. Refresh before retrying.',
+    LABEL_PROFILE_INVALID: 'This saved export used an older print profile. Refresh labels and prepare a new export.',
+    LABEL_ITEM_NOT_FOUND: 'This label is no longer available. Refresh to view the current labels.',
+    LABEL_SHEET_NOT_FOUND: 'This sheet is no longer available. Refresh to view the current sheets.',
+    LABEL_EXPORT_NOT_FOUND: 'This export is no longer available. Refresh and prepare a new export.',
     LABEL_NOT_READY: 'The label is still preparing or needs attention. Refresh its saved status.',
     LABEL_SHEET_NOT_READY: 'This sheet is not ready to export. Check its saved label statuses.',
     LABEL_EXPORT_NOT_READY: 'The saved export is still preparing or changed. Refresh its status before downloading.',
@@ -51,7 +60,7 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
     const raw = readRaw(); if (!raw) return null;
     let saved; try { saved = JSON.parse(raw); } catch { throw fail('LABEL_REQUEST_CHANGED'); }
     check(saved?.version === 1 && saved.staffId === staffId && uuid(saved.body?.requestId)
-      && ['export', 'individual-export', 'print', 'reprint', 'download', 'individual-download'].includes(saved.kind)
+      && ['export', 'individual-export', 'print', 'reprint', 'layout-retry', 'download', 'individual-download'].includes(saved.kind)
       && validPath(saved), 'LABEL_REQUEST_CHANGED');
     return saved;
   };
@@ -77,7 +86,9 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
       // the exact intent, including across reload and other-tab completion.
       const definiteConflict = error?.status === 409 && ['LABEL_SHEET_STALE', 'LABEL_SHEET_REVISION_STALE', 'LABEL_REQUEST_CONFLICT', 'LABEL_REVISION_CHANGED', 'LABEL_SOURCE_SUPERSEDED', 'LABEL_SHEET_NOT_READY', 'LABEL_EXPORT_NOT_READY', 'LABEL_ACCESS_DENIED', 'LABEL_SOURCE_CHANGED', 'LABEL_PUBLISHED_PRODUCTION_REQUIRED', 'LABEL_EXPORT_RETRY_LIMIT', 'LABEL_EXPORT_CHANGED', 'LABEL_REPRINT_SOURCE_INVALID', 'LABEL_NOT_READY'].includes(error.code);
       const unavailableSource = error?.status === 404 && ['LABEL_EXPORT_NOT_FOUND', 'LABEL_ITEM_NOT_FOUND', 'LABEL_SHEET_NOT_FOUND', 'MANUAL_CARD_NOT_FOUND'].includes(error.code) || error?.status === 410 && error.code === 'INTAKE_CARD_DELETED' || error?.status === 403 && error.code === 'LABEL_ACCESS_DENIED';
-      if (definiteConflict || unavailableSource) clear(saved);
+      const rejectedLayout = saved.kind === 'layout-retry' && error?.status === 409 && ['LABEL_LAYOUT_ALREADY_RETRIED', 'LABEL_LAYOUT_RETRY_UNAVAILABLE', 'LABEL_LAYOUT_RETRY_LIMIT', 'LABEL_FAILURE_CHANGED', 'LABEL_RENDERER_CHANGED'].includes(error.code);
+      const rejectedProfile = ['export', 'individual-export'].includes(saved.kind) && error?.status === 400 && error.code === 'LABEL_PROFILE_INVALID';
+      if (definiteConflict || unavailableSource || rejectedLayout || rejectedProfile) clear(saved);
       throw error;
     }
     validateResult(saved, result);
@@ -138,6 +149,13 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
       check(uuid(item?.itemId) && hash(item.labelHash) && typeof reason === 'string' && reason.trim().length > 0 && reason.length <= 500);
       return mutate('reprint', `${LABEL_ITEMS_PATH}/${item.itemId}/reprints`, { expectedLabelHash: item.labelHash, reason: reason.trim() });
     },
+    retryLayout: (item, rendererProfileHash) => {
+      check(uuid(item?.itemId) && item.state === 'NEEDS_LAYOUT' && ['ORIGINAL', 'LAYOUT_RETRY'].includes(item.purpose)
+        && hash(item.failureHash) && hash(rendererProfileHash));
+      return mutate('layout-retry', `${LABEL_ITEMS_PATH}/${item.itemId}/layout-retries`, {
+        expectedFailureHash: item.failureHash, expectedRendererProfileHash: rendererProfileHash,
+      });
+    },
     resume: () => exclusive(() => commit(pending())),
   });
 }
@@ -147,6 +165,7 @@ function validPath(saved) {
     export: `${LABEL_SHEETS_PATH}/${id}/exports`, print: `${LABEL_SHEETS_PATH}/${id}/print-confirmations`,
     download: `${LABEL_SHEETS_PATH}/${id}/exports/${id}/download`,
     reprint: `${LABEL_ITEMS_PATH}/${id}/reprints`, 'individual-export': `${LABEL_ITEMS_PATH}/${id}/exports`, 'individual-download': `${LABEL_ITEMS_PATH}/${id}/exports/${id}/download`,
+    'layout-retry': `${LABEL_ITEMS_PATH}/${id}/layout-retries`,
   };
   return typeof saved.path === 'string' && Boolean(patterns[saved.kind]) && new RegExp(`^${patterns[saved.kind]}$`, 'i').test(saved.path);
 }
@@ -159,4 +178,7 @@ function validateResult(saved, result) {
   } else if (saved.kind === 'print') {
     check(result && (uuid(result.eventId) || uuid(result.printEventId)) && result.exportId === saved.body.exportId);
   } else if (saved.kind === 'reprint') check(uuid(result?.itemId));
+  else if (saved.kind === 'layout-retry') check(uuid(result?.itemId) && result.itemId !== result.originalItemId
+    && result.originalItemId === saved.path.split('/').at(-2) && result.purpose === 'LAYOUT_RETRY'
+    && ['PENDING_RENDER', 'READY', 'NEEDS_LAYOUT', 'SUPERSEDED'].includes(result.state));
 }

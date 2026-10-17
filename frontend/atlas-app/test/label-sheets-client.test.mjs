@@ -110,3 +110,42 @@ test('a different saved jig cannot be displayed as the current physical layout',
   const f = fixture(async () => ({ ...sheet, jigHash: 'f'.repeat(64), capacity: 50 }));
   await assert.rejects(f.client.sheet(sheetId), { code: 'LABEL_JIG_CHANGED' });
 });
+
+test('layout recovery binds the exact failure and renderer and resumes the same request after a lost reply', async () => {
+  const failed = { itemId, state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', failureHash: hash }, profile = 'b'.repeat(64);
+  const f = fixture(async () => { throw { status: 503, code: 'NETWORK_LOST' }; });
+  await assert.rejects(f.client.retryLayout(failed, profile));
+  const saved = f.client.pending();
+  assert.equal(saved.path, `/api/staff/manual-connected/labels/${itemId}/layout-retries`);
+  assert.equal(saved.body.expectedFailureHash, hash); assert.equal(saved.body.expectedRendererProfileHash, profile);
+  const successor = { itemId: randomUUID(), originalItemId: itemId, purpose: 'LAYOUT_RETRY', state: 'PENDING_RENDER' };
+  const next = createLabelSheetsClient({ ...f.options, request: async (path, options) => {
+    assert.equal(path, saved.path); assert.deepEqual(options.body, saved.body); return successor;
+  } });
+  assert.deepEqual(await next.resume(), { kind: 'layout-retry', result: successor }); assert.equal(next.pending(), null);
+  for (const invalid of [{ ...failed, state: 'READY' }, { ...failed, purpose: 'REPRINT' }, { ...failed, failureHash: null }]) {
+    assert.throws(() => next.retryLayout(invalid, profile), { code: 'LABEL_REPLY_INVALID' });
+  }
+});
+
+test('only definite layout refusals and rejected export profiles release the saved request', async () => {
+  const failed = { itemId, state: 'NEEDS_LAYOUT', purpose: 'LAYOUT_RETRY', failureHash: hash };
+  for (const code of ['LABEL_LAYOUT_ALREADY_RETRIED', 'LABEL_LAYOUT_RETRY_UNAVAILABLE', 'LABEL_LAYOUT_RETRY_LIMIT', 'LABEL_FAILURE_CHANGED', 'LABEL_RENDERER_CHANGED']) {
+    for (const status of [409, 503]) {
+      const f = fixture(async () => { throw { status, code }; }); await assert.rejects(f.client.retryLayout(failed, hash));
+      assert.equal(Boolean(f.client.pending()), status !== 409);
+    }
+  }
+  for (const status of [400, 503]) {
+    const f = fixture(async () => { throw { status, code: 'LABEL_PROFILE_INVALID' }; });
+    await assert.rejects(f.client.exportLabel(item)); assert.equal(Boolean(f.client.pending()), status !== 400);
+  }
+  const unrelated = fixture(async () => { throw { status: 400, code: 'LABEL_PROFILE_INVALID' }; });
+  await assert.rejects(unrelated.client.recordPrint(sheet, output, [1])); assert.ok(unrelated.client.pending());
+});
+
+test('an unverified layout successor does not consume the saved retry intent', async () => {
+  const failed = { itemId, state: 'NEEDS_LAYOUT', purpose: 'ORIGINAL', failureHash: hash };
+  const f = fixture(async () => ({ itemId: randomUUID(), originalItemId: randomUUID(), purpose: 'LAYOUT_RETRY', state: 'READY' }));
+  await assert.rejects(f.client.retryLayout(failed, hash), { code: 'LABEL_REPLY_INVALID' }); assert.ok(f.client.pending());
+});

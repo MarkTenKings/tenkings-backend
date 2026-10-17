@@ -66,3 +66,20 @@ test('CSV identity text is quoted and inert while the NFC URL remains byte-for-b
   assert.throws(() => nfcBatchCsv(batch, []), { code: 'NFC_BATCH_SELECTION_INVALID' });
   assert.throws(() => nfcBatchCsv(batch, [value.items[0].itemId, value.items[0].itemId]), { code: 'NFC_BATCH_SELECTION_INVALID' });
 });
+
+test('a recovered layout is the same approved card for NFC, while replacement labels remain excluded', () => {
+  const value = sheet(1, 2), recovered = value.items[0];
+  recovered.purpose = 'LAYOUT_RETRY'; recovered.originalItemId = randomUUID();
+  value.items[1].purpose = 'REPRINT'; value.items[1].originalItemId = recovered.itemId;
+  value.items[1].cardId = recovered.cardId; value.items[1].snapshot = structuredClone(recovered.snapshot);
+  const batch = buildNfcBatch([value]);
+  assert.equal(batch.rows.length, 1); assert.equal(batch.rows[0].itemId, recovered.itemId);
+  assert.equal(batch.rows[0].reportHref, recovered.snapshot.reportHref); assert.equal(batch.rows[0].grade, 9.5);
+  assert.equal(batch.excluded.length, 1);
+  for (const invalid of [null, recovered.itemId, 'invalid']) {
+    const bad = structuredClone(value); bad.items[0].originalItemId = invalid;
+    assert.throws(() => buildNfcBatch([bad]), { code: 'NFC_BATCH_INVALID' });
+  }
+  value.items[1].purpose = 'LAYOUT_RETRY';
+  assert.throws(() => buildNfcBatch([value]), { code: 'NFC_BATCH_DUPLICATE' });
+});

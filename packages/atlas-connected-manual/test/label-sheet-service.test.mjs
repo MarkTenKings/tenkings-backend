@@ -88,3 +88,19 @@ test('queued current-profile sheet export reaches the real renderer and saves th
   assert.equal(await f.service.runPending(),0);
   assert.throws(()=>f.service.prepareSheetExport({},sheetId,{requestId:randomUUID(),expectedSheetRevision:1,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v1'}),{code:'LABEL_PROFILE_INVALID'});
 });
+
+
+test('layout retry accepts only exact failure/profile intent and binds authoritative material',async()=>{
+  const f=await fixture({cardProfile:'POKEMON'}),input={requestId:randomUUID(),expectedFailureHash:digest('failure'),expectedRendererProfileHash:digest('profile')};
+  f.repository.item=async()=>f.item;let captured;
+  f.repository.retryLayout=async(...args)=>{captured=args;return{state:'PENDING_RENDER'};};
+  await f.service.retryLayout({},f.item.id,input);assert.deepEqual(captured[2],input);assert.equal(captured[3].materialProfileId,'atlas-v4-holo-v1');assert.match(captured[3].rendererProfileHash,/^[a-f0-9]{64}$/);
+  for(const extra of [{grade:10},{materialProfileId:'gold'},{printSvg:'<svg/>'},{reason:'change'}])
+    await assert.rejects(f.service.retryLayout({},f.item.id,{...input,...extra}),{code:'LABEL_REQUEST_INVALID'});
+});
+
+test('a layout generation renders its same approved packet without copying failed artwork',async()=>{
+  const f=await fixture();f.item.purpose='LAYOUT_RETRY';f.item.original_item_id=randomUUID();
+  f.repository.item=()=>assert.fail('Layout retry must render exact approved report, not copy failed artwork');
+  assert.equal(await f.service.runPending(),1);assert.deepEqual(f.saved[0].snapshot.identity,f.f.full.identity);assert.equal(f.saved[0].snapshot.grade,f.f.full.finalGrade);
+});

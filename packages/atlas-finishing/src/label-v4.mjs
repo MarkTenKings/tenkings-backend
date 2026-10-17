@@ -29,6 +29,9 @@ export const LABEL_V4_RENDERER_PROFILE = Object.freeze({
   certificate: 'full-cert-arc-v1', alpha: 'straight-rgba-alpha-threshold-128-v1',
   certificateRules: { baselineRadiusMm: 6.78, maximumArcDeg: 120, targetInkHeightMm: 0.99, minimumInkHeightMm: 0.85 },
   metadataRules: { widthMm: 28.5, targetInkHeightMm: 1.5, minimumInkHeightMm: 1, topMm: 12.8 },
+  metadataOverflowRules: { version: 'full-identity-three-line-v1', leftMm: 15.8, widthMm: 28.5, topMm: 4.55, bottomMm: 14.3,
+    maximumLines: 3, maximumTokens: 128, semanticReadabilityToleranceMm: 0.05,
+    nameLineGapMm: 0.45, metadataLineGapMm: 0.2, nameMetadataGapMm: 0.3 },
   assetHashes: provenance.files,
 });
 export const LABEL_V4_RENDERER_PROFILE_HASH = hash(stable(LABEL_V4_RENDERER_PROFILE));
@@ -129,6 +132,100 @@ function metadataFor(identity) {
     [identity.year, product].filter(Boolean).join(' ')].filter(Boolean).join(' · ').toUpperCase();
 }
 
+// Only used when the original one-line metadata cannot meet its 1 mm minimum.
+// Keep every approved field and use uniform glyph scaling in the original area.
+// A semantic field break replaces its generated display delimiter with a newline;
+// punctuation inside an approved field is retained verbatim.
+function fitOverflowText(name, metadata, identity) {
+  const rules = LABEL_V4_RENDERER_PROFILE.metadataOverflowRules;
+  const words = metadata.trim().split(/\s+/u);
+  if (words.length > rules.maximumTokens) return null;
+  const nameWords = name === null ? [] : name.normalize('NFC').trim().replace(/\s+/gu, ' ').toUpperCase().split(' ');
+  const nameChoices = nameWords.length ? [[nameWords.join(' ')], ...nameWords.slice(1).map((_, i) =>
+    [nameWords.slice(0, i + 1).join(' '), nameWords.slice(i + 1).join(' ')])] : [[]];
+  const measure = (text, font) => {
+    const { bbox } = font.layout(text.normalize('NFC'), { kern: false });
+    return (bbox.maxX - bbox.minX) / (bbox.maxY - bbox.minY);
+  };
+  const names = nameChoices.map(lines => ({ lines, ratios: lines.map(line => measure(line, headline)) }))
+    .map(value => ({ ...value, maximumHeight: Math.min(3.6, ...value.ratios.map(ratio => rules.widthMm / ratio)) }))
+    .filter(value => value.maximumHeight >= 2.8);
+  const measured = new Map();
+  const segment = (start, end) => {
+    const key = `${start}:${end}`;
+    if (!measured.has(key)) {
+      const text = words.slice(start, end).join(' ');
+      measured.set(key, { text, ratio: measure(text, detail) });
+    }
+    return measured.get(key);
+  };
+  const candidates = [];
+  const consider = (lines, semantic = false) => {
+    const maximumMetadataHeight = Math.min(1.5, ...lines.map(line => rules.widthMm / line.ratio));
+    if (maximumMetadataHeight < 1) return;
+    for (const choice of names) {
+      const nameGaps = Math.max(0, choice.lines.length - 1) * rules.nameLineGapMm;
+      const metadataGaps = (lines.length - 1) * rules.metadataLineGapMm;
+      const between = choice.lines.length ? rules.nameMetadataGapMm : 0;
+      const available = rules.bottomMm - rules.topMm - nameGaps - metadataGaps - between;
+      const metadataHeight = Math.min(maximumMetadataHeight, (available - choice.lines.length * 2.8) / lines.length);
+      if (metadataHeight < 1 - 1e-9) continue;
+      const nameHeight = choice.lines.length ? Math.min(choice.maximumHeight, (available - lines.length * metadataHeight) / choice.lines.length) : 0;
+      if (choice.lines.length && nameHeight < 2.8 - 1e-9) continue;
+      const height = nameHeight * choice.lines.length + nameGaps + between + metadataHeight * lines.length + metadataGaps;
+      const top = rules.topMm + (rules.bottomMm - rules.topMm - height) / 2;
+      candidates.push({ name: choice.lines, metadata: lines.map(line => line.text), semantic, nameHeight, metadataHeight, nameTop: top,
+        metadataTop: top + nameHeight * choice.lines.length + nameGaps + between,
+        balance: Math.max(...lines.map(line => line.ratio)) - Math.min(...lines.map(line => line.ratio)),
+        orphanSeparators: lines.filter(line => /^[·&]|[·&]$/u.test(line.text)).length });
+    }
+  };
+  const variants = [...new Set([identity.parallel, identity.insert].filter(value => value && !/^(base|base card|none|n\/a)$/i.test(value)))];
+  const products = [...new Set([identity.manufacturer, identity.productSet].filter(Boolean))];
+  const semanticLines = [
+    [identity.cardNumber ? `#${identity.cardNumber.replace(/^#/, '')}` : null, variants.join(' · ')].filter(Boolean).join(' '),
+    [identity.year, products[0]].filter(Boolean).join(' '), products.slice(1).join(' '),
+  ].filter(Boolean).map(text => text.toUpperCase());
+  consider(semanticLines.map(text => ({ text, ratio: measure(text, detail) })), true);
+  // At most 128 tokens: 8,128 possible two/three-line arrangements. Reject
+  // prefixes/suffixes that cannot meet 1 mm before measuring their middles;
+  // this uses actual font bounds, not character-count or average-width guesses.
+  // Only the selected arrangement creates glyph paths.
+  const prefixes = [], suffixes = [];
+  for (let boundary = 1; boundary < words.length; boundary++) {
+    const prefix = segment(0, boundary), suffix = segment(boundary, words.length);
+    if (prefix.ratio <= rules.widthMm) prefixes.push({ boundary, line: prefix });
+    if (suffix.ratio <= rules.widthMm) suffixes.push({ boundary, line: suffix });
+    if (prefix.ratio <= rules.widthMm && suffix.ratio <= rules.widthMm) consider([prefix, suffix]);
+  }
+  for (const first of prefixes) for (const second of suffixes) {
+    if (second.boundary <= first.boundary) continue;
+    const middle = segment(first.boundary, second.boundary);
+    if (middle.ratio <= rules.widthMm) consider([first.line, middle, second.line]);
+  }
+  const bestHeight = Math.max(...candidates.map(candidate => candidate.metadataHeight));
+  const readable = candidates.filter(candidate => candidate.metadataHeight >= bestHeight - rules.semanticReadabilityToleranceMm);
+  readable.sort((a, b) => a.orphanSeparators - b.orphanSeparators
+    || b.metadataHeight - a.metadataHeight || b.nameHeight - a.nameHeight || a.metadata.length - b.metadata.length || a.balance - b.balance
+    || a.metadata.join('\n').localeCompare(b.metadata.join('\n'), 'en'));
+  // First avoid orphan separators at an equivalent readable size; then prefer
+  // intact identity fields when they are within 0.05 mm of that actual result.
+  // This avoids rewarding a malformed line merely for a tiny height gain.
+  const semantic = candidates.filter(candidate => candidate.semantic
+    && candidate.metadataHeight >= (readable[0]?.metadataHeight ?? Infinity) - rules.semanticReadabilityToleranceMm)
+    .sort((a, b) => b.metadataHeight - a.metadataHeight || b.nameHeight - a.nameHeight);
+  const chosen = semantic[0] ?? readable[0];
+  if (!chosen) return null;
+  const outlines = (lines, font, top, height, gap) => lines.map((text, index) => {
+    const shaped = shape(text, font), y = top + index * (height + gap);
+    return { text, xMm: rules.leftMm, yMm: n(y), widthMm: n(shaped.width / shaped.height * height), heightMm: n(height),
+      paths: place(shaped, rules.leftMm, y, height) };
+  });
+  return { version: rules.version, wrapping: chosen.semantic ? 'SEMANTIC_FIELDS' : 'TOKEN_WRAP',
+    name: outlines(chosen.name, headline, chosen.nameTop, chosen.nameHeight, rules.nameLineGapMm),
+    metadata: outlines(chosen.metadata, detail, chosen.metadataTop, chosen.metadataHeight, rules.metadataLineGapMm) };
+}
+
 /** Pure authoritative-snapshot renderer. The caller must load and authenticate
  * the exact PUBLISHED report. This function never decides approval or material.
  */
@@ -154,12 +251,22 @@ export function renderLabelV4(input, { previewMaterial = 'gold', certificateLayo
     if (fitted.state !== 'READY') return attention('NAME_OVERFLOW');
     const nameHeight = fitted.shapes.length * fitted.inkHeightMm + (fitted.shapes.length - 1) * 0.45;
     const nameTop = 4.55 + (7.65 - nameHeight) / 2;
-    const namePaths = fitted.shapes.map((value, index) => place(value, 15.8, nameTop + index * (fitted.inkHeightMm + 0.45), fitted.inkHeightMm)).join('');
+    let namePaths = fitted.shapes.map((value, index) => place(value, 15.8, nameTop + index * (fitted.inkHeightMm + 0.45), fitted.inkHeightMm)).join('');
     const metadata = metadataFor(identity), metadataShape = metadata ? shape(metadata, detail) : null;
     const metadataHeight = metadataShape ? Math.min(1.5, 28.5 * metadataShape.height / metadataShape.width) : 0;
     diagnostics.metadata = { text: metadata, inkHeightMm: n(metadataHeight) };
-    if (metadataShape && metadataHeight < 1) return attention('METADATA_OVERFLOW');
-    const metadataPaths = metadataShape ? place(metadataShape, 15.8, 12.8 + (1.5 - metadataHeight) / 2, metadataHeight) : '';
+    let metadataPaths = metadataShape ? place(metadataShape, 15.8, 12.8 + (1.5 - metadataHeight) / 2, metadataHeight) : '';
+    if (metadataShape && metadataHeight < 1) {
+      const overflow = fitOverflowText(name, metadata, identity);
+      if (!overflow) return attention('METADATA_OVERFLOW');
+      const boxes = values => values.map(({ paths, ...box }) => box);
+      diagnostics.textLayout = { version: overflow.version, wrapping: overflow.wrapping, name: boxes(overflow.name), metadata: boxes(overflow.metadata) };
+      diagnostics.name = { text: name, lines: overflow.name.map(line => line.text), inkHeightMm: overflow.name[0]?.heightMm ?? 0,
+        widthsMm: overflow.name.map(line => line.widthMm) };
+      diagnostics.metadata = { text: metadata, lines: overflow.metadata.map(line => line.text), inkHeightMm: overflow.metadata[0].heightMm };
+      namePaths = overflow.name.map(line => line.paths).join('');
+      metadataPaths = overflow.metadata.map(line => line.paths).join('');
+    }
     const cert = certificateOutline(`${reportNumber} · V${approvalVersion}`, certificateLayout);
     diagnostics.certificate = { ...cert }; delete diagnostics.certificate.paths;
     const grade = gradeOutline(finalGrade), captionText = finalGrade === 10 ? 'GEM MINT' : 'GRADE';

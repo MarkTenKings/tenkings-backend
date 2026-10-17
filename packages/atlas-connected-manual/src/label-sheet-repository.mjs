@@ -4,9 +4,15 @@ import { canonical, digest, requireThat, uuid } from '@atlas/manual-service/cont
 const S = 'atlas_manual_connected';
 const stored = (text, hash) => { requireThat(typeof text === 'string' && digest(text) === hash, 503, 'LABEL_STORED_CONTENT_INVALID'); return JSON.parse(text); };
 const reviewer = p => requireThat(p.role === 'REVIEWER', 403, 'LABEL_ACCESS_DENIED');
+export const labelFailureHash = r => digest(canonical({ itemId:r.id,cardId:r.card_id,actionId:r.action_id,approvalVersion:r.approval_version,
+  sourceRevision:r.source_revision,sourceHash:r.source_hash,reportHash:r.report_hash,publicHash:r.public_hash,
+  snapshotHash:r.snapshot_hash,code:r.code,attempts:r.attempts,rendererProfileHash:r.renderer_profile_hash,materialProfileId:r.material_profile_id,jigHash:r.jig_hash }));
 const itemView = r => ({ itemId: r.id, cardId: r.card_id, approvalActionId: r.action_id, approvalVersion: r.approval_version,
-  state: r.current === false ? 'SUPERSEDED' : r.state, purpose: r.purpose, originalItemId: r.original_item_id, sheetId: r.sheet_id, slot: r.slot,
+  state: r.current === false ? 'SUPERSEDED' : r.state,
+  layoutRetryItemId: r.current !== false ? r.layout_retry_item_id ?? null : null,
+  supersededReason: r.current === false ? 'APPROVAL_CHANGED' : r.state === 'SUPERSEDED' && r.layout_retry_item_id ? 'LAYOUT_RETRIED' : null, purpose: r.purpose, originalItemId: r.original_item_id, sheetId: r.sheet_id, slot: r.slot,
   labelHash: r.artwork_hash, materialProfileId: r.material_profile_id, code: r.code,
+  failureHash: r.state === 'NEEDS_LAYOUT' && r.current !== false ? labelFailureHash(r) : null,
   snapshot: r.snapshot ? stored(r.snapshot, r.snapshot_hash) : null,
   previewHref: r.artwork_hash ? `/api/staff/manual-connected/labels/${r.id}/artwork?mode=preview` : null });
 const exportView = r => ({ exportId: r.id, kind: r.kind, sheetId: r.sheet_id, itemId: r.item_id, state: r.state,
@@ -16,7 +22,9 @@ const sheetView = r => ({ sheetId: r.id, number: Number(r.number), state: r.stat
   materialProfileId: r.material_profile_id, jigHash: r.jig_hash, manifestHash: r.manifest_hash });
 const eventView = r => ({ eventId: r.id, exportId: r.export_id, exportSha256: r.export_sha256, manifestHash: r.manifest_hash,
   successfulSlots: r.successful_slots, failedSlots: r.failed_slots, recordedAt: new Date(r.created_at).toISOString() });
-const summaryColumns = 'id,actor_id,card_id,action_id,approval_version,state,purpose,original_item_id,sheet_id,slot,artwork_hash,material_profile_id,code,snapshot,snapshot_hash,source_revision,source_hash,report_hash,public_hash,renderer_profile_hash,jig_hash';
+const successorProjection = `(SELECT successor.id FROM ${S}.label_item successor WHERE successor.original_item_id=i.id AND successor.purpose='LAYOUT_RETRY') AS layout_retry_item_id`;
+const summaryColumns = 'id,actor_id,card_id,action_id,approval_version,state,purpose,original_item_id,sheet_id,slot,artwork_hash,material_profile_id,code,snapshot,snapshot_hash,source_revision,source_hash,report_hash,public_hash,renderer_profile_hash,jig_hash,attempts'.split(',').map(c=>'i.'+c).join(',')
+  + `,${successorProjection},(SELECT latest.action_id=i.action_id FROM atlas_manual.publication latest WHERE latest.card_id=i.card_id ORDER BY latest.version DESC LIMIT 1) AS current`;
 
 export function createLabelRepository({ boundary, validateAccess = null, validateAccessMany = null }) {
   requireThat(boundary?.transaction, 500, 'LABEL_CONFIGURATION_INVALID');
@@ -46,7 +54,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       && item.public_hash === row.public_hash, 409, 'LABEL_SOURCE_CHANGED');
   }
   async function scopedItem(tx, principal, id, latest = true) {
-    const [item] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_item WHERE id=$1::uuid AND actor_id=$2::uuid`, uuid(id), principal.id);
+    const [item] = await tx.$queryRawUnsafe(`SELECT i.*,${successorProjection} FROM ${S}.label_item i WHERE id=$1::uuid AND actor_id=$2::uuid`, uuid(id), principal.id);
     requireThat(item, 404, 'LABEL_ITEM_NOT_FOUND'); const published = await source(tx, principal, item.card_id, item.action_id, latest); matches(item, published);
     if (item.snapshot) stored(item.snapshot, item.snapshot_hash);
     item.current = published.latest_action_id === item.action_id; return item;
@@ -63,7 +71,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
     return new Set(allowed);
   }
   async function members(tx, principal, sheetId, latest = false, artwork = false) {
-    const rows = await tx.$queryRawUnsafe(`SELECT ${artwork ? '*' : summaryColumns} FROM ${S}.label_item WHERE sheet_id=$1::uuid ORDER BY slot`, sheetId);
+    const rows = await tx.$queryRawUnsafe(`SELECT ${artwork ? `i.*,${successorProjection}` : summaryColumns} FROM ${S}.label_item i WHERE sheet_id=$1::uuid ORDER BY slot`, sheetId);
     requireThat(rows.every(item => item.actor_id === principal.id), 404, 'LABEL_SHEET_NOT_FOUND');
     await accessible(tx, principal, rows.map(i => i.card_id));
     const publications = await tx.$queryRawUnsafe(`SELECT p.*,a.source_revision,a.source_hash,a.report_hash,
@@ -135,7 +143,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
             summaries.push({ ...sheetView(sheet), occupied: items.length, containsSuperseded: items.some(i => i.state === 'SUPERSEDED' || i.current === false), exports: exports.map(exportView) });
           } catch (error) { if (![403,404].includes(error.status)) throw error; }
         }
-        const rows = await tx.$queryRawUnsafe(`SELECT ${summaryColumns} FROM ${S}.label_item WHERE actor_id=$1::uuid ORDER BY created_at DESC,id LIMIT 201 OFFSET $2`, principal.id, cursor * 10);
+        const rows = await tx.$queryRawUnsafe(`SELECT ${summaryColumns} FROM ${S}.label_item i WHERE actor_id=$1::uuid ORDER BY created_at DESC,id LIMIT 201 OFFSET $2`, principal.id, cursor * 10);
         const visible = rows.slice(0,200), allowed = await accessible(tx, principal, visible.map(i => i.card_id), false);
         const items = visible.filter(i => allowed.has(i.card_id)).map(itemView);
         const single = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_export WHERE actor_id=$1::uuid AND item_id=ANY($2::uuid[])`, principal.id, items.map(i => i.itemId));
@@ -181,8 +189,10 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       await lock(tx, principal.id); const item = await scopedItem(tx, principal, claimed.id); matches(item, result.row);
       if (item.state !== 'PENDING_RENDER') return itemView(item);
       requireThat(item.claim_id === claimed.claim_id, 409, 'LABEL_CLAIM_CHANGED');
+      if (item.purpose === 'LAYOUT_RETRY') requireThat(result.rendererProfileHash === item.renderer_profile_hash
+        && result.materialProfileId === item.material_profile_id && result.jigHash === item.jig_hash, 409, 'LABEL_RENDERER_CHANGED');
       if (result.state !== 'READY') {
-        const [updated] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET state='NEEDS_LAYOUT',code=$2,snapshot=$3,snapshot_hash=$4,claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING *`, item.id, result.code ?? 'LABEL_NEEDS_LAYOUT', canonical(result.snapshot), digest(canonical(result.snapshot)));
+        const [updated] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET state='NEEDS_LAYOUT',code=$2,snapshot=$3,snapshot_hash=$4,renderer_profile_hash=$5,material_profile_id=$6,jig_hash=$7,claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING *`, item.id, result.code ?? 'LABEL_NEEDS_LAYOUT', canonical(result.snapshot), digest(canonical(result.snapshot)), result.rendererProfileHash, result.materialProfileId, result.jigHash);
         return itemView(updated);
       }
       const poolHash = digest(canonical({ renderer: result.rendererProfileHash, material: result.materialProfileId, jig: result.jigHash }));
@@ -269,6 +279,34 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       requireThat(input.successfulSlots.length > 0 && new Set(all).size === all.length && all.every(s => Number.isInteger(s) && slots.includes(s)), 400, 'LABEL_PRINT_SLOTS_INVALID');
       const [event] = await tx.$queryRawUnsafe(`INSERT INTO ${S}.label_print_event(id,actor_id,request_id,request_hash,export_id,export_sha256,manifest_hash,successful_slots,failed_slots)
         VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8::integer[],$9::integer[]) RETURNING *`, randomUUID(), principal.id, input.requestId, requestHash, row.id, row.sha256, row.manifest_hash, input.successfulSlots, input.failedSlots ?? []); return eventView(event);
+    }); },
+    retryLayout(staff, id, input, target) { return boundary.transaction(staff, async ({ tx, principal }) => {
+      reviewer(principal); await lock(tx, principal.id); const original = await scopedItem(tx, principal, id);
+      const requestHash = digest(canonical({ operation:'layout-retry/v1', itemId:id, ...input }));
+      const [prior] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_item WHERE actor_id=$1::uuid AND request_id=$2::uuid`, principal.id, input.requestId);
+      // A lost response must recover the accepted generation even after it renders
+      // or a newer renderer is deployed. Authority and source were rechecked above.
+      if (prior) { requireThat(prior.request_hash === requestHash, 409, 'LABEL_REQUEST_CONFLICT'); return itemView(prior); }
+      const [successor] = await tx.$queryRawUnsafe(`SELECT id FROM ${S}.label_item WHERE original_item_id=$1::uuid AND purpose='LAYOUT_RETRY'`, id);
+      requireThat(!successor, 409, 'LABEL_LAYOUT_ALREADY_RETRIED');
+      requireThat(original.state === 'NEEDS_LAYOUT' && ['ORIGINAL','LAYOUT_RETRY'].includes(original.purpose)
+        && !original.print_svg && !original.preview_svg && !original.artwork_hash && !original.sheet_id && !original.slot
+        && !original.claim_id && !original.lease_until, 409, 'LABEL_LAYOUT_RETRY_UNAVAILABLE');
+      requireThat(labelFailureHash(original) === input.expectedFailureHash, 409, 'LABEL_FAILURE_CHANGED');
+      requireThat(target.rendererProfileHash === input.expectedRendererProfileHash, 409, 'LABEL_RENDERER_CHANGED');
+      const [chain] = await tx.$queryRawUnsafe(`WITH RECURSIVE ancestry AS (
+        SELECT id,original_item_id,purpose,ARRAY[id] AS path,1 AS depth,false AS cycle FROM ${S}.label_item WHERE id=$1::uuid
+        UNION ALL SELECT p.id,p.original_item_id,p.purpose,a.path||p.id,a.depth+1,p.id=ANY(a.path)
+        FROM ancestry a JOIN ${S}.label_item p ON p.id=a.original_item_id WHERE a.purpose='LAYOUT_RETRY' AND NOT a.cycle AND a.depth<17)
+        SELECT max(depth)::int AS depth,bool_or(purpose='ORIGINAL') AS rooted,bool_or(cycle) AS cycle FROM ancestry`,id);
+      requireThat(chain?.rooted && !chain.cycle && chain.depth<=16,409,'LABEL_LAYOUT_RETRY_LIMIT');
+      const [saved] = await tx.$queryRawUnsafe(`INSERT INTO ${S}.label_item(id,actor_id,access_version,card_id,action_id,approval_version,source_revision,source_hash,report_hash,public_hash,
+        purpose,original_item_id,request_id,request_hash,reason,renderer_profile_hash,material_profile_id,jig_hash)
+        VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,'LAYOUT_RETRY',$11::uuid,$12::uuid,$13,'Retry failed layout',$14,$15,$16) RETURNING *`,
+      randomUUID(),principal.id,principal.accessVersion,original.card_id,original.action_id,original.approval_version,original.source_revision,original.source_hash,original.report_hash,original.public_hash,
+      original.id,input.requestId,requestHash,target.rendererProfileHash,target.materialProfileId,target.jigHash);
+      await tx.$executeRawUnsafe(`UPDATE ${S}.label_item SET state='SUPERSEDED',updated_at=clock_timestamp() WHERE id=$1::uuid`,original.id);
+      return itemView(saved);
     }); },
     reprint(staff, id, input) { return boundary.transaction(staff, async ({ tx, principal }) => {
       reviewer(principal); await lock(tx, principal.id); const original = await scopedItem(tx, principal, id);

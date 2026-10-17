@@ -12,9 +12,9 @@ const request = (url, method = 'GET', body) => ({ url, method, body, headers: { 
 test('only exact label paths and bounded SVG artwork enter the signed transport', () => {
   for (const path of [`${base}/label-sheets`, `${base}/label-sheets?cursor=20`, sheet, `${sheet}/exports`, `${sheet}/exports/${id}`,
     `${sheet}/exports/${id}/download`, `${sheet}/print-confirmations`, `${item}/artwork?mode=preview`, `${item}/artwork?mode=print`,
-    `${item}/exports`, `${item}/exports/${id}`, `${item}/exports/${id}/download`, `${item}/reprints`]) assert.equal(isManualServicePath(path), true, path);
+    `${item}/exports`, `${item}/exports/${id}`, `${item}/exports/${id}/download`, `${item}/reprints`, `${item}/layout-retries`]) assert.equal(isManualServicePath(path), true, path);
   for (const path of [`${base}/label-sheets?cursor=-1`, `${base}/label-sheets?cursor=20&cursor=40`, `${sheet}/delete`,
-    `${item}/artwork?mode=preview&url=https://evil.invalid`, `${item}/exports?mode=preview`, `${item}/artwork?mode=other`,
+    `${item}/artwork?mode=preview&url=https://evil.invalid`, `${item}/exports?mode=preview`, `${item}/layout-retries/${id}`, `${item}/layout-retries?force=true`, `${item}/artwork?mode=other`,
     `${sheet}/exports/${id}/download?token=anything`]) assert.equal(isManualServicePath(path), false, path);
   assert.equal(manualResponsePolicy(`${item}/artwork?mode=preview`, 'image/svg+xml').limit, 1024 * 1024);
   assert.throws(() => manualResponsePolicy(`${sheet}/exports/${id}`, 'image/svg+xml'));
@@ -50,4 +50,15 @@ test('preview is a bounded authenticated SVG response; reads do not start queue 
   assert.equal(res.headers['Content-Type'], 'image/svg+xml');
   assert.match(res.headers['Content-Security-Policy'], /sandbox/);
   await assert.rejects(handle(request(`${item}/artwork?mode=print&mode=preview`), response(), new URL(`${item}/artwork?mode=print&mode=preview`, origin)), { code: 'LABEL_ARTWORK_MODE_INVALID' });
+});
+
+
+test('layout retry is an authenticated POST with CSRF and one worker wake', async () => {
+  const staff={},calls=[],body={requestId:id,expectedFailureHash:'a'.repeat(64),expectedRendererProfileHash:'b'.repeat(64)};
+  const handler=createLabelSheetsHandler({origin,boundary:{async authenticate(cookie,csrf){assert.equal(cookie,'session');assert.equal(csrf,'csrf');return staff;}},
+    connected:{labels:{async retryLayout(...args){calls.push(args);return{purpose:'LAYOUT_RETRY',state:'PENDING_RENDER'};}},labelWorker:{wake(){calls.push('wake');}}}});
+  const path=`${item}/layout-retries`,res=response();
+  await assert.rejects(handler(request(path),res,new URL(path,origin)),{code:'METHOD_NOT_ALLOWED'});
+  const bad=request(path,'POST',body);bad.headers['x-atlas-csrf']='';await assert.rejects(handler(bad,res,new URL(path,origin)),{code:'CSRF_REQUIRED'});
+  await handler(request(path,'POST',body),res,new URL(path,origin));assert.deepEqual(calls,[[staff,id,body],'wake']);assert.equal(res.value.purpose,'LAYOUT_RETRY');
 });

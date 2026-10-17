@@ -121,7 +121,24 @@ export function manualLabelSheetsEnabled(env) {
 }
 export async function validateLabelRuntimeConfiguration({enabled,client}) {
   if(!enabled)return;
-  const [schema]=await client.$queryRawUnsafe("SELECT bool_and(to_regclass('atlas_manual_connected.'||name) IS NOT NULL) AS installed FROM unnest(ARRAY['label_item','label_sheet','label_export','label_print_event']) name");
+  const [schema]=await client.$queryRawUnsafe(`SELECT current_setting('session_replication_role')='origin' AND
+    (SELECT bool_and(to_regclass('atlas_manual_connected.'||name) IS NOT NULL) FROM unnest(ARRAY['label_item','label_sheet','label_export','label_print_event']) name)
+    AND (SELECT count(*)=2 AND bool_and(NOT p.prosecdef AND p.prorettype='trigger'::regtype
+      AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql') AND p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=pg_catalog']::text[]
+      AND encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=expected.hash)
+      FROM (VALUES ('guard_label_item','bd24e0102f55dbe9d15e5b7b984facd9f72733747fe4f91184936a30ae8327dc'),
+        ('guard_label_layout_retry','d83a9a673fef0925db13caad141b5ffcb49dc92c472d4a13fc512c8f9cf415bd')) expected(name,hash)
+      JOIN pg_proc p ON p.oid=to_regprocedure('atlas_manual_connected.'||expected.name||'()'))
+    AND (SELECT count(*)=2 FROM pg_trigger t WHERE t.tgrelid=to_regclass('atlas_manual_connected.label_item')
+      AND NOT t.tgisinternal AND t.tgenabled='O' AND t.tgqual IS NULL AND t.tgnargs=0
+      AND ((t.tgname='label_item_guard' AND t.tgtype=27 AND t.tgfoid=to_regprocedure('atlas_manual_connected.guard_label_item()'))
+        OR (t.tgname='label_layout_retry_guard' AND t.tgtype=7 AND t.tgfoid=to_regprocedure('atlas_manual_connected.guard_label_layout_retry()'))))
+    AND EXISTS(SELECT 1 FROM pg_index i WHERE i.indexrelid=to_regclass('atlas_manual_connected.label_item_layout_successor')
+      AND i.indrelid=to_regclass('atlas_manual_connected.label_item') AND i.indisunique AND i.indisvalid AND i.indnkeyatts=1 AND i.indnatts=1
+      AND i.indkey::text=(SELECT attnum::text FROM pg_attribute WHERE attrelid=i.indrelid AND attname='original_item_id')
+      AND pg_get_expr(i.indpred,i.indrelid)='(purpose = ''LAYOUT_RETRY''::text)')
+    AND (SELECT count(*)=3 FROM pg_constraint WHERE conrelid=to_regclass('atlas_manual_connected.label_item')
+      AND convalidated AND conname IN ('label_item_purpose_v2','label_item_purpose_binding_v2','label_item_retry_target')) AS installed`);
   requireThat(schema?.installed===true,503,'LABEL_SCHEMA_REQUIRED');
   const [grants]=await client.$queryRawUnsafe("SELECT bool_and(has_table_privilege(current_user,'atlas_manual_connected.'||name,'SELECT') AND has_table_privilege(current_user,'atlas_manual_connected.'||name,'INSERT')) AND has_sequence_privilege(current_user,'atlas_manual_connected.label_sheet_number_seq','USAGE') AS allowed FROM unnest(ARRAY['label_item','label_sheet','label_export','label_print_event']) name");
   requireThat(grants?.allowed===true,503,'LABEL_GRANTS_REQUIRED');

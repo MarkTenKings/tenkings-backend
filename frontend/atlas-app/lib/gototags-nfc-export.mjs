@@ -25,7 +25,7 @@ export function buildNfcBatch(sheets) {
     for (const item of [...sheet.items].sort((a, b) => a.slot - b.slot)) {
       check(uuid(item?.itemId) && uuid(item.cardId) && uuid(item.approvalActionId) && item.sheetId === sheet.sheetId
         && Number.isInteger(item.slot) && item.slot >= 1 && item.slot <= 50 && !slots.has(item.slot) && !itemIds.has(item.itemId)
-        && ['ORIGINAL', 'REPRINT'].includes(item.purpose));
+        && ['ORIGINAL', 'LAYOUT_RETRY', 'REPRINT'].includes(item.purpose));
       slots.add(item.slot); itemIds.add(item.itemId);
       const name = item.snapshot?.identity?.playerName || item.snapshot?.identity?.cardName || 'Approved card';
       const location = { itemId: item.itemId, sheetNumber: sheet.number, slot: item.slot, name };
@@ -34,7 +34,8 @@ export function buildNfcBatch(sheets) {
         excluded.push({ ...location, reason: item.state === 'SUPERSEDED' ? 'Approval changed' : item.purpose === 'REPRINT' ? 'Replacement label — original card only' : 'Label is not ready' });
         continue;
       }
-      check(item.originalItemId == null && /^[a-f0-9]{64}$/.test(item.labelHash ?? '')
+      check((item.purpose === 'LAYOUT_RETRY' ? uuid(item.originalItemId) && item.originalItemId !== item.itemId : item.originalItemId == null)
+        && /^[a-f0-9]{64}$/.test(item.labelHash ?? '')
         && Number.isSafeInteger(item.approvalVersion) && item.approvalVersion > 0
         && item.snapshot?.approvalVersion === item.approvalVersion && safeText(item.snapshot?.reportNumber) && safeText(name)
         && Number.isFinite(item.snapshot.grade) && item.snapshot.grade >= 0 && item.snapshot.grade <= 10);

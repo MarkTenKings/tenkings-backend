@@ -26,8 +26,8 @@ const connect=async(role=null,password=null)=>{const u=new URL(cluster.url('atla
 const txFor=c=>({$queryRawUnsafe:async(q,...v)=>(await c.query(q,v)).rows,$executeRawUnsafe:async(q,...v)=>(await c.query(q,v)).rowCount});
 try {
  await cluster.sql('CREATE DATABASE atlas_shared_retry');const admin=await connect();await applyStandaloneBaseline(admin);
- const migrations=await registeredMigrations(),migration=migrations.at(-1);assert.equal(migration.version,'atlas-standalone-006-variant-shared-label-retry');
- for(const m of migrations.slice(0,-1)){await admin.query(m.sql);await admin.query('INSERT INTO atlas_staff._standalone_migrations(version,checksum) VALUES($1,$2)',[m.version,m.sqlSha256]);}
+ const migrations=await registeredMigrations(),index=migrations.findIndex(m=>m.version==='atlas-standalone-006-variant-shared-label-retry');assert(index>=0);const migration=migrations[index],suffix=migrations.slice(index);
+ for(const m of migrations.slice(0,index)){await admin.query(m.sql);await admin.query('INSERT INTO atlas_staff._standalone_migrations(version,checksum) VALUES($1,$2)',[m.version,m.sqlSha256]);}
  const roles={staff:'atlas_shared_staff',manual:'atlas_shared_main',variant:'atlas_shared_worker',customer:'atlas_shared_customer',customerPrivate:'atlas_shared_private'};
  await admin.query(standaloneRoleSQL(roles));const peerRole='atlas_shared_worker_peer';await admin.query(variantWorkerRoleSQL(peerRole));await admin.query(variantWorkerGrantSQL(peerRole));const password=randomBytes(24).toString('hex');
  for(const role of [roles.manual,roles.variant,peerRole])await admin.query(`ALTER ROLE ${role} LOGIN PASSWORD '${password}'`);
@@ -65,11 +65,11 @@ try {
  const source=await seed(),current=await seed({photos:1,shared:source,extraChoices:1});
  const before=(await admin.query('SELECT * FROM atlas_manual_connected.variant_catalog_cache ORDER BY key,snapshot_hash')).rows,ledgerBefore=(await admin.query('SELECT * FROM atlas_staff._standalone_migrations ORDER BY version')).rows;
  const cardsBefore=(await admin.query('SELECT * FROM atlas_manual.card ORDER BY id')).rows,jobsBefore=(await admin.query('SELECT * FROM atlas_manual_connected.variant_job ORDER BY key')).rows;
- const applied=await applyStandaloneMigrations(admin);assert.deepEqual(applied.applied,[{version:migration.version,checksum:migration.sqlSha256}]);assert.equal((await applyStandaloneMigrations(admin)).status,'NO_OP');
+ const applied=await applyStandaloneMigrations(admin);assert.deepEqual(applied.applied,suffix.map(m=>({version:m.version,checksum:m.sqlSha256})));assert.equal((await applyStandaloneMigrations(admin)).status,'NO_OP');
  assert.deepEqual((await admin.query('SELECT * FROM atlas_manual_connected.variant_catalog_cache ORDER BY key,snapshot_hash')).rows,before);assert.deepEqual((await admin.query('SELECT * FROM atlas_manual.card ORDER BY id')).rows,cardsBefore);assert.deepEqual((await admin.query('SELECT * FROM atlas_manual_connected.variant_job ORDER BY key')).rows,jobsBefore);
- assert.deepEqual((await admin.query('SELECT * FROM atlas_staff._standalone_migrations WHERE version<>$1 ORDER BY version',[migration.version])).rows,ledgerBefore);
+ assert.deepEqual((await admin.query('SELECT * FROM atlas_staff._standalone_migrations WHERE NOT(version=ANY($1::text[])) ORDER BY version',[suffix.map(m=>m.version)])).rows,ledgerBefore);
  for(const [c,isWorker]of [[main,false],[worker,true]])await validateVariantRuntimeConfiguration({enabled:true,client:txFor(c),worker:isWorker});
- checks.push('005→006 changes one existing function and one ledger row; all card/job/reference bytes preserved; repeat no-op;005 startup rejected and006 main/worker admitted');
+ checks.push('005→current registered suffix includes006 retry function; all card/job/reference bytes preserved; repeat no-op;005 startup rejected and006 main/worker admitted');
  const signature='atlas_manual_connected.retry_variant_labels(uuid,uuid,uuid,text,text,integer,text,text,text,text)';
  const call=(c,a)=>c.query('SELECT atlas_manual_connected.retry_variant_labels($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) receipt',a);
  await assert.rejects(call(worker,current.args),/permission denied/);await assert.rejects(call(main,[other,...current.args.slice(1)]),/ACCESS_DENIED/);
