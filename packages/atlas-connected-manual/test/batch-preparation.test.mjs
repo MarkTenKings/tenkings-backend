@@ -51,7 +51,9 @@ test('machine report scores the measured weighted damage at the Surface 2× fact
   assert.equal(report.grade.back.surface.weightedDamagePercent, .04);
   assert.equal(report.grade.front.surface.score, 4);
   assert.equal(report.grade.back.surface.score, 4);
-  assert.equal(report.proposedGrade, 8.5);
+  assert.equal(report.grade.overall.rawGrade, 8.5);
+  assert.equal(report.finalGradePolicy, 'atlas-final-whole-point-v1');
+  assert.equal(report.proposedGrade, 9);
 });
 test('a clean machine proposal still remains uncertified and uninspected', async () => {
   const f = fixture(); f.analysis.proposals = []; const report = await buildMachineReport(f);

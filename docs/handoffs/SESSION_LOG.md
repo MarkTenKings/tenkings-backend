@@ -45890,3 +45890,120 @@ Core42/42 and workspace/report-view290/290 tests passed; both package builds pas
 Independent reciprocal source reviews found no actionable issue. Combined service/workflow/finishing run:233 passed,0failed,1 native fixture skip. Staff frontend743/743 passed. Public/customer/batch frontend154 tests passed initially; six test files could not import the already-installed qrcode package because this worktree lacked its local dependency link. Restoring ignored workspace links without manifest/lock changes resolved all29 cases in those files. All three production Next builds and staff/public/customer boundary checks passed; grading-core and manual-workspace builds passed. Homepage existing integrity/route tests passed.
 
 Root freezes this reviewed application for fresh source-bound candidate/image qualification. Prepared helpers add compatible customer readers and six exact control bindings; all previous release effects remain consumed. No production mutation is performed by committing the source. Subsequent candidate/image and cutover steps require their fresh reviewed plans and planned/observed entries.
+
+
+## 2026-10-17T09:22:54.133677+00:00 — Planned isolated whole-number native image qualification
+
+Frozen source c68e9ea7c77b35fc53cab6ee162e063dfb02b0fe is committed/pushed. Fresh build plan e526ae74df69cc4bf34f21115846b4983e84ff5ea4c0eb8a311acd053562f6a9 rebuilds core and manual-workspace from exact committed inputs in empty output directories.51 patches include26core+15workspace compiled outputs, with52test files and1858retained catalog files. Independent review cfd5a3be8588449beb550d37d31c28a1176db8729b3160464c5c225548eb03e1 and fresh read-only dryrun33317c250cb18403b707fe09f232b7aabc987dd6e65cbb5706583a7328cc412f passed. Root reviewed helper/plan scope and will execute this one additive image build with isolated network-none Linux qualification. No serving runtime, proxy, database, credentials or provider work changes in this step.
+
+Read-only live census09:19:27UTC observed41currentcards and0approvals, with work in progress. This supersedes prior zero-card release observations; retain all new cards and saved drafts. Browser fixture independently passed desktop/phone whole8 and historical7.5 at exactraw7.64684128229908 using explicitly synthetic verified evidence. Production card approval was not performed.
+
+
+## 2026-10-17T09:26:29.163408+00:00 — Planned whole-number web candidates
+
+Fresh web plan1f6f5bc0eb2778de80ad3490009def5884311f7cad61fefe7b4b6a9daa8b670b binds sourcec68e9ea7,2602source files,98exact deltas including42old content-addressed homepage removals. Root reviewed frozen source/manifest, unpromoted three-zone payloads, and explicit policy-byte gates. Final frozen web tests50passed with one expected unfrozen-source-only case skipped; all positive frozen-source cases passed. The customer app/auth/intake/dealer sources have zero diff from its retained2ba5e964 release; only shared readers change.
+
+After the independent exact-plan review, root will upload exact changed source content once, create unpromoted staff/customer candidates once each, then create public with both READY candidate origins. Qualify complete source inventories and actual served whole/half policy bytes for all three zones, retaining automatic-label/foil feature checks. Candidate creation changes no production target, project setting or existing environment. Native isolated image qualification remains pending; no serving transition or database write has occurred.
+
+
+## 2026-10-17T09:30:11.979641+00:00 — Whole-number candidate upload and isolated qualification outcome
+
+Independent web plan review f1c43128ffd06a67f7079d658cb57a71cacc0565ffbf7e2945a37fa690570704 passed. One-use upload completed:56 exact new source contents,2546 retained contents. Unpromoted staff creation dispatched once; outcome pending. No production web target changed.
+
+Native additive image build completed its image closure proof but isolated Linux test command exited nonzero (LINUX_QUALIFICATION_TESTS_FAILED). Original intent is consumed; no build replay or serving transition. Read-only inspection of saved test evidence is underway. Production runtime and scoring remain unchanged while this release gate is resolved.
+
+
+## 2026-10-17T09:31:38.667606+00:00 — Isolated qualification correction and candidate progress
+
+Saved native failure evidence identifies exactly two qualification issues: stale batch-preparation expected8.5 when preserved raw8.5 correctly awards9 under current policy; missing fixture-only scripts/file-artifacts.mjs mount prevented service.test loading.518 tests passed,2failed,0skipped;1910image closure files were exact. No runtime defect identified. Agent corrected only batch-preparation test to assert raw8.5/currentwholepolicy/proposed9; preserved damage .04 and surface4 assertions, local35/35passed. CorrectedtestSHAa0280c81b6a4e954308e665b04381067a4f916cd041a62203a5b384315fc1ae9. This test-only change remains uncommitted until frozen application release completes.
+
+Staffcandidate dpl_EW5bHeDuMqfFcWdEp4NWoyct9DCf is READY; customerdpl_2aW7K6CTUftYNKaWanBouvgUaDS5 is building. Both unpromoted, unchanged productiontargets. A separate one-use qualification-only extension is being prepared against the existing exact image, originalplan/failure and all52suites; no image rebuild or consumed-intent replay. It must pass independentreview before execution.
+
+
+## 2026-10-17T09:34:45.065656+00:00 — Exact staff/public web qualification observed
+
+StaffEW5bHeDu andpublic78deLXKw are READY and qualified at frozen c68e9ea7: entire2602-file source identities/modes,56changed-file direct byte readbacks,2546 retained qualifiedbytes, buildboundary and actualwhole/historical policychunks. Staffproof93697ea52b96a753f92e08330b7493795618f5ccdfec2d289cff923dcf7b35eb; publicproof3884d41ac34543d568fe79362da185279f60ab10f79d08d6b3e4c83524e80eff. Public embeds the exactreadynewstaff/customer origins.
+
+Customer2aW7K6CT is READY but the read-only qualification helper expected a boundary marker that this unchanged customer checker never emits. Its real marker is PASS customer build: isolated /account routes, packaged database engine, dedicated assets and no server credentials in browser chunks. A separate read-only qualification correction will require this exact frozenchecker/event evidence; no rebuild, helper mutation or publication is performed. All productiontargets still retain their prior releases.
+
+
+## 2026-10-17T09:36:56.549827+00:00 — Planned existing-image full requalification
+
+Root and independent reviewer approved separate one-use plan16dc94652ec11f41cca14d3da5de50e646644174bb87c13632039df1164985de (reviewc52a1d39a9f26b64f3f59a3317c02c479d1a693e7ef44d80012289db52393ebc; dryrunf1941f1663dde000cb61dfd916371aed5a2176546367eac899f2bb82473c93d0;12/12refusaltests). Reuse immutableimage96583776472587e573220aff62e5d0ae6a6da322e5d9ff274240f9fce3e088aa and originalconsumedbuild/failure evidence. Recheck1910closurefiles and all52suites with only correctedbatchtest and exactfrozen fixture-file mount. Requireallpass/zeroskip, retain420secondboundedtimeout,2CPU/3GB/pid256/networknone/read-only/init/Pythonlimits, unchanged27/3serving inventory/proxy. Rootwilldispatchonce; noimagebuild, servingmutation, databaseconnection orproviderrequest.
+
+
+## 2026-10-17T09:41:00.028266+00:00 — Customer candidate access evidence
+
+Read-only customer boundary extension34d37726 reached the exact customer build but stopped on actual403 text/html at direct /account; originalextensionintent retained and not replayed. Source/runtime inspection confirms expected HOST_NOT_ALLOWED guard for direct deployment hosts lacking the ordinary public-router hop. Next bootstrap remains exactcandidate/build with page=/ and unavailable=true. Normal publiccandidate /account returned503plain text because authoritative production bindings still point at priorrelease; that response cannot qualify reportassetbytes. Neither response is claimed as successful customer access.
+
+A fresh strict read-only qualification will preserve actual403/no-redirect/unavailable/bootstrap provenance and verify exact compiledpolicyassets; originaltop-levelwebhelpers/plans and allcandidateeffectintents remain unchanged. Only not-yet-planned publication/canonical consumers will bind the new validator. Final canonicalcustomer /account must still return200 with unavailable=false aftercutover. Root has not switched production.
+
+
+## 2026-10-17T09:42:20.215198+00:00 — Exact existing-image requalification passed
+
+Requalification receipt1e41da795bda2fb5e8c8dc6442b595ccb64736048bac4e1409ab1011e0d0d627 observed09:41:41.586UTC:529/529passed,0fail/cancelled/skip/todo acrossall52suites with realPythonmeasurement. Exact1910closurefiles verified on unchangedimage96583776472587e573220aff62e5d0ae6a6da322e5d9ff274240f9fce3e088aa. Originalconsumedbuild/failure evidence retained; noimagebuild,servingwrite,DBconnection orproviderrequest. Serving27/3 andproxyunchanged. Runtimeplan preparation now uses this distinctsuccessfulreceipt, nevertheoriginalemptyfailureoutput.
+
+
+## 2026-10-17T09:45:08.403787+00:00 — Planned qualified runtime staging
+
+Runtimeplan7f646b5c46d8681a78d7b70a2190280d1da11fb91d7a1349d93b0e0ad5dce60c passed rootreview and independentdabca6a01167edd4a0ef6401a6e388c14a272fe5f98172c847b31b27ee3f2c5c; dryrundec7329794135ce68ab496ceeceea3043c4a8c2de39e96b32c7d8ed8b3a64ce1 passed. Exact529-pass image965837, sourcec68, qualifiedstaffgjorwr6fl/customer3pykjnz60 and retained125sbootstrap/admissionplan are bound. Mainenvironmentchangesonly staffdeployment/source andcustomerbindingdeployment/source; customerconfigHash andallotherkeys preserved. Workeronlystaffdeployment/source; maininittrue/workerunset, security/resources/proxy/network unchanged.
+
+Rootwillstageonlynewreleaseplan/bootstrap/envfiles once under /opt/atlas/whole-grade-c68e9ea7c77b-01. No containerscreated and no servingtransition inthisphase. Quiesce/data/start/seal/publication still awaitfreshreviewedplans andliveworkload. Strictcustomer403qualificationplan7fb70e54 independentlyrevieweddb434eda is running read-only; originalsremainpreserved.
+
+
+## 2026-10-17T09:47:07.125299+00:00 — Stage and three-zone candidate verification observed
+
+Native stage completed PASS469761dd48f1dc41ddca669bb708ca7bf1029a99623ae3be9ac305d57ae14df6, configurationfilesonly and servingcontainersunchanged. Allthreewebcandidates verified665c6801b4580c8965604c25d10555f896215f5ceee6ae62c18a9d66612009ff, independentcrossreviewb1a975f892b522f8d259de234e61ddfeaa3abc027105426e7a15a0076e5c45a2. Customerqualification56955e04025c55931c9cad80c580dc940ab937c18671b990d9163e23e8e50955 preservesactual403hostboundary; exactguard/bootstrap/lazychunks/wholeandhalfpolicies verified. Staff/publicqualificationsremainunchanged. Eachzone2602files/56directchangedGETs/2546retainedbyteproofs; alloriginaleffectintents preserved.
+
+Read-only six-controlplanpreparation now inprogress. No claimholder, productiontarget, servingruntime orcontrolrow haschangedatthischeckpoint. Canonicalcustomer200availability remains a mandatorypostpublicationcheck.
+
+
+## 2026-10-17T09:50:22.039203+00:00 — Planned whole-number production cutover
+
+The root review and independent cross-plan review 538a0926ebfd1db6f59229c2be2438c1d8321d28f3df13c5f3b878046b8d2195 passed. Exact plans: runtime 7f646b5c46d8681a78d7b70a2190280d1da11fb91d7a1349d93b0e0ad5dce60c; admission 89edeb4a29a3a9439eda89e0ec09f12c8c11bbbbc2e15c29a693a40d86be7968; data 3855928b1fef6578841d9da31903fca1492418fbe08b78d2f81e434fb4319ef8; publication ec290f155a88702b82e130bb71d15430c5816a54002a8d122f1724479616777e.
+
+Planned actions: acquire one bounded 90-minute read-only claim holder; obtain fresh held workload and exact historical-orphan proof; gracefully stop and disconnect the predecessor pair without SIGKILL. Atomically update six release-control rows: Staff133→134, Public93→94, Customer82→83, CustomerService binding, SMS Staff101→102 and Customer34→35. Preserve enabled states, commerce/progress controls, credentials, schema/grants, installed005/006/007, all seven ledger rows and 105 protected tables. No DDL, ledger writes, card edits, approvals, deletions, provider retries or analysis requests.
+
+Then start and seal qualified image965837/sourcec68 with retained125-second startup fence, resources/security/init/proxy/network. Require fresh native/data readiness before changing two existing public origins and promoting the exact customer, staff and public candidates in that order. Verify canonical routes and actual served policy bytes; customer/account must be200 and available. Explicitly release the same holder and perform postflight. Every effect is one-use; reconcile uncertain responses read-only. Existing and new unapproved cards are retained.
+
+
+## 2026-10-17T09:59:47.069659+00:00 — Whole-number cutover admission held, natural work drain
+
+The single holder acquired09:50:32UTC under approved89edeb4a, ID8afa6804-c876-47cd-a844-f59d53dc5eda and databasePID1847272, remains active without reacquisition. Read-only held snapshots02–08 preserve41currentcards/0approvals; one current attempt1 variant job continues through serial photo packets. Claim admission blocks new jobs but not current packet renewal/completion; no provider retry, force-stop, card edit or production binding change is made while it finishes. Exact old discarded orphan/geometry/defect evidence remains separately classified only by the reviewed gate. No quiesce/data/start/publication effect consumed yet.
+
+
+## 2026-10-17T10:46:10.256044+00:00 — Natural drain progress and operator audit
+
+Read-only observer confirms552/563referencephoto readings saved at10:45:58UTC on the same original attempt1;11remain. Holder session86923 remains active. Neither provider requests nor approval/card data have been replayed or edited. All cutover plans remain unchanged and unconsumed beyond stage. Added whole-number implementation/operator audit with deployment explicitly pending; actual publication/acceptance fields will be completed from observed receipts. No repository commit moves frozenHEAD while release consumers remain.
+
+
+## 2026-10-17T10:49:18.947663+00:00 — Natural drain complete; quiesce passed
+
+The current variant job reachedREADY with563/563readings retained at10:47:54UTC, originalattempt1 (receipt740af7a992477f718a6a5f0d65afb51a4ee9b3e48ab6913c23818b207614ed67). Fresh heldworkload10 at10:48:05 preserves41currentcards/0approvals;30queuedvariantsremainheld. Followinghistoricalproof74e624f6 andclassifiedd6df242a provezero unresolvedvariantrows without changing evidence. Rawbaseline4e5db637 saved for postflight. Quiescedryrun857d95dd passed; one-usequiescef469a225bb36e601a91b22ffe0e1769cd9a255477e02e58a751b5152f855bc27 passed. Predecessor services stopped cleanly under the same holder. Six-control atomic apply dispatchedonce under approved3855928b; resultpending. No request, card or approval replay.
+
+
+## 2026-10-17T10:53:46.117103+00:00 — Whole-number control update observed; startup in progress
+
+Atomic six-control applyfd12c0049b9ea48b5b62e98c7a50e9a1498eff148eda0fbcacaafde88381e29e completed successfully. Release sourcec68e9ea7, zeroledgerwrites and provider calls; protected rows, controls outside plan, installed005/006/007, historicalledger, objects/grants and enabledstates preserved. Startdryrun53fd97a4 passed; startupdispatchedonce promptly under sameholder and exactdatareceipt. Startupresultpending, webpublicationnotyetperformed.
+
+
+## 2026-10-17T10:56:33.377302+00:00 — Whole-number runtime started and sealed
+
+Startc924dcf8ffe31db3d86f01d460c334cf3c6d3a14ff7a3cfcd884470593b88364 andseal433c5cf842b2dd646ea6543a1db741ad6cec0d705fb319825cb0a8934c332a54 passed under the sameholder and frozenruntimeplan. Currentnativehealth750ecdfbd118831056f9c42393b5f1c762d064c1d3730a6dd9c32080031a948d at10:56:14UTC confirms sourcec68e9ea7. Independentdatareviewdd2419266b942f503612119619400a7dd03b9d852718f30ec9faac7fa75cf7ce passed. Freshnative/datareadiness for five plannedwebpublicationoperations isrunning; publicwebnotyetpromoted.
+
+
+## 2026-10-17T10:58:48.039401+00:00 — Web authorization refreshed; first publication effect observed
+
+Initial origin execute stopped on VercelGET403 during candidateState, before writing originintent/preimage or sending any effect. Fileabsence and networkjournal confirmed zero publicationeffect; the existing CLIaccess token had aged during naturaldrain. Routine vercelwhoami refreshed its existing authorization without changing scope or project settings. Freshreadiness1dfa9497 passed; the unchanged unconsumed origin operation thenexecuted once and wasobserved10:58:30UTC (response8852b924, observation12697098, sameholdercontinuity98f7c066). Customer-origin step dispatchednext under the same approvedpublicationplan. No consumed effect replayed, no plan/helper weakened. Independentstart/sealreview969f943019eea5ea8d4f777e28105e4344179ea8518f40bbe472d88597e71e70 passed.
+
+
+## 2026-10-17T11:02:44.656975+00:00 — Whole-number web publication observed
+
+Allfive operations under unchangedec290f15 plan completed. Customerorigin observed10:59:07, customerpromotion11:00:13; staffpromotion returnedHTTP201 at11:00:43 before aliases settled. Preservedintent/response and read-onlyfinalize at11:01:43 verified exactsettledstate withrequestsSent0; no promotionreplay. Publicpromotion completed11:02:25.779UTC withobservation25e803d1a9c1551fce78f2a129181ebac178a6421ff0ed3be6f587ee38d34fe8 andsameholdercontinuity69693c21060240fe26c29077c79b38b3d8e622ff6f0efb1c3721f52cad1e6bc6. Candidates: staffEW5bHeDu/customer2aW7K6CT/public78deLXKw, sourcec68e9ea7. Exactcanonicalroute/asset checks nowrunning; claimholderstillheld pendingthesechecks.
+
+
+## 2026-10-17T11:05:59.819870+00:00 — Whole-number release verified and holder released
+
+Canonical66checks passed0b97b1e5cc57afc9369c56b1c4d08c8e4c8094a4855a5656eae43563ca22f795, includingcustomer/account200/available, current/historicalpolicybytes inallthreezones and retainedautomaticlabels/blacktransparent/originalexport/NFCfeatures. Independentallfivepublicationreview3efdaa9687462a20eaea635d375adf190071fe46b025c36f1cde5b303514ae71 passed. Sameholder explicitlyreleased11:03:40.056UTC,receipt44e8d70a242e325f3bc11b1f82b1860e61b3369ec503c45853b56c0de92a843a,PTYexit0. Postflightef8f7904dae4268e8f1bd49dfef57510627e1dc74c9a3e89bdfbe0f1c14b7b78 confirmsabsentholder,41currentcards/0approvals retained,discardedrows unchanged,priorREADYmarketresults andlabelrequests retained. Finalhealth2b471354261e12dc5cebd62aae8c52fac2dc2e475b3447b37b66dbadc6e49daa passed.
+
+ActualownerChrome reloadreachedstaffsign-in; savedbrowser/live-sign-in.png. Requestedowner sign-in asynchronously for actualJaxsonraw→8 acceptance; no card approval orproviderdiagnosticperformed. Updatedmandatorycontext/runbooks/handoff to currentlivewholepolicy and markedearlierlabelreleasehistorical, retainingphysicalprintlimits. Frozenruntimec68remainsdeployed; followingdocs/test-onlycommit willnotrebuild orredeploy.
