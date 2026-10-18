@@ -1,5 +1,13 @@
 # Ten Kings Master Product Context
 
+## Approved-card sold search wording — live October 17, 2026 Pacific
+
+Native source `6c6d183bc7656d289b51e316f9b07e4de7be907b` is live on main/worker. Staff/public web retains the completed one-click label source `455b27ec693cdca09478c20f3dc384bfa6e9d643`; customer binding, all environment values, controls, schema, proxies and runtime configuration remain unchanged. This is a native-only two-module query change; no web deployment or database update occurred. The temporary processing hold was explicitly released at **2026-10-18 02:44:08.853 UTC**. Postflight at02:44:28UTC confirms healthy services, zero restarts, holder absence, unchanged business rows and all20prior READY result commitments. The observed current-card census was41cards/3approvals.
+
+Fresh Sports searches use manufacturer, year, player, `#` card number and `graded` plus the saved final award. Pokémon also includes the full saved set name. Current Jaxson therefore ends `graded 8`; the owner’s grade9 example ends `graded 9`. Existing results and older-page continuation retain their original query. To test a fresh query, open an approved card’s **eBay sold comps → Refresh sales**. Browser reload alone does not purchase a new search. Variant-reference acquisition and image reading are unchanged.
+
+Qualification passed58/58local and52/52actual Linux-image tests with zero skips/failures. Public home/admin GETs return200; an anonymous manual-page GET redirects to sign-in. The owner’s live provider-result test remains pending; the agent made no paid diagnostic search, grade approval or comp selection. Evidence: `~/.codex/atlas-handoffs/atlas-sold-query-20261017/release-01/`; audit: `docs/atlas/audits/2026-10-17/approved-sold-query.md`. Later dated sections below retain their historical release identities/censuses.
+
 ## Foil preview and print download delivery — repaired October 17, 2026 Pacific
 
 The outer host gateway now admits the exact authenticated foil artwork and layout-retry routes. Its missing allowlist entries caused HTTP 502 errors while original-format previews still worked. The inner proxy and application were already correct. Three matcher values were corrected and the existing edge Caddy process gracefully reloaded once at **2026-10-18 00:24:48 UTC**; zero container restarts, application rebuilds, database/control changes or provider requests. Active outer configuration SHA256 `dc025395428b40cedfc86ae3378bc8fafb6c9166d09958ab0f2b631380accd51`; inner remains `d3825349ebd6d3dedbc70992a06f9c5f7a6396cce32ce61a7ae7b131cdf71a38`. Native/web source `c68e9ea7` remains live.
