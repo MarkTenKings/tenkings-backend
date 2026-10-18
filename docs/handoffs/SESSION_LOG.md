@@ -46044,3 +46044,82 @@ Final normal-page reload retained the black/transparent format, removed the expi
 Owner reported that the visible Download button did not download. Root reproduced the current two-step behavior: the first click only requested a signed URL and added a second link near the top of the page; the second click downloaded the saved Sylveon PNG. Updated LabelSheets so an explicit READY sheet/individual download, or explicit saved-download resume, activates the exact validated signed URL once after the existing account-owner guard. The existing signed link remains available as a fallback, with truthful "Download requested" wording. The server supplies the attachment filename; no Blob conversion, export regeneration, polling-triggered download, grade/card edit, print confirmation or NFC action was added.
 
 Local Node 22 client/component qualification passed 54/54 with zero skips or failures. Added checks for actual sheet and individual anchor activation, both saved print formats, no download during preparation/polling, lost-response intent retention and explicit replay, invalid URL/expiry/profile rejection, and suppression of late prior-account replies. Existing read-only, approval, physical-print and NFC tests pass. git diff --check passed. Browser fixture acceptance and release remain pending with root; this entry does not claim deployment. No commit, network call or production effect was performed for this code change.
+
+
+## 2026-10-18T01:45:52.014454+00:00 — One-click download source frozen and qualified
+
+Source 455b27ec is committed/pushed; independent source review and repeat 54 client/component tests pass. Full staff suite covered 747 tests: 746 passed and the packaged-catalog subprocess timed out under concurrent load; its exact isolated rerun passed with no source/test changes. Both outputs are retained in atlas-label-download-click-20261017/qualification. Current production still uses the prior two-step UI. Narrow release preparation is in progress; no new runtime effect yet.
+
+
+## 2026-10-18T01:51:29.957095+00:00 — Planned one-click download candidate deployment
+
+Fresh candidate plan 8cffb05e6bf9d68f9768e27fae0ec54b582c79f32d7b11787daf72cb7d0e422b pins source 455b27ec693cdca09478c20f3dc384bfa6e9d643 and source manifest efbf3aeff3db14460146890d12d24a97245df0ee3514492191be525939521a2c: exactly one changed deployed input, LabelSheets.jsx, among 2602 verified files. Planned candidate effects after independent signoff: upload that one content blob, stage staff production-target build without canonical alias assignment, then stage public router with exact new staff origin and retained customer origin. Existing live deployments/settings/environment remain unchanged during staging. No native build, customer build, control change, card/grade mutation or physical print in this phase. Initial read-only prepare failed with an expired CLI access token; ordinary Vercel whoami refreshed existing authentication and the repeated read-only prepare passed, with failure evidence preserved. Outer gateway read-only SHA remains dc025395428b40cedfc86ae3378bc8fafb6c9166d09958ab0f2b631380accd51.
+
+
+## 2026-10-18T01:53:06.009407+00:00 — One-click staff candidate staged
+
+Independent bound candidate review 288a0bd43699f399ebd2bfb76c1ce131c571ffed495ef3394416cef3956a648c passed. Root executed the one-use upload: exactly one new source blob, 2601 retained. Created staff candidate dpl_63s5oMwUBCL1Xyx5xtqPPPAXpbU4 at atlas-grading-staff-g9o38os6v-ten-kings.vercel.app; read-only inspection now shows BUILDING. Canonical live deployment remains c68; public candidate and qualification follow. No runtime/control change or card/print action occurred.
+
+
+## 2026-10-18T01:54:19.678798+00:00 — Planned same-image runtime file staging
+
+Staff candidate reached READY. Runtime plan 8f67a8326ff9d37813f5fab32d7b514ea589c92189e09a2cf8ede925bb7a1918 and stage dry-run 4078d3b5b56fda4af33421435a389a1eb555dc248d9f4d5544625c5ed6832095 passed independent bound review e31e766e876d77e342ac9eaff88ebd6604494956f27289aff7ce96fee2f139a5. Planned next effect writes only new private runtime configuration/bootstrap files in the fresh release directory. It retains exact c68 native image96583776 and customer binding, changing only two staff web binding values per process. No container stop/start, control mutation or publication in this staging phase. Public candidate creation was requested once and is pending; no consumed intent will be replayed.
+
+
+## 2026-10-18T01:54:44.872826+00:00 — Public candidate and runtime file stage observed
+
+Public candidate dpl_6kygNTbt4k1y1Zbkqiz9P4ir8S7j at atlas-grading-public-f64sg5eta-ten-kings.vercel.app was created once with exact new staff origin and unchanged c68 customer origin. File-only native stage passed, receipt f7fe7056806b56119bbda51db24e77c26917b36f749c63ea3e663514ee720218. No containers stopped/started and no controls changed. Staff candidate source/build/served-byte qualification is in progress; canonical production remains unchanged.
+
+
+## 2026-10-18T01:57:01.906156+00:00 — Candidate qualification location correction
+
+Both staged builds reached READY. Original GET-only staff qualifier refused ONE_CLICK_LABEL_DOWNLOAD_BYTES_REQUIRED because it expected component implementation markers in the thin pages/labels chunk. Root and independent review confirmed the exact new owner-guarded URL/anchor/click/remove branch and both messages in the labels-page referenced shared chunk d8bc606dda224822a074ec3f1c17e0701261cddb3da0117e5aac9e0d270ac6b8. A separate GET-only qualifier will bind that real page dependency union; frozen upload/create helpers and source remain unchanged, and the failed attempt is retained. Public status GET had one timeout, followed by a successful read-only READY observation. No candidate create, runtime effect or publication was replayed; no canonical cutover yet.
+
+
+## 2026-10-18T02:03:18.471856+00:00 — One-click download candidates qualified
+
+GET-only extension plan 51be973f5aea1ff463a8818a1eb1c49c755a6d00fc547c14e77cff7f23ac518f passed independent review and staff qualification. Staff receipt 3e313b5872ee7081198a2abc805bcebbdb679ec56add43cb615fdbbc0875cd25 and public receipt ef4f88a883b92f7542175585a4537bfd3dadc469149624937773d925ceb90b81 now produce HOTFIX_WEB_CANDIDATES_READY. Exact page-referenced shared chunk contains the corrected download branch; the complete source/build checks pass. Both source/build candidates remain unpromoted. The retained customer is unchanged. Separate postflight helper review 0e6eeb57284732d6d3c9c21620ecba57fa130ac278431c94e4c52742c14daf75 passed with 19/19 tests. Read-only final data/publication planning follows before coordinated cutover.
+
+
+## 2026-10-18T02:07:11.570899+00:00 — Planned coordinated one-click download cutover
+
+Read-only data plan f2ff0e43f8f72df7025dd9c9798f9eab9c2cde06fbbb0f9fbb64c2ee1ddddb71 pins all 105 protected tables, unchanged schema/ledger and exactly three binding controls. Publication plan 340aadfa5d61d71b90d6abb1df26d3afb35da592e5df6f2be8483d2f276645a0 permits the existing public staff-origin environment update, staff promotion and public promotion only. After independent bound review, root plans bounded admission hold, natural workload drain, graceful predecessor shutdown, three control updates, same-image main/worker replacements changing only two web binding values per role, seal/readiness, and those three publication operations. Native source/image remains c68/96583776; new web source is 455b27ec. Customer, both proxies, grades, saved labels, schema and historical ledger remain unchanged. Each effect has a one-use intent; ambiguous outcomes require read-only reconciliation. Finish with canonical checks, explicit hold release, scoped postflight and owner Chrome individual/sheet download acceptance. No new grading, approval, card deletion, physical print recording or NFC action is authorized by this release.
+
+
+## 2026-10-18T02:11:14.745107+00:00 — One-click release gracefully quiesced
+
+Independent combined cutover review 285aa3e62d5c64ee6d579c471f03672a89841b4df3c22100639a69dc3aa1ef3c passed. Admission holder bedc9ecf3a1c05703ae6ec74150980946b6c4faf4c4372bc39beafcaa57a3e4a was acquired once, expiring 03:38:36 UTC. Fresh held census observed 41 current cards and 3 current approvals; four queued batches and unresolved historical rows were independently classified from retained discarded work with no data repair. Quiesce dry-run fbf473102feb4145644a989819c885e0d6c63fb5f59046093241ac20dad7f5c3 and same-holder continuity passed. Root executed one graceful stop of each predecessor, quiesce receipt 5c145ed58c14531c8684194babf0df6092ad450a44e15dee7014ba59774bd2e5. Three-control application is now running under the exact reviewed plan with protected-row before/after comparisons. Canonical web promotion remains pending.
+
+
+## 2026-10-18T02:19:16.388771+00:00 — One-click release control application passed
+
+Data receipt a1efaa18780a9eaac0ae19304047f489671319745366c3fd6874d86fd91c4bd6 confirms exactly three atomic committed control updates, zero DDL/ledger/provider writes, and unchanged protected rows, unrelated controls, schema objects/grants and historical ledger. Both full protected-table comparisons passed. Completed 02:18:46.698 UTC. Native start dry-run 93c38d72ec4cd0d645b2a337841d03c5196b7f30dded1246ad4962bbafd77bd1 passed; root proceeds with the previously planned same-image pair start, seal/readiness and publication under the same bounded holder.
+
+
+## 2026-10-18T02:23:04.423536+00:00 — Same-image runtime replacement and seal passed
+
+Start receipt 33633310da9189965b37043f182d7038f79502bbfc1d20737cb141406435a51f confirms main b8278e414aebd537580833331e76e71a67c4b529485a1acc1fa1936391648625 and worker f03112b8d2ae9998d1186cb65ceb972ae35fb62dc07b3382e26fddbaeb613251 are ready on retained image 96583776, restart count zero, after the existing 125000 ms startup fence. Both roles differ only in the two approved web-binding environment values; customer and proxy configuration are unchanged. Independent start/seal dry-run review f9b6cef8fc614c6d8aa08a31a4336959ce02fac632fb2d27b6a19746ff7a93e3 passed. Seal receipt f1a1a2bf7ae73cddf4a4bbea1dbdbde03ed1efbc1a46f18711dfc5ac2f2352f2 sets the two normal restart policies with zero process restarts. Thirty-one containers remain, three running including the unchanged proxy; old pair remains stopped/disconnected. Fresh readiness precedes the already reviewed three publication operations.
+
+
+## 2026-10-18T02:28:21.902227+00:00 — One-click download web release published
+
+Fresh readiness 999531fe8d986f48e8ff1452dc049988e70afe2d5efef0882c1ac01bb0b32e3b passed independent review b5c8c6275fdc7e3d69e3d86f2a07f880ca87f0859c209048cea052f4ac48c8a0. Root executed the origin PATCH and staff/public promotions once each. Staff returned HTTP 201 and its first observation caught an alias still propagating; GET-only finalize with renewed health/readiness e863e893e6658bd67af6f00f5042e1ea6f638ba1e1d563cd7890fbd807c19027 confirmed settlement without replay. Public promotion settled at 02:27:00 UTC. All three exact provider receipts passed independent review a1e499b8b13332358239cb82fe75d17cd3ce357fdb7270722beb104a618396b2, preserving customer target/environment/aliases. Canonical checks are running before explicit holder release and postflight. Outer gateway SHA still dc025395428b40cedfc86ae3378bc8fafb6c9166d09958ab0f2b631380accd51. Chrome reload reached staff sign-in because the security binding changed; owner sign-in requested for actual one-click download acceptance. No browser acceptance claim yet.
+
+
+## 2026-10-18T02:29:21.661892+00:00 — Canonical release and postflight passed; browser sign-in pending
+
+Canonical receipt 79c4edc8a8140f06643d72b9c38e3ac019a7678b03720d5bc161998df47216bf verified 66 real routes/assets and the corrected download implementation in Labels-referenced served JS. Independent canonical review 050e071346251817b1c14726b07ed6a42007f558f17fb70dc22e3018668a0b17 passed. Root explicitly released the original holder via its bound release command; process exited 0 with EXPLICIT_RELEASE. Postflight receipt 3536b35425baeb7879ad25328cd9b8f8e0f0bbfee4cf4f62e731b447ec62e6df confirms holder absent and unchanged current card identities/approval counts, discarded rows, prior paid READY results, retained label requests and all four saved label tables. Forty-one current cards and three current approvals remain. Fresh native health 61602e54658cb92aff2e85f2e73504895c0c050e881a51f6ad7363cec6fcd4b6 passed, native c68/web455, 31 containers/3 running and zero process restarts. One-click UI is now live; owner Chrome requires normal sign-in following the binding revision. Actual authenticated one-click individual/sheet acceptance is pending that sign-in, distinct from the completed canonical checks and the successful pre-fix second-link PNG download.
+
+
+## 2026-10-18T02:42:58.663950+00:00 — One-click individual accepted; sheet test crossed a separate release
+
+Owner Chrome signed in. One explicit individual Download click saved Sylveon export f32f44c8-a733-46ef-bfb1-893d2f9e2c8f at02:31:43UTC:202642bytes,SHA2561b59e653ded4b403fcee3d8ece34ddfd65220f82da9d78320beae588f227305a, identical to the previously verified black/transparent PNG. Screenshot retained in atlas-label-download-click-20261017/one-click-individual-completed.png. Sheet006 download then failed in324ms with502 MANUAL_SERVICE_RESPONSE_INVALID before URL/anchor activation. No export regeneration, grade approval, data deletion, physical print or NFC action was performed.
+
+Independent diagnostics found both gateways retain the correct exact download route. Docker evidence native-termination-04.private.json shows both new runtime roles explicitly received restart=no and SIGTERM at02:31:46–47UTC; worker exited0 immediately and main exited0 at02:35:22 after its215second graceful drain. Reading the active user-authorized chat Trace Atlas sold comps image flow (01a14cb3-7245-7a40-8829-73b2cf845353) identified its sold-query deployment6c6d183b as the owner of that shutdown. Its runtime plan b421264d retains web455 and has started replacement services after read-only preservation checks. Root will not restart, replay or patch routing during that separate deployment. Sheet acceptance remains pending service restoration; no current claim of complete authenticated download acceptance.
+
+
+## 2026-10-18T02:47:14.957152+00:00 — Authenticated one-click downloads accepted after concurrent release
+
+The separate sold-query release reopened processing with native6c6d183b and retained web455b27ec. Owner Chrome remained signed in. Explicit saved Sheet006 request resume downloaded at02:45:06UTC. A fresh normal Sheet006 Download click then completed at02:45:27UTC, followed by Sheet005 Sports at02:45:53UTC. Together with Sylveon individual acceptance at02:31:43UTC, both direct individual/sheet actions and saved-request recovery pass. No fallback link was clicked. Acceptance receipt0ffb1a69d149b38463fadc973d55c3dcc7aa15c032a2e3921b8c1af51e407ad9 records four actual files and byte-for-byte comparison with prior fully pixel-verified black/transparent PNGs; individual6458x1898, sheet9764x12598. Sports sheet532959bytes/SHA256b6ad7df781dc3495a1d5ee5ceb9f04a6dc4e8b45df44cbd5e7dcffbbf44faf77; Pokemon sheet581637bytes/SHA256fa7c9a2bef795f2c6b5778727da8ce2186d6c5ee7ec4a1cfd331879886a5fe49.
+
+Final browser left on Black ink + transparent foil and true Print ink preview. Screenshots and acceptance receipt remain under atlas-label-download-click-20261017; convenience originals remain ~/Downloads/ATLAS_Verified_Foil_Labels_2026-10-17/. No grade/card changes, reapproval, export regeneration, physical-print recording, NFC writes, additional deployment or routing changes occurred. Physical E1 foil/registration qualification still requires actual operator samples; file/download acceptance is complete.
