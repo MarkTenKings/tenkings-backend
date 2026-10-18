@@ -1,5 +1,15 @@
 # Ten Kings Master Product Context
 
+## Foil preview and print download delivery — repaired October 17, 2026 Pacific
+
+The outer host gateway now admits the exact authenticated foil artwork and layout-retry routes. Its missing allowlist entries caused HTTP 502 errors while original-format previews still worked. The inner proxy and application were already correct. Three matcher values were corrected and the existing edge Caddy process gracefully reloaded once at **2026-10-18 00:24:48 UTC**; zero container restarts, application rebuilds, database/control changes or provider requests. Active outer configuration SHA256 `dc025395428b40cedfc86ae3378bc8fafb6c9166d09958ab0f2b631380accd51`; inner remains `d3825349ebd6d3dedbc70992a06f9c5f7a6396cce32ce61a7ae7b131cdf71a38`. Native/web source `c68e9ea7` remains live.
+
+Actual owner Chrome verification now passes: the retained deleted-card request reconciled, the warning cleared after page reload, Sports/Pokémon foil material and print-ink previews load, and individual/sheet download controls work. Jaxson Dart displays approved 8; Alakazam ex and Sylveon ex each display 9. Three actual individual PNGs and both partial sheet PNGs were downloaded, visually inspected on a checkerboard and pixel-verified: every pixel is solid black or fully transparent, with no colored/gray/white pixels or partial alpha. Individual 6458×1898 at 68.342×20.082 mm; sheet 9764×12598 at 310×400 mm; density metadata matches intended dimensions. Saved copies and import instructions are in `~/Downloads/ATLAS_Verified_Foil_Labels_2026-10-17/`.
+
+Exporting froze Sheet 005 (one Sports label) and Sheet 006 (two Pokémon labels) as saved snapshots. New approvals fill the next compatible sheet automatically. No grade approval, physical print or NFC write was performed by the agent. Physical E1 scale/origin, coverage/detail and adhesion still require a sample on each foil. For any future route extension, qualify **both live gateway layers**, including exact raw-query/method allowlists, and the actual signed-in download flow; source tests and unauthenticated page checks alone are insufficient.
+
+Evidence: `~/.codex/atlas-handoffs/atlas-label-foil-delivery-20261017/`; audit: `docs/atlas/audits/2026-10-17/label-foil-delivery.md`. One-use routing intent is consumed; do not replay it. Prior dated sections retain their historical release censuses.
+
 ## Whole-number final awards — live (October 17, 2026)
 
 Application source `c68e9ea7c77b35fc53cab6ee162e063dfb02b0fe` is live on native main/worker and staff, customer and public web. Public publication completed at **11:02:25.779 UTC**; **66 canonical route and asset checks** passed at11:03:23UTC, including available customer `/account` and the exact current/historical policy assets. The same temporary claim holder was explicitly released at **11:03:40.056 UTC**. Postflight confirms holder absence, healthy services, all **41 current cards / 0 approvals** retained, discarded rows unchanged, prior READY market results unchanged and retained label requests preserved. Earlier release sections below are historical checkpoints.
