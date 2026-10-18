@@ -33,8 +33,8 @@ function inspectIdentity(description, candidate) {
 
 const queryText = value => String(value ?? '').normalize('NFC').replace(/[—–]/g, '-').replace(/\s+/g, ' ').trim();
 
-/** One card-level acquisition query. Keep the printed number faithful, including
- * zeroes, prefixes and denominators. Set, variant and grade are photo evidence. */
+/** Search using the approved identity and its recorded final award. The generic
+ * graded term does not translate that award into another company's grade. */
 export function publishedMarketQuery({ packet, publicHash }, { savedQuery, savedInput } = {}) {
   requireThat(typeof publicHash === 'string' && /^[a-f0-9]{64}$/.test(publicHash)
     && digest(JSON.stringify(packet)) === publicHash, 409, 'MARKET_PUBLICATION_MISMATCH');
@@ -43,9 +43,13 @@ export function publishedMarketQuery({ packet, publicHash }, { savedQuery, saved
     ...(parsed.report.cardProfile === 'SPORTS' ? { playerName: identity.playerName, manufacturer: identity.manufacturer }
       : { cardName: identity.cardName }), parallel: identity.parallel, cardNumber: identity.cardNumber,
     ...('insert' in identity ? { insert: identity.insert } : {}) };
-  const currentQuery = [identity.playerName ?? identity.cardName, identity.cardNumber].map(queryText).filter(Boolean).join(' ');
+  const cardNumber = queryText(identity.cardNumber).replace(/^(?:#\s*)+/, '');
+  const setName = queryText(String(identity.productSet ?? '').replace(/[—–]/g, ' ').replace(/\s+-\s+/g, ' '));
+  const currentQuery = [parsed.report.cardProfile === 'SPORTS' ? identity.manufacturer : 'Pokémon', identity.year,
+    ...(parsed.report.cardProfile === 'POKEMON' ? [setName] : []), identity.playerName ?? identity.cardName,
+    cardNumber ? `#${cardNumber}` : null, 'graded', parsed.report.finalGrade].map(queryText).filter(Boolean).join(' ');
   // Saved queries are immutable evidence bound by the job/preview to this exact
-  // publication. Reading an old receipt never executes its old query strategy.
+  // publication. Recovery and page continuation preserve that exact query.
   const query = savedQuery ?? currentQuery;
   requireThat(typeof query === 'string' && query.trim() === query && query.length > 0 && query.length <= 400
     && !/[\x00-\x1f\x7f]/.test(query), 409, 'MARKET_PUBLICATION_MISMATCH');
