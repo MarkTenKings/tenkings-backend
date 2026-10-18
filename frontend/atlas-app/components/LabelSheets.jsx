@@ -210,7 +210,18 @@ export default function LabelSheets({ staff, embedded = false, initialCardId = n
     try {
       const reply = await operation(client.current);
       if (owner.current !== token) return;
-      if (reply.kind === 'download' || reply.kind === 'individual-download') { setDownload(reply.result); setMessage('Your saved print file is ready to download.'); }
+      if (reply.kind === 'download' || reply.kind === 'individual-download') {
+        setDownload(reply.result);
+        // The client has verified this signed URL and saved export profile.
+        // Start only this explicit download gesture; preparation and polling
+        // never enter this branch. Keep the link available if the browser blocks it.
+        const link = document.createElement('a');
+        try {
+          link.href = reply.result.url; link.download = ''; link.rel = 'noopener noreferrer';
+          document.body.appendChild(link); link.click();
+          setMessage('Download requested. If it did not start, use the download link below.');
+        } finally { link.remove(); }
+      }
       else if (reply.kind === 'individual-export') { setItemExports(old => ({ ...old, [`${reply.itemId ?? reply.result.itemId}:${reply.result.exportProfileId}`]: reply.result })); setMessage('Individual export saved.'); }
       else if (reply.kind === 'layout-retry') { setSelectedItemId(reply.result.itemId); setTab('labels'); setMessage('Label preparation is continuing automatically.'); }
       else setMessage(reply.kind === 'print' ? 'Your physical print confirmation is saved.' : reply.kind === 'reprint' ? 'Replacement label requested. The original is retained.' : 'The sheet is frozen. Its export is saved separately from physical printing.');
@@ -246,7 +257,7 @@ export default function LabelSheets({ staff, embedded = false, initialCardId = n
     {pending && <div className={styles.attention} role="status"><p>{pending.kind === 'layout-retry' ? automaticReconciliation ? 'ATLAS is checking a saved label request automatically.' : 'ATLAS could not confirm a saved label request. Your approved cards are unchanged.' : <>A saved {pending.kind.includes('download') ? 'download' : pending.kind.includes('export') ? 'export' : pending.kind === 'print' ? 'print confirmation' : 'replacement'} request needs to finish.</>}</p>{!automaticReconciliation && <button type="button" className={styles.button} disabled={busy || readOnly} onClick={() => void run(api => api.resume())}>{busy ? 'Checking saved request…' : pending.kind === 'layout-retry' ? 'Check connection again' : 'Retry saved request'}</button>}</div>}
     {message && <p className={styles.message} role="status">{message}</p>}
     {listing && initialCardId && !allItems.some(value => value.cardId === initialCardId) && <p className={styles.attention} role="status">This card’s label is not in the loaded results yet. {listing.hasMore ? 'Load older sheets and labels to check its saved status.' : 'It will appear here when its published label is prepared.'}</p>}
-    {download && <div className={styles.download} role="status"><a className={`${styles.button} ${styles.primary}`} href={download.url} download rel="noopener noreferrer">Download {Object.values(LABEL_PRINT_FORMATS).find(format => [format.sheet, format.individual].includes(download.exportProfileId))?.label ?? 'saved'} PNG ↓</a><p>This link expires {new Date(download.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Request it again if needed.</p></div>}
+    {download && <div className={styles.download} role="status"><a className={`${styles.button} ${styles.primary}`} href={download.url} download rel="noopener noreferrer">Download {Object.values(LABEL_PRINT_FORMATS).find(format => [format.sheet, format.individual].includes(download.exportProfileId))?.label ?? 'saved'} PNG ↓</a><p>If the download did not start, use this link. It expires {new Date(download.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Request it again if needed.</p></div>}
     {listing && <section className={styles.nfcBatch} aria-labelledby="nfc-batch-title">
       <div className={styles.nfcHeading}><div><h2 id="nfc-batch-title">NFC batch · GoToTags</h2><p>One chip per current approved card, in sheet and position order. Replacement labels are excluded.</p></div><button type="button" className={styles.button} disabled={nfcBusy || readOnly} onClick={() => void prepareNfc()}>{nfcBusy ? 'Checking approved labels…' : nfcBatch ? 'Refresh NFC batch' : 'Prepare NFC batch'}</button></div>
       {nfcError && <p className={styles.error} role="alert">{nfcError}</p>}

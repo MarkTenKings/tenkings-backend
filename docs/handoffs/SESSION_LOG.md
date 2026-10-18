@@ -46037,3 +46037,10 @@ Owner Chrome recovered the retained old request through the normal API, then pag
 ## 2026-10-18T00:33:50.452575+00:00 — Foil delivery final handoff
 
 Final normal-page reload retained the black/transparent format, removed the expired download banner, and loaded Sylveon true print ink with enabled saved exports. Saved acceptance/live-labels-final.png. Independent handoff review confirmed all five saved file hashes, dimensions and pixel counts, disclosed frozen Sheet 005/006 snapshots, and retained physical E1 qualification on both materials. Documentation-only completion follows; no additional runtime effect or deployment.
+
+
+## 2026-10-18T01:11:54Z — Single-click label download correction prepared locally
+
+Owner reported that the visible Download button did not download. Root reproduced the current two-step behavior: the first click only requested a signed URL and added a second link near the top of the page; the second click downloaded the saved Sylveon PNG. Updated LabelSheets so an explicit READY sheet/individual download, or explicit saved-download resume, activates the exact validated signed URL once after the existing account-owner guard. The existing signed link remains available as a fallback, with truthful "Download requested" wording. The server supplies the attachment filename; no Blob conversion, export regeneration, polling-triggered download, grade/card edit, print confirmation or NFC action was added.
+
+Local Node 22 client/component qualification passed 54/54 with zero skips or failures. Added checks for actual sheet and individual anchor activation, both saved print formats, no download during preparation/polling, lost-response intent retention and explicit replay, invalid URL/expiry/profile rejection, and suppression of late prior-account replies. Existing read-only, approval, physical-print and NFC tests pass. git diff --check passed. Browser fixture acceptance and release remain pending with root; this entry does not claim deployment. No commit, network call or production effect was performed for this code change.

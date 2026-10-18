@@ -34,6 +34,7 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
     if (!options.method && f.pages && url.startsWith(api.LABEL_SHEETS_PATH) && !url.slice(api.LABEL_SHEETS_PATH.length).startsWith('/')) return f.pages[new URL(url, 'https://fixture.test').searchParams.get('cursor') ?? '0'];
     if (!options.method && url === api.LABEL_SHEETS_PATH) return { version: 'atlas-label-sheets-v1', rendererProfileHash: 'f'.repeat(64), sheets: f.sheets.map(value => ({ ...value })), items: f.listItems ?? f.sheets.flatMap(value => value.items), pending: f.pendingItems ?? [] };
     const sheet = f.sheets.find(value => url === `${api.LABEL_SHEETS_PATH}/${value.sheetId}` || url.startsWith(`${api.LABEL_SHEETS_PATH}/${value.sheetId}/`));
+    const item = f.sheets.flatMap(value => value.items).find(value => url.startsWith(`${api.LABEL_ITEMS_PATH}/${value.itemId}/`));
     if (options.method === 'POST') {
       if (f.postError) throw f.postError;
       if (url.endsWith('/layout-retries')) {
@@ -42,11 +43,12 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
         const successor = { ...parent, itemId: randomUUID(), originalItemId: parent.itemId, purpose: 'LAYOUT_RETRY', state: 'PENDING_RENDER', failureHash: null };
         f.pendingItems = [successor]; return successor;
       }
-      if (url.endsWith('/exports')) { const result = { exportId: randomUUID(), sheetId: sheet.sheetId, exportProfileId: options.body.exportProfileId, state: 'READY', sha256: 'c'.repeat(64), manifestHash: 'd'.repeat(64) }; sheet.state = 'SEALED'; sheet.exports = [result]; return result; }
-      if (url.endsWith('/download')) return { exportProfileId: sheet.exports.find(value => url.includes(value.exportId)).exportProfileId, url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString() };
+      if (url.endsWith('/exports')) { const result = { exportId: randomUUID(), sheetId: sheet?.sheetId ?? null, itemId: item?.itemId ?? null, exportProfileId: options.body.exportProfileId, state: f.exportState ?? 'READY', sha256: 'c'.repeat(64), manifestHash: 'd'.repeat(64) }; if (sheet) sheet.state = 'SEALED'; (sheet ?? item).exports = [result]; return result; }
+      if (url.endsWith('/download')) return { exportProfileId: (sheet ?? item).exports.find(value => url.includes(value.exportId)).exportProfileId, url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString() };
       if (url.endsWith('/print-confirmations')) { const result = { eventId: randomUUID(), ...options.body }; sheet.printEvents.push(result); return result; }
     }
     if (sheet) return structuredClone(sheet);
+    if (item) { const output = item.exports?.find(value => url.endsWith(`/exports/${value.exportId}`)); if (output) return structuredClone(output); }
     throw new Error(`Unexpected fixture path: ${url}`);
   };
   class BrowserURL extends URL { static createObjectURL(blob) { const url = `blob:${randomUUID()}`; f.blobs.set(url, blob); return url; } static revokeObjectURL() {} }
@@ -94,10 +96,64 @@ test('partial export requires its explicit gesture and binds the sheet displayed
 });
 test('download and physical print recording stay distinct and select the exact successful positions', async () => {
   const first = data(), f = await fixture({ sheets: [first] }); f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+  assert.equal(f.downloads.length, 0);
   f.click('Download sheet PNG ↓'); await f.flush();
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 2); assert.equal(first.printEvents.length, 0); assert.match(f.text(), /Download Black ink \+ transparent foil PNG/);
+  assert.deepEqual(f.downloads, [{ href: 'https://objects.example/exact.png', filename: '' }]); assert.equal(f.blobs.size, 0);
+  assert.match(f.text(), /Download requested/); assert.match(f.text(), /If the download did not start, use this link/);
+  assert.ok(f.find(node => node.type === 'a' && node.props.href === f.downloads[0].href && node.props.download === true).length);
+  await f.tick(); assert.equal(f.downloads.length, 1);
   f.click('Record printed labels'); assert.equal(first.printEvents.length, 0); f.dialog().onSubmit({ slots: [2], reason: '' }); await f.flush();
-  assert.equal(first.printEvents.length, 1); assert.deepEqual(first.printEvents[0].successfulSlots, [2]); assert.match(f.text(), /1 saved physical print confirmation/); f.dispose();
+  assert.equal(first.printEvents.length, 1); assert.deepEqual(first.printEvents[0].successfulSlots, [2]); assert.equal(f.downloads.length, 1); assert.match(f.text(), /1 saved physical print confirmation/); f.dispose();
+});
+test('individual download needs one explicit gesture for either saved print format and never downloads during preparation or polling', async () => {
+  for (const format of ['foil', 'original']) {
+    const first = data(), f = await fixture({ sheets: [first] });
+    if (format === 'original') { f.find(node => node.type === 'select' && node.props.value === 'foil')[0].props.onChange({ target: { value: format } }); f.render(); }
+    f.exportState = 'PREPARING'; f.detail().onIndividual(f.detail().item, null); await f.flush();
+    assert.equal(f.downloads.length, 0);
+    const output = first.items[0].exports[0]; assert.equal(output.exportProfileId, api.LABEL_PRINT_FORMATS[format].individual);
+    output.state = 'READY'; await f.tick();
+    assert.equal(f.detail().individualOutput.state, 'READY'); assert.equal(f.downloads.length, 0);
+    f.detail().onIndividual(f.detail().item, f.detail().individualOutput); await f.flush();
+    assert.deepEqual(f.downloads, [{ href: 'https://objects.example/exact.png', filename: '' }]); assert.equal(f.blobs.size, 0);
+    const posts = f.calls.filter(call => call.method === 'POST'); assert.equal(posts.length, 2);
+    assert.ok(posts[1].url.endsWith(`/${output.exportId}/download`)); assert.equal(first.printEvents.length, 0);
+    assert.match(f.text(), new RegExp(`Download ${format === 'foil' ? 'Black ink \\+ transparent foil' : 'Original black, gray \\+ white'} PNG`));
+    await f.tick(); assert.equal(f.downloads.length, 1); f.dispose();
+  }
+});
+test('a lost download reply stays saved without starting a download until its explicit resume', async () => {
+  const first = data(), f = await fixture({ sheets: [first] });
+  f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+  f.postError = { status: 503, code: 'NETWORK_LOST' }; f.click('Download sheet PNG ↓'); await f.flush();
+  const original = f.calls.find(call => call.url.endsWith('/download'));
+  await f.tick(); assert.equal(f.downloads.length, 0); assert.equal(f.calls.filter(call => call.url.endsWith('/download')).length, 1);
+  f.postError = null; f.click('Retry saved request'); await f.flush();
+  const retried = f.calls.filter(call => call.url.endsWith('/download'));
+  assert.equal(retried.length, 2); assert.deepEqual(retried[1].body, original.body);
+  assert.deepEqual(f.downloads, [{ href: 'https://objects.example/exact.png', filename: '' }]);
+  assert.equal(f.button('Retry saved request'), undefined); assert.equal(first.printEvents.length, 0); f.dispose();
+});
+test('invalid signed download replies never activate a link or discard the saved request', async () => {
+  for (const changed of [{ url: 'javascript:alert(1)' }, { expiresAt: new Date(0).toISOString() }, { exportProfileId: api.LABEL_PRINT_FORMATS.foil.individual }]) {
+    const first = data(), f = await fixture({ sheets: [first] });
+    f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+    f.hold = url => url.endsWith('/download') ? Promise.resolve({ url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString(), exportProfileId: api.LABEL_PRINT_FORMATS.foil.sheet, ...changed }) : null;
+    f.click('Download sheet PNG ↓'); await f.flush();
+    assert.equal(f.downloads.length, 0); assert.ok(f.button('Retry saved request'));
+    assert.equal(f.find(node => node.type === 'a' && node.props.download === true).length, 0); f.dispose();
+  }
+});
+test('a late download reply from the prior staff account cannot start a download or show its link', async () => {
+  const first = data(), f = await fixture({ sheets: [first] }); let finish;
+  f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+  f.hold = url => url.endsWith('/download') ? new Promise(resolve => { finish = resolve; }) : null;
+  f.click('Download sheet PNG ↓'); await f.flush(); assert.equal(typeof finish, 'function');
+  f.hold = null; f.sheets = [data(2)]; f.switchStaff(randomUUID()); await f.flush();
+  finish({ url: 'https://objects.example/prior-account.png', expiresAt: new Date(Date.now() + 60000).toISOString(), exportProfileId: api.LABEL_PRINT_FORMATS.foil.sheet }); await f.flush();
+  assert.equal(f.downloads.length, 0); assert.equal(f.find(node => node.type === 'a' && node.props.download === true).length, 0);
+  assert.doesNotMatch(f.text(), /Download requested/); f.dispose();
 });
 test('lost mutation reply stays visible with exact retry and no fresh export is silently submitted', async () => {
   const f = await fixture(); f.postError = { status: 503, code: 'NETWORK_LOST' }; f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
