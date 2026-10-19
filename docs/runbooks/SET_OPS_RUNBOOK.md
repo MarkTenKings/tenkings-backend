@@ -1,6 +1,18 @@
 # Set Ops Runbook
 
-## Label download action — live and authenticated (October 17, 2026 Pacific)
+## Shared variant and sold-comps search identity — live (October 19, 2026 Pacific)
+
+Native main and worker now serve source `3256af83da2d83d48e6c54ec25696ca166990952`, image `sha256:a12972fbb0bb4c71a3c083764bcc6a8ce958c885178b5b72e2b34c945a57eb74`, replacing compact-label native source `aa202590621c907e1e6af2244290c33efae432e7`. Staff/public web remains `455b27ec693cdca09478c20f3dc384bfa6e9d643`. The compact label and one-click download behavior is retained.
+
+Fresh variant-reference searches use manufacturer (Pokémon for Pokémon), year, full saved set, card/player name and one `#` before the saved collector number. Fresh after-approval sold-comps searches use the same identity plus literal `psa` and the saved final ATLAS grade. All eligible printings share one new identity request; their candidate/photo associations remain separate. Exact historical v3 requests, saved references, uncertain-outcome fences, explicit refresh authority and historical market queries/page continuations remain supported. No catalogless fallback or catalog import was added. The previously identified Jaxson Dart checklist gap is unchanged; without eligible catalog candidates, no variant acquisition is dispatched. Reused reference images need not generate a fresh provider query.
+
+Processing reopened after explicit claim-holder release at `2026-10-19T22:16:12.259Z`; independent read-only observation confirmed the holder and exclusive claim locks absent. Final native health at `2026-10-19T22:16:30.458083+00:00` and database postflight at `2026-10-19T22:16:32.877Z` passed. Both services are ready with zero restarts; all 37 retained containers / 3 running match the reviewed plan. Public home and `/admin` return HTTP 200; the unsigned native API correctly refuses with HTTP 401. Controls, ledger, business rows, 20 prior READY market results and saved label artifacts are unchanged. The held census found zero current cards after the owner's deletion. No card was restored, approved or graded by this release; no diagnostic paid provider request was made. Fresh human grading acceptance remains separate.
+
+The owner can resume submitting cards. For a later workflow audit, inspect the new card's saved identity, catalog eligibility, retained/new reference source, human decision, approved grade and persisted market request; distinguish reference reuse from a new provider dispatch. Set operations, inventory, physical printing and NFC rules remain unchanged.
+
+Evidence: `~/.codex/atlas-handoffs/atlas-shared-search-20261019/release-01/`; sanitized final summary SHA256 `21f83b541e3c5bdf9be2bcc8caed973e92159d4253c95c05dfa7fe3affcaf91f`. Older sections below describe dated checkpoints and their historical censuses.
+
+## Prior label download action — live and authenticated (October 17, 2026 Pacific)
 
 Pressing **Download individual PNG** or **Download sheet PNG** now requests the saved file immediately from the button. Previously, the button only obtained a signed URL and displayed a second link above the current scroll position. The corrected action activates that exact validated URL once and leaves the signed link available if the browser does not start the download. The message says “Download requested”; it does not claim that the browser finished saving the file.
 
