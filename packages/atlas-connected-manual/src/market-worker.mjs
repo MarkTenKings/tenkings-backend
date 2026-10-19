@@ -73,9 +73,10 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       requireThat(!leaseLost && await store.bind(job, source), 409, 'MARKET_LEASE_LOST');
       let response = job.response;
       const previous = typeof store.pageContext === 'function' ? await store.pageContext(job) : null;
-      const context = publishedMarketQuery(source, response ? { savedQuery: response.query } : {});
+      const savedQuery = response?.query ?? previous?.response.query;
+      const context = publishedMarketQuery(source, savedQuery === undefined ? {} : { savedQuery });
       const page = previous ? previous.response.pagination.page + 1 : 1;
-      requireThat(!previous || previous.response.query === publishedMarketQuery(source).query
+      requireThat(!previous || previous.response.query === context.query
         && previous.response.pagination.hasNextPage, 409, 'MARKET_NEXT_PAGE_UNAVAILABLE');
       if (!response) {
         // An uncertain dispatch-transaction reply is itself a no-repeat fence.
@@ -87,7 +88,7 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
         responseSaved = true;
       }
       requireThat(response.responsePolicy === 'ATLAS_SLAB_V1', 502, 'MARKET_PROVIDER_POLICY_INVALID');
-      requireThat(!response.pagination || response.query === publishedMarketQuery(source).query && response.pagination.page === page, 502, 'MARKET_PROVIDER_RESULT_INVALID');
+      requireThat(!response.pagination || response.query === context.query && response.pagination.page === page, 502, 'MARKET_PROVIDER_RESULT_INVALID');
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
       const evidence = await labelMarket({ source, response: structuredClone(response), job,

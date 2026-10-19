@@ -98,6 +98,24 @@ test('retained response recovery survives elapsed days without a new search', as
   const previousFailure={...f.rows[0],state:'FAILED',code:'MARKET_PREVIEW_EXPIRED'};assert.equal(marketJobStatus(previousFailure).refreshAction,'RETRY_SAVED_RESPONSE');
 });
 
+test('queued historical first-page response with pagination resumes without another provider request', async () => {
+  const f = await setup();
+  f.rows[0].response = { ...structuredClone(f.original), query: 'Synthetic report',
+    pagination: { page: 1, pageSize: 240, hasNextPage: true, totalResults: '240' } };
+  const before = structuredClone(f.rows[0].response);
+  assert.notEqual(before.query, f.original.query);
+  await f.worker.drainOnce(); assert.equal(f.rows[0].state, 'READY'); assert.equal(f.calls(), 0);
+  assert.deepEqual(f.rows[0].response, before); assert.deepEqual(f.fixture.row, f.before);
+});
+
+test('fresh provider response with pagination must match the query actually dispatched', async () => {
+  const f = await setup();
+  f.original.query = 'Unrelated provider query';
+  f.original.pagination = { page: 1, pageSize: 240, hasNextPage: false, totalResults: '0' };
+  await f.worker.drainOnce(); assert.equal(f.rows[0].state, 'FAILED'); assert.equal(f.calls(), 1);
+  assert.equal(f.rows[0].code, 'MARKET_PROVIDER_RESULT_INVALID'); assert.equal(f.writes(), 0);
+});
+
 
 test('unprocessed historical responses are retained without executing the retired title-only classifier', async () => {
   const f=await setup({legacyResponse:true});f.rows[0].response=structuredClone(f.original);

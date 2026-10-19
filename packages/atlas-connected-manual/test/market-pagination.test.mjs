@@ -8,11 +8,11 @@ import { createMarketWorker, mergeMarketPages } from '../src/market-worker.mjs';
 import { createMarketJobStore } from '../src/market-job-store.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
-async function fixture() {
+async function fixture({ savedQuery } = {}) {
   const f = await publicationFixture(); await f.publication.publish({}, f.cardId, f.actionId);
   const manifest = JSON.parse(f.row.manifest), packet = await f.artifacts.read(manifest.packet.ref,
     { cardId: f.cardId, kind: 'PUBLIC_REPORT', sourceHash: manifest.packet.sourceHash });
-  const source = { packet, publicHash: f.row.public_hash, row: f.row }, context = publishedMarketQuery(source);
+  const source = { packet, publicHash: f.row.public_hash, row: f.row }, context = publishedMarketQuery(source, { savedQuery });
   const response = (page, providerIds) => ({ responsePolicy: 'ATLAS_SLAB_V1', source: 'EBAY_SOLD', engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
     query: context.query, retrievedAt: `2026-10-0${page}T00:00:00.000Z`, pagination: { page, pageSize: 240, hasNextPage: page === 1, totalResults: '3' },
     acquisitionDiagnostics: { returnedItemCount: providerIds.length }, items: providerIds.map((providerItemId, index) => ({
@@ -54,6 +54,50 @@ test('same-query older-page worker survives artifact failure, retains both pages
   assert.deepEqual(x.source.packet, before);
   const wrong = structuredClone(preview); wrong.binding.approvalVersion++;
   assert.throws(() => mergeMarketPages(x.first.preview, { preview: wrong }, x.prior.previewId), { code: 'MARKET_PAGE_MISMATCH' });
+});
+
+test('historical older-page query survives acquisition and saved-response replay without mixing current wording', async () => {
+  const x = await fixture({ savedQuery: 'Synthetic report' });
+  assert.notEqual(x.firstResponse.query, publishedMarketQuery(x.source).query);
+  const job = { request_id: randomUUID(), card_id: x.f.cardId, approval_action_id: x.f.actionId, state: 'QUEUED', response: null };
+  let calls = 0, writes = 0;
+  const store = {
+    async claim() { if (job.state !== 'QUEUED') return null; job.state = 'RUNNING'; return structuredClone(job); },
+    async bind() { return true; }, async renew() { return true; }, async dispatch() { job.state = 'REQUESTED'; return true; },
+    async pageContext() { return x.prior; }, async recordResponse(_job, response) { job.response = structuredClone(response); return true; },
+    async finish(_job, result) { job.result = result.result; job.code = result.code; job.state = result.result ? 'READY' : result.disposition === 'RETRY' ? 'QUEUED' : result.disposition; },
+  };
+  const worker = createMarketWorker({ store, approved: { loadPacket: async () => x.source }, publication: { publish: async () => {} },
+    authorityFor: async () => ({}), labelMarket: x.labels, provider: async (input, options) => {
+      calls++; assert.equal(input.queryOverride, 'Synthetic report'); assert.deepEqual(options, { page: 2 }); return x.nextResponse;
+    }, artifacts: { ...x.f.artifacts, write: async (...args) => { if (++writes === 1) throw Error('storage interrupted'); return x.f.artifacts.write(...args); } } });
+  const previous = structuredClone(x.prior);
+  await worker.drainOnce(); assert.equal(job.state, 'QUEUED'); assert.equal(calls, 1);
+  const retained = structuredClone(job.response);
+  await worker.drainOnce(); assert.equal(job.state, 'READY'); assert.equal(calls, 1); assert.deepEqual(job.response, retained);
+  const preview = await x.f.artifacts.read(job.result.ref, { cardId: x.f.cardId, kind: 'MARKET_PREVIEW', sourceHash: job.result.artifactHash });
+  assert.equal(preview.query, 'Synthetic report'); assert.equal(preview.pagination.page, 2); assert.equal(preview.pages.length, 2);
+  assert.equal(preview.candidates.length, 2); assert.deepEqual(x.prior, previous);
+});
+
+test('historical page continuation rejects a response belonging to a different query or page', async () => {
+  for (const change of [{ query: 'Different saved search' }, { pagination: { page: 3, pageSize: 240, hasNextPage: false, totalResults: '3' } }]) {
+    const x = await fixture({ savedQuery: 'Synthetic report' });
+    const job = { request_id: randomUUID(), card_id: x.f.cardId, approval_action_id: x.f.actionId, state: 'QUEUED',
+      response: { ...x.nextResponse, ...change } }, before = structuredClone(job.response);
+    let providers = 0, labels = 0, writes = 0;
+    const store = {
+      async claim() { if (job.state !== 'QUEUED') return null; job.state = 'RUNNING'; return structuredClone(job); },
+      async bind() { return true; }, async renew() { return true; }, async pageContext() { return x.prior; },
+      async finish(_job, result) { job.code = result.code; job.state = result.result ? 'READY' : result.disposition; },
+    };
+    const worker = createMarketWorker({ store, approved: { loadPacket: async () => x.source }, publication: { publish: async () => {} },
+      authorityFor: async () => ({}), provider: async () => { providers++; assert.fail('Saved response must not dispatch'); },
+      labelMarket: async () => { labels++; assert.fail('Mixed page must not reach labels'); },
+      artifacts: { write: async () => { writes++; assert.fail('Mixed page must not produce a preview'); } } });
+    await worker.drainOnce(); assert.notEqual(job.state, 'READY'); assert.deepEqual(job.response, before);
+    assert.deepEqual({ providers, labels, writes }, { providers: 0, labels: 0, writes: 0 });
+  }
 });
 
 test('page context verifies immutable request and parent receipt within the existing approval', async () => {
