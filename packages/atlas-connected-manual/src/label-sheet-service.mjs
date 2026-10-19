@@ -5,6 +5,7 @@ import { renderLabelSheetPng, renderLabelBlackInkSvg, renderLabelBlackInkPreview
   LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 import { labelFailureHash } from './label-sheet-repository.mjs';
+import { labelReplacementIntent, assertLabelRefreshSnapshot } from './label-replacement-intent.mjs';
 const jigHash = LABEL_JIG_V1.jigHash;
 
 export const LABEL_EXPORT_PROFILES = Object.freeze({ SHEET: LABEL_EXPORT_PROFILE_V1.id, SINGLE: LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id });
@@ -33,15 +34,19 @@ export function createLabelService({ boundary, repository, finishing, storage,
       // This adapter proves exact approval/action/draft lineage and reauthenticates
       // after the immutable public packet is read from object storage.
       const { packet, row } = await finishing.loadPacket(staff, claimed.card_id, claimed.action_id);
-      let result;
+      let result, replacement = null;
       if (claimed.purpose === 'REPRINT') {
         const original = await repository.item(staff, claimed.original_item_id);
-        requireThat(original.state === 'READY' && original.snapshot && digest(original.print_svg) === original.artwork_hash, 409, 'LABEL_REPRINT_SOURCE_INVALID');
-        result = { state: 'READY', snapshot: JSON.parse(original.snapshot), printSvg: original.print_svg, previewSvg: original.preview_svg,
+        replacement = labelReplacementIntent(claimed, original);
+        if (replacement.kind === 'COPY') result = { state: 'READY', snapshot: JSON.parse(original.snapshot), printSvg: original.print_svg, previewSvg: original.preview_svg,
           artworkHash: original.artwork_hash, rendererProfileHash: original.renderer_profile_hash, materialProfileId: original.material_profile_id, jigHash: original.jig_hash };
-      } else {
+        else assertLabelRefreshSnapshot(original, packet);
+      }
+      if (!result) {
         const report = packet.report, material = materials[report.cardProfile];
         requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+        if (replacement?.kind === 'REFRESH') requireThat(replacement.target.rendererProfileHash === LABEL_V4_RENDERER_PROFILE_HASH
+          && replacement.target.materialProfileId === material.id && replacement.target.jigHash === jigHash, 409, 'LABEL_RENDERER_CHANGED');
         attemptedProfile = { ...attemptedProfile, materialProfileId: material.id };
         const rendered = await renderer.label({ identity: report.identity, finalGrade: report.finalGrade,
           reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, cardProfile: report.cardProfile }, { previewMaterial: material.preview });
@@ -149,6 +154,17 @@ export function createLabelService({ boundary, repository, finishing, storage,
       exact(input, ['requestId','expectedLabelHash','reason']); uuid(input.requestId); uuid(itemId); hash(input.expectedLabelHash);
       requireThat(typeof input.reason === 'string' && input.reason.trim() === input.reason && input.reason.length > 0 && input.reason.length <= 500, 400, 'LABEL_REPRINT_REASON_REQUIRED');
       return repository.reprint(staff, itemId, input);
+    },
+    async refreshLayout(staff, itemId, input) {
+      exact(input, ['requestId','expectedLabelHash','expectedRendererProfileHash']); uuid(input.requestId); uuid(itemId);
+      hash(input.expectedLabelHash); hash(input.expectedRendererProfileHash);
+      const original = await repository.item(staff, itemId);
+      const { packet } = await finishing.loadPacket(staff, original.card_id, original.action_id);
+      assertLabelRefreshSnapshot(original, packet);
+      const material = materials[packet.report.cardProfile];
+      requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+      return repository.refreshLayout(staff, itemId, input,
+        { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, materialProfileId: material.id, jigHash });
     },
     runPending({ limit = 4 } = {}) {
       if (running) return running;

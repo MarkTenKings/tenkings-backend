@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { canonical, digest, requireThat, uuid } from '@atlas/manual-service/contract';
+import { LABEL_REFRESH_REASON, labelRefreshRequestId, labelRefreshRequestHash, labelReplacementIntent } from './label-replacement-intent.mjs';
 
 const S = 'atlas_manual_connected';
 const stored = (text, hash) => { requireThat(typeof text === 'string' && digest(text) === hash, 503, 'LABEL_STORED_CONTENT_INVALID'); return JSON.parse(text); };
@@ -83,6 +84,12 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
     requireThat(item, 404, 'LABEL_ITEM_NOT_FOUND'); const published = await source(tx, principal, item.card_id, item.action_id, latest); matches(item, published);
     if (item.snapshot) stored(item.snapshot, item.snapshot_hash);
     item.current = published.latest_action_id === item.action_id; return item;
+  }
+  async function assertRefreshUnprinted(tx, original) {
+    requireThat(!(await tx.$queryRawUnsafe(`SELECT 1 FROM ${S}.label_print_event p JOIN ${S}.label_export e ON e.id=p.export_id
+      WHERE (e.kind='SHEET' AND e.sheet_id=$1::uuid AND $2::integer=ANY(p.successful_slots))
+        OR (e.kind='SINGLE' AND e.item_id=$3::uuid AND 1=ANY(p.successful_slots)) LIMIT 1`, original.sheet_id, original.slot, original.id)).length,
+    409, 'LABEL_REFRESH_ALREADY_PRINTED');
   }
   async function accessible(tx, principal, suppliedIds, strict = true) {
     reviewer(principal); const ids = [...new Set(suppliedIds)];
@@ -224,14 +231,15 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
     claimItem(staff, id, attemptedProfile = null) { return boundary.transaction(staff, async ({ tx, principal }) => {
       await lock(tx, principal.id); const item = await scopedItem(tx, principal, id);
       if (item.state !== 'PENDING_RENDER' || (item.lease_until && new Date(item.lease_until) > new Date())) return null;
+      if (item.purpose === 'REPRINT') labelReplacementIntent(item, await scopedItem(tx, principal, item.original_item_id));
       if (item.attempts >= 5) { await tx.$executeRawUnsafe(`UPDATE ${S}.label_item SET state='NEEDS_LAYOUT',code='LABEL_RENDER_FAILED',claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp(),
         renderer_profile_hash=COALESCE(renderer_profile_hash,$2),jig_hash=COALESCE(jig_hash,$3) WHERE id=$1::uuid`,
       id, attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.jigHash ?? null); return null; }
       // Record the attempted recipe before storage/rendering, including a process
       // crash. A successor's target remains immutable across deployments.
       const [claimed] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET claim_id=$2::uuid,lease_until=clock_timestamp()+interval '2 minutes',attempts=attempts+1,updated_at=clock_timestamp(),
-        renderer_profile_hash=CASE WHEN purpose='LAYOUT_RETRY' THEN renderer_profile_hash ELSE COALESCE($3,renderer_profile_hash) END,
-        jig_hash=CASE WHEN purpose='LAYOUT_RETRY' THEN jig_hash ELSE COALESCE($4,jig_hash) END WHERE id=$1::uuid RETURNING *`,
+        renderer_profile_hash=CASE WHEN purpose IN ('LAYOUT_RETRY','REPRINT') THEN renderer_profile_hash ELSE COALESCE($3,renderer_profile_hash) END,
+        jig_hash=CASE WHEN purpose IN ('LAYOUT_RETRY','REPRINT') THEN jig_hash ELSE COALESCE($4,jig_hash) END WHERE id=$1::uuid RETURNING *`,
       id, randomUUID(), attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.jigHash ?? null);
       return claimed;
     }); },
@@ -241,6 +249,18 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       requireThat(item.claim_id === claimed.claim_id, 409, 'LABEL_CLAIM_CHANGED');
       if (item.purpose === 'LAYOUT_RETRY') requireThat(result.rendererProfileHash === item.renderer_profile_hash
         && result.materialProfileId === item.material_profile_id && result.jigHash === item.jig_hash, 409, 'LABEL_RENDERER_CHANGED');
+      if (item.purpose === 'REPRINT') {
+        const original = await scopedItem(tx, principal, item.original_item_id), intent = labelReplacementIntent(item, original);
+        if (intent.kind === 'REFRESH') {
+          requireThat(result.rendererProfileHash === intent.target.rendererProfileHash
+            && result.materialProfileId === intent.target.materialProfileId && result.jigHash === intent.target.jigHash, 409, 'LABEL_RENDERER_CHANGED');
+          await assertRefreshUnprinted(tx, original);
+        }
+        else requireThat(result.state === 'READY' && canonical(result.snapshot) === original.snapshot
+          && result.printSvg === original.print_svg && result.previewSvg === original.preview_svg && result.artworkHash === original.artwork_hash
+          && result.rendererProfileHash === original.renderer_profile_hash && result.materialProfileId === original.material_profile_id
+          && result.jigHash === original.jig_hash, 409, 'LABEL_REPRINT_SOURCE_INVALID');
+      }
       if (result.state !== 'READY') {
         const [updated] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET state='NEEDS_LAYOUT',code=$2,snapshot=$3,snapshot_hash=$4,renderer_profile_hash=$5,material_profile_id=$6,jig_hash=$7,claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING *`, item.id, result.code ?? 'LABEL_NEEDS_LAYOUT', canonical(result.snapshot), digest(canonical(result.snapshot)), result.rendererProfileHash, result.materialProfileId, result.jigHash);
         return itemView(updated);
@@ -373,6 +393,33 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       const [saved] = await tx.$queryRawUnsafe(`INSERT INTO ${S}.label_item(id,actor_id,access_version,card_id,action_id,approval_version,source_revision,source_hash,report_hash,public_hash,purpose,original_item_id,request_id,request_hash,reason)
         VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,'REPRINT',$11::uuid,$12::uuid,$13,$14) RETURNING *`, randomUUID(), principal.id, principal.accessVersion,
       original.card_id, original.action_id, original.approval_version, original.source_revision, original.source_hash, original.report_hash, original.public_hash, original.id, input.requestId, requestHash, input.reason); return itemView(saved);
+    }); },
+    // Explicit internal operation only. Saved originals, sheet positions, exports
+    // and print/NFC history remain untouched; normal reprint() still copies bytes.
+    refreshLayout(staff, id, input, target) { return boundary.transaction(staff, async ({ tx, principal }) => {
+      reviewer(principal); await lock(tx, principal.id); const original = await scopedItem(tx, principal, id);
+      requireThat(original.state === 'READY' && ['ORIGINAL','LAYOUT_RETRY'].includes(original.purpose)
+        && original.artwork_hash === input.expectedLabelHash && digest(original.print_svg) === original.artwork_hash,
+      409, 'LABEL_REFRESH_SOURCE_CHANGED');
+      const [prior] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_item WHERE actor_id=$1::uuid AND request_id=$2::uuid`, principal.id, input.requestId);
+      if (prior) {
+        const intent = labelReplacementIntent(prior, original);
+        requireThat(intent.kind === 'REFRESH' && input.expectedRendererProfileHash === intent.target.rendererProfileHash
+          && prior.request_hash === labelRefreshRequestHash(id, input, intent.target), 409, 'LABEL_REQUEST_CONFLICT');
+        return itemView(prior);
+      }
+      requireThat(input.expectedRendererProfileHash === target.rendererProfileHash
+        && original.renderer_profile_hash !== target.rendererProfileHash
+        && original.material_profile_id === target.materialProfileId && original.jig_hash === target.jigHash, 409, 'LABEL_RENDERER_CHANGED');
+      requireThat(input.requestId === labelRefreshRequestId(id, input.expectedLabelHash, target), 409, 'LABEL_REQUEST_CONFLICT');
+      const requestHash = labelRefreshRequestHash(id, input, target);
+      await assertRefreshUnprinted(tx, original);
+      const [saved] = await tx.$queryRawUnsafe(`INSERT INTO ${S}.label_item(id,actor_id,access_version,card_id,action_id,approval_version,source_revision,source_hash,report_hash,public_hash,
+        purpose,original_item_id,request_id,request_hash,reason,renderer_profile_hash,material_profile_id,jig_hash)
+        VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,'REPRINT',$11::uuid,$12::uuid,$13,$14,$15,$16,$17) RETURNING *`,
+      randomUUID(),principal.id,principal.accessVersion,original.card_id,original.action_id,original.approval_version,original.source_revision,original.source_hash,original.report_hash,original.public_hash,
+      original.id,input.requestId,requestHash,LABEL_REFRESH_REASON,target.rendererProfileHash,target.materialProfileId,target.jigHash);
+      return itemView(saved);
     }); },
     async reconciliation(staff, { apply = false, cardIds = [], expectedPlanHash = null } = {}) {
       requireThat(Array.isArray(cardIds) && cardIds.length <= 200); cardIds.forEach(uuid);

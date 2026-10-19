@@ -12,6 +12,7 @@ import { canonical, digest, requireThat } from '../../atlas-manual-service/src/c
 import { createIntakeRepository } from '../../atlas-manual-intake/src/repository.mjs';
 import { createLabelRepository, labelFailureHash } from '../src/label-sheet-repository.mjs';
 import { createLabelService } from '../src/label-sheet-service.mjs';
+import { labelRefreshRequestId, labelReplacementIntent } from '../src/label-replacement-intent.mjs';
 import { LABEL_JIG_V1 } from '../../atlas-finishing/src/label-sheet-geometry.mjs';
 import { renderLabelV4, LABEL_V4_RENDERER_PROFILE_HASH } from '../../atlas-finishing/src/label-v4.mjs';
 import { LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 } from '../../atlas-finishing/src/label-sheet.mjs';
@@ -23,7 +24,7 @@ const args = process.argv.slice(2), require = createRequire(import.meta.url);
 const { Client } = require(args[args.indexOf('--pg-module') + 1]);
 const { PrismaClient, Prisma } = require(resolve(root, 'frontend/atlas-app/.generated/staff-database'));
 const cluster = await disposablePostgres(args), checks = [], errors = [], packets = new Map(), loadFailures = new Set();
-const sourceFiles = Object.fromEntries(['src/label-sheet-repository.mjs', 'src/label-sheet-service.mjs'].map(name => [name,
+const sourceFiles = Object.fromEntries(['src/label-sheet-repository.mjs', 'src/label-sheet-service.mjs', 'src/label-replacement-intent.mjs'].map(name => [name,
   createHash('sha256').update(readFileSync(resolve(root, 'packages/atlas-connected-manual', name))).digest('hex')]));
 let admin, prisma, result, labelCalls = 0, packetCalls = 0, storageCalls = 0;
 try {
@@ -248,6 +249,78 @@ try {
   assert.deepEqual(await readExport(sheetOld.exportId), sheetOldReady); assert.deepEqual(await currentSheet(), frozenSheet);
   assert.equal((await admin.query('SELECT count(*)::int n FROM atlas_manual_connected.label_export')).rows[0].n, 4);
   checks.push('legacy and black-only exports coexist as four immutable profile-specific records for the same READY item and frozen sheet; exact request replays preserve old bytes and reject changed semantics');
+
+  const refreshSource = await seed({ pending: true }), oldProfile = digest('owned-previous-compact-recipe');
+  const onlyItem = id => ({ ...makeRepository(), pendingCandidates: async () => [{ id, actor_id: actor, access_version: 1, kind: 'ITEM' }] });
+  await makeService({ repository: onlyItem(refreshSource.id), render: (...args) => ({ ...renderLabelV4(...args), rendererProfileHash: oldProfile }) }).runPending();
+  const refreshParent = await readItem(refreshSource.id); assert.equal(refreshParent.state, 'READY');
+  const parentSheet = await repo.sheet(staff, refreshParent.sheet_id);
+  const oldExport = await service.prepareSheetExport(staff, refreshParent.sheet_id,
+    { requestId: randomUUID(), expectedSheetRevision: parentSheet.revision, exportProfileId: LABEL_BLACK_INK_EXPORT_PROFILE_V1.id });
+  const oldExportBefore = await completeFixtureExport(oldExport);
+  const oldSingle = await service.prepareIndividualExport(staff, refreshParent.id,
+    { requestId: randomUUID(), expectedLabelHash: refreshParent.artwork_hash, exportProfileId: LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1.id });
+  const oldSingleBefore = await completeFixtureExport(oldSingle);
+  const frozenBefore = (await admin.query('SELECT * FROM atlas_manual_connected.label_sheet WHERE id=$1', [refreshParent.sheet_id])).rows[0];
+  const refreshApprovals = await approveRows(), targetRecipe = { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH,
+    materialProfileId: refreshParent.material_profile_id, jigHash: refreshParent.jig_hash };
+  const refreshInput = { requestId: labelRefreshRequestId(refreshParent.id, refreshParent.artwork_hash, targetRecipe),
+    expectedLabelHash: refreshParent.artwork_hash, expectedRendererProfileHash: targetRecipe.rendererProfileHash };
+  const refreshed = await Promise.all([service.refreshLayout(staff, refreshParent.id, refreshInput), makeService().refreshLayout(staff, refreshParent.id, refreshInput)]);
+  assert.deepEqual(refreshed[0], refreshed[1]); assert.equal(refreshed[0].purpose, 'REPRINT');
+  assert.equal((await admin.query('SELECT count(*)::int n FROM atlas_manual_connected.label_item WHERE original_item_id=$1', [refreshParent.id])).rows[0].n, 1);
+  const refreshId = refreshed[0].itemId, refreshClaim = await repo.claimItem(staff, refreshId, attemptedProfile);
+  assert.equal(refreshClaim.renderer_profile_hash, targetRecipe.rendererProfileHash); assert.equal(refreshClaim.jig_hash, targetRecipe.jigHash);
+  await repo.failItem(staff, refreshClaim, { rendererProfileHash: digest('different-attempt'), materialProfileId: 'different-material', jigHash: digest('different-jig') });
+  assert.equal((await readItem(refreshId)).renderer_profile_hash, targetRecipe.rendererProfileHash);
+  await makeService({ repository: onlyItem(refreshId) }).runPending();
+  const compact = await readItem(refreshId); assert.equal(compact.state, 'READY'); assert.equal(compact.attempts, 2);
+  assert.equal(labelReplacementIntent(compact, refreshParent).kind, 'REFRESH'); assert.notEqual(compact.sheet_id, refreshParent.sheet_id);
+  for (const key of ['identity','grade','finalGrade','reportNumber','approvalVersion','reportHref'])
+    assert.deepEqual(JSON.parse(compact.snapshot)[key], JSON.parse(refreshParent.snapshot)[key]);
+  assert.deepEqual(await service.refreshLayout(staff, refreshParent.id, refreshInput), await visibleItem(refreshId).then(({ exports, ...view }) => view));
+  await assert.rejects(service.refreshLayout(staff, refreshParent.id, { ...refreshInput, requestId: randomUUID() }), { code: 'LABEL_REQUEST_CONFLICT' });
+  await assert.rejects(service.refreshLayout(staff, refreshParent.id, { ...refreshInput, expectedRendererProfileHash: digest('stale') }), { code: 'LABEL_REQUEST_CONFLICT' });
+  assert.deepEqual(await readItem(refreshParent.id), refreshParent); assert.deepEqual(await readExport(oldExport.exportId), oldExportBefore);
+  assert.deepEqual(await readExport(oldSingle.exportId), oldSingleBefore);
+  assert.deepEqual((await admin.query('SELECT * FROM atlas_manual_connected.label_sheet WHERE id=$1', [refreshParent.sheet_id])).rows[0], frozenBefore);
+  assert.equal((await repo.export(staff, oldExport.exportId)).row.state, 'READY'); assert.equal((await repo.export(staff, oldSingle.exportId)).row.state, 'READY');
+  assert.deepEqual(await approveRows(), refreshApprovals);
+  checks.push('concurrent explicit compact refresh reserves one REPRINT, pins target through claim/fail/retry, renders same approval and preserves frozen sheet/individual exports and all approvals');
+
+  const ordinary = await repo.reprint(staff, refreshParent.id, { requestId: randomUUID(), expectedLabelHash: refreshParent.artwork_hash, reason: 'Damaged stock' });
+  await admin.query('UPDATE atlas_manual_connected.label_item SET renderer_profile_hash=$2,material_profile_id=$3,jig_hash=$4,attempts=1 WHERE id=$1',
+    [ordinary.itemId, digest('crashed-legacy-attempt'), 'crashed-legacy-material', digest('crashed-legacy-jig')]);
+  const copyCalls = labelCalls;
+  await makeService({ repository: onlyItem(ordinary.itemId), render: () => { throw new Error('ORDINARY_REPRINT_MUST_NOT_RENDER'); } }).runPending();
+  const copied = await readItem(ordinary.itemId); assert.equal(copied.state, 'READY'); assert.equal(labelCalls, copyCalls);
+  for (const key of ['snapshot','snapshot_hash','print_svg','preview_svg','artwork_hash','renderer_profile_hash','material_profile_id','jig_hash']) assert.equal(copied[key], refreshParent[key]);
+  checks.push('ordinary REPRINT with historical crashed attempt fields still copies exact saved snapshot/artwork/profile under real Prisma and installed immutable triggers');
+  await repo.confirmPrint(staff, { requestId: randomUUID(), exportId: oldSingleBefore.id, exportSha256: oldSingleBefore.sha256,
+    manifestHash: oldSingleBefore.manifest_hash, successfulSlots: [1] });
+  const afterSingleTarget = { ...targetRecipe, rendererProfileHash: digest('after-single-print') }, afterSingleInput = {
+    requestId: labelRefreshRequestId(refreshParent.id, refreshParent.artwork_hash, afterSingleTarget), expectedLabelHash: refreshParent.artwork_hash,
+    expectedRendererProfileHash: afterSingleTarget.rendererProfileHash };
+  await assert.rejects(repo.refreshLayout(staff, refreshParent.id, afterSingleInput, afterSingleTarget), { code: 'LABEL_REFRESH_ALREADY_PRINTED' });
+  checks.push('recorded successful individual-export slot 1 also blocks a fresh refresh, independently of sheet-print events');
+
+  const finishRace = await seed({ pending: true });
+  await makeService({ repository: onlyItem(finishRace.id), render: (...args) => ({ ...renderLabelV4(...args), rendererProfileHash: digest('owned-print-race-recipe') }) }).runPending();
+  const raceParent = await readItem(finishRace.id), raceTarget = { ...targetRecipe }, raceInput = {
+    requestId: labelRefreshRequestId(raceParent.id, raceParent.artwork_hash, raceTarget), expectedLabelHash: raceParent.artwork_hash, expectedRendererProfileHash: raceTarget.rendererProfileHash };
+  const raceRefresh = await service.refreshLayout(staff, raceParent.id, raceInput);
+  const raceSheet = await repo.sheet(staff, raceParent.sheet_id), raceExport = await service.prepareSheetExport(staff, raceParent.sheet_id,
+    { requestId: randomUUID(), expectedSheetRevision: raceSheet.revision, exportProfileId: LABEL_BLACK_INK_EXPORT_PROFILE_V1.id });
+  const raceReady = await completeFixtureExport(raceExport);
+  await repo.confirmPrint(staff, { requestId: randomUUID(), exportId: raceReady.id, exportSha256: raceReady.sha256,
+    manifestHash: raceReady.manifest_hash, successfulSlots: [raceParent.slot] });
+  await makeService({ repository: onlyItem(raceRefresh.itemId) }).runPending();
+  const printFenced = await readItem(raceRefresh.itemId); assert.equal(printFenced.state, 'PENDING_RENDER'); assert.equal(printFenced.print_svg, null); assert.equal(printFenced.sheet_id, null);
+  const changedTarget = { ...raceTarget, rendererProfileHash: digest('future-explicit-target') }, changedInput = {
+    requestId: labelRefreshRequestId(raceParent.id, raceParent.artwork_hash, changedTarget), expectedLabelHash: raceParent.artwork_hash, expectedRendererProfileHash: changedTarget.rendererProfileHash };
+  await assert.rejects(repo.refreshLayout(staff, raceParent.id, changedInput, changedTarget), { code: 'LABEL_REFRESH_ALREADY_PRINTED' });
+  assert.deepEqual(await readItem(raceParent.id), raceParent);
+  checks.push('recorded original print blocks fresh refresh and a print after reservation fences finish before any compact artwork or sheet assignment');
 
   assert.deepEqual(await readItem(existing.id), readyBefore); assert.equal(storageCalls, 0);
   const approvalRows = await approveRows(); assert(approvalBefore.every(old => approvalRows.some(row => canonical(row) === canonical(old))));
