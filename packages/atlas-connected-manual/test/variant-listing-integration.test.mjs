@@ -83,7 +83,7 @@ test('official sports metadata and published catalog feed one printing roster re
  const service=createVariantCatalogService({providers:[metadata],listingProvider:provider,now});
  const executeListingSource=async(request,_dispatch,{retainedOnly=false}={})=>{if(journal.has(request.requestKey))return {state:'REUSED',source:journal.get(request.requestKey)};if(retainedOnly)return {state:'MISSING'};const bodyText=JSON.stringify({keyword:request.query,page:1,totalItems:0,hasNextPage:false,items:[]});const source={...responseFor(request),bodyText,sha256:sha(bodyText)};journal.set(request.requestKey,source);return {state:'SAVED',source};};
  const first=await service.prepare({identity:target},{executeListingSource}),second=await service.prepare({identity:target},{executeListingSource});
- assert.equal(journal.size,9);assert.equal(first.candidates.length,9);assert.deepEqual(first,second);assert(first.candidates.every(c=>c.images.length===0&&c.source.provider==='manufacturer_checklist'));
+ assert.equal(journal.size,1);assert.equal(first.candidates.length,9);assert.deepEqual(first,second);assert(first.candidates.every(c=>c.images.length===0&&c.source.provider==='manufacturer_checklist'));
 });
 
 
@@ -100,11 +100,11 @@ test('unknown year prepares manufacturer-backed reference searches before confir
  };
  const first=await service.prepare({identity:target},{executeListingSource});
  assert.equal(target.year,null);assert.equal(first.candidates.length,16);assert.equal(first.candidates[0].identity.year,'2025-26');
- assert.equal(calls.length,48,'Two read-only season/bare probes precede each of sixteen canonical dispatches');assert.equal(calls.filter(c=>c.retainedOnly).length,32);assert.equal(journal.size,16);assert.equal(calls[0].request.identity.year,'2025-26');
+ assert.equal(calls.length,34,'Thirty-two legacy season/bare probes and one current probe precede one shared canonical dispatch');assert.equal(calls.filter(c=>c.retainedOnly).length,33);assert.equal(journal.size,1);assert.equal(calls[0].request.identity.year,'2025-26');
  const known={...target,year:'2025-26'},ordinary=prepareVariantListingRequest(known,{name:'BALL OF DUTY',language:null});
- assert.equal(calls.find(c=>c.request.printing.name==='ball of duty').request.requestKey,ordinary.requestKey);assert.deepEqual(target,original);
+ assert.equal(calls.find(c=>!c.retainedOnly).request.requestKey,ordinary.requestKey);assert.deepEqual(target,original);
  await service.prepare({identity:known,generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});
- assert.equal(journal.size,16);assert.equal(calls.filter(c=>!c.retainedOnly).length,16);
+ assert.equal(journal.size,1);assert.equal(calls.filter(c=>!c.retainedOnly).length,1);
  assert(calls.every(c=>!Object.hasOwn(c.request,'generation')));
 });
 
@@ -134,5 +134,5 @@ test('unknown-year photos and literal Codex readings retain source-year printing
  const again=await restarted.prepare({identity:{...identity,year:selected.year},generation:'7b109de3-c117-49d8-81aa-1221b735b8cb',reuseJobKey:null},{executeListingSource});
  assert.equal(codexChoices(again).find(c=>c.parallel==='ball of duty').key,choice.key);assert.equal(again.referencePhotos.length,1);assert.equal(again.referencePhotos[0].sha256,image.sha256);
  const reprojected=projectCodexReading(reading,again,[]);assert.equal(reprojected.canonicalPrintingKey,choice.key);assert.equal(reprojected.candidateId,again.candidates.find(c=>c.parallel==='BALL OF DUTY').candidateId);
- assert.equal(listingCalls,16);assert.equal(imageCalls,1);assert.equal(journal.size,16);assert.equal(identity.year,null);
+ assert.equal(listingCalls,1);assert.equal(imageCalls,1);assert.equal(journal.size,1);assert.equal(identity.year,null);
 });

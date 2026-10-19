@@ -5,8 +5,10 @@ import { researchImageOptions } from '../../card-research-core/src/evidence.mjs'
 import { boundedProviderOperation, readBoundedProviderBody } from '../../card-catalog-evidence/src/provider-media.mjs';
 import { validVariantReferenceListing } from '../../card-catalog-evidence/src/variant-review.mjs';
 import { resolveVariantSourceSeasonYear } from '../../card-catalog-evidence/src/variant-season.mjs';
+import { cardIdentitySearchQuery } from './sold-query-identity.mjs';
 
-export const VARIANT_LISTING_REVISION = 'variant-reference-photos-v3';
+export const VARIANT_LISTING_REVISION = 'variant-reference-photos-v4';
+export const VARIANT_LISTING_LEGACY_REVISION = 'variant-reference-photos-v3';
 export const VARIANT_LISTING_LIMITS = Object.freeze({results:240,responseResults:240,sourceBytes:1024*1024,
  imageBytes:2*1024*1024,imagePixels:16000000,imageRequests:240,images:240,totalImageBytes:12*1024*1024,
  timeoutMs:45000,imageTimeoutMs:10000,ttlMs:86400000});
@@ -52,13 +54,15 @@ export function variantChecklistListingYears(input,candidate){
  if(season.startingYearAlias)years.push(season.year.slice(0,4));
  return [...new Set(years)];
 }
-/** A single concise search per printing. Search wording is discovery, never
- * proof of printing, grade or authenticity. Raw cards remain eligible. */
-export function prepareVariantListingRequest(input,printing=null,{generation=null}={}){
+/** One full-identity search supplies every catalog printing. The v3 branch is
+ * an exact historical reader; search wording never proves a printing. */
+export function prepareVariantListingRequest(input,printing=null,{generation=null,revision=VARIANT_LISTING_REVISION}={}){
+ check([VARIANT_LISTING_REVISION,VARIANT_LISTING_LEGACY_REVISION].includes(revision),'VARIANT_LISTING_REQUEST_CHANGED');
+ const legacy=revision===VARIANT_LISTING_LEGACY_REVISION;
  const fields=['category','name','year','setName','cardNumber','manufacturer','language'];
  check(input&&Object.keys(input).every(k=>fields.includes(k)),'VARIANT_LISTING_IDENTITY');
  const normalized=normalizeVariantIdentity(Object.fromEntries(Object.entries(input).map(([k,v])=>[k,typeof v==='string'?normalize(v):v])));
- const identity=normalizeVariantIdentity(Object.fromEntries(Object.entries(normalized).map(([k,v])=>[k,v===null||k==='category'?v:v.toLowerCase()])));
+ const identity=legacy?normalizeVariantIdentity(Object.fromEntries(Object.entries(normalized).map(([k,v])=>[k,v===null||k==='category'?v:v.toLowerCase()]))):normalized;
  check(identity.name&&identity.setName&&identity.cardNumber,'VARIANT_LISTING_IDENTITY_INCOMPLETE');
  check(generation===null||typeof generation==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(generation),'VARIANT_LISTING_REFRESH_GENERATION');
  if(printing!==null){
@@ -69,13 +73,13 @@ export function prepareVariantListingRequest(input,printing=null,{generation=nul
  const finish=printing?.name.replace(/\bholofoil\b|\bholographic\b/g,'holo').replace(/^expansion stamp$/,'stamped')
   .replace(/^base cards?(?: [ivx]+)?(?:\s+|$)/,'').replace(/^chrome rookie red rc variation$/,'red rc');
  const term=/^(?:base|normal|base cards?)$/.test(finish??'')?null:finish;
- const query=[identity.name,identity.cardNumber.replace(/^#/,'').trim(),term,printing?.language&&printing.language!=='en'?languageNames[printing.language]??printing.language:null].filter(Boolean).join(' ');
+ const query=legacy?[identity.name,identity.cardNumber.replace(/^#/,'').trim(),term,printing?.language&&printing.language!=='en'?languageNames[printing.language]??printing.language:null].filter(Boolean).join(' '):cardIdentitySearchQuery(identity);
  const url=new URL(endpoint);url.search=new URLSearchParams({keyword:query,ebaySite:'ebay.com',count:'240',page:'1',sold:'true',includeCompleteListing:'true',exactMatch:'true',hydrateBoa:'false'}).toString();
- const request={schemaVersion:'variant-listing-request/v1',revision:VARIANT_LISTING_REVISION,parserRevision:'photo-evidence-v3',identity,...(printing?{printing}:{}),...(generation?{generation}:{}),query,url:url.href};
+ const request={schemaVersion:'variant-listing-request/v1',revision,parserRevision:'photo-evidence-v3',identity,...(legacy&&printing?{printing}:{}),...(generation?{generation}:{}),query,url:url.href};
  return {...request,requestKey:`variant-listing-source:v1:${hash(canonicalJson(request))}`};
 }
 function validateRequest(request){
- check(request?.revision===VARIANT_LISTING_REVISION&&same(request,prepareVariantListingRequest(request.identity,request.printing??null,{generation:request.generation??null})),'VARIANT_LISTING_REQUEST_CHANGED');return request;
+ check(request&&same(request,prepareVariantListingRequest(request.identity,request.printing??null,{generation:request.generation??null,revision:request.revision})),'VARIANT_LISTING_REQUEST_CHANGED');return request;
 }
 function validateSource(request,source){
  validateRequest(request);
@@ -92,7 +96,7 @@ function referenceListing(raw){
 }
 export function projectVariantListingSource(request,source){
  const payload=validateSource(request,source);
- return {schemaVersion:'variant-listing-evidence/v1',revision:VARIANT_LISTING_REVISION,requestKey:request.requestKey,identity:request.identity,query:request.query,source:{url:source.url,sha256:source.sha256,capturedAt:source.capturedAt},authority:'provider_candidate',coverage:'partial',requiresReview:true,
+ return {schemaVersion:'variant-listing-evidence/v1',revision:request.revision,requestKey:request.requestKey,identity:request.identity,query:request.query,source:{url:source.url,sha256:source.sha256,capturedAt:source.capturedAt},authority:'provider_candidate',coverage:'partial',requiresReview:true,
  listings:payload.items.map((value,sourceIndex)=>{const raw=value&&typeof value==='object'&&!Array.isArray(value)?value:{};return {sourceIndex,listing:referenceListing(raw),imageOptions:researchImageOptions(raw,true).image_options,image:null};}),excluded:[],warnings:['LISTING_CLAIMS_UNREVIEWED','REFERENCE_USAGE_NOT_REVIEWED',...(payload.hasNextPage||payload.totalItems>payload.items.length?['SOURCE_TRUNCATED']:[])]};
 }
 const listingOperation=(_request,signal,_timeoutMs,work)=>work(signal??new AbortController().signal);
@@ -206,6 +210,7 @@ export function createVariantListingProvider({ apiKey = null, cache = null, fetc
   return Object.freeze({
     async fetchSource(request, { signal } = {}) {
       validateRequest(request);
+      check(request.revision===VARIANT_LISTING_REVISION,'VARIANT_LISTING_READ_ONLY');
       check(apiKey !== null, 'VARIANT_LISTING_CREDENTIAL_MISSING');
       return listingOperation(request, signal, timeoutMs, async active => {
         active.throwIfAborted();

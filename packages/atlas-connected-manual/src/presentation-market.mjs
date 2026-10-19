@@ -5,6 +5,7 @@ import { inspectStaffInventoryResearchSale, inspectStaffInventoryResearchTitle }
 import { EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
 
 import { publishedResearchQuery } from './research-market-query.mjs';
+import { cardIdentitySearchQuery } from './sold-query-identity.mjs';
 
 export const MARKET_UNAVAILABLE_REASONS = Object.freeze(['PROVIDER_NOT_CONFIGURED', 'PROVIDER_CONFIGURATION_ERROR', 'PROVIDER_QUOTA_REACHED', 'PROVIDER_REQUEST_LIMITED']);
 
@@ -31,10 +32,8 @@ function inspectIdentity(description, candidate) {
   return evidence;
 }
 
-const queryText = value => String(value ?? '').normalize('NFC').replace(/[—–]/g, '-').replace(/\s+/g, ' ').trim();
-
-/** Search using the approved identity and its recorded final award. The generic
- * graded term does not translate that award into another company's grade. */
+/** Search using the approved identity and its recorded final award as the PSA
+ * search target. This does not translate the award into another company's grade. */
 export function publishedMarketQuery({ packet, publicHash }, { savedQuery, savedInput } = {}) {
   requireThat(typeof publicHash === 'string' && /^[a-f0-9]{64}$/.test(publicHash)
     && digest(JSON.stringify(packet)) === publicHash, 409, 'MARKET_PUBLICATION_MISMATCH');
@@ -43,11 +42,9 @@ export function publishedMarketQuery({ packet, publicHash }, { savedQuery, saved
     ...(parsed.report.cardProfile === 'SPORTS' ? { playerName: identity.playerName, manufacturer: identity.manufacturer }
       : { cardName: identity.cardName }), parallel: identity.parallel, cardNumber: identity.cardNumber,
     ...('insert' in identity ? { insert: identity.insert } : {}) };
-  const cardNumber = queryText(identity.cardNumber).replace(/^(?:#\s*)+/, '');
-  const setName = queryText(String(identity.productSet ?? '').replace(/[—–]/g, ' ').replace(/\s+-\s+/g, ' '));
-  const currentQuery = [parsed.report.cardProfile === 'SPORTS' ? identity.manufacturer : 'Pokémon', identity.year,
-    ...(parsed.report.cardProfile === 'POKEMON' ? [setName] : []), identity.playerName ?? identity.cardName,
-    cardNumber ? `#${cardNumber}` : null, 'graded', parsed.report.finalGrade].map(queryText).filter(Boolean).join(' ');
+  const identityQuery = cardIdentitySearchQuery({ category: parsed.report.cardProfile, manufacturer: identity.manufacturer,
+    year: identity.year, setName: identity.productSet, name: identity.playerName ?? identity.cardName, cardNumber: identity.cardNumber });
+  const currentQuery = [identityQuery, 'psa', parsed.report.finalGrade].filter(value => value !== '').join(' ');
   // Saved queries are immutable evidence bound by the job/preview to this exact
   // publication. Recovery and page continuation preserve that exact query.
   const query = savedQuery ?? currentQuery;

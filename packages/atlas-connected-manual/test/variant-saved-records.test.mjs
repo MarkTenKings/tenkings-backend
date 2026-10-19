@@ -28,12 +28,12 @@ test('saved LaMelo two-photo library crosses only the manufacturer-sourced 2025/
  assert(!variantCodexAliases(unrelated).some(c=>c.key===previous.key));
 });
 
-test('official Ball of Duty printings produce distinct concise searches and literal finish association',async()=>{
+test('official Ball of Duty printings share one identity search while literal finish association remains distinct',async()=>{
  const old=saved.lamelo,identity={...old.catalog.candidates[0].identity,year:null};
  const found=await createManufacturerChecklistVariantProvider().prepare(identity);
  const catalog=createVariantReviewSnapshot({identity,candidates:found.candidates,referencePhotos:old.catalog.referencePhotos,capturedAt:old.catalog.capturedAt});
  const queries=found.candidates.map(c=>prepareVariantListingRequest(c.identity,{name:c.parallel,language:c.identity.language}).query);
- assert.equal(new Set(queries).size,16);assert(queries.includes('lamelo ball bd-13 ball of duty blue refractor'));
+ assert.equal(new Set(queries).size,1);assert.equal(queries[0],'Topps 2025-26 Topps Chrome Ball of Duty LaMelo Ball #BD-13');
  const r={...reading(old.referenceLabels.readings[0]),candidateKey:null,labelText:'2025 TOPPS CHROME LaMelo Ball BALL OF DUTY #BD-13 BLUE REFRACTOR'};
  assert.equal(projectCodexReading(r,catalog,[]).candidateId,null,'Saved text without source sport remains visible and unassociated');
  const scoped={...r,labelText:r.labelText+' BASKETBALL'};

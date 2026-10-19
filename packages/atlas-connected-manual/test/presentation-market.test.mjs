@@ -146,31 +146,31 @@ test('malformed or double-counted reclassification exclusions cannot become trus
 test('ATLAS acquisition uses approved Pokémon metadata and award without translating grade or adding a variant', async () => {
   const f = await pokemonFixture({ productSet: '151', parallel: 'English Cosmos Holofoil' }), before = structuredClone(f.packet);
   const context = publishedMarketQuery(f);
-  assert.equal(context.query, `Pokémon 2023 151 Pikachu #025/165 graded ${f.packet.report.finalGrade}`);
+  assert.equal(context.query, `Pokémon 2023 151 Pikachu #025/165 psa ${f.packet.report.finalGrade}`);
   assert.deepEqual(context.input, { matchingPolicy: 'ATLAS_IDENTITY_V1', category: 'POKEMON', cardName: 'Pikachu', year: '2023',
     productSet: '151', parallel: 'English Cosmos Holofoil', cardNumber: '025/165', queryOverride: context.query });
   assert.deepEqual(f.packet, before);
   assert.equal(buildEbaySoldCompsV2Query({ ...context.input, queryOverride: undefined }), '2023 151 Pikachu English Cosmos Holofoil #025/165');
   const base = await pokemonFixture({ parallel: 'English Base' });
-  assert.equal(publishedMarketQuery(base).query, `Pokémon 2023 Scarlet & Violet 151 Pikachu #025/165 graded ${base.packet.report.finalGrade}`);
+  assert.equal(publishedMarketQuery(base).query, `Pokémon 2023 Scarlet & Violet 151 Pikachu #025/165 psa ${base.packet.report.finalGrade}`);
 });
 
-test('sports retrieval omits product and printing phrases without losing a player surname or changing saved identity', async () => {
+test('sports retrieval includes the saved full set without adding printing fields or changing saved identity', async () => {
   const f = await fixture();
   f.packet.report.identity = { year: '2025', manufacturer: 'Topps', productSet: '2025 Topps Chrome — Ball of Duty',
     playerName: 'LaMelo Ball', cardNumber: 'BD-013', insert: 'Ball of Duty', parallel: 'Ball of Duty' };
   f.publicHash = digest(JSON.stringify(f.packet));
   const before = structuredClone(f.packet), context = publishedMarketQuery(f);
-  assert.equal(context.query, `Topps 2025 LaMelo Ball #BD-013 graded ${f.packet.report.finalGrade}`);
+  assert.equal(context.query, `Topps 2025 2025 Topps Chrome Ball of Duty LaMelo Ball #BD-013 psa ${f.packet.report.finalGrade}`);
   assert.deepEqual(f.packet, before); assert.equal(context.input.cardNumber, 'BD-013');
   f.packet.report.identity = { year: '2025', manufacturer: 'Panini', productSet: '2025 Panini Donruss Optic Football',
     playerName: 'Jaxson Dart', cardNumber: 'DTBH-JDT', insert: 'Donruss Threads', parallel: 'Base Donruss Threads Red' };
   f.publicHash = digest(JSON.stringify(f.packet));
-  assert.equal(publishedMarketQuery(f).query, `Panini 2025 Jaxson Dart #DTBH-JDT graded ${f.packet.report.finalGrade}`);
+  assert.equal(publishedMarketQuery(f).query, `Panini 2025 2025 Panini Donruss Optic Football Jaxson Dart #DTBH-JDT psa ${f.packet.report.finalGrade}`);
   f.packet.report.identity = { year: '1990', manufacturer: 'Fleer', productSet: 'Fleer Basketball',
     playerName: 'Alex English', cardNumber: '001', insert: null, parallel: 'Base Card' };
   f.publicHash = digest(JSON.stringify(f.packet));
-  assert.equal(publishedMarketQuery(f).query, `Fleer 1990 Alex English #001 graded ${f.packet.report.finalGrade}`);
+  assert.equal(publishedMarketQuery(f).query, `Fleer 1990 Fleer Basketball Alex English #001 psa ${f.packet.report.finalGrade}`);
 });
 
 test('explicit research preserves historical paid query and signed preview remains selectable', async () => {
