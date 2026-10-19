@@ -1,6 +1,18 @@
 # Ten Kings Master Product Context
 
-## One-click label downloads — live and authenticated (October 17, 2026 Pacific)
+## Current compact Sports/Pokémon labels — October 19, 2026
+
+Native main and worker now serve source `aa202590621c907e1e6af2244290c33efae432e7`, image `sha256:9fa08f4e276f1083fc6fbf9d290c92cacf28336874428006e17d1ddee72d15de`. Staff/public web remains `455b27ec693cdca09478c20f3dc384bfa6e9d643`; customer deployment, gateways and security bindings are unchanged. This native release retains the sold-query behavior and existing one-click downloads.
+
+New Sports and Pokémon labels use the compact detail caption: **card number and optional confirmed variant · year and short manufacturer**. Product/set names and base placeholders are omitted from that printed caption. The complete approved identity stays in the saved source and report; scoring, final awards, approvals, certificate/report versions, physical geometry and black/transparent export behavior are unchanged. Renderer profile is `atlas-v4-outlined-label-compact-caption-v2`, hash `5110522c9355f9af82617675e59a5e40da33f3100c7daf2675109856883c6610`.
+
+The three current saved labels were refreshed once through linked replacements from their same approvals. At `2026-10-19T18:17:50.273Z`, all three were READY: Pokémon Sheet **007**, slot **1 Sylveon ex (9)** and slot **2 Alakazam ex (9)**; Sports Sheet **008**, slot **1 Jaxson Dart (8)**. The originals and frozen Sheets **005/006**, their saved exports, approved identities/grades/reports and canonical NFC rows are retained. Ordinary reprints still copy their original saved artwork exactly.
+
+Actual signed-in owner Chrome one-click download of the compact Sylveon ex PNG passed: export `c930de80-9966-4437-8f28-a58632e97e13`, 186,264 bytes, SHA256 `c21b1d52c1d44f3ecb49ad847990012018c095267481be93795fa33cf0ea0d6a`. It exactly matches the qualified local render. All five actual individual/sheet PNGs are now downloaded and byte-identical to the local files that passed black-only RGB, binary alpha, dimensions and unused-sheet-slot checks. The remaining four were first obtained through the normal authorized export/download service. After the owner made Chrome available, all five normal UI Download buttons were accepted: each completed in Chrome and saved the exact verified PNG, with no fallback link clicked. Browser receipt `acceptance/browser-downloads.json` SHA256 `f231b8b9d7996bfb41c9776f4044898fe64fc2e22d261708e643e6c9739a59f5` records the completed acceptance. All five exports are READY, and normal export sealed Sheets **007/008**. The operator package is `~/Downloads/ATLAS_Compact_Foil_Labels_2026-10-19/`. The same eufyMake E1, gold Sports foil, holographic Pokémon foil and 310 × 400 mm jig remain in use. Physical scale/origin, detail, coverage and adhesion still require operator samples on both materials; this release records no physical print or NFC write. Evidence: `~/.codex/atlas-handoffs/atlas-compact-labels-20261019/`; audit: `docs/atlas/audits/2026-10-19/compact-label-captions.md`.
+
+The dated release sections below are historical checkpoints; the current runtime and acceptance state are recorded above.
+
+## Prior one-click label downloads — live and authenticated (October 17, 2026 Pacific)
 
 Pressing **Download individual PNG** or **Download sheet PNG** now requests the saved file immediately from the button. Previously, the button only obtained a signed URL and displayed a second link above the current scroll position. The corrected action activates that exact validated URL once and leaves the signed link available if the browser does not start the download. The message says “Download requested”; it does not claim that the browser finished saving the file.
 

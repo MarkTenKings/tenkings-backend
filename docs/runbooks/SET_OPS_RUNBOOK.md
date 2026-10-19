@@ -1,6 +1,24 @@
 # Set Ops Runbook
 
-## Label download action — live and authenticated (October 17, 2026 Pacific)
+## Current ATLAS compact label sheets — October 19, 2026
+
+Compact labels are READY for the three current approved cards. Use the new sheets for this layout: **Sheet 007, holographic Pokémon:** slot 1 Sylveon ex (9), slot 2 Alakazam ex (9); **Sheet 008, gold Sports:** slot 1 Jaxson Dart (8). Their detail captions are:
+
+| Card | Compact caption |
+| --- | --- |
+| Sylveon ex | `#086/191 ENGLISH HOLOFOIL · 2024 POKÉMON` |
+| Alakazam ex | `#215/091 ULTRA RARE (FULL ART) · 2024 POKÉMON` |
+| Jaxson Dart | `#7 PRIZM · 2025 PANINI` |
+
+Original frozen Sheets **005/006** and their prior downloads remain historical saved artifacts. The replacements retain the same full approved identities, grades, report versions and NFC canonical records. No review, grade approval or card recreation is needed. Standard replacement/reprint requests continue to copy the selected saved original artwork; they are not a general layout-upgrade control.
+
+Native source is `aa202590621c907e1e6af2244290c33efae432e7`, image `9fa08f4e…`; staff/public web remains `455b27ec693cdca09478c20f3dc384bfa6e9d643`. **Black ink + transparent foil** remains the default. Preserve the full transparent canvas: individual **68.342 × 20.082 mm**, sheet **310 × 400 mm**, 50 positions. Normal export freezes its sheet snapshot; later approvals use a compatible open sheet. The compact Sylveon one-click download passed in owner Chrome and is saved as `~/Downloads/ATLAS-single-c930de80-9966-4437-8f28-a58632e97e13.png` (186,264 bytes; SHA256 `c21b1d52c1d44f3ecb49ad847990012018c095267481be93795fa33cf0ea0d6a`). All five actual individual/sheet files are now downloaded and byte-identical to their black/transparent pixel- and geometry-qualified local renders, with unused sheet slots clear. The two remaining individual files and both sheets were retrieved through the normal authorized export/download service. All five exports are READY; Sheets **007/008** are now SEALED. All five normal browser Download buttons now have actual owner-Chrome acceptance, in addition to the normal service/export/download checks. Every download completed with the exact verified PNG bytes; no fallback link was clicked. The final browser is on Sheet 008 with Jaxson’s compact caption visible in Print ink preview. Use the five actual files in `~/Downloads/ATLAS_Compact_Foil_Labels_2026-10-19/`.
+
+Use the same E1, gold and holographic blanks and jig. Existing physical qualification requirements are unchanged: confirm import dimensions, origin/registration, coverage, fine detail and adhesion on actual samples before a full jig run. Software READY/download status is not a physical-print confirmation. No physical print or NFC write was performed by this change. Audit: `docs/atlas/audits/2026-10-19/compact-label-captions.md`.
+
+The dated release sections below are historical checkpoints; the current runtime and acceptance state are recorded above.
+
+## Prior label download action — live and authenticated (October 17, 2026 Pacific)
 
 Pressing **Download individual PNG** or **Download sheet PNG** now requests the saved file immediately from the button. Previously, the button only obtained a signed URL and displayed a second link above the current scroll position. The corrected action activates that exact validated URL once and leaves the signed link available if the browser does not start the download. The message says “Download requested”; it does not claim that the browser finished saving the file.
 
