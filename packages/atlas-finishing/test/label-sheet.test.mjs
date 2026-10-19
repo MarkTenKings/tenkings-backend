@@ -53,9 +53,9 @@ test('partial 800 ppi export retains the full canvas and exact first/last clockw
 });
 
 // This corpus covers every accepted grade in both categories, long accepted
-// names/metadata and full twelve-hex certificates. The mixed-sheet golden
-// includes the approved compact 8.5/9.5 typography. Unaffected individual
-// fixtures retain their original strip-renderer byte goldens below.
+// names/metadata and full twelve-hex certificates. The mixed-sheet and individual
+// goldens include the compact caption and the prior 8.5/9.5 typography. Captured
+// with pinned Node 22 after inspecting the actual individual and sheet rasters.
 function mixedSheet() {
   return Array.from({ length: 50 }, (_, i) => {
     const cardProfile = i % 2 ? 'POKEMON' : 'SPORTS';
@@ -70,12 +70,12 @@ function mixedSheet() {
   });
 }
 
-test('bounded clipped strips preserve the mixed 50-label golden and original unaffected individual bytes', async () => {
+test('bounded clipped strips preserve the compact-caption mixed 50-label and individual goldens', async () => {
   const { renderLabelV4Png, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 } = await import('../src/label-sheet.mjs');
   const items = mixedSheet();
   for (const category of ['SPORTS', 'POKEMON']) assert.equal(new Set(items.filter(item => item.source.cardProfile === category).map(item => item.source.finalGrade)).size, 19);
   const result = await renderLabelSheetPng(items);
-  assert.equal(result.sha256, '9091008d13d8ac37bc1c37cb1d0534daeaa15dc17753012b6e6812f59d2afc62');
+  assert.equal(result.sha256, 'ea954122d4127304dd9e4dce6cb77181a4d4a7609134b49d12252d1d064138d1');
   assert.equal(result.manifest.exportProfileId, 'atlas-v4-sheet-800ppi-diagnostic-v2');
   assert.equal(result.manifest.rasterReceipt.rasterizer, 'sharp-0.33.5-clipped-strip-png-v2');
   assert.ok(result.manifest.rasterReceipt.rasterizedTiles > 50);
@@ -102,10 +102,10 @@ test('bounded clipped strips preserve the mixed 50-label golden and original una
   assert.equal(row, 12598);
   assert.equal(LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.rasterizer, 'sharp-0.33.5-strip-png-v1');
   assert.equal(LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.version, 1);
-  for (const [index, expected] of [[0, '87190ba49a5a5882f0432a32df83fc857a4e472fbc576cdcf9e272b3a6015803'],
-    [1, '8de8d059aca7d4a961c5b42178d1c4f7dc9306aacf5c5e506b630a1019bfc04f']]) {
+  for (const [index, expected] of [[0, '53ea0533b8f8dac55c827bad64849095b490ba04417146056b675471265b532c'],
+    [1, '171ea459aa888bf0f13aa595362799699a04fefb103005296dcb9d758a7704ad']]) {
     const individual = await renderLabelV4Png(items[index]);
-    assert.equal(individual.sha256, expected, '2400ppi individual bytes remain identical to the original worker');
+    assert.equal(individual.sha256, expected, '2400ppi individual bytes match the inspected compact-caption output');
     assert.equal(individual.manifest.rasterReceipt.rasterizedTiles, 0);
   }
 });

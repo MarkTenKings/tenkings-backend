@@ -46138,3 +46138,12 @@ Node 22.23.2 focused qualification passed **58/58 tests, zero failures/skips**, 
 ## 2026-10-19T17:49:18.578488+00:00 — Compact caption change authorized; current source integrated
 
 Owner approved restoring the original compact V4 detail caption for Sports and Pokemon: card number plus optional confirmed variant, then year and short manufacturer; omit product/set from print caption and omit base placeholders. Full report/source identity remains unchanged. Integrated the already-live sold-query source6c6d183b with the one-click label branch, retaining both append-only session histories. Renderer implementation and existing-label successor handling are being qualified locally before any release. No deployment, restart, database mutation, approval or physical-print action occurred during this integration.
+
+
+## 2026-10-19 — Compact Sports/Pokémon label captions prepared locally
+
+User approved restoring the original compact caption: `#card number [optional variant] · year short manufacturer`. The V4 renderer now omits product/set from the printed caption, uses exact known Pokémon/Panini America/Topps company display aliases, and omits whitespace-normalized Base/None/N/A placeholders. Unknown manufacturers and legitimate variant wording remain intact; the complete approved identity is retained in the source snapshot and report. No grading or approval code changed.
+
+New renderer profile `atlas-v4-outlined-label-compact-caption-v2`, SHA256 `5110522c9355f9af82617675e59a5e40da33f3100c7daf2675109856883c6610`, separates new artwork from saved snapshots. The historical SVG reader format, physical dimensions, cuts, grade/certificate artwork and black/transparent export conversion are retained. A real prior long-caption SVG fixture proves both historical original/foil sheet consumers remain supported. Pinned Node22 finishing suite passed 87/87; the final whitespace-placeholder refinement passed 13/13 focused caption/overflow tests. Actual individual and 50-position raster proofs were inspected before updating affected caption goldens.
+
+Root visually inspected Sports and Pokémon compact foil previews at `~/.codex/atlas-handoffs/atlas-compact-labels-20261019/visual-proof/`; sample captions are `#7 PRIZM · 2025 PANINI` and `#086/191 ENGLISH HOLOFOIL · 2024 POKÉMON`. These are local renderer proofs, not production replacement/download acceptance. Existing saved-label replacement support is still being prepared; no production writes, deployment, physical print or NFC action occurred in this step.

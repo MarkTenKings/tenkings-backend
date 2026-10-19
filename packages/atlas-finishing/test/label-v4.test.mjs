@@ -36,7 +36,7 @@ async function gradeInkColumns(svg) {
     top: column.top * 20.082 / info.height, bottom: column.bottom * 20.082 / info.height })), pixelMm: Math.max(68.342 / info.width, 20.082 / info.height) };
 }
 
-test('only 8.5 and 9.5 change saved artwork; every other grade preserves print and both previews byte-for-byte', () => {
+test('the retained Fleer specimen preserves prior artwork bytes except the already revised 8.5 and 9.5 grade paths', () => {
   assert.notEqual(LABEL_V4_RENDERER_PROFILE_HASH, previousArtwork.rendererProfileHash, 'new artwork requires a new recipe identity');
   for (const [grade, expected] of Object.entries(previousArtwork.grades)) {
     const affected = [8.5, 9.5].includes(Number(grade));
@@ -83,7 +83,7 @@ test('pinned fonts reproduce supplied V4 specimen headline metrics and overflow 
 
 test('complete source and explicit domain attention survive long fields and unsupported glyphs', () => {
   for (const [field, value, code] of [['playerName', 'Giannis Antetokounmpo', 'NAME_OVERFLOW'], ['playerName', '皮卡丘', 'UNSUPPORTED_GLYPH'],
-    ['productSet', 'Very long exact confirmed product name '.repeat(8), 'METADATA_OVERFLOW']]) {
+    ['parallel', 'Very long exact confirmed variant name '.repeat(8), 'METADATA_OVERFLOW']]) {
     const input = fixture({ identity: { ...fixture().identity, [field]: value } }), result = renderLabelV4(input);
     assert.equal(result.state, 'NEEDS_LAYOUT'); assert.equal(result.diagnostics.code, code);
     assert.deepEqual(result.source, input); assert.equal(result.printSvg, undefined);

@@ -1,14 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import sharp from 'sharp';
-import { renderLabelV4, LABEL_V4_RENDERER_PROFILE } from '../src/label-v4.mjs';
+import { renderLabelV4, LABEL_V4_RENDERER_PROFILE, LABEL_V4_RENDERER_PROFILE_HASH } from '../src/label-v4.mjs';
+import { validateLabelV4Artwork, renderLabelBlackInkSvg, renderLabelSheetSvg } from '../src/label-sheet.mjs';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const packet = identity => ({ identity, cardProfile: 'POKEMON', finalGrade: 8.5, reportNumber: 'ATLAS-0123456789AB', approvalVersion: 1 });
 const identities = [
   { cardName: 'Sylveon ex', year: '2024', manufacturer: 'The Pokémon Company International', productSet: 'Scarlet & Violet—Surging Sparks', cardNumber: '086/191', parallel: 'English Holofoil' },
   { cardName: 'Articuno', year: '2022', manufacturer: 'The Pokémon Company International', productSet: 'Sword & Shield—Silver Tempest', cardNumber: '036/195', parallel: 'English Cosmos Holofoil' },
+];
+const overflowIdentities = [
+  { ...identities[0], parallel: 'English Special Illustration Rare Holofoil · Red' },
+  { ...identities[0], manufacturer: 'Unknown Independent Trading Card Company' },
 ];
 function part(svg, name) {
   const start = svg.indexOf(`<g data-part="${name}"`); assert.ok(start >= 0);
@@ -17,19 +24,34 @@ function part(svg, name) {
   throw new Error('UNBALANCED_GROUP');
 }
 
-test('full Pokémon identity fits three metadata lines without aliases, omissions, stretching or undersized text', () => {
+test('ordinary Pokémon captions use the short maker and omit product set while preserving the full approved source', () => {
   for (const identity of identities) {
     const source = packet(identity), result = renderLabelV4(source, { previewMaterial: 'holo' });
     assert.equal(result.state, 'READY'); assert.deepEqual(result.source, source);
+    assert.notEqual(result.source.identity, source.identity);
+    assert.equal(result.diagnostics.metadata.text, `#${identity.cardNumber} ${identity.parallel.toUpperCase()} · ${identity.year} POKÉMON`);
+    assert.equal(result.diagnostics.textLayout, undefined);
+    assert.ok(result.diagnostics.metadata.inkHeightMm >= 1 && result.diagnostics.metadata.inkHeightMm <= 1.5);
+    assert.equal(result.source.identity.manufacturer, identity.manufacturer);
+    assert.equal(result.source.identity.productSet, identity.productSet);
+    assert.equal(result.source.finalGrade, 8.5);
+    assert.equal(renderLabelV4(source, { previewMaterial: 'gold' }).printSvg, result.printSvg);
+  }
+});
+
+test('long approved variants and unknown manufacturers retain bounded readable wrapping with no clipping or text omission', () => {
+  for (const identity of overflowIdentities) {
+    const source = packet(identity), result = renderLabelV4(source, { previewMaterial: 'holo' });
+    assert.equal(result.state, 'READY'); assert.deepEqual(result.source, source);
     const layout = result.diagnostics.textLayout;
-    assert.equal(layout.version, 'full-identity-three-line-v1'); assert.equal(layout.metadata.length, 3);
-    assert.equal(layout.wrapping, 'SEMANTIC_FIELDS');
+    assert.equal(layout.version, 'compact-caption-three-line-v2'); assert.ok(layout.metadata.length >= 2 && layout.metadata.length <= 3);
+    assert.equal(layout.wrapping, 'TOKEN_WRAP');
     assert.equal(layout.name.map(line => line.text).join(' '), identity.cardName.toUpperCase());
-    assert.deepEqual(layout.metadata.map(line => line.text), [`#${identity.cardNumber} ${identity.parallel}`, `${identity.year} ${identity.manufacturer}`, identity.productSet].map(text => text.toUpperCase()));
-    assert.equal(layout.metadata.map(line => line.text).join(' '), result.diagnostics.metadata.text.replace(' · ', ' '), 'a line break replaces only the generated field delimiter');
+    assert.equal(layout.metadata.map(line => line.text).join(' '), result.diagnostics.metadata.text);
     assert.ok(layout.metadata.every(line => !/^[·&]|[·&]$/u.test(line.text)), 'no separator is stranded to gain a tiny type-size difference');
-    assert.ok(result.diagnostics.metadata.text.includes(identity.manufacturer.toUpperCase()));
-    assert.ok(result.diagnostics.metadata.text.includes(identity.productSet.toUpperCase()));
+    assert.ok(result.diagnostics.metadata.text.includes(identity.parallel.toUpperCase()));
+    if (identity.manufacturer.startsWith('Unknown')) assert.ok(result.diagnostics.metadata.text.includes(identity.manufacturer.toUpperCase()));
+    assert.ok(!result.diagnostics.metadata.text.includes(identity.productSet.toUpperCase()));
     assert.equal(result.source.finalGrade, 8.5);
     for (const line of layout.name) assert.ok(line.heightMm >= 2.8 && line.heightMm <= 3.6);
     for (const line of layout.metadata) assert.ok(line.heightMm >= 1 && line.heightMm <= 1.5);
@@ -48,7 +70,7 @@ test('full Pokémon identity fits three metadata lines without aliases, omission
 });
 
 test('overflow name and metadata retain every opaque glyph pixel through physical cuts and the full ink mask', async () => {
-  for (const identity of identities) {
+  for (const identity of overflowIdentities) {
     const result = renderLabelV4(packet(identity));
     const defs = result.printSvg.match(/<defs>([^]*?)<\/defs>/)[1];
     for (const name of ['name', 'metadata']) {
@@ -61,7 +83,7 @@ test('overflow name and metadata retain every opaque glyph pixel through physica
   }
 });
 
-test('existing short labels preserve prior PRINT and both material preview bytes, including half grades and null identity', () => {
+test('compact captions update formerly short labels, ignore set length, and preserve null-identity artwork bytes', () => {
   const previous = [
     { source: { ...packet({ playerName: 'Kobe Bryant', year: '1996–97', manufacturer: 'Topps', productSet: 'Basketball', cardNumber: '138' }), cardProfile: 'SPORTS' },
       print: '8d0004c3de99fa168b9f53359e8173b87be87dd1fc8f16bae4d4b7304bd955d7', gold: '008269a7333fdf65e9430eb212598e63a3c6cf96dbfccee1dae3ce797525ae61', holo: '108bf0f4cbed960f2cf0f18fcd3d2128c78e29c7145b51e7450e40ddab12e4e3' },
@@ -72,45 +94,67 @@ test('existing short labels preserve prior PRINT and both material preview bytes
   ];
   for (const fixture of previous) for (const previewMaterial of ['gold', 'holo']) {
     const rendered = renderLabelV4(fixture.source, { previewMaterial });
-    assert.equal(sha(rendered.printSvg), fixture.print); assert.equal(sha(rendered.previewSvg), fixture[previewMaterial]);
+    const compare = fixture.source.identity.productSet ? assert.notEqual : assert.equal;
+    compare(sha(rendered.printSvg), fixture.print); compare(sha(rendered.previewSvg), fixture[previewMaterial]);
     assert.equal(rendered.diagnostics.textLayout, undefined);
+    const longSet = renderLabelV4({ ...fixture.source, identity: { ...fixture.source.identity, productSet: 'Retained complete product name '.repeat(16) } }, { previewMaterial });
+    assert.equal(longSet.printSvg, rendered.printSvg); assert.equal(longSet.previewSvg, rendered.previewSvg);
   }
 });
 
-test('overflow stays explicit when full content cannot fit and null identity never acquires a name', () => {
-  for (const productSet of ['W'.repeat(150), 'Official full product name '.repeat(18)]) {
-    const source = packet({ ...identities[0], productSet }), result = renderLabelV4(source);
+test('overflow stays explicit when a caption field cannot fit and null identity never acquires a name', () => {
+  for (const field of ['parallel', 'manufacturer']) for (const value of ['W'.repeat(150), 'Full confirmed display detail '.repeat(16)]) {
+    const source = packet({ ...identities[0], [field]: value }), result = renderLabelV4(source);
     assert.equal(result.state, 'NEEDS_LAYOUT'); assert.equal(result.diagnostics.code, 'METADATA_OVERFLOW');
     assert.deepEqual(result.source, source); assert.equal(result.printSvg, undefined);
   }
   const source = packet({ ...identities[0], cardName: null }), result = renderLabelV4(source);
   assert.equal(result.state, 'READY'); assert.deepEqual(result.source, source);
   assert.equal(part(result.printSvg, 'name'), '<g data-part="name"></g>');
-  assert.equal(result.diagnostics.metadata.lines.join(' '), result.diagnostics.metadata.text.replace(' · ', ' '));
+  assert.equal(result.diagnostics.metadata.text, '#086/191 ENGLISH HOLOFOIL · 2024 POKÉMON');
   assert.equal(LABEL_V4_RENDERER_PROFILE.metadataOverflowRules.maximumLines, 3);
 });
 
 test('semantic wrapping preserves punctuation inside an approved variant and keeps the year with its maker', () => {
-  const identity = { ...identities[0], parallel: 'Holo · Red' }, result = renderLabelV4(packet(identity));
+  const identity = { ...identities[0], parallel: 'English Holofoil · Red', manufacturer: 'Specialist Card Maker' }, result = renderLabelV4(packet(identity));
   assert.equal(result.state, 'READY'); assert.equal(result.diagnostics.textLayout.wrapping, 'SEMANTIC_FIELDS');
-  assert.deepEqual(result.diagnostics.metadata.lines, ['#086/191 HOLO · RED', '2024 THE POKÉMON COMPANY INTERNATIONAL', 'SCARLET & VIOLET—SURGING SPARKS']);
-  assert.equal(result.source.identity.parallel, 'Holo · Red');
+  assert.deepEqual(result.diagnostics.metadata.lines, ['#086/191 ENGLISH HOLOFOIL · RED', '2024 SPECIALIST CARD MAKER']);
+  assert.equal(result.source.identity.parallel, 'English Holofoil · Red');
 });
 
 test('overflow measurement uses the same Unicode normalization as its outlined glyphs without changing source', () => {
-  const identity = { ...identities[0], manufacturer: identities[0].manufacturer.normalize('NFD') };
-  const result = renderLabelV4(packet(identity)), composed = renderLabelV4(packet(identities[0]));
-  assert.equal(result.state, 'READY'); assert.deepEqual(result.source.identity, identity);
-  assert.equal(result.printSvg, composed.printSvg); assert.equal(result.previewSvg, composed.previewSvg);
-  assert.equal(result.diagnostics.metadata.inkHeightMm, composed.diagnostics.metadata.inkHeightMm);
+  for (const original of [identities[0], { ...overflowIdentities[1], manufacturer: 'Pokémon Independent Trading Card Company' }]) {
+    const identity = { ...original, manufacturer: original.manufacturer.normalize('NFD') };
+    const result = renderLabelV4(packet(identity)), composed = renderLabelV4(packet(original));
+    assert.equal(result.state, 'READY'); assert.deepEqual(result.source.identity, identity);
+    assert.equal(result.printSvg, composed.printSvg); assert.equal(result.previewSvg, composed.previewSvg);
+    assert.equal(result.diagnostics.metadata.inkHeightMm, composed.diagnostics.metadata.inkHeightMm);
+  }
 });
 
 test('the bounded 128-token search retains oversized source and refuses text that cannot fit', () => {
   assert.equal(LABEL_V4_RENDERER_PROFILE.metadataOverflowRules.maximumTokens, 128);
   for (const [count, word] of [[128, 'I'], [128, 'WWW'], [129, 'I']]) {
-    const source = packet({ cardName: 'Mew', productSet: Array(count).fill(word).join(' ') });
+    const source = packet({ cardName: 'Mew', parallel: Array(count).fill(word).join(' ') });
     const result = renderLabelV4(source);
     assert.equal(result.state, 'NEEDS_LAYOUT'); assert.equal(result.diagnostics.code, 'METADATA_OVERFLOW');
     assert.deepEqual(result.source, source); assert.equal(result.printSvg, undefined);
   }
+});
+
+test('retained pre-compact PRINT bytes remain valid for original and black-ink exports without rerendering their source', () => {
+  // Captured from renderer profile 4b2e6e37 before the compact-caption change.
+  const printSvg = gunzipSync(readFileSync(new URL('./label-v4-previous-caption.svg.gz', import.meta.url))).toString('utf8');
+  const artworkHash = '5a862f7cd2dd6c3e5e0d43ad4b3b7a00184bea931fe4164fbb06e396505e1428';
+  const saved = { printSvg, artworkHash, rendererProfileHash: '4b2e6e37a9207cbb6224bd599065b9c95183a60bf8ee699836ef9c25a4dd7ed5' };
+  assert.equal(sha(printSvg), artworkHash); assert.equal(validateLabelV4Artwork(saved), printSvg);
+  assert.notEqual(LABEL_V4_RENDERER_PROFILE_HASH, saved.rendererProfileHash);
+  assert.equal(LABEL_V4_RENDERER_PROFILE.version, 'atlas-v4-outlined-label-compact-caption-v2');
+  assert.equal(LABEL_V4_RENDERER_PROFILE.metadataCaptionRules.includeProductSet, false);
+  const current = renderLabelV4(packet(identities[0]));
+  const withoutDynamicText = svg => svg.replace(part(svg, 'name'), 'NAME').replace(part(svg, 'metadata'), 'METADATA');
+  assert.equal(withoutDynamicText(current.printSvg), withoutDynamicText(printSvg), 'prior artwork differs only in the compact caption and its associated text layout');
+  assert.match(renderLabelBlackInkSvg(saved), /data-print-mode="BLACK_INK_TRANSPARENT"/);
+  for (const blackInkTransparent of [false, true]) assert.match(renderLabelSheetSvg([{ ...saved, slot: 1 }], { blackInkTransparent }), /data-slot="1"/);
+  assert.equal(saved.printSvg, printSvg); assert.equal(saved.artworkHash, artworkHash);
 });

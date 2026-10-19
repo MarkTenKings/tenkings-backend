@@ -19,8 +19,23 @@ const headline = fontkit.create(asset('fonts/Montserrat-variable.ttf')).getVaria
 const detailFont = fontkit.create(asset('fonts/RobotoCondensed-variable.ttf'));
 const detail = detailFont.getVariation({ wght: 700 });
 const halfGradeFont = detailFont.getVariation({ wght: 600 });
+// Exact display aliases only. Unknown manufacturers keep their approved name;
+// neither the card profile nor product set supplies a missing manufacturer.
+const manufacturerAliases = Object.freeze({
+  'POKEMON': 'POKÉMON',
+  'THE POKEMON COMPANY': 'POKÉMON',
+  'THE POKÉMON COMPANY': 'POKÉMON',
+  'THE POKEMON COMPANY INTERNATIONAL': 'POKÉMON',
+  'THE POKÉMON COMPANY INTERNATIONAL': 'POKÉMON',
+  'PANINI AMERICA': 'PANINI',
+  'PANINI AMERICA, INC.': 'PANINI',
+  'TOPPS COMPANY': 'TOPPS',
+  'THE TOPPS COMPANY': 'TOPPS',
+  'THE TOPPS COMPANY, INC.': 'TOPPS',
+});
+const omittedVariants = Object.freeze(['', 'base', 'base card', 'none', 'n/a']);
 export const LABEL_V4_RENDERER_PROFILE = Object.freeze({
-  version: 'atlas-v4-outlined-label-v1', physicalWidthMm: 68.342, physicalHeightMm: 20.082,
+  version: 'atlas-v4-outlined-label-compact-caption-v2', physicalWidthMm: 68.342, physicalHeightMm: 20.082,
   fontkit: '2.0.4', headlineWeight: 900, detailWeight: 700, shaping: 'fontkit-layout-kern-disabled-v1',
   name: { boxWidthMm: 28.5, boxHeightMm: 7.65, targetInkHeightMm: 3.6, minimumInkHeightMm: 2.8 },
   grade: 'original-whole-grades-and-compact-full-height-half-grades-v2',
@@ -28,8 +43,10 @@ export const LABEL_V4_RENDERER_PROFILE = Object.freeze({
     apertureRightMm: 56.35, labelRightMm: 68.342, caption: false },
   certificate: 'full-cert-arc-v1', alpha: 'straight-rgba-alpha-threshold-128-v1',
   certificateRules: { baselineRadiusMm: 6.78, maximumArcDeg: 120, targetInkHeightMm: 0.99, minimumInkHeightMm: 0.85 },
+  metadataCaptionRules: { version: 'card-variant-year-short-manufacturer-v1', includeProductSet: false, manufacturerAliases,
+    variantOmission: { values: omittedVariants, normalization: 'trim-collapse-whitespace-lowercase-v1' } },
   metadataRules: { widthMm: 28.5, targetInkHeightMm: 1.5, minimumInkHeightMm: 1, topMm: 12.8 },
-  metadataOverflowRules: { version: 'full-identity-three-line-v1', leftMm: 15.8, widthMm: 28.5, topMm: 4.55, bottomMm: 14.3,
+  metadataOverflowRules: { version: 'compact-caption-three-line-v2', leftMm: 15.8, widthMm: 28.5, topMm: 4.55, bottomMm: 14.3,
     maximumLines: 3, maximumTokens: 128, semanticReadabilityToleranceMm: 0.05,
     nameLineGapMm: 0.45, metadataLineGapMm: 0.2, nameMetadataGapMm: 0.3 },
   assetHashes: provenance.files,
@@ -125,18 +142,21 @@ function gradeOutline(grade) {
   return `<g transform="translate(${n(57.25 + (9.47 - width) / 2)},4.5) scale(${n(sx)},${n(-sy)}) translate(${n(-full.b.minX)},${n(-full.b.maxY)})">${full.paths}</g>`;
 }
 
-function metadataFor(identity) {
-  const variant = [...new Set([identity.parallel, identity.insert].filter(value => value && !/^(base|base card|none|n\/a)$/i.test(value)))].join(' · ');
-  const product = [...new Set([identity.manufacturer, identity.productSet].filter(Boolean))].join(' ');
+function metadataFieldsFor(identity) {
+  const variant = [...new Set([identity.parallel, identity.insert].filter(value => value
+    && !omittedVariants.includes(value.trim().replace(/\s+/gu, ' ').toLowerCase())))].join(' · ');
+  const makerKey = identity.manufacturer?.normalize('NFC').trim().replace(/\s+/gu, ' ').toUpperCase();
+  const maker = Object.hasOwn(manufacturerAliases, makerKey) ? manufacturerAliases[makerKey] : identity.manufacturer;
   return [[identity.cardNumber ? `#${identity.cardNumber.replace(/^#/, '')}` : null, variant].filter(Boolean).join(' '),
-    [identity.year, product].filter(Boolean).join(' ')].filter(Boolean).join(' · ').toUpperCase();
+    [identity.year, maker].filter(Boolean).join(' ')].filter(Boolean).map(text => text.toUpperCase());
 }
 
 // Only used when the original one-line metadata cannot meet its 1 mm minimum.
-// Keep every approved field and use uniform glyph scaling in the original area.
+// Keep every compact caption field and use uniform glyph scaling in the original
+// area. The complete approved identity remains in the separate source snapshot.
 // A semantic field break replaces its generated display delimiter with a newline;
 // punctuation inside an approved field is retained verbatim.
-function fitOverflowText(name, metadata, identity) {
+function fitOverflowText(name, metadata, metadataFields) {
   const rules = LABEL_V4_RENDERER_PROFILE.metadataOverflowRules;
   const words = metadata.trim().split(/\s+/u);
   if (words.length > rules.maximumTokens) return null;
@@ -180,13 +200,7 @@ function fitOverflowText(name, metadata, identity) {
         orphanSeparators: lines.filter(line => /^[·&]|[·&]$/u.test(line.text)).length });
     }
   };
-  const variants = [...new Set([identity.parallel, identity.insert].filter(value => value && !/^(base|base card|none|n\/a)$/i.test(value)))];
-  const products = [...new Set([identity.manufacturer, identity.productSet].filter(Boolean))];
-  const semanticLines = [
-    [identity.cardNumber ? `#${identity.cardNumber.replace(/^#/, '')}` : null, variants.join(' · ')].filter(Boolean).join(' '),
-    [identity.year, products[0]].filter(Boolean).join(' '), products.slice(1).join(' '),
-  ].filter(Boolean).map(text => text.toUpperCase());
-  consider(semanticLines.map(text => ({ text, ratio: measure(text, detail) })), true);
+  consider(metadataFields.map(text => ({ text, ratio: measure(text, detail) })), true);
   // At most 128 tokens: 8,128 possible two/three-line arrangements. Reject
   // prefixes/suffixes that cannot meet 1 mm before measuring their middles;
   // this uses actual font bounds, not character-count or average-width guesses.
@@ -252,12 +266,13 @@ export function renderLabelV4(input, { previewMaterial = 'gold', certificateLayo
     const nameHeight = fitted.shapes.length * fitted.inkHeightMm + (fitted.shapes.length - 1) * 0.45;
     const nameTop = 4.55 + (7.65 - nameHeight) / 2;
     let namePaths = fitted.shapes.map((value, index) => place(value, 15.8, nameTop + index * (fitted.inkHeightMm + 0.45), fitted.inkHeightMm)).join('');
-    const metadata = metadataFor(identity), metadataShape = metadata ? shape(metadata, detail) : null;
+    const metadataFields = metadataFieldsFor(identity), metadata = metadataFields.join(' · ');
+    const metadataShape = metadata ? shape(metadata, detail) : null;
     const metadataHeight = metadataShape ? Math.min(1.5, 28.5 * metadataShape.height / metadataShape.width) : 0;
     diagnostics.metadata = { text: metadata, inkHeightMm: n(metadataHeight) };
     let metadataPaths = metadataShape ? place(metadataShape, 15.8, 12.8 + (1.5 - metadataHeight) / 2, metadataHeight) : '';
     if (metadataShape && metadataHeight < 1) {
-      const overflow = fitOverflowText(name, metadata, identity);
+      const overflow = fitOverflowText(name, metadata, metadataFields);
       if (!overflow) return attention('METADATA_OVERFLOW');
       const boxes = values => values.map(({ paths, ...box }) => box);
       diagnostics.textLayout = { version: overflow.version, wrapping: overflow.wrapping, name: boxes(overflow.name), metadata: boxes(overflow.metadata) };
@@ -278,6 +293,8 @@ export function renderLabelV4(input, { previewMaterial = 'gold', certificateLayo
     const defs = `${vectors.clips}${clearance}<mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="68.342" height="20.082"><rect width="68.342" height="20.082" fill="white"/><g fill="black" color="black">${staticInk}<g data-part="grade">${grade}</g><g data-part="caption">${caption}</g><g data-part="name">${namePaths}</g><g data-part="certificate">${cert.paths}</g></g></mask>`;
     const ink = `<g clip-path="url(#body)" mask="url(#ink)"><rect width="68.342" height="20.082" fill="#000000"/>${vectors.grayDetails}<g data-part="metadata" fill="white">${metadataPaths}</g></g>`;
     const title = `${name ? `${name}, ` : ''}grade ${finalGrade}, ${reportNumber}, version ${approvalVersion}`;
+    // This marker is the retained SVG reader format. The separate renderer
+    // profile version/hash identifies the compact caption recipe and caches.
     const wrap = (purpose, content) => `<svg xmlns="http://www.w3.org/2000/svg" width="68.342mm" height="20.082mm" viewBox="0 0 68.342 20.082" data-atlas-artwork="${purpose}" data-renderer="atlas-v4-outlined-label-v1" role="img"><title>${esc(title)}</title>${content}</svg>`;
     const printSvg = wrap('PRINT', `<defs>${defs}</defs>${ink}`);
     const colors = previewMaterial === 'gold' ? ['#c99c3d', '#ecd296', '#b78b32'] : ['#7ddfe7', '#c8a4ec', '#f1b6d4'];
