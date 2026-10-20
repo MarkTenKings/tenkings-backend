@@ -11,11 +11,13 @@ const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve()
 const options = (signal = new AbortController().signal, priority = 0) => ({ signal, priority, parse: value => value });
 const ok = value => ({ ok: true, status: 200, json: async () => value });
 
-test('actual native two-reader gate rejects four parallel grants, while the shared loader admits them without a refusal', async t => {
+test('actual native two-reader gate rejects four parallel grants, while the shared loader admits them without a refusal', { timeout: 10000 }, async t => {
   const key = Buffer.alloc(32, 17); let active = 0, peak = 0, refused = 0;
+  let releaseReaders = deferred(), twoReaders = deferred(); const twoRefusals = deferred();
   const handler = createManualPublicHandler({ key, reader: { async read(claims) {
     active++; peak = Math.max(peak, active);
-    await new Promise(resolve => setTimeout(resolve, 20)); active--;
+    if (active === 2) twoReaders.resolve();
+    await releaseReaders.promise; active--;
     return { contentType: 'application/json', bytes: Buffer.from(JSON.stringify({ token: claims.request.token })) };
   } } });
   const server = createServer((req, res) => { void handler(req, res); });
@@ -26,7 +28,7 @@ test('actual native two-reader gate rejects four parallel grants, while the shar
       const req = request({ host: '127.0.0.1', port: server.address().port, path: '/api/internal/atlas/manual-public', method: 'POST',
         signal: init.signal, headers: { ...init.headers, host: 'private.atlasgrading.com' } }, res => {
         const parts = []; res.on('data', part => parts.push(part)); res.on('error', reject);
-        res.on('end', () => { if (res.statusCode === 503) refused++;
+        res.on('end', () => { if (res.statusCode === 503 && ++refused === 2) twoRefusals.resolve();
           resolve(new Response(Buffer.concat(parts), { status: res.statusCode, headers: res.headers })); });
       }); req.on('error', reject); req.end(init.body);
     }));
@@ -35,11 +37,17 @@ test('actual native two-reader gate rejects four parallel grants, while the shar
     catch { return { ok: false, status: 503 }; }
   };
   const tokens = ['A', 'B', 'C', 'D'].map(value => 'ar_' + value.repeat(24));
-  const old = await Promise.all(tokens.map(fetchGrant));
+  const oldPending = Promise.all(tokens.map(fetchGrant));
+  // Hold the admitted pair until both excess requests have actually failed.
+  // CPU/network scheduling cannot turn the four-request burst into serial work.
+  await Promise.all([twoReaders.promise, twoRefusals.promise]); releaseReaders.resolve();
+  const old = await oldPending;
   assert.equal(old.filter(value => value.status === 503).length, 2); assert.equal(peak, 2);
-  refused = 0;
+  refused = 0; peak = 0; releaseReaders = deferred(); twoReaders = deferred();
   const load = createPublicImageAccessLoader({ fetchImpl: fetchGrant, retryDelays: [] });
-  const current = await Promise.all(tokens.map(token => load(token, options())));
+  const currentPending = Promise.all(tokens.map(token => load(token, options())));
+  await twoReaders.promise; releaseReaders.resolve();
+  const current = await currentPending;
   assert.deepEqual(current.map(value => value.token), tokens); assert.equal(refused, 0); assert.equal(peak, 2);
 });
 
