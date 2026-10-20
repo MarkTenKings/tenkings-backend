@@ -1,5 +1,17 @@
 # Ten Kings Master Product Context
 
+## Current public ATLAS showcase — October 20, 2026
+
+AtlasGrading.com now serves public source `eafcec149196f1918b0d56b8814f323dd76c079d`, deployment `dpl_DZF3UG5iDrpJPAxxUcJQ5KUf6uJz` / `atlas-grading-public-ne8q8othu-ten-kings.vercel.app`, homepage package `56c03a479d0d827e`. All four public aliases and the production target are verified; enabled PublicReaderControl is revision **96** with its existing configuration hash.
+
+The owner-approved lineup is Black Diamond Michael Jordan **8** in the hero (“SEE WHY / IT’S AN 8.”), Fleer Jordan #273 **7** in Beyond the Grade, red-border Jordan **7** in Fingerprint, and Jalen Hurts Purple X-Refractor **9** in Connected Proof. Each section uses its own current approved report and original photos, saved findings, measurements and fingerprint. Swap an approved card, including Pokémon, through `frontend/atlas-public/lib/showcase-selections.mjs`; change token/version/publicHash together, rebuild the homepage package, and verify both sides and inspection before release. No retired card/report is restored. This supersedes all older headline and archived-card showcase instructions.
+
+Public image requests now share two admission slots, prioritize both originals before optional presentation, and retry temporary503 responses within one bounded deadline. Manual side retry retains the healthy photo. **81/81** integrated tests pass. Canonical postflight verified all four packets/reports, all eight original photo hashes, exact homepage/module bytes and preserved staff/customer authentication. Browser checked live desktop/390px homepage, distinct section inspections, red Jordan’s empty Back fingerprint, and the exact versioned NFC-style report URL loading Front/Back automatically without Retry. A physical tag tap is not claimed. An existing phone SSR hydration warning remains: unchanged `PublicEvidenceExplorer.jsx:40` derives initial media state from window; the report recovers automatically and the photos/controls work. That separate viewer issue is recorded in the audit.
+
+Only the public deployment/control changed. Staff stays `455b27ec` / `dpl_63s5oMwUBCL1Xyx5xtqPPPAXpbU4`; customer stays `c68e9ea7` / `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5`. Fresh reconciliation corrected the older native handoff: current shared-search native is `3256af83da2d83d48e6c54ec25696ca166990952`, image `sha256:a12972fbb0bb4c71a3c083764bcc6a8ce958c885178b5b72e2b34c945a57eb74`, main `8a7831d5…`, worker `36eb8585…`. Its exact37-container inventory, proxy, current pair, zero restarts and unsigned401 are retained before/after this website release. No native restart, migration, card/grade/approval/publication, label or NFC write occurred.
+
+Evidence: `~/.codex/atlas-handoffs/atlas-showcase-20261020/`. Audit: `docs/atlas/audits/2026-10-20/website-showcase-restoration.md`. Earlier dated release sections below are historical checkpoints even where their headings originally said “current.” Set Ops behavior is unchanged.
+
 ## Current compact Sports/Pokémon labels — October 19, 2026
 
 Native main and worker now serve source `aa202590621c907e1e6af2244290c33efae432e7`, image `sha256:9fa08f4e276f1083fc6fbf9d290c92cacf28336874428006e17d1ddee72d15de`. Staff/public web remains `455b27ec693cdca09478c20f3dc384bfa6e9d643`; customer deployment, gateways and security bindings are unchanged. This native release retains the sold-query behavior and existing one-click downloads.
