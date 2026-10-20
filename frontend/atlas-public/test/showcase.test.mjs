@@ -151,3 +151,25 @@ test('empty fingerprint raster stays transparent and abort prevents any raster w
  assert.equal((await fetchShowcaseAsset(asset,{signal:new AbortController().signal})).type,'image/png');assert.deepEqual(calls,[]);
  const stopped=new AbortController();stopped.abort();await assert.rejects(fetchShowcaseAsset(asset,{signal:stopped.signal}),{name:'AbortError'});
 });
+
+
+test('verified originals return exact bytes without a CSP-forbidden blob fetch and dispose their temporary URL',async t=>{
+ const previousLocation=globalThis.location,previousFetch=globalThis.fetch;
+ const create=URL.createObjectURL,revoke=URL.revokeObjectURL;let created=0,revoked=0,calls=0;
+ t.after(()=>{if(previousLocation===undefined)delete globalThis.location;else globalThis.location=previousLocation;globalThis.fetch=previousFetch;URL.createObjectURL=create;URL.revokeObjectURL=revoke;});
+ globalThis.location={origin:'https://atlasgrading.com'};
+ globalThis.fetch=async()=>{throw Error('CSP forbids fetching blob URLs');};
+ URL.createObjectURL=value=>{created++;return create.call(URL,value);};URL.revokeObjectURL=value=>{revoked++;revoke.call(URL,value);};
+ const bytes=Buffer.from('RIFFsyntWEBPexact saved bytes'),sha256=digest(bytes),publicHash='b'.repeat(64),publicToken='ar_'+'D'.repeat(24);
+ const src=`/api/reports/${publicToken}/images/FRONT?v=1`,storage='https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/fixture.webp?signature=synthetic';
+ const asset={kind:'SHOWCASE_ORIGINAL',src,side:'FRONT',publicToken,approvalVersion:1,publicHash,sha256,bytes:bytes.length};
+ const grant={version:'atlas-approved-image-access-v1',publicToken,approvalVersion:1,publicHash,side:'FRONT',image:{url:storage,sha256,byteCount:bytes.length,mime:'image/webp',width:1350,height:1858}};
+ let payload=bytes;
+ const fetcher=async url=>{calls++;if(url===src+'&delivery=direct')return new Response(JSON.stringify(grant),{headers:{'content-type':'application/json'}});
+  assert.equal(url,storage);return new Response(payload,{headers:{'content-type':'image/webp','content-length':String(payload.length)}});};
+ const blob=await fetchShowcaseAsset(asset,{signal:new AbortController().signal,fetcher});
+ assert.equal(blob.type,'image/webp');assert.deepEqual(Buffer.from(await blob.arrayBuffer()),bytes);assert.equal(created,1);assert.equal(revoked,1);assert.equal(calls,2);
+ payload=Buffer.from(bytes);payload[payload.length-1]^=1;
+ await assert.rejects(fetchShowcaseAsset(asset,{signal:new AbortController().signal,fetcher}),{code:'VERIFIED_IMAGE_HASH'});
+ assert.equal(created,1);assert.equal(revoked,1);
+});

@@ -70,10 +70,13 @@ export async function fetchShowcaseAsset(asset, { signal, fetcher } = {}) {
       sha256: asset.sha256, byteCount: asset.bytes }) });
   // Byte count, exact SHA-256, MIME and deadline remain the existing verifier's
   // responsibility. Blob URLs are local ownership, never saved authority.
+  let blob;
   const verified = await loadVerifiedImage(parsed.image, { signal: bounded,
-    ...(fetcher ? { fetchImpl: fetcher } : {}) });
-  try {
-    const response = await fetch(verified.url, { signal: bounded });
-    const blob = await response.blob(); bounded.throwIfAborted(); return blob;
-  } finally { verified.dispose(); }
+    ...(fetcher ? { fetchImpl: fetcher } : {}),
+    urlImpl: { createObjectURL(value) { blob = value; return URL.createObjectURL(value); },
+      revokeObjectURL(value) { URL.revokeObjectURL(value); } } });
+  // Keep the exact Blob the verifier created after hashing. Fetching its blob:
+  // URL would violate the public connect-src policy and needlessly copy bytes.
+  try { bounded.throwIfAborted(); check(blob instanceof Blob, 'verified image unavailable'); return blob; }
+  finally { verified.dispose(); }
 }
