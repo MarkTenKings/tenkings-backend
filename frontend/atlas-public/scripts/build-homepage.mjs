@@ -1,9 +1,12 @@
 // Freeze the complete approved experience and every dependency under one digest.
-// This is a marketing demonstration; it never publishes or restores a report.
-import {readFile,writeFile,mkdir,copyFile} from 'node:fs/promises';
+// Showcase assignments use live approved publications; packaging never restores a report.
+import {readFile,writeFile,mkdir,copyFile,readdir,rm} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
+import './build-showcase.mjs';
+import {SHOWCASE_SELECTIONS,validShowcaseBinding} from '../lib/showcase-selections.mjs';
+if(!Object.values(SHOWCASE_SELECTIONS).every(validShowcaseBinding))throw Error('Invalid showcase assignments');
 const app=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=path.resolve(app,'../../docs/atlas/design/experience');
 const names=JSON.parse(await readFile(path.join(source,'files.json'),'utf8'));
@@ -30,5 +33,7 @@ for(const [name,bytes] of files){
  else await copyFile(path.join(source,'site',name),target);
 }
 await copyFile(path.join(output,'index.html'),path.join(app,'public/homepage/index.html'));
-await writeFile(path.join(app,'public/homepage/release.json'),JSON.stringify({version,presentation:'atlas-experience-v1',approvedReportCount:0,archivedSampleCount:0,sourceFileCount:files.size,liveRecordRestored:false})+'\n');
+await writeFile(path.join(app,'public/homepage/release.json'),JSON.stringify({version,presentation:'atlas-experience-v1',approvedReportCount:Object.keys(SHOWCASE_SELECTIONS).length,archivedSampleCount:0,sourceFileCount:files.size,liveRecordRestored:false,showcaseSource:'live-approved-reports'})+'\n');
+// Remove only superseded generated packages after the new closure is complete.
+for(const entry of await readdir(path.join(app,'public/homepage'),{withFileTypes:true}))if(entry.isDirectory()&&/^[a-f0-9]{16}$/.test(entry.name)&&entry.name!==version)await rm(path.join(app,'public/homepage',entry.name),{recursive:true});
 console.log(JSON.stringify({status:'HOMEPAGE_PACKAGED',version,prefix,files:files.size,archivedSampleCount:0}));

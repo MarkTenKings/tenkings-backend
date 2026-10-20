@@ -84,3 +84,22 @@
 /* The connected record is a direct, reversible comparison of the same approved side. */
 .connected-compare{max-width:1120px;margin:28px auto 18px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:0 2px}.connected-compare>p{margin:0;color:#b9c0ae;font:10px/1.6 var(--atlas-mono,monospace);letter-spacing:.04em}.connected-side-switch{display:flex;gap:0}.connected-side-switch button{min-width:76px;min-height:44px;padding:10px 17px;border:1px solid #bea06c55;background:transparent;color:#b4baa9;font:500 12px Atlas,Manrope,sans-serif;cursor:pointer}.connected-side-switch button:first-child{border-radius:4px 0 0 4px}.connected-side-switch button:last-child{margin-left:-1px;border-radius:0 4px 4px 0}.connected-side-switch button[aria-pressed=true]{position:relative;border-color:#c7ac70;background:#b09b551b;color:#eed9a8}.connected-side-switch button:focus-visible{outline:2px solid #e9cb8f;outline-offset:4px}.service-film{position:relative}.service-film-context{position:absolute;top:12px;left:12px;max-width:calc(100% - 24px);margin:0!important;padding:8px 10px;background:#0c130eeb;border:1px solid #e2d2a75e;border-radius:3px;color:#f1e5c7!important;font:9px/1.45 var(--atlas-mono,monospace)!important;letter-spacing:.05em;pointer-events:none}
 @media(max-width:700px){.connected-compare{margin:23px 0 15px;gap:14px}.connected-compare>p{max-width:18ch;font-size:9px}.connected-side-switch button{min-width:66px;padding-inline:13px}.service-film-context{font-size:8px!important;top:9px;left:9px}}
+
+/* Scoped current-report controls; the illustration-only NFC chapter is independent. */
+.ac-sample-actions{max-width:1400px;margin:12px auto 0;display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.ac-sample-actions a,.ac-sample-actions button{font:500 12px/1.5 Atlas,Manrope,sans-serif;color:#e9cb8f;text-decoration:none;background:transparent;border:1px solid #bea06c66;border-radius:3px;padding:11px 16px;min-height:44px;cursor:pointer}
+.ac-sample-actions [hidden]{display:none!important}
+.ac-sample-actions a:hover,.ac-sample-actions button:hover{background:#bea06c15}
+.ac-sample-actions :focus-visible,.ac-fingerprint-findings button:focus-visible,.connected-finding:focus-visible{outline:2px solid #e9cb8f;outline-offset:4px}
+.ac-fingerprint-findings{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin:14px auto 0}
+.ac-fingerprint-findings button{min-width:44px;min-height:44px;border:1px solid #bea06c66;border-radius:3px;background:transparent;color:#e9cb8f;font:500 13px Oxanium,sans-serif;cursor:pointer}
+.ac-fingerprint-stage [role=button]:focus-visible{outline:2px solid #e9cb8f}
+.ac-focus-controls button:disabled{opacity:.45;cursor:default;text-decoration:none}
+.ac-report-chapter .ac-findings{grid-template-columns:repeat(auto-fit,minmax(43px,1fr))}
+#connected-proof .connected-print svg{filter:none}
+#connected-proof .connected-finding{padding:2px 0;min-height:44px;border:0;background:transparent;color:#cbd5c8;text-align:left;font:10px/1.7 var(--atlas-mono,monospace);cursor:pointer}
+#connected-proof .connected-finding:hover{color:#eed9a8}
+#connected-proof .ac-sample-actions{max-width:1120px;justify-content:center}
+#connected-proof .connected-record[aria-busy=true]{min-height:340px}
+@media(prefers-reduced-motion:reduce){.ac-fingerprint-field,.ac-locator-ring{animation:none!important;transition:none!important}}
+.motion-off .ac-fingerprint-field,.motion-off .ac-locator-ring{animation:none!important;transition:none!important}

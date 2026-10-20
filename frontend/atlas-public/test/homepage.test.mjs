@@ -29,10 +29,10 @@ test('homepage rewrite leaves service and report routes untouched',async()=>{
  assert.match(readFileSync(resolve(import.meta.dirname,'../middleware.js'),'utf8'),/matcher: \['\/admin\/:path\*', '\/account\/:path\*'\]/);
 });
 test('homepage retains ATLAS identity and submission routes without historic card evidence',()=>{
- assert(html.includes('<span>KNOW WHAT</span><span>YOU <em>HAVE.</em></span>'));
+ assert(html.includes('<span>SEE WHY</span>'));assert(html.includes('data-showcase-grade'));assert(html.includes('data-showcase-award-prefix'));
  for(const id of ['hero-title','fingerprint','slab','connected-proof','submit','capacity-title'])assert(html.includes(`id="${id}"`),id);
  assert(html.includes('WE SHOW YOU EVERYTHING.'));assert(html.includes('href="/account/submit"'));assert(!html.includes('127.0.0.1'));assert(!html.includes('DESIGN STUDY 10'));assert(!html.includes('noindex,nofollow'));assert(!html.includes('Interactive design preview'));
- assert.equal(release.approvedReportCount,0);assert.equal(release.archivedSampleCount,0);
+ assert.equal(release.approvedReportCount,4);assert.equal(release.archivedSampleCount,0);
  for(const marker of ['Drake Maye','Abomasnow','Jaxson Dart','hero-assets/','report-screen','ARCHIVED_APPROVED_SAMPLE'])assert(!html.includes(marker),marker);
  assert(html.includes('Fictional artwork. Display slabs are illustrative.'));
  const service=html.match(/<article class="service-card service-card-mail[\s\S]*?<\/article>/)?.[0];assert(service);
