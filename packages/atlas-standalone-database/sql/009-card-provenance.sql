@@ -32,7 +32,13 @@ BEGIN
  -- issued before access changed. Staff owner_id is solely an access-control fact.
  SELECT jsonb_build_object('cardId',c.id,'certificateNumber',i.report_number,'approvalActionId',a.action_id,
   'approvedAt',to_char(a.approved_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-  'identity',a.report::jsonb->'identity','finalGrade',a.report::jsonb->'finalGrade',
+  'identity',a.report::jsonb->'identity','finalGrade',a.report::jsonb->'finalGrade','approvedSnapshot',a.report,
+  'approver',jsonb_build_object('id',a.actor_id,'name',si.name),'reviewers',COALESCE(review.people,'[]'::jsonb),'submission',submitted.value,
+  'presentationEvidence',(SELECT jsonb_build_object('card_id',pr.card_id,'approval_action_id',pr.approval_action_id,'revision',pr.revision,
+    'createdAt',to_char(pr.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+    'presentation',pr.presentation,'presentation_hash',pr.presentation_hash,'market_source',pr.market_source,'market_source_hash',pr.market_source_hash)
+    FROM atlas_manual.presentation pr WHERE pr.card_id=c.id AND pr.approval_action_id=a.action_id AND pr.created_at<=snap
+    ORDER BY pr.revision DESC LIMIT 1),
   'report',jsonb_build_object('state',CASE WHEN p.state='PUBLISHED' AND p.published_at<=snap THEN 'PUBLISHED' ELSE 'PENDING' END,
     'version',p.version,'publicToken',i.public_token,'reportHash',a.report_hash),
   'mediaEvidence',jsonb_build_object('publicHash',p.public_hash,'sourceRevision',a.source_revision,'sourceHash',a.source_hash))
@@ -44,6 +50,19 @@ BEGIN
   WHERE aa.card_id=c.id AND aa.approved_at<=snap AND pp.mode=binding->>'mode'
   ORDER BY aa.approved_at DESC,aa.action_id DESC LIMIT 1)a
  JOIN atlas_manual.publication p ON p.card_id=c.id AND p.action_id=a.action_id
+ JOIN atlas_staff."StaffIdentity" si ON si.id=a.actor_id
+ LEFT JOIN LATERAL(SELECT jsonb_agg(jsonb_build_object('id',r.id,'name',r.name) ORDER BY r.name,r.id) people
+  FROM(SELECT DISTINCT reviewer.id,reviewer.name FROM atlas_manual.action act JOIN atlas_staff."StaffIdentity" reviewer ON reviewer.id=act.actor_id
+   WHERE act.card_id=c.id AND act.result_revision<=a.source_revision
+    AND act.result::jsonb#>>'{receipt,actorKind}'='HUMAN' AND act.request::jsonb#>>'{action,type}'<>'APPROVE_REPORT'
+   ORDER BY reviewer.name,reviewer.id LIMIT 100)r)review ON true
+ LEFT JOIN LATERAL(SELECT jsonb_build_object('orderId',o.id,'reference',o.reference,'cardId',oc.card_id,
+   'customer',jsonb_build_object('name',o.receipt->'profile'->>'name'),'channel',oc.channel,
+   'dealer',CASE WHEN oc.dealer_id IS NULL THEN NULL ELSE jsonb_build_object('id',oc.dealer_id,'locationId',oc.location_id,'name',oc.location_snapshot->>'name') END) value
+  FROM atlas_dealer.manual_card_link l JOIN atlas_dealer.order_card oc ON oc.card_id=l.card_id
+  JOIN atlas_dealer.custody_event received ON received.id=l.received_event_id AND received.card_id=l.card_id AND received.kind='ATLAS_RECEIVED'
+  JOIN atlas_customer."CommerceOrder" o ON o.id=oc.order_id
+  WHERE l.manual_card_id=c.id AND l.linked_at<=snap AND received.recorded_at<=snap AND o."paidAt"<=snap AND atlas_dealer.order_desk_paid(o.id))submitted ON true
  WHERE c.id=cid AND (c.owner_id=actor.id OR actor.id=ANY(c.readers) OR actor.id=ANY(c.editors) OR actor.id=ANY(c.approvers))
  AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card x WHERE x.card_id=c.id OR (x.owner_id=intake.owner_id AND x.create_request_id=intake.create_request_id));
  IF card_value IS NULL THEN RETURN atlas_customer.problem(404,'CARD_PROVENANCE_NOT_FOUND'); END IF;

@@ -1,42 +1,133 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Shell from './Shell';
+import ApprovedCardMedia from './ApprovedCardMedia';
 import { api } from '../lib/client';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
-import { approvedDate, approvedReportPath, archiveAccessFailure, gradedCardSubtitle, gradedCardTitle, recordedGrade } from '../lib/graded-cards-client.mjs';
-import { cardHistoryPath, historyEventDetail, historyEventTitle, historyPhotoPath, historyReportPath, mergeCardHistory, readCardHistory } from '../lib/card-history-client.mjs';
+import { orderDeskPagePath } from '../lib/order-desk-client.mjs';
+import { approvedDate, approvedReportPath, archiveAccessFailure, gradedCardSubtitle, gradedCardTitle, gradedCardVariation, recordedGrade, submissionOrigin } from '../lib/graded-cards-client.mjs';
+import { cardHistoryPath, historyEventDetail, historyEventTitle, historyReportPath, mergeCardHistory, readCardHistory } from '../lib/card-history-client.mjs';
+import { ATLAS_SPORTS_ATTRIBUTE_LABELS as sportsLabels } from '@atlas/grading-core/identity';
+import { groupSoldReferences, saleAmountLabel, saleDateLabel, saleGradeLabel } from '@atlas/manual-workspace/sold-references';
 import archive from './GradedCards.module.css';
 import styles from './CardHistory.module.css';
 
-function EvidencePhoto({ card }) {
-  const [side, setSide] = useState('FRONT'), [failed, setFailed] = useState([]);
-  const path = historyPhotoPath(card, side), available = path && !failed.includes(path);
-  return <div className={styles.evidence}>
-    <div className={styles.photo}>{available ? <a href={path} target="_blank" rel="noreferrer" aria-label={`Open approved ${side.toLowerCase()} photograph`}><img src={path} alt={`${gradedCardTitle(card)} · approved ${side.toLowerCase()} photograph`} onError={() => setFailed(previous => [...previous, path])}/></a>
-      : <div className={styles.noPhoto}><span>ATLAS</span><p>Approved photograph unavailable</p><small>Open the grading workspace to inspect saved evidence.</small></div>}</div>
-    <div className={styles.sideSwitch} role="group" aria-label="Photograph side">{['FRONT', 'BACK'].map(value => <button key={value} type="button" aria-pressed={side === value} onClick={() => setSide(value)}>{value === 'FRONT' ? 'Front' : 'Back'}</button>)}</div>
-    <p className={styles.caption}>Approved grading photograph</p>
+const sections = [['overview', 'Overview'], ['report', 'Grade report'], ['comps', 'Sold comps'], ['history', 'History']];
+const categories = { SPORTS: 'Sports', POKEMON: 'Pokémon' };
+const gradeCategories = [['centering', 'Centering'], ['corners', 'Corners'], ['edges', 'Edges'], ['surface', 'Surface']];
+const scoreLabel = (value, exact = false) => Number.isFinite(value) && value >= 0 && value <= 10
+  ? exact ? String(value) : new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value) : 'Not recorded';
+
+function sportsIdentityRows(attributes) {
+  if (!attributes) return [];
+  return [
+    ['Printed serial', attributes.serial.presence === 'PRESENT' ? attributes.serial.printed : sportsLabels[attributes.serial.presence]],
+    ['Autograph', [sportsLabels[attributes.autograph.presence], attributes.autograph.presence === 'PRESENT' && `${sportsLabels[attributes.autograph.type]} · Presence is not authentication`].filter(Boolean).join(' · ')],
+    ['Relic', sportsLabels[attributes.relic.presence]],
+    ...attributes.relic.windows.map(window => [`Relic · ${window.position}`, [window.material || 'Material unknown', sportsLabels[window.use], window.manufacturerStatement && `“${window.manufacturerStatement}”`].filter(Boolean).join(' · ')]),
+  ];
+}
+
+function Facts({ rows }) {
+  return <dl className={styles.factList}>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || 'Not recorded'}</dd></div>)}</dl>;
+}
+
+export function CardOverview({ card, custody, orderLinks }) {
+  const identity = card.identity ?? {}, submission = card.submission;
+  const orderPath = orderLinks && submission ? orderDeskPagePath(submission.orderId) : null;
+  return <div className={styles.overviewGrid}>
+    <section aria-labelledby="identity-heading"><p className={styles.eyebrow}>THE CARD</p><h2 id="identity-heading">Every detail, on record.</h2>
+      <Facts rows={[
+        ['Category', categories[identity.category]], ['Year', identity.year], ['Manufacturer', identity.manufacturer],
+        ['Set', identity.productSet], ['Card number', identity.cardNumber], ['Parallel / variant', identity.parallel],
+        ...(identity.insert ? [['Insert', identity.insert]] : []), ...sportsIdentityRows(identity.sportsAttributes),
+      ]}/>
+    </section>
+    <div className={styles.contextColumn}>
+      <section aria-labelledby="submission-heading"><p className={styles.eyebrow}>SUBMISSION</p><h2 id="submission-heading">Where its Atlas story began.</h2>
+        {submission ? <><Facts rows={[
+          ['Submission', orderPath ? <Link href={orderPath}>{submission.reference || 'Open recorded submission'} <span aria-hidden="true">↗</span></Link> : submission.reference],
+          ['Submitted by', submission.customer?.name], ['Origin', submissionOrigin(card)],
+        ]}/><p className={styles.note}>Submission details describe the recorded intake. They do not establish ownership.</p></>
+          : <p className={styles.body}>No customer submission is linked to this card.</p>}
+      </section>
+      <section className={styles.provenanceSummary} aria-labelledby="ownership-heading"><h3 id="ownership-heading">Ownership &amp; custody</h3>
+        <Facts rows={[
+          ['Ownership', 'Not recorded'], ['Custody history', custody.status === 'RECORDED' ? 'Handling events recorded' : 'Not recorded'],
+        ]}/><p className={styles.note}>A verified owner and current physical holder have not been established in this record.</p>
+      </section>
+    </div>
   </div>;
 }
 
-function HistoryTimeline({ data }) {
+export function GradeSummary({ card, report }) {
+  const summary = card.approvedSummary, available = summary?.state === 'AVAILABLE';
+  return <section aria-labelledby="grade-heading">
+    <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>THE APPROVED REPORT</p><h2 id="grade-heading">See what makes the grade.</h2></div><span className={styles.version}>Version {card.report?.version ?? 'not recorded'}</span></div>
+    <p className={styles.body}>Open the saved report to inspect the approved photographs, findings and exact measurements.</p>
+    {available ? <dl className={styles.subgrades}>{gradeCategories.map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{scoreLabel(summary.subgrades?.[key])}</dd></div>)}</dl>
+      : <p className={styles.unavailableNote}>Category scores are not available in this record. The saved report remains the source for grading details.</p>}
+    <div className={styles.reportDetails}>
+      <Facts rows={[
+        ['Certificate', card.certificateNumber], ['ATLAS grade', recordedGrade(card)], ['Approved (UTC)', approvedDate(card.approvedAt)],
+        ['Approved by', card.approver?.name],
+        ...(card.reviewers?.length ? [['Review staff', card.reviewers.map(person => person.name || 'Name not recorded').join(', ')]] : []),
+      ]}/>
+      <div className={styles.reportCallout}><span className={styles.reportMark} aria-hidden="true">A</span><h3>The evidence, in full.</h3><p>Explore the findings in the report version saved with this approval.</p>
+        {report ? <a className={archive.primary} href={report}>Open approved report <span aria-hidden="true">↗</span></a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}
+      </div>
+    </div>
+    {available && <details className={styles.policy}><summary>Exact scores &amp; grading policy</summary><Facts rows={[
+      ...gradeCategories.map(([key, label]) => [`${label} · exact`, scoreLabel(summary.subgrades?.[key], true)]),
+      ['Scoring rule', summary.ruleVersion], ['Final-grade policy', summary.finalGradePolicy],
+    ]}/><p className={styles.note}>Category tiles display up to two decimal places. The exact saved scores appear above; this page does not recalculate the approved grade.</p></details>}
+  </section>;
+}
+
+function SalePhoto({ sale }) {
+  const [failed, setFailed] = useState(false);
+  return <div className={styles.salePhoto}>{sale.imageUrl && !failed ? <img src={sale.imageUrl} alt={`Listing photograph: ${sale.title}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)}/> : <span>Photo<br/>unavailable</span>}</div>;
+}
+
+export function SavedComparables({ card }) {
+  const saved = card.savedComparables, sales = saved?.state === 'SAVED' ? saved.sales : [], groups = groupSoldReferences(sales);
+  const [selected, setSelected] = useState('all');
+  const group = groups.find(value => value.key === selected);
+  const visible = (group ? group.candidates : sales).slice().sort((a, b) => (Date.parse(b.soldAt) || 0) - (Date.parse(a.soldAt) || 0));
+  return <section aria-labelledby="comps-heading">
+    <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>SAVED MARKET REFERENCES</p><h2 id="comps-heading">A look at recorded sales.</h2></div>{saved?.state === 'SAVED' && <span className={styles.version}>{sales.length} saved {sales.length === 1 ? 'sale' : 'sales'}</span>}</div>
+    {saved?.state !== 'SAVED' ? <div className={styles.emptySection}><h3>No saved selection is available.</h3><p>Sold references appear here when a selection has been saved to this report. This does not mean no comparable sales exist.</p></div>
+      : <><p className={styles.body}>The eBay sold listings saved with this report. Grading companies, grades and variants remain distinct; these references do not set this card’s value.</p>
+        <div className={styles.compsToolbar}><p>Recorded {approvedDate(saved.observedAt)} <span>· Dates in UTC</span></p>{groups.length > 1 && <label><span>Show</span><select value={group ? selected : 'all'} onChange={event => setSelected(event.target.value)}><option value="all">All saved references ({sales.length})</option>{groups.map(value => <option key={value.key} value={value.key}>{value.label} · {value.identityLabel} ({value.candidates.length})</option>)}</select></label>}</div>
+        {visible.length ? <ol className={styles.sales}>{visible.map(sale => <li key={sale.id}>
+          <SalePhoto sale={sale}/><div className={styles.saleDescription}><p className={styles.saleGrade}>{saleGradeLabel(sale)}</p><h3>{sale.listingUrl ? <a href={sale.listingUrl} target="_blank" rel="noreferrer">{sale.title} <span aria-hidden="true">↗</span></a> : sale.title}</h3>
+            <p className={styles.saleDate}>{sale.soldAt ? `Sold ${saleDateLabel(sale.soldAt)}` : 'Sale date unavailable'}</p>{[sale.language, sale.printing, sale.variant].some(Boolean) && <p className={styles.saleIdentity}>{[sale.language, sale.printing, sale.variant].filter(Boolean).join(' · ')}</p>}
+            {sale.identityStatus !== 'MATCH' && <p className={styles.matchNote}>{sale.identityStatus === 'DIFFERENT' ? 'Identity differs from this card.' : 'Identity match is unconfirmed.'}</p>}
+          </div><div className={styles.saleAmount}><strong>{saleAmountLabel(sale)}</strong>{sale.priceBasis === 'sold' && sale.currency && <span>{sale.currency} · disclosed sale price</span>}</div>
+        </li>)}</ol> : <div className={styles.emptySection}><h3>No sales in the saved selection.</h3><p>This report currently has an empty selection of sold references.</p></div>}
+      </>}
+  </section>;
+}
+
+export function HistoryTimeline({ data }) {
   return <section className={styles.timeline} aria-labelledby="timeline-heading">
-    <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>PROVENANCE</p><h2 id="timeline-heading">The recorded history.</h2></div><span>Dates in UTC</span></div>
-    <p className={styles.intro}>Saved Atlas events, newest record first. Earlier history may be unknown.</p>
+    <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>PROVENANCE</p><h2 id="timeline-heading">The recorded history.</h2></div><span className={styles.version}>Dates in UTC</span></div>
+    <p className={styles.body}>Saved Atlas events, newest record first. Earlier history may be unknown.</p>
     <ol>{data.history.events.map(event => { const path = historyReportPath(event, data.card.report?.publicToken); return <li key={event.eventId}>
       <span className={`${styles.dot} ${event.category === 'CUSTODY' ? styles.custodyDot : ''}`} aria-hidden="true"/>
       <div className={styles.eventTop}><time dateTime={event.occurredAt || event.recordedAt}>{approvedDate(event.occurredAt || event.recordedAt)}</time><span className={styles.recordType}>{event.verification === 'SUBMITTER_REPORTED' ? 'Submitter reported' : 'Verified record'}</span></div>
       <h3>{historyEventTitle(event)}</h3><p>{historyEventDetail(event)}</p>
       {event.occurredAt && event.occurredAt.slice(0, 10) !== event.recordedAt.slice(0, 10) && <p className={styles.recordedAt}>Recorded {approvedDate(event.recordedAt)}</p>}
-      {path && <a className={styles.reportLink} href={path}>View this report version ↗</a>}
+      {path && <a className={styles.reportLink} href={path}>View this report version <span aria-hidden="true">↗</span></a>}
     </li>; })}</ol>
-    {!data.history.events.length && <p className={styles.intro}>No recorded events are available for this card.</p>}
+    {!data.history.events.length && <p className={styles.unavailableNote}>No recorded events are available for this card.</p>}
   </section>;
 }
 
 export default function CardHistory({ staff, cardId, request = api }) {
   const [data, setData] = useState(null), [loading, setLoading] = useState(true), [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(''), [accessLost, setAccessLost] = useState(false), [refresh, setRefresh] = useState(0);
+  const [section, setSection] = useState('overview'), [dataScope, setDataScope] = useState('');
   const generation = useRef(0), current = useRef(null), mounted = useRef(false), load = useRef(null);
   const scope = `${staff.id}:${staff.role}:${staff.mode}:${cardId}`;
   async function read(cursor) {
@@ -52,14 +143,14 @@ export default function CardHistory({ staff, cardId, request = api }) {
         throw Object.assign(new Error('Staff account changed'), { code: 'MANUAL_STAFF_CHANGED' });
       const next = readCardHistory(await request(cardHistoryPath(cardId, { cursor }), { signal: controller.signal }), cardId);
       if (!active()) return;
-      // Validate before the React state updater so malformed pagination remains
-      // a recoverable read error rather than an exception during rendering.
+      // Validate before the React state updater so malformed pagination stays recoverable.
       const value = cursor ? mergeCardHistory(data, next) : next;
-      setData(value);
+      setDataScope(scope); setData(value);
     } catch (failure) {
       if (!active()) return;
-      if (archiveAccessFailure(failure)) { setData(null); setAccessLost(true); setError('Your staff access needs to be checked. Sign in again to open this history.'); }
-      else setError(failure?.status === 404 ? 'This approved card is unavailable to this account.' : 'The card history could not be read. Try again to load its saved records.');
+      if (archiveAccessFailure(failure)) { setData(null); setAccessLost(true); setError('Your staff access needs to be checked. Sign in again to open this card.'); }
+      else if (failure?.status === 404) { setData(null); setError('This approved card is unavailable to this account.'); }
+      else setError('The card could not be read. Try again to load its saved records.');
     } finally { if (active()) { setLoading(false); setLoadingMore(false); } }
   }
   load.current = read;
@@ -68,27 +159,41 @@ export default function CardHistory({ staff, cardId, request = api }) {
     const invalidate = () => { generation.current++; current.current?.abort(); };
     const hide = () => { invalidate(); setData(null); setLoading(true); setError(''); };
     const show = event => { if (event.persisted) setRefresh(value => value + 1); };
-    const endAccess = () => { hide(); setLoading(false); setLoadingMore(false); setAccessLost(true); setError('Your staff access needs to be checked. Sign in again to open this history.'); };
+    const endAccess = () => { hide(); setLoading(false); setLoadingMore(false); setAccessLost(true); setError('Your staff access needs to be checked. Sign in again to open this card.'); };
     window.addEventListener('pagehide', hide); window.addEventListener('pageshow', show); window.addEventListener('atlas:verified-image-access-ended', endAccess);
     return () => { mounted.current = false; invalidate(); window.removeEventListener('pagehide', hide); window.removeEventListener('pageshow', show); window.removeEventListener('atlas:verified-image-access-ended', endAccess); };
   }, [scope]);
+  useEffect(() => { setSection('overview'); }, [scope]);
   useEffect(() => { void load.current(); }, [scope, refresh]);
-  const card = data?.card, report = approvedReportPath(card);
-  return <Shell staff={staff} title="Card history" manual className={archive.shell}>
+  const visible = dataScope === scope ? data : null, card = visible?.card, report = approvedReportPath(card);
+  function selectWithKeyboard(event, index) {
+    const next = event.key === 'ArrowRight' ? (index + 1) % sections.length : event.key === 'ArrowLeft' ? (index + sections.length - 1) % sections.length : event.key === 'Home' ? 0 : event.key === 'End' ? sections.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault(); setSection(sections[next][0]); event.currentTarget.parentElement.querySelectorAll('[role="tab"]')[next]?.focus();
+  }
+  return <Shell staff={staff} title={card ? `${gradedCardTitle(card)} · Card details` : 'Card details'} manual className={archive.shell}>
     <main className={`${archive.page} ${styles.page}`}>
-      <div className={styles.navigation}><Link href="/graded-cards">← Graded cards</Link><button type="button" disabled={loading || loadingMore} onClick={() => setRefresh(value => value + 1)}>Refresh history ↻</button></div>
-      {error && <div className={archive.errorBox} role="alert"><p>{error}</p>{accessLost ? <a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a> : <button type="button" onClick={() => void read(data?.history.nextCursor ?? undefined)}>Try again</button>}</div>}
-      {loading ? <div className={archive.loading} role="status"><span className={archive.loadingMark} aria-hidden="true">A</span><p>Opening the saved history.</p></div> : data && <>
-        <section className={styles.hero} aria-label="Card record">
-          <EvidencePhoto key={`${card.cardId}:${card.approvalActionId}`} card={card}/>
-          <div className={styles.identity}><p className={styles.eyebrow}>ONE CARD. ITS RECORDED STORY.</p><h1>{gradedCardTitle(card)}</h1><p className={styles.subtitle}>{gradedCardSubtitle(card)}</p><p className={styles.cert}>{card.certificateNumber}</p>
-            <div className={styles.grade}><span>ATLAS</span><strong>{recordedGrade(card)}</strong><span>Approved<br/>{approvedDate(card.approvedAt)}</span></div>
-            <div className={styles.actions}>{report && <a className={archive.primary} href={report}>View grade report ↗</a>}<Link href={`/manual/${cardId}`}>Open grading workspace ↗</Link></div>
-            <div className={styles.facts}><div><span>Ownership</span><strong>Not recorded</strong><p>No verified owner is recorded yet.</p></div><div><span>Custody</span><strong>{data.custody.status === 'RECORDED' ? 'Handling history available' : 'Not recorded'}</strong><p>Current physical holder is unconfirmed.</p></div></div>
+      <div className={styles.navigation}><Link href="/graded-cards"><span aria-hidden="true">←</span> Graded cards</Link><button type="button" disabled={loading || loadingMore} onClick={() => setRefresh(value => value + 1)}>Refresh record <span aria-hidden="true">↻</span></button></div>
+      {error && <div className={archive.errorBox} role="alert"><p>{error}</p>{accessLost ? <a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a> : <button type="button" onClick={() => void read(visible?.history.nextCursor ?? undefined)}>Try again</button>}</div>}
+      {loading ? <div className={archive.loading} role="status"><span className={archive.loadingMark} aria-hidden="true">A</span><p>Opening the saved card.</p></div> : visible && <>
+        <section className={styles.hero} aria-label="Approved card">
+          <div className={styles.heroMedia}><ApprovedCardMedia key={`${card.cardId}:${card.approvalActionId}`} card={card} mode="detail"/></div>
+          <div className={styles.identity}><p className={styles.eyebrow}>{categories[card.identity?.category] || 'ATLAS ARCHIVE'} <span aria-hidden="true">/</span> APPROVED CARD</p><h1>{gradedCardTitle(card)}</h1>
+            {gradedCardSubtitle(card) && <p className={styles.subtitle}>{gradedCardSubtitle(card)}</p>}{gradedCardVariation(card) && <p className={styles.variation}>{gradedCardVariation(card)}</p>}
+            <p className={styles.certificate}><span>Certificate</span><strong>{card.certificateNumber || 'Not recorded'}</strong></p>
+            <div className={styles.grade}><div className={styles.award}><span>ATLAS GRADE</span><strong>{recordedGrade(card)}</strong></div><div className={styles.approval}><span className={styles.approved}><span aria-hidden="true">✓</span> Human approved</span><time dateTime={card.approvedAt}>{approvedDate(card.approvedAt)} <span>UTC</span></time>{card.report?.version && <p>Report version {card.report.version}</p>}</div></div>
+            <div className={styles.actions}>{report ? <a className={archive.primary} href={report}>Open approved report <span aria-hidden="true">↗</span></a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}<p>The photographs, findings and measurements behind this grade.</p></div>
+            <Link className={styles.workspaceLink} href={`/manual/${cardId}`}>Grading workspace <span aria-hidden="true">↗</span></Link>
           </div>
         </section>
-        <HistoryTimeline data={data}/>
-        {data.history.nextCursor && !accessLost && <div className={archive.loadMore}><button className={archive.primary} type="button" disabled={loadingMore} onClick={() => void read(data.history.nextCursor)}>{loadingMore ? 'Loading history…' : 'Load earlier events'}</button></div>}
+        <div className={styles.tabs} role="tablist" aria-label="Card details">{sections.map(([id, label], index) => <button type="button" key={id} role="tab" id={`card-tab-${id}`} aria-controls={`card-panel-${id}`} aria-selected={section === id} tabIndex={section === id ? 0 : -1} onKeyDown={event => selectWithKeyboard(event, index)} onClick={() => setSection(id)}>{label}</button>)}</div>
+        {sections.map(([id]) => <div key={id} id={`card-panel-${id}`} role="tabpanel" aria-labelledby={`card-tab-${id}`} hidden={section !== id} tabIndex={0} className={styles.panel}>
+          {section === id && (id === 'overview' ? <CardOverview card={card} custody={visible.custody} orderLinks={staff.customerOperationsEnabled === true}/>
+            : id === 'report' ? <GradeSummary card={card} report={report}/>
+              : id === 'comps' ? <SavedComparables key={card.approvalActionId} card={card}/>
+                : <><HistoryTimeline data={visible}/>{visible.history.nextCursor && !accessLost && <div className={styles.loadMore}><button className={archive.primary} type="button" disabled={loadingMore} onClick={() => void read(visible.history.nextCursor)}>{loadingMore ? 'Loading history…' : 'Load earlier events'}</button></div>}</>)}
+        </div>)}
+        <p className={styles.recordNote}>This archive preserves recorded approvals and their evidence. Ownership, physical custody and later transactions require their own records.</p>
       </>}
     </main>
   </Shell>;

@@ -35,7 +35,9 @@ try {
   const hashes = { content: digest('{}'), source: digest('approved-source'), public: digest('approved-public') };
   async function approve(card, { identity = card.identity, approvedAt = null, published = true } = {}) {
     const actionId = randomUUID(), version = ++card.version, sourceRevision = version * 2;
-    const report = canonical({ version: 'atlas-manual-report-snapshot-v2', identity, finalGrade: version === 1 ? 9.5 : 8, ruleVersion: 'SYNTHETIC_ONLY' });
+    const report = canonical({ version: 'atlas-manual-report-snapshot-v2', identity, finalGrade: version === 1 ? 9.5 : 8,
+      grade: { subgrades: { centering: 9.27, corners: 9.75, edges: 8.94, surface: 9.63 } },
+      finalGradePolicy: 'atlas-final-half-point-v1', ruleVersion: 'SYNTHETIC_ONLY' });
     await admin.$executeRawUnsafe(`INSERT INTO atlas_manual.action(card_id,action_id,actor_id,expected_revision,result_revision,request_hash,request,result)
       VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8)`, card.id, randomUUID(), peer.id, sourceRevision - 1, sourceRevision,
       digest('{"action":{"type":"CONFIRM_FINDINGS"}}'), '{"action":{"type":"CONFIRM_FINDINGS"}}', '{"receipt":{"actorKind":"HUMAN"}}');
@@ -90,9 +92,21 @@ try {
   const receiptId = randomUUID();
   await admin.$executeRawUnsafe(`INSERT INTO atlas_dealer.custody_event(id,card_id,sequence,request_id,input_hash,kind,actor_id,occurred_at,evidence) VALUES($1::uuid,$2::uuid,1,$3::uuid,$4,'ATLAS_RECEIVED',$5::uuid,clock_timestamp(),'{"reference":"Synthetic actual-receipt fixture"}')`, receiptId, customerCard, randomUUID(), hashes.content, actor.id);
   await admin.$executeRawUnsafe(`INSERT INTO atlas_dealer.manual_card_link(card_id,manual_card_id,received_event_id,actor_id,evidence_ref) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'Synthetic immutable binding')`, customerCard, first.id, receiptId, actor.id);
+  async function selectSales(card, revision, { bindingVersion = card.version, title = 'Synthetic saved sold listing' } = {}) {
+    const value = { version: 'atlas-report-presentation-v1', binding: { publicToken: card.token, approvalVersion: bindingVersion, publicHash: hashes.public }, revision,
+      updatedAt: new Date().toISOString(), market: { observedAt: new Date().toISOString(), sales: [{ id: 'fixture-sale', title,
+        listingUrl: 'https://www.ebay.com/itm/123456789012', grader: 'PSA', grade: '9', soldAt: '2026-01-01T00:00:00.000Z',
+        priceMinor: 10000, currency: 'USD', priceBasis: 'sold' }] } };
+    const source = { version: 'atlas-selected-market-source-v1', previewId: randomUUID(), sourceHash: hashes.source,
+      selectedIds: ['fixture-sale'], ref: { cardId: card.id, kind: 'MARKET_PREVIEW', sha256: hashes.content, privateStorageKey: 'PRIVATE_MARKET_REFERENCE' } };
+    await admin.$executeRawUnsafe(`INSERT INTO atlas_manual.presentation(card_id,approval_action_id,revision,request_id,request_hash,actor_id,presentation,presentation_hash,market_source,market_source_hash)
+      VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,$6::uuid,$7,$8,$9,$10)`, card.id, card.actionId, revision, randomUUID(), hashes.content, actor.id,
+      canonical(value), digest(canonical(value)), canonical(source), digest(canonical(source)));
+  }
+  await selectSales(first, 1); await selectSales(second, 1); await selectSales(third, 1, { bindingVersion: 2 });
   const read = (card, input) => service.read(reviewer.staff, card.id, input);
   const tables = ['atlas_manual.card', 'atlas_manual.action', 'atlas_manual.approval', 'atlas_manual.public_report_identity', 'atlas_manual.publication',
-    'atlas_dealer.custody_event', 'atlas_dealer.manual_card_link', 'atlas_customer."CommerceOrder"', 'atlas_customer."CommercePayment"', 'atlas_customer."CommerceEffect"'];
+    'atlas_manual.presentation', 'atlas_dealer.custody_event', 'atlas_dealer.manual_card_link', 'atlas_customer."CommerceOrder"', 'atlas_customer."CommercePayment"', 'atlas_customer."CommerceEffect"'];
   const census = async () => {
     const rows = {};
     for (const table of tables) rows[table] = (await admin.$queryRawUnsafe(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb) rows FROM ${table} t`))[0].rows;
@@ -103,24 +117,33 @@ try {
   assert.equal(initial.ownership.status, 'UNKNOWN'); assert.equal(initial.custody.status, 'RECORDED');
   assert.equal(initial.custody.latestRecorded.kind, 'ATLAS_RECEIVED'); assert.equal(initial.custody.currentPhysicalHolder, 'UNKNOWN');
   assert.deepEqual(new Set(initial.history.events.map(e => e.kind)), new Set(['REPORT_APPROVED', 'REPORT_PUBLISHED', 'ATLAS_RECEIVED']));
-  assert.doesNotMatch(JSON.stringify(initial), /private@example|Private address|synthetic-payment|Synthetic Submitter|accountId|ownerId|actorId|evidence_ref|UNAPPROVED SECRET/);
+  assert.doesNotMatch(JSON.stringify(initial), /private@example|Private address|synthetic-payment|accountId|ownerId|actorId|evidence_ref|UNAPPROVED SECRET|PRIVATE_MARKET_REFERENCE/);
+  assert.equal(initial.card.approvedSummary.subgrades.centering, 9.27); assert.equal(initial.card.approvedSummary.finalGradePolicy, 'atlas-final-half-point-v1');
+  assert.equal(initial.card.finalGrade, 9.5); assert.equal(initial.card.report.publicHash, hashes.public);
+  assert.equal(initial.card.submission.orderId, orderId); assert.equal(initial.card.submission.customer.name, 'Synthetic Submitter');
+  assert.equal(initial.card.approver.name, 'Approval Specialist'); assert.equal(initial.card.reviewers[0].name, 'Review Colleague');
+  assert.equal(initial.card.savedComparables.state, 'SAVED'); assert.equal(initial.card.savedComparables.presentationRevision, 1);
   assert.deepEqual(await census(), before);
   const publicValue = publicCardProvenance(initial);
   assert.equal(publicValue.history.events.length, 1); assert.equal(publicValue.history.events[0].reportPath, `/reports/${first.token}?v=1`);
   assert.doesNotMatch(JSON.stringify(publicValue), new RegExp(`${first.id}|${actor.id}|${customerId}|${customerCard}|source|custody|snapshot|cursor`, 'i'));
   assert.equal((await read(second)).card.report.path, null); assert.equal(publicCardProvenance(await read(second)), null);
-  assert.equal((await read(third)).custody.status, 'UNKNOWN'); assert.equal((await read(shared)).card.cardId, shared.id);
+  assert.deepEqual((await read(second)).card.savedComparables, { state: 'UNAVAILABLE' }); assert.equal((await read(second)).card.report.publicHash, undefined);
+  assert.equal((await read(third)).custody.status, 'UNKNOWN'); assert.deepEqual((await read(third)).card.savedComparables, { state: 'UNAVAILABLE' });
+  assert.equal((await read(shared)).card.cardId, shared.id);
   for (const denied of [hidden, deleted, { id: randomUUID() }]) await assert.rejects(read(denied), { code: 'CARD_PROVENANCE_NOT_FOUND' });
   checks.push('least-privilege per-card read preserves exact approval, report and custody source anchors; unknown ownership, no inferred live holder, pending reports private, hidden/discarded/unknown cards indistinguishable; no protected-row writes');
 
   // Fixed recorded-time pagination includes immutable prior versions while a
   // newly approved report cannot replace the selected snapshot between pages.
   const page1 = await read(first, { limit: 1 });
+  await selectSales(first, 2, { title: 'New selection after the snapshot' });
   const action2 = await approve(first, { identity: { playerName: 'Synthetic reapproval' } });
   let cursor = page1.history.nextCursor, events = [...page1.history.events];
   while (cursor) {
     const page = await read(first, { limit: 1, cursor });
     assert.equal(page.card.approvalActionId, page1.card.approvalActionId); assert.equal(page.history.snapshot, page1.history.snapshot);
+    assert.deepEqual(page.card.approvedSummary, page1.card.approvedSummary); assert.deepEqual(page.card.savedComparables, page1.card.savedComparables);
     events.push(...page.history.events); cursor = page.history.nextCursor;
   }
   assert.equal(new Set(events.map(e => e.eventId)).size, 3); assert.equal(events.length, 3);
@@ -130,7 +153,9 @@ try {
   assert.deepEqual(updated.history.events.filter(e => e.source.approvalActionId === first.actionId), initial.history.events.filter(e => e.source.approvalActionId === first.actionId));
   assert.deepEqual(publicCardProvenance(updated).history.events.map(e => e.reportVersion), [2, 1]);
   assert.equal(updated.capabilities.reholder, false);
+  assert.deepEqual(updated.card.savedComparables, { state: 'UNAVAILABLE' }, 'a new approval must not inherit the old selected sales');
   checks.push('microsecond cursor pages retain same approval/cert/report identity and exact initial source payloads while a new approval/publication appends separate events; no inferred regrade/reholder cause');
+  checks.push('detail scores derive from hashed immutable approval; exact received paid submission and staff names only; selected sales retain same approval/version/publicHash and fixed-snapshot presentation revision, while wrong-version/pending/new-approval selection remains unavailable; no draft, source-storage or private contact data');
 
   // Completing a pending publication after the snapshot must not mutate its
   // earlier approval event or make the snapshot overview appear published.

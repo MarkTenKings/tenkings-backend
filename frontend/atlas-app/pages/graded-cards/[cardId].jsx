@@ -12,8 +12,8 @@ export async function getServerSideProps(ctx) {
 }
 export default function CardHistoryPage({ staff, unavailable, accessFailure, manualEnabled, cardId }) {
   if (unavailable || !manualEnabled) return <Unavailable accessFailure={accessFailure ?? (!unavailable ? { kind: 'FEATURE_DISABLED' } : undefined)}/>;
-  if (staff?.role !== 'REVIEWER') return <Shell staff={staff} title="Card history" manual className={styles.shell}>
-    <main className={styles.page}><h1>Reviewer access required</h1><p>A reviewer staff account is required to open this card’s history.</p></main>
+  if (staff?.role !== 'REVIEWER') return <Shell staff={staff} title="Card details" manual className={styles.shell}>
+    <main className={styles.page}><h1>Reviewer access required</h1><p>A reviewer staff account is required to open this card’s details.</p></main>
   </Shell>;
   return <CardHistory key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId}/>;
 }

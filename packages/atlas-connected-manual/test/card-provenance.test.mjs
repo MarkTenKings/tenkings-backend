@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { canonical, digest } from '@atlas/manual-service/contract';
+import { emptyAtlasSportsAttributes } from '@atlas/grading-core/identity';
 import { cardProvenanceInput, cardProvenanceQuery, OWNERSHIP_VERIFICATION } from '../src/card-provenance-contract.mjs';
 import { createCardProvenanceService, projectCardProvenance, publicCardProvenance, cardProvenanceGrantSQL, validateCardProvenanceConfiguration } from '../src/card-provenance-service.mjs';
 
@@ -99,5 +101,75 @@ test('future provenance runtime requires additive schema and exact grant; role n
   for (const [installed, allowed, code] of [[false, false, 'CARD_PROVENANCE_SCHEMA_REQUIRED'], [true, false, 'CARD_PROVENANCE_GRANTS_REQUIRED'], [true, true, null]]) {
     const client = { async $queryRawUnsafe(sql) { return [sql.includes('to_regprocedure') ? { installed } : { allowed }]; } };
     if (code) await assert.rejects(validateCardProvenanceConfiguration({ client }), { code }); else await validateCardProvenanceConfiguration({ client });
+  }
+});
+
+function detailFixture() {
+  const f = fixture(), attributes = emptyAtlasSportsAttributes();
+  attributes.serial = { presence: 'PRESENT', printed: '007/099', numerator: 7, denominator: 99,
+    evidence: [{ side: 'BACK', imageSha256: hash, observation: 'Private reviewed source observation' }] };
+  f.card.identity = { playerName: null, productSet: 'Saved set', sportsAttributes: attributes };
+  const saved = { version: 'atlas-manual-report-snapshot-v2', identity: f.card.identity, finalGrade: f.card.finalGrade,
+    finalGradePolicy: 'atlas-final-half-point-v1', ruleVersion: 'SAVED_HISTORICAL_RULE',
+    grade: { subgrades: { centering: 9.27, corners: 9.75, edges: 8.94, surface: 9.63 } }, report: { privateStorageKey: 'PRIVATE_REF' } };
+  f.card.approvedSnapshot = canonical(saved); f.card.report.reportHash = digest(f.card.approvedSnapshot);
+  for (const event of f.result.events) event.source.reportHash = f.card.report.reportHash;
+  const sale = { id: 'saved-sale-1', title: 'Saved sold listing', listingUrl: 'https://www.ebay.com/itm/123456789012', grader: 'PSA', grade: '9',
+    soldAt: '2026-10-01T12:00:00.000Z', priceMinor: 10123, currency: 'USD', priceBasis: 'sold', labelText: 'PRIVATE_LABEL_READING' };
+  f.presentation = { version: 'atlas-report-presentation-v1', binding: { publicToken: f.card.report.publicToken, approvalVersion: 2, publicHash: hash },
+    revision: 3, updatedAt: '2026-10-20T13:10:00.000Z', market: { observedAt: '2026-10-20T13:05:00.000Z', sales: [sale],
+      estimate: { lowMinor: 1, highMinor: 100000, currency: 'USD', asOf: '2026-10-20T13:05:00.000Z', sampleCount: 1, method: 'Do not project this estimate' } } };
+  f.source = { version: 'atlas-selected-market-source-v1', previewId: randomUUID(), sourceHash: hash, selectedIds: [sale.id],
+    ref: { cardId: f.card.cardId, kind: 'MARKET_PREVIEW', sha256: hash, privateStorageKey: 'PRIVATE_MARKET_REF' } };
+  f.savePresentation = () => { const presentation = canonical(f.presentation), market_source = canonical(f.source);
+    f.card.presentationEvidence = { card_id: f.card.cardId, approval_action_id: f.card.approvalActionId, revision: 3, createdAt: '2026-10-20T13:10:00.000001Z',
+      presentation, presentation_hash: digest(presentation), market_source, market_source_hash: digest(market_source) }; };
+  f.savePresentation(); return f;
+}
+
+test('detail uses exact approval scores and reviewed Sports facts without exposing source artifacts or recalculating historical awards', async () => {
+  const f = detailFixture(), before = structuredClone(f.result), value = await f.read();
+  assert.equal(value.card.identity.category, 'SPORTS', 'null descriptive name does not erase the saved category');
+  assert.equal(value.card.identity.sportsAttributes.serial.printed, '007/099');
+  assert.equal(value.card.identity.sportsAttributes.serial.denominator, 99);
+  assert.deepEqual(value.card.approvedSummary, { state: 'AVAILABLE', ruleVersion: 'SAVED_HISTORICAL_RULE', finalGradePolicy: 'atlas-final-half-point-v1',
+    subgrades: { centering: 9.27, corners: 9.75, edges: 8.94, surface: 9.63 } });
+  assert.equal(value.card.finalGrade, 9.5); assert.equal(value.card.report.publicHash, hash);
+  assert.doesNotMatch(JSON.stringify(value), /PRIVATE_|Private reviewed|approvedSnapshot|imageSha256|presentationEvidence|estimate/);
+  assert.deepEqual(f.result, before);
+  const legacy = fixture(); const old = await legacy.read(); assert.deepEqual(old.card.approvedSummary, { state: 'UNAVAILABLE' });
+  assert.equal(old.card.identity.sportsAttributes, undefined); assert.deepEqual(old.card.savedComparables, { state: 'UNAVAILABLE' });
+});
+
+test('saved comparable selection retains observed disclosed prices and exact links but never private source ids or a valuation', async () => {
+  const f = detailFixture(), { card } = await f.read();
+  assert.equal(card.savedComparables.state, 'SAVED'); assert.equal(card.savedComparables.selection, 'SAVED_REPORT_SELECTION');
+  assert.equal(card.savedComparables.source, 'EBAY_SOLD_LISTINGS'); assert.equal(card.savedComparables.sales[0].priceMinor, 10123);
+  assert.equal(card.savedComparables.sales[0].listingUrl, 'https://www.ebay.com/itm/123456789012');
+  assert.equal(card.savedComparables.presentationRevision, 3); assert.equal(card.savedComparables.observedAt, f.presentation.market.observedAt);
+  assert.doesNotMatch(JSON.stringify(card.savedComparables), /previewId|sourceHash|PRIVATE|estimate|shipping|ref/);
+  f.presentation.market.sales[0].priceMinor = null; f.presentation.market.sales[0].priceBasis = 'accepted_offer_unknown'; f.savePresentation();
+  assert.equal((await f.read()).card.savedComparables.sales[0].priceMinor, null);
+});
+
+test('wrong card/approval/version/hash/source/time or unvalidated URL makes optional comps unavailable without hiding the approved grade', async () => {
+  for (const change of [f => f.card.presentationEvidence.card_id = randomUUID(), f => f.card.presentationEvidence.approval_action_id = randomUUID(),
+    f => f.card.presentationEvidence.createdAt = '2026-10-20T14:00:00.123457Z', f => f.card.presentationEvidence.presentation_hash = hash,
+    f => { f.presentation.binding.approvalVersion = 1; f.savePresentation(); }, f => { f.presentation.binding.publicHash = 'b'.repeat(64); f.savePresentation(); },
+    f => { f.presentation.market.observedAt = '2026-10-21T00:00:00.000Z'; f.savePresentation(); },
+    f => { f.presentation.market.sales[0].listingUrl = 'https://attacker.invalid/itm/123456789012'; f.savePresentation(); },
+    f => { f.source.selectedIds = ['wrong']; f.savePresentation(); }, f => { f.source.ref.cardId = randomUUID(); f.savePresentation(); },
+    f => { f.source.ref.kind = 'UNAPPROVED_DRAFT'; f.savePresentation(); }, f => f.card.presentationEvidence.market_source_hash = hash,
+    f => { f.card.report.state = 'PENDING'; f.result.events = [f.approval]; }]) {
+    const f = detailFixture(); change(f); const value = await f.read();
+    assert.deepEqual(value.card.savedComparables, { state: 'UNAVAILABLE' }); assert.equal(value.card.finalGrade, 9.5);
+    if (f.card.report.state === 'PENDING') { assert.equal(value.card.report.publicHash, undefined); assert.deepEqual(value.card.media, {}); }
+  }
+});
+
+test('approval snapshot corruption and current-event report swaps fail closed instead of presenting a false detail record', async () => {
+  for (const change of [f => f.card.approvedSnapshot += ' ', f => f.card.identity.playerName = 'Different card', f => f.card.finalGrade = 10,
+    f => f.publication.report.version = 1, f => f.publication.report.finalGrade = 8, f => f.approval.source.reportHash = hash]) {
+    const f = detailFixture(); change(f); await assert.rejects(f.read(), { code: 'CARD_PROVENANCE_RESPONSE_INVALID' });
   }
 });

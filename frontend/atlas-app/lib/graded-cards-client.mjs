@@ -48,7 +48,7 @@ export function approvedReportPath(card) {
   const match = /^\/reports\/(ar_[A-Za-z0-9_-]{24})\?v=([1-9][0-9]{0,9})$/.exec(card.report.path ?? '');
   return match && match[1] === card.report.publicToken && Number(match[2]) === card.report.version ? card.report.path : null;
 }
-export function gradedCardPath(card) { return cardIdPattern.test(card?.cardId ?? '') ? `/manual/${card.cardId}` : null; }
+export function gradedCardPath(card) { return cardIdPattern.test(card?.cardId ?? '') ? `/graded-cards/${card.cardId}` : null; }
 export const submissionOrigin = card => card?.submission?.channel === 'MAIL_IN' ? 'Mail-in'
   : card?.submission?.channel === 'KIOSK' ? card.submission.dealer?.name || 'Card shop' : 'No linked submission';
 export const archiveAccessFailure = error => error?.status === 401 || error?.status === 403

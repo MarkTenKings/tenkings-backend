@@ -1,8 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { approvedDate, approvedReportPath, gradedCardsFormFilters, gradedCardsPath, mergeGradedCards, readGradedCardsPage, recordedGrade, submissionOrigin } from '../lib/graded-cards-client.mjs';
 import { staffApiPath, validGradedCardsQueryPath } from '../lib/routes.mjs';
+import { approvedDate, approvedReportPath, gradedCardPath, gradedCardsFormFilters, gradedCardsPath, mergeGradedCards, readGradedCardsPage, recordedGrade, submissionOrigin } from '../lib/graded-cards-client.mjs';
+
+test('archive cards open the dedicated saved-card detail and reject malformed destinations', () => {
+  const cardId = 'aac6bff4-5f2a-4e5c-a9cd-4fef01f18454';
+  assert.equal(gradedCardPath({ cardId }), `/graded-cards/${cardId}`);
+  for (const value of [undefined, '', '../manual', `${cardId}?edit=1`]) assert.equal(gradedCardPath({ cardId: value }), null);
+});
 
 test('archive search encodes literal Unicode text and uses bounded server filters', () => {
   for (const q of ['O’Neil / 台灣', '100% & paid', 'Pikachu ex', 'mark+desk@example.test', 'ATLAS-0001']) {

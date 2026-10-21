@@ -1,5 +1,11 @@
 # Set Ops Runbook
 
+## Current ATLAS archive release — October 21, 2026 UTC
+
+The completed archive release supersedes the older deployment identities below. Staff/public web source is `c4b7cc85f01754eb5776042147e6c0fdf50f845a`; native source is `31c6685e8ae49e05c8f78b748a6233d143776131` and image is `sha256:f64dfc31485603df756ec9cd64976fda8cc5effe8b0155fa727a45fb82b4fa52`. Registered SQL008 is installed with manual-only access; customer deployment and Set Ops behavior are unchanged. The release hold was explicitly released at 2026-10-21T06:42:09.621Z and absence independently verified. The owner approved the live Graded Cards gallery in signed-in Chrome. Dedicated card-detail, SQL009 history, and reviewed Sports identity enhancements remain local next-release work.
+
+For complete deployment IDs, preservation evidence, and actual browser acceptance, use [archive production audit](../atlas/audits/2026-10-20/graded-cards-archive-production.md) and the latest Deploy Runbook section. Earlier dated headings below are historical checkpoints.
+
 ## Current public ATLAS showcase — October 20, 2026
 
 AtlasGrading.com now serves public source `eafcec149196f1918b0d56b8814f323dd76c079d`, deployment `dpl_DZF3UG5iDrpJPAxxUcJQ5KUf6uJz` / `atlas-grading-public-ne8q8othu-ten-kings.vercel.app`, homepage package `56c03a479d0d827e`. All four public aliases and the production target are verified; enabled PublicReaderControl is revision **96** with its existing configuration hash.

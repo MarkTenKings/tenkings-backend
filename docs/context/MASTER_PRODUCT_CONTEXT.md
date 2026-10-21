@@ -1,5 +1,9 @@
 # Ten Kings Master Product Context
 
+## Local dedicated card-detail increment — October21,2026
+
+Three Astra Ultra specialists implemented dedicated staff card details, verified Front/Back media/zoom/retry, and approval-bound category/identity/history/saved-sale projections. Root integrated the approved white/emerald design and gallery navigation. This is local source on `codex/atlas-marketplace-foundation`, not a deployed release. SQL009 remains source-only; current production identities below are unchanged.811 staff tests passed;48 final focused tests passed after the final hook dependency correction;902 connected tests passed with2 existing native-measurement skips;8 owned PostgreSQL17 groups passed with cleanup verified. Production build/boundary passed. Browser evidence and remaining gates are in `docs/atlas/audits/2026-10-21/card-detail-integration.md`. Ownership/My Collection, bounded comp curation/pricing and marketplace transactions remain future work. Raw intake masters and calibrated paired slab composition are not claimed by the approved1350×1858-photo viewer.
+
 ## Current Graded Cards production release — October 20, 2026 Pacific
 
 The staff **Graded cards** archive is deployed at `https://atlasgrading.com/admin/graded-cards`. It provides pure-white gallery/table views, server-wide search across recorded identity/certificate/staff/customer/order fields, category and inclusive UTC approval-date filters, and links to the exact saved card, report version and recorded submission. It reads existing approvals; it does not create ownership, listings or marketplace transactions. Ordinary staff sign-in is required after the release-binding update. **Technical deployment is complete. The owner signed in and supplied production screenshots showing four real approved cards, then approved the gallery design. Search/filter/table and destination-flow acceptance have not yet been fully observed.**

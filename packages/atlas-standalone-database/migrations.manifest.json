@@ -39,7 +39,7 @@
     {
       "version": "atlas-standalone-009-card-provenance",
       "file": "sql/009-card-provenance.sql",
-      "sqlSha256": "2ce701a8d22ca0b2dfa81381919331046358f7acff308440220f1a9c3faa1a6a"
+      "sqlSha256": "9e9361a6cfe6b057a306a347741d88911d4d9f654f3c01b71aefcbd95f74bc2f"
     }
   ]
 }

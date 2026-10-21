@@ -1,5 +1,7 @@
 # Next R1 integration qualification
 
+This is the retained October20 source checkpoint. It is superseded for current detail/media/SQL009 source by [the October21 dedicated-detail audit](../2026-10-21/card-detail-integration.md); its original test counts and receipts below remain historical evidence.
+
 This is a local integration checkpoint for the uncommitted next-R1 work on top of `c4b7cc85f01754eb5776042147e6c0fdf50f845a` in the foundation worktree. It combines the authenticated Card history/provenance read with optional reviewed sports attributes and identification v5 proposals. It is separate from the frozen archive-only release-02 source, which excludes these changes and migration 009. This evidence does not establish production deployment or completion of all R1/master-plan work.
 
 The final source checkpoint contains 56 changed or new frontend/package source and test files. Their byte hashes are recorded in `/tmp/atlas-marketplace-foundation-checks/r1-source-checkpoint-final.json`, SHA256 `1bc4218cf5d9f2ecb31bbfdcf252e0b3bea71c2f524acbe6fa57a43163548ee3`. It was captured after the identity owner's explicit source freeze and final complete test run. Documentation and SESSION_LOG are outside that source checkpoint. The final source includes all reviewed comp-negation corrections and the conservative unresolved-material guard; the identity owner confirmed that the existing core build remained current.

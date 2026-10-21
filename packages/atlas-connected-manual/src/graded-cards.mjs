@@ -30,6 +30,10 @@ function projectCard(row) {
     ...Object.fromEntries(['playerName', 'cardName', 'year', 'manufacturer', 'productSet', 'parallel', 'insert', 'cardNumber'].map(key => [key, text(row.identity?.[key])])) };
   const report = { state: row.report.state, version: row.report.version, publicToken: row.report.publicToken, reportHash: row.report.reportHash,
     path: row.report.state === 'PUBLISHED' ? `/reports/${row.report.publicToken}?v=${row.report.version}` : null };
+  if (report.state === 'PUBLISHED') {
+    requireThat(/^[a-f0-9]{64}$/.test(row.mediaEvidence?.publicHash ?? ''), 503, 'GRADED_CARDS_RESPONSE_INVALID');
+    report.publicHash = row.mediaEvidence.publicHash;
+  }
   const submission = row.submission && UUID.test(row.submission.orderId ?? '') && UUID.test(row.submission.cardId ?? '')
     && ['MAIL_IN', 'KIOSK'].includes(row.submission.channel) ? { orderId: row.submission.orderId, cardId: row.submission.cardId,
       reference: text(row.submission.reference), channel: row.submission.channel, customer: { name: text(row.submission.customer?.name) },

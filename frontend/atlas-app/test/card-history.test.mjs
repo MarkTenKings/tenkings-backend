@@ -7,6 +7,9 @@ import { createRequire } from 'node:module';
 import * as history from '../lib/card-history-client.mjs';
 import * as archive from '../lib/graded-cards-client.mjs';
 import * as routes from '../lib/routes.mjs';
+import * as orderDesk from '../lib/order-desk-client.mjs';
+import * as soldReferences from '@atlas/manual-workspace/sold-references';
+import * as identity from '@atlas/grading-core/identity';
 
 const cardId = randomUUID(), token = `ar_${'a'.repeat(24)}`, action = randomUUID();
 const fixture = () => ({ schemaVersion: 1, card: { cardId, approvalActionId: action, certificateNumber: 'ATLAS-ABCDEF123456', identity: { playerName: 'Saved card' }, finalGrade: 8.5, approvedAt: '2026-10-20T00:00:00.000000Z', report: { state: 'PUBLISHED', version: 2, publicToken: token, path: `/reports/${token}?v=2` }, media: { FRONT: { url: `/api/reports/${token}/images/FRONT?v=2` } } }, ownership: { status: 'UNKNOWN', verification: 'UNKNOWN', history: [] }, custody: { status: 'UNKNOWN', currentPhysicalHolder: 'UNKNOWN' }, history: { scope: 'RECORDED_ATLAS_EVENTS', complete: false, snapshot: '2026-10-21T00:00:00.000000Z', events: [{ eventId: `publication:${randomUUID()}`, kind: 'REPORT_PUBLISHED', category: 'GRADING', verification: 'VERIFIED_RECORD', recordedAt: '2026-10-20T00:00:00.000000Z', report: { version: 2, finalGrade: 8.5, path: `/reports/${token}?v=2` } }], nextCursor: null } });
@@ -32,7 +35,7 @@ test('history replies cannot switch card, ownership meaning or snapshot during p
     const malformed = structuredClone(first); malformed.history.events[0].occurredAt = occurredAt;
     assert.throws(() => history.readCardHistory(malformed, cardId));
   }
-  const next = fixture(); next.history.events.unshift(first.history.events[0]);
+  const next = fixture(); next.history.events[0].recordedAt = '2026-10-19T00:00:00.000000Z'; next.history.events.unshift(first.history.events[0]);
   assert.equal(history.mergeCardHistory(first, next).history.events.length, 2);
   next.card.approvalActionId = randomUUID(); assert.throws(() => history.mergeCardHistory(first, next));
   next.card.approvalActionId = action; next.history.snapshot = '2026-10-22T00:00:00.000000Z';
@@ -66,6 +69,10 @@ function harness() {
     if (name === 'react') return react;
     if (name === 'next/link') return 'a';
     if (name === './Shell') return { __esModule: true, default: 'Shell' };
+    if (name === './ApprovedCardMedia') return { __esModule: true, default: 'ApprovedCardMedia' };
+    if (name === '@atlas/manual-workspace/sold-references') return soldReferences;
+    if (name === '@atlas/grading-core/identity') return identity;
+    if (name.endsWith('/order-desk-client.mjs')) return orderDesk;
     if (name.endsWith('/routes.mjs')) return routes;
     if (name.endsWith('/card-history-client.mjs')) return history;
     if (name.endsWith('/graded-cards-client.mjs')) return archive;
@@ -77,13 +84,16 @@ function harness() {
   f.flush = async () => { for (let i = 0; i < 4; i++) { await new Promise(setImmediate); f.render(); } };
   f.event = name => { listeners.get(name)?.({ persisted: true }); f.render(); };
   f.text = () => JSON.stringify(f.tree);
+  f.component = (name, props) => { cursor = 1000; return exports[name](props); };
+  f.find = predicate => findNode(f.tree, predicate);
   f.dispose = () => slots.forEach(slot => slot?.cleanup?.());
   f.render(); return f;
 }
 test('actual history component reads only after matching fresh session and retains saved grade', async () => {
   const f = harness(); await f.flush();
   assert.deepEqual(f.calls.map(call => call.path), ['session', history.cardHistoryPath(cardId)]);
-  assert.match(f.text(), /ATLAS-ABCDEF123456/); assert.match(f.text(), /8\.5/); assert.match(f.text(), /Not recorded/); f.dispose();
+  assert.match(f.text(), /ATLAS-ABCDEF123456/); assert.match(f.text(), /8\.5/);
+  assert.match(JSON.stringify(f.component('CardOverview', { card: fixture().card, custody: { status: 'UNKNOWN' }, orderLinks: false })), /Not recorded/); f.dispose();
 });
 test('changed account prevents any private history read', async () => {
   const f = harness(); f.session = { staff: { ...f.staff, id: randomUUID() } }; f.event('pageshow'); await f.flush();
@@ -103,4 +113,110 @@ test('403 clears previously loaded private history and unknown custody is never 
   const f = harness(); await f.flush(); assert.match(f.text(), /ATLAS-ABCDEF123456/);
   f.failure = { status: 403 }; f.event('pageshow'); await f.flush();
   assert.doesNotMatch(f.text(), /ATLAS-ABCDEF123456/); assert.match(f.text(), /Sign in again/); f.dispose();
+});
+
+
+function findNode(value, predicate) {
+  if (!value || typeof value !== 'object') return null;
+  if (Array.isArray(value)) return value.map(item => findNode(item, predicate)).find(Boolean) ?? null;
+  if (predicate(value)) return value;
+  return findNode(value.props?.children, predicate);
+}
+
+test('card detail keeps the exact report primary and the grading workspace secondary', async () => {
+  const f = harness(); await f.flush();
+  const report = f.find(node => node.type === 'a' && node.props.href === `/reports/${token}?v=2`);
+  assert.ok(report); assert.match(JSON.stringify(report), /Open approved report/);
+  assert.ok(f.find(node => node.type === 'a' && node.props.href === `/manual/${cardId}`));
+  const media = f.find(node => node.type === 'ApprovedCardMedia');
+  assert.equal(media.props.mode, 'detail'); assert.equal(media.props.card.approvalActionId, action);
+  assert.equal(f.find(node => node.props?.role === 'tab' && node.props.id === 'card-tab-overview').props['aria-selected'], true);
+  f.dispose();
+});
+
+test('tabs support keyboard navigation and opening saved panels never dispatches work', async () => {
+  const f = harness(); await f.flush(); const count = f.calls.length;
+  let prevented = false, focused = null;
+  const tab = f.find(node => node.props?.id === 'card-tab-overview');
+  tab.props.onKeyDown({ key: 'End', preventDefault() { prevented = true; }, currentTarget: { parentElement: {
+    querySelectorAll: () => [0, 1, 2, 3].map(index => ({ focus() { focused = index; } })),
+  } } });
+  f.render(); assert.equal(prevented, true); assert.equal(focused, 3);
+  assert.equal(f.find(node => node.props?.id === 'card-tab-history').props.tabIndex, 0);
+  assert.equal(f.find(node => node.props?.id === 'card-panel-history').props.hidden, false);
+  assert.equal(f.find(node => node.props?.id === 'card-panel-overview').props.hidden, true);
+  f.find(node => node.props?.id === 'card-tab-comps').props.onClick(); f.render(); await f.flush();
+  assert.equal(f.find(node => node.props?.id === 'card-panel-comps').props.hidden, false);
+  assert.equal(f.calls.length, count); f.dispose();
+});
+
+test('a changed staff role hides loaded details before the replacement read resolves', async () => {
+  const f = harness(); await f.flush(); assert.match(f.text(), /ATLAS-ABCDEF123456/);
+  f.staff = { ...f.staff, role: 'OBSERVER' }; f.render();
+  assert.doesNotMatch(f.text(), /ATLAS-ABCDEF123456/);
+  await f.flush(); assert.match(f.text(), /Sign in again/); f.dispose();
+});
+
+test('pagehide clears loaded detail and bfcache return rechecks the ordinary staff session', async () => {
+  const f = harness(); await f.flush(); f.event('pagehide');
+  assert.doesNotMatch(f.text(), /ATLAS-ABCDEF123456/);
+  const count = f.calls.length; f.event('pageshow'); await f.flush();
+  assert.equal(f.calls[count].path, 'session'); assert.match(f.text(), /ATLAS-ABCDEF123456/); f.dispose();
+});
+
+test('overview exposes linked submission only through the existing order permission', async () => {
+  const f = harness(); await f.flush();
+  const card = { ...fixture().card, submission: { orderId: randomUUID(), reference: 'ATLAS-ORDER-123', customer: { name: 'Recorded submitter' }, channel: 'MAIL_IN' } };
+  const without = f.component('CardOverview', { card, custody: { status: 'UNKNOWN' }, orderLinks: false });
+  assert.doesNotMatch(JSON.stringify(without), new RegExp(card.submission.orderId)); assert.match(JSON.stringify(without), /do not establish ownership/);
+  const withLink = f.component('CardOverview', { card, custody: { status: 'RECORDED' }, orderLinks: true });
+  assert.match(JSON.stringify(withLink), new RegExp(card.submission.orderId));
+  assert.match(JSON.stringify(withLink), /current physical holder have not been established/); f.dispose();
+});
+
+test('category tiles round only their display while exact saved scores and historical award stay available', async () => {
+  const f = harness(); await f.flush();
+  const card = { ...fixture().card, approvedSummary: { state: 'AVAILABLE', ruleVersion: 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1', finalGradePolicy: 'atlas-final-half-point-v1', subgrades: { centering: 8.125, corners: 9, edges: 7.5, surface: 8.75 } } };
+  const tree = f.component('GradeSummary', { card, report: `/reports/${token}?v=2` });
+  const text = JSON.stringify(tree);
+  assert.match(text, /8\.13/); assert.match(text, /8\.125/); assert.match(text, /8\.75/); assert.match(text, /8\.5/); assert.match(text, /atlas-final-half-point-v1/);
+  assert.match(text, /Category tiles display up to two decimal places/); assert.match(text, /does not recalculate the approved grade/); f.dispose();
+});
+
+test('saved sales preserve unknown prices, grading distinctions and unconfirmed identities', async () => {
+  const f = harness(); await f.flush();
+  const card = { ...fixture().card, savedComparables: { state: 'SAVED', selection: 'SAVED_REPORT_SELECTION', observedAt: '2026-10-20T00:00:00.000Z', sales: [
+    { id: 'one', title: 'Recorded PSA sale', grader: 'PSA', grade: '9', soldAt: '2026-10-19T00:00:00.000Z', priceMinor: 12500, currency: 'USD', priceBasis: 'sold', identityStatus: 'MATCH', listingUrl: 'https://www.ebay.com/itm/123456789012' },
+    { id: 'two', title: 'Recorded raw sale', grader: null, grade: null, raw: true, soldAt: null, priceMinor: null, currency: 'USD', priceBasis: 'accepted_offer_unknown', identityStatus: 'UNKNOWN', listingUrl: null },
+  ] } };
+  const text = JSON.stringify(f.component('SavedComparables', { card }));
+  assert.match(text, /PSA 9/); assert.match(text, /Ungraded/); assert.match(text, /\$125\.00/);
+  assert.match(text, /Accepted offer · Amount undisclosed/); assert.match(text, /Identity match is unconfirmed/);
+  assert.doesNotMatch(text, /market value|estimated value|\$0\.00/i);
+  const missing = JSON.stringify(f.component('SavedComparables', { card: fixture().card }));
+  assert.match(missing, /does not mean no comparable sales exist/); f.dispose();
+});
+
+
+test('sports facts preserve exact printed serial and distinguish presence from authentication', async () => {
+  const f = harness(); await f.flush();
+  const card = { ...fixture().card, identity: { ...fixture().card.identity, sportsAttributes: {
+    serial: { presence: 'PRESENT', printed: '007/099' }, autograph: { presence: 'PRESENT', type: 'STICKER' },
+    relic: { presence: 'PRESENT', windows: [{ position: 'Lower left', material: 'Fabric', use: 'UNKNOWN', manufacturerStatement: null }] },
+  } } };
+  const text = JSON.stringify(f.component('CardOverview', { card, custody: { status: 'UNKNOWN' }, orderLinks: false }));
+  assert.match(text, /007\/099/); assert.match(text, /Sticker · Presence is not authentication/);
+  assert.match(text, /Fabric · Unknown/); assert.doesNotMatch(text, /game.used/i); f.dispose();
+});
+
+
+test('a card-specific 404 during history pagination clears the retained detail and media', async () => {
+  const f = harness(); f.result.history.nextCursor = 'saved-cursor'; await f.flush();
+  f.find(node => node.props?.id === 'card-tab-history').props.onClick(); f.render();
+  const loadMore = f.find(node => node.type === 'button' && JSON.stringify(node.props.children).includes('Load earlier events'));
+  assert.ok(loadMore); assert.match(f.text(), /ATLAS-ABCDEF123456/);
+  f.failure = { status: 404, code: 'CARD_PROVENANCE_NOT_FOUND' }; loadMore.props.onClick(); await f.flush();
+  assert.match(f.text(), /This approved card is unavailable to this account/);
+  assert.doesNotMatch(f.text(), /ATLAS-ABCDEF123456|Saved card|ApprovedCardMedia/);
+  assert.doesNotMatch(f.text(), /Sign in again/); f.dispose();
 });

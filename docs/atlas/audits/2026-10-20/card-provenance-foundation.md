@@ -32,17 +32,21 @@ Fixed-snapshot pagination selects the latest approval as of that snapshot and in
 
 ## Privacy and public projection
 
-The authorized staff projection allowlists source references needed to audit the saved events. It excludes customer name, email, address, payment identifiers, staff actor identity, custody free text and unapproved draft content. Original image evidence remains in the existing authorized media systems; this read does not export raw storage keys or create image derivatives.
+The authorized staff projection allowlists source references needed to audit saved events. The October21 detail extension includes archive-equivalent received-submission customer display name, approver/reviewer display names and bounded internal IDs, behind the same current staff role/session/card ACL. It excludes email, address, phone, payment identifiers, custody free text, raw approval artifacts and unapproved drafts. The public helper excludes these private display fields and IDs. Original image evidence remains in the existing authorized media systems; this read does not export raw storage keys or create image derivatives.
 
 `publicCardProvenance` is a pure, per-page redaction helper only. It returns published report facts and certificate, with unknown ownership. It excludes pending approvals, custody, internal card/source/actor IDs, hashes other than the already public packet hash, cursors and internal snapshot metadata. A page with no published report event returns null, including an entirely pending card. There is no public provenance endpoint and no claim that this helper establishes publication consent or customer authority. A later public/customer integration must separately use appropriate public report admission or authenticated submission access and must not widen that access into ownership authority.
 
 ## Migration and runtime readiness
 
-Additive migration `atlas-standalone-009-card-provenance` has SHA256 `2ce701a8d22ca0b2dfa81381919331046358f7acff308440220f1a9c3faa1a6a`. Released migration 008 is unchanged. Migration 009 creates only the read function; it does not create tables, backfill rows or alter source event guards. Existing card/event indexes support its bounded per-card query; production scale and latency have not been measured.
+Additive migration `atlas-standalone-009-card-provenance` has SHA256 `9e9361a6cfe6b057a306a347741d88911d4d9f654f3c01b71aefcbd95f74bc2f`. Released migration 008 is unchanged. Migration 009 creates only the read function; it does not create tables, backfill rows or alter source event guards. Existing card/event indexes support its bounded per-card query; production scale and latency have not been measured.
 
 The future native runtime requires the exact function and EXECUTE grant, failing with `CARD_PROVENANCE_SCHEMA_REQUIRED` or `CARD_PROVENANCE_GRANTS_REQUIRED` before serving if either is missing. This check belongs to the future source and does not change frozen archive-release startup. The standalone grant generator conditionally grants the function when installed, preserving historical-prefix qualification. The existing archive qualifier now explicitly identifies migration 008 and tests the currently registered suffix, so additive 009 does not invalidate the archive's own upgrade evidence.
 
-## Verification
+## October21 detail extension
+
+Source-only009 now reads the exact hashed immutable approval for category scores/policy and reviewed Sports facts, plus a same-approval presentation at the fixed snapshot. Saved sales require valid presentation/source hashes, source-card identity, selected IDs, matching token/version/publicHash and bounded dates. Invalid/missing ancillary evidence is unavailable, never a new search or valuation. Published archive/detail output includes publicHash for exact media grants. SQL009 remains unapplied in production. Latest qualification:902 connected tests passed with2 existing native-measurement skips;8 disposable PostgreSQL17 groups passed with owned-cluster cleanup verified. Evidence: `/tmp/atlas-detail-records-20261021/pg-02/postgres-result.json` and `/tmp/atlas-detail-records-20261021/connected-full-node22.log`. See [dedicated detail integration](../2026-10-21/card-detail-integration.md) for UI/browser/build evidence.
+
+## Historical foundation verification
 
 The final focused contract/service/HTTP/migration run passed 13/13 tests. It covers malformed and cross-card cursors, counterfeit capabilities, private projections, exact source binding, stable ordering, pending/public redaction, raw role-name injection rejection, missing-schema/grant readiness and an actual signed proxy/private HTTP round trip. No ownership mutation path is accepted.
 

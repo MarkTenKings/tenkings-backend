@@ -1,4 +1,6 @@
-import { requireThat } from '@atlas/manual-service/contract';
+import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
+import { projectAtlasSportsAttributes } from '@atlas/grading-core/identity';
+import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
 import { archiveApprovedMedia } from './approved-card-media.mjs';
 import { cardProvenanceInput, provenanceId, provenanceInstant, provenanceEventId, PROVENANCE_CUSTODY_KINDS, unknownOwnership } from './card-provenance-contract.mjs';
 
@@ -8,6 +10,62 @@ const positive = value => Number.isSafeInteger(value) && value > 0 && value <= 2
 const grade = value => typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 10;
 const words = value => typeof value === 'string' && value.length <= 200 ? value : null;
 const physical = kind => PROVENANCE_CUSTODY_KINDS.includes(kind) && !['DEPOSIT_DECLARED', 'DELAY_REPORTED', 'DELAY_RESOLVED'].includes(kind);
+const unavailable = () => ({ state: 'UNAVAILABLE' });
+const person = value => value && provenanceId(value.id) ? { id: value.id, name: words(value.name) } : null;
+const categoryKeys = ['centering', 'corners', 'edges', 'surface'];
+
+function approvedSnapshot(row) {
+  if (row.approvedSnapshot == null) return null; // Older read models remain readable.
+  check(typeof row.approvedSnapshot === 'string' && Buffer.byteLength(row.approvedSnapshot) <= 2 * 1024 * 1024
+    && digest(row.approvedSnapshot) === row.report.reportHash);
+  let value; try { value = JSON.parse(row.approvedSnapshot); } catch { check(false); }
+  check(value && canonical(value.identity) === canonical(row.identity) && value.finalGrade === row.finalGrade);
+  return value;
+}
+
+function approvedSummary(value) {
+  const subgrades = value?.grade?.subgrades;
+  if (!subgrades || !categoryKeys.every(key => typeof subgrades[key] === 'number' && Number.isFinite(subgrades[key]) && subgrades[key] >= 0 && subgrades[key] <= 10)
+    || typeof value.ruleVersion !== 'string' || !value.ruleVersion.length || value.ruleVersion.length > 180
+    || !['atlas-final-whole-point-v1', 'atlas-final-half-point-v1', 'atlas-historical-tenth-v1'].includes(value.finalGradePolicy)) return unavailable();
+  return { state: 'AVAILABLE', ruleVersion: value.ruleVersion, finalGradePolicy: value.finalGradePolicy,
+    subgrades: Object.fromEntries(categoryKeys.map(key => [key, subgrades[key]])) };
+}
+
+function savedComparables(row, report, snapshot) {
+  const saved = row.presentationEvidence;
+  if (report.state !== 'PUBLISHED' || !saved) return unavailable();
+  // This is an existing selected-report presentation, never a search candidate
+  // or mutable grading draft. Its optional failure cannot suppress the grade.
+  try {
+    check(saved.card_id === row.cardId && saved.approval_action_id === row.approvalActionId && positive(saved.revision)
+      && provenanceInstant(saved.createdAt) && saved.createdAt <= snapshot
+      && typeof saved.presentation === 'string' && Buffer.byteLength(saved.presentation) <= 2 * 1024 * 1024
+      && digest(saved.presentation) === saved.presentation_hash
+      && typeof saved.market_source === 'string' && Buffer.byteLength(saved.market_source) <= 32768
+      && digest(saved.market_source) === saved.market_source_hash);
+    const value = parseReportPresentation(JSON.parse(saved.presentation), { publicToken: report.publicToken, approvalVersion: report.version, publicHash: report.publicHash });
+    const sources = JSON.parse(saved.market_source), source = sources.version === 'atlas-market-sources-v2' ? sources.soldReferences : sources;
+    check(value.revision === saved.revision && Date.parse(value.updatedAt) <= Date.parse(snapshot)
+      && value.market && Date.parse(value.market.observedAt) <= Date.parse(snapshot) && value.market.sales.length > 0 && value.market.sales.length <= 600
+      && source?.version === 'atlas-selected-market-source-v1' && provenanceId(source.previewId) && hash(source.sourceHash)
+      && source.ref?.cardId === row.cardId && source.ref.kind === 'MARKET_PREVIEW' && hash(source.ref.sha256)
+      && Array.isArray(source.selectedIds) && source.selectedIds.length === value.market.sales.length
+      && new Set(source.selectedIds).size === source.selectedIds.length
+      && value.market.sales.every(sale => source.selectedIds.includes(sale.id)));
+    const fields = ['id', 'title', 'listingUrl', 'grader', 'grade', 'soldAt', 'priceMinor', 'currency', 'priceBasis', 'raw', 'rawCondition',
+      'designation', 'language', 'printing', 'variant', 'identityStatus', 'evidenceKind', 'matchReason', 'reportedPrice', 'imageUrl'];
+    return { state: 'SAVED', selection: 'SAVED_REPORT_SELECTION', source: 'EBAY_SOLD_LISTINGS', observedAt: value.market.observedAt,
+      presentationRevision: value.revision, sales: value.market.sales.map(sale => Object.fromEntries(fields.filter(key => Object.hasOwn(sale, key)).map(key => [key, sale[key]]))) };
+  } catch { return unavailable(); }
+}
+
+function submission(value) {
+  if (!value || !provenanceId(value.orderId) || !provenanceId(value.cardId) || !['MAIL_IN', 'KIOSK'].includes(value.channel)) return null;
+  return { orderId: value.orderId, cardId: value.cardId, reference: words(value.reference), channel: value.channel,
+    customer: { name: words(value.customer?.name) }, dealer: value.dealer && provenanceId(value.dealer.id) && provenanceId(value.dealer.locationId)
+      ? { id: value.dealer.id, locationId: value.dealer.locationId, name: words(value.dealer.name) } : null };
+}
 
 export function cardProvenanceGrantSQL(role) {
   requireThat(typeof role === 'string' && /^[a-z][a-z0-9_]{0,62}$/.test(role), 500, 'CARD_PROVENANCE_ROLE_INVALID');
@@ -27,16 +85,21 @@ function projectCard(row, cardId, snapshot) {
     && provenanceInstant(row.approvedAt) && row.approvedAt <= snapshot && grade(row.finalGrade)
     && row.report && ['PENDING', 'PUBLISHED'].includes(row.report.state) && positive(row.report.version)
     && typeof row.report.publicToken === 'string' && /^ar_[A-Za-z0-9_-]{24}$/.test(row.report.publicToken) && hash(row.report.reportHash));
-  const raw = row.identity ?? {}, identity = { category: typeof raw.playerName === 'string' && !raw.cardName ? 'SPORTS'
-    : typeof raw.cardName === 'string' && !raw.playerName ? 'POKEMON' : null,
+  const saved = approvedSnapshot(row), raw = row.identity ?? {}, identity = { category: Object.hasOwn(raw, 'playerName') && !Object.hasOwn(raw, 'cardName') ? 'SPORTS'
+    : Object.hasOwn(raw, 'cardName') && !Object.hasOwn(raw, 'playerName') ? 'POKEMON' : null,
   ...Object.fromEntries(['playerName', 'cardName', 'year', 'manufacturer', 'productSet', 'parallel', 'insert', 'cardNumber'].map(key => [key, words(raw[key])])) };
+  if (saved?.identity?.sportsAttributes && identity.category === 'SPORTS') {
+    try { identity.sportsAttributes = projectAtlasSportsAttributes(saved.identity.sportsAttributes); } catch { /* Historical unsupported optional facts remain unavailable. */ }
+  }
   const report = { state: row.report.state, version: row.report.version, publicToken: row.report.publicToken,
     reportHash: row.report.reportHash, path: row.report.state === 'PUBLISHED' ? `/reports/${row.report.publicToken}?v=${row.report.version}` : null };
+  if (report.state === 'PUBLISHED') { check(hash(row.mediaEvidence?.publicHash)); report.publicHash = row.mediaEvidence.publicHash; }
   const media = archiveApprovedMedia({ cardId, approvalActionId: row.approvalActionId, publicToken: report.publicToken,
     approvalVersion: report.version, publicationState: report.state, reportHash: report.reportHash,
     sourceRevision: row.mediaEvidence?.sourceRevision, sourceHash: row.mediaEvidence?.sourceHash, publicHash: row.mediaEvidence?.publicHash });
   return { cardId, certificateNumber: row.certificateNumber, identity, finalGrade: row.finalGrade, approvalActionId: row.approvalActionId,
-    approvedAt: row.approvedAt, report, media };
+    approvedAt: row.approvedAt, report, media, approvedSummary: approvedSummary(saved), savedComparables: savedComparables(row, report, snapshot),
+    approver: person(row.approver), reviewers: Array.isArray(row.reviewers) ? row.reviewers.slice(0, 100).map(person).filter(Boolean) : [], submission: submission(row.submission) };
 }
 
 function projectEvent(row, card, snapshot) {
@@ -49,7 +112,11 @@ function projectEvent(row, card, snapshot) {
       && source.type === (published ? 'PUBLICATION' : 'APPROVAL') && provenanceId(source.approvalActionId)
       && row.eventId === `${published ? 'publication' : 'approval'}:${source.approvalActionId}`
       && hash(source.reportHash) && report && positive(report.version) && grade(report.finalGrade)
+      && report.version <= card.report.version
       && provenanceInstant(report.approvedAt) && report.approvedAt <= row.recordedAt && row.occurredAt === row.recordedAt);
+    if (source.approvalActionId === card.approvalActionId) check(report.version === card.report.version && report.finalGrade === card.finalGrade
+      && report.approvedAt === card.approvedAt && source.reportHash === card.report.reportHash
+      && (!published || card.report.state === 'PUBLISHED' && source.publicHash === card.report.publicHash));
     const projectedSource = { type: source.type, cardId: card.cardId, approvalActionId: source.approvalActionId, reportHash: source.reportHash };
     const projectedReport = { version: report.version, finalGrade: report.finalGrade, approvedAt: report.approvedAt };
     if (published) {
