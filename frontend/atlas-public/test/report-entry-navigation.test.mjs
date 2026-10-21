@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { readCardDetailReportEntry, REPORT_ENTRY_STORAGE_KEY } from '@atlas/site-router/report-entry';
+import { captureCardDetailReportEntry, readCardDetailReportEntry, REPORT_ENTRY_STORAGE_KEY } from '@atlas/site-router/report-entry';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core');
 const nextRequire = createRequire(require.resolve('next/package.json'));
@@ -34,7 +34,10 @@ function harness(pending) {
   };
   vm.runInNewContext(navigationCode, { exports, window: browser, require(name) {
     if (name === 'react') return react;
-    if (name === '@atlas/site-router/report-entry') return { readCardDetailReportEntry: path => readCardDetailReportEntry(path, browser, now) };
+    if (name === '@atlas/site-router/report-entry') return {
+      captureCardDetailReportEntry: () => captureCardDetailReportEntry(browser, now),
+      readCardDetailReportEntry: path => readCardDetailReportEntry(path, browser, now),
+    };
     if (name.endsWith('.module.css')) return { navigation: 'navigation' };
     return fallbackRequire(name);
   } });

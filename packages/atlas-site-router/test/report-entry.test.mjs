@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REPORT_ENTRY_STORAGE_KEY, REPORT_ENTRY_HISTORY_KEY, REPORT_ENTRY_MAX_AGE_MS,
-  staffCardDetailPath, rememberCardDetailReportEntry, rememberCardDetailReportClick, readCardDetailReportEntry,
+  staffCardDetailPath, rememberCardDetailReportEntry, rememberCardDetailReportClick, readCardDetailReportEntry, captureCardDetailReportEntry,
 } from '../report-entry.mjs';
 
 const origin = 'https://atlasgrading.com', now = 1792627200000;
@@ -106,4 +106,39 @@ test('modified and auxiliary clicks do not create a pending same-tab handoff', (
     assert.equal(b.sessionStorage.getItem(REPORT_ENTRY_STORAGE_KEY), null);
   }
   assert.equal(rememberCardDetailReportClick({ button: 0 }, reportPath, cardId, browser()), true);
+});
+
+test('bootstrap capture survives replacement once without creating a persistent direct-entry mapping', () => {
+  const b = browser(reportPath); b.history.state[REPORT_ENTRY_HISTORY_KEY] = context();
+  assert.equal(captureCardDetailReportEntry(b, now + 1), true);
+  b.history.state = { __N: true, key: 'next-router-reload' };
+  assert.equal(readCardDetailReportEntry(reportPath, b, now + 2), cardPath);
+  assert.equal(b.history.state.key, 'next-router-reload');
+  assert.equal(b.sessionStorage.getItem(REPORT_ENTRY_STORAGE_KEY), null);
+  b.history.state = { __N: true, key: 'fresh-direct-entry' };
+  assert.equal(captureCardDetailReportEntry(b, now + 3), false, 'one capture per document');
+  assert.equal(readCardDetailReportEntry(reportPath, b, now + 4), null);
+  assert.equal(readCardDetailReportEntry(reportPath, browser(reportPath), now + 4), null, 'new tab has no entry context');
+});
+
+test('bootstrap context validates the current entry and revalidates path, age and origin after replacement', () => {
+  for (const candidate of [{ ...context(), reportPath: reportPath.replace('?v=2', '?v=1') },
+    { ...context(), origin: 'https://evil.test' }, { ...context(), cardPath: '//evil.test/' },
+    { ...context(), createdAt: now + 1 }, { ...context(), createdAt: now - REPORT_ENTRY_MAX_AGE_MS - 1 },
+    { ...context(), privateCustomer: 'never captured' }]) {
+    const b = browser(reportPath); b.history.state[REPORT_ENTRY_HISTORY_KEY] = candidate;
+    assert.equal(captureCardDetailReportEntry(b, now), false);
+    b.history.state = { __N: true };
+    assert.equal(readCardDetailReportEntry(reportPath, b, now), null);
+  }
+  for (const change of ['path', 'origin', 'expiry']) {
+    const b = browser(reportPath); b.history.state[REPORT_ENTRY_HISTORY_KEY] = context();
+    assert.equal(captureCardDetailReportEntry(b, now), true); b.history.state = { __N: true };
+    if (change === 'path') b.location.href = origin + reportPath.replace('?v=2', '?v=1');
+    if (change === 'origin') b.location.href = 'https://evil.test' + reportPath;
+    assert.equal(readCardDetailReportEntry(reportPath, b, change === 'expiry' ? now + REPORT_ENTRY_MAX_AGE_MS + 1 : now), null);
+    b.location.href = origin + reportPath;
+    assert.equal(readCardDetailReportEntry(reportPath, b, now), null, 'failed validation consumes captured context');
+  }
+  assert.equal(captureCardDetailReportEntry(undefined, now), false);
 });

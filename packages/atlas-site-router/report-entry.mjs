@@ -5,6 +5,7 @@ export const REPORT_ENTRY_HISTORY_KEY = 'atlasReportEntryV1';
 export const REPORT_ENTRY_MAX_AGE_MS = 30 * 60 * 1000;
 const handoffMaxAge = 2 * 60 * 1000;
 const cardIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const capturedBrowsers = new WeakSet(), bootstrapEntries = new WeakMap();
 
 export function staffCardDetailPath(cardId) {
   return typeof cardId === 'string' && cardIdPattern.test(cardId) ? `${ZONES.staff}/graded-cards/${cardId}` : null;
@@ -29,6 +30,22 @@ function validContext(value, reportPath, origin, now, maxAge) {
     && Number.isSafeInteger(value.createdAt) && value.createdAt > 0 && value.createdAt <= now && now - value.createdAt <= maxAge;
 }
 
+// Next's Pages Router replaces history.state before the first React render.
+// Capture this document's existing entry before router bootstrap, once only.
+// No report-to-card mapping is retained in storage or reused by a fresh entry.
+export function captureCardDetailReportEntry(browser = globalThis.window, now = Date.now()) {
+  try {
+    if (!browser || capturedBrowsers.has(browser)) return false;
+    capturedBrowsers.add(browser);
+    const url = locationFor(browser), reportPath = url && `${url.pathname}${url.search}`;
+    const saved = browser.history.state?.[REPORT_ENTRY_HISTORY_KEY];
+    if (!url || !Number.isSafeInteger(now) || now <= 0
+      || !validContext(saved, reportPath, url.origin, now, REPORT_ENTRY_MAX_AGE_MS)) return false;
+    bootstrapEntries.set(browser, { ...saved });
+    return true;
+  } catch { return false; }
+}
+
 // A local handoff, never a URL parameter or public report field. Only the exact
 // staff detail currently open can establish it; the destination still authenticates.
 export function rememberCardDetailReportEntry(reportPath, cardId, browser = globalThis.window, now = Date.now()) {
@@ -51,6 +68,8 @@ export function rememberCardDetailReportClick(event, reportPath, cardId, browser
 // not inherit an old report-to-card mapping. Storage failures leave reports usable.
 export function readCardDetailReportEntry(reportPath, browser = globalThis.window, now = Date.now()) {
   try {
+    const bootstrapped = bootstrapEntries.get(browser);
+    bootstrapEntries.delete(browser);
     let pending = null;
     try {
       const raw = browser.sessionStorage.getItem(REPORT_ENTRY_STORAGE_KEY);
@@ -61,7 +80,8 @@ export function readCardDetailReportEntry(reportPath, browser = globalThis.windo
     if (!url || !reportPathValid(reportPath) || `${url.pathname}${url.search}` !== reportPath || !Number.isSafeInteger(now) || now <= 0) return null;
     const saved = browser.history.state?.[REPORT_ENTRY_HISTORY_KEY];
     const context = validContext(pending, reportPath, url.origin, now, handoffMaxAge) ? pending
-      : validContext(saved, reportPath, url.origin, now, REPORT_ENTRY_MAX_AGE_MS) ? saved : null;
+      : validContext(saved, reportPath, url.origin, now, REPORT_ENTRY_MAX_AGE_MS) ? saved
+        : validContext(bootstrapped, reportPath, url.origin, now, REPORT_ENTRY_MAX_AGE_MS) ? bootstrapped : null;
     if (!context) return null;
     try { browser.history.replaceState({ ...browser.history.state, [REPORT_ENTRY_HISTORY_KEY]: context }, ''); }
     catch { /* The initial return link still works when history writes are blocked. */ }

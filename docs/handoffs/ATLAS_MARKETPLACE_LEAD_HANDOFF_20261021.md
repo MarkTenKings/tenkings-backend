@@ -1,6 +1,6 @@
 # ATLAS marketplace — successor lead handoff, October 21, 2026
 
-**Current checkpoint: technical detail/identity/history production release complete.** See [production release](../atlas/audits/2026-10-21/detail-production-release.md). Native/staff/public source `ca3a848d` and SQL009 are live; canonical technical/report/photo/preservation checks passed, and the original admission holder was explicitly released with absence proof. Ordinary signed-in real-card acceptance is pending normal staff sign-in. Ownership/collection/curation source `46621dad` and subsequent separate reader/account workspace remain local and unregistered; see [reader foundation](../atlas/audits/2026-10-21/collection-reader-foundation.md).
+**Current checkpoint: technical detail/identity/history production release complete.** See [production release](../atlas/audits/2026-10-21/detail-production-release.md). Native/staff/public source `ca3a848d` and SQL009 are live; canonical technical/report/photo/preservation checks passed, and the original admission holder was explicitly released with absence proof. Normal staff sign-in and real-card checks now succeeded for archive/media/history and normal report return; full report reload exposed a Next bootstrap defect. A locally qualified public-only correction is pending release; see [reload correction](../atlas/audits/2026-10-21/report-return-reload.md). Ownership/collection/curation source `46621dad` and subsequent separate reader/account workspace remain local and unregistered; see [reader foundation](../atlas/audits/2026-10-21/collection-reader-foundation.md).
 
 This document carries all 30 original requirement IDs for an Astra Ultra lead with up to three Astra xHigh specialists. Earlier local qualification remains evidence; it is not a claim of owner or physical acceptance.
 
@@ -26,7 +26,7 @@ The latest requests are now **implemented, locally verified and technically depl
 Final audit: [optional-3d-report-return.md](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-21/optional-3d-report-return.md).
 Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-marketplace-foundation-20261020/three-preview-20261021/` — `desktop-3d.png`, `report-return.png`, `mobile-320.png`, `focused-tests.log`, `staff-build.log`, `public-build-result.txt`. Public test/build details are in the specialist tool transcript; do not claim another root rerun.
 
-**Exact continuation point:** canonical technical release is complete. Owner Chrome tab2132133231 at `https://atlasgrading.com/admin` awaits normal staff sign-in; no sign-in SMS was requested by the agent. Complete real archive/detail/media/history/report-return interaction checks, retaining unchanged local failure/recovery evidence. Keep Front default and 3D optional. Then continue ownership/My Collection and optional curation integration; do not replay any consumed release packet. No claim of manufacturing-quality media or live marketplace.
+**Exact continuation point:** canonical technical release is complete. Owner Chrome tab2132133231 has a normal signed-in staff session. Archive search/category/date/Table and four real card Front/Back details passed; optional3D and versioned history passed. Correct and release the report-reload Card Detail loss, then recheck exact same-tab return and fresh direct entry. Retain unchanged local failure/recovery evidence. Keep Front default and 3D optional. Then continue ownership/My Collection and optional curation integration; do not replay any consumed release packet. No claim of manufacturing-quality media or live marketplace.
 
 ## 2. Workspace and documents
 
@@ -404,3 +404,7 @@ Use Node22, relevant tests, owned disposable PostgreSQL17, actual-component desk
 Append SESSION_LOG after each commit-worthy code change and before/after any deployment/restart/migration. Reconcile stale docs against evidence in the same session. Report implemented, locally verified, deployed, owner-accepted and real-world operationally accepted separately. Carry the whole plan forward without dropping remaining work.
 ```
 
+
+## October21 queued staff landing gallery
+
+The owner requests a clearer `/admin/grading` staff workspace and original-upload front-photo gallery matching the archive direction, with actual grading statuses and no composed graded slabs. The current view is assigned staff intake records (including completed cards), not legal ownership or all-site inventory. Queue after the active report-return correction; do not silently broaden access. See the master-plan additional request.

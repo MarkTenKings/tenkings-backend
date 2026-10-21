@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
-import { readCardDetailReportEntry } from '@atlas/site-router/report-entry';
+import { captureCardDetailReportEntry, readCardDetailReportEntry } from '@atlas/site-router/report-entry';
 import styles from './ReportEntryNavigation.module.css';
+
+// Next loads this page module before constructing its router and replacing the
+// current history state. An effect would run too late to preserve reload entry.
+captureCardDetailReportEntry();
 
 // Host navigation is deliberately outside the immutable approved report view.
 export default function ReportEntryNavigation({ reportPath }) {

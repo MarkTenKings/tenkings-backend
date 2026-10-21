@@ -1,5 +1,11 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## Current detail release and active correction — October 21, 2026
+
+Current native/staff/public source is `ca3a848d4d6eb28f149a8f253115df90b5fc60ac`; SQL009 is installed. Staff deployment `dpl_2vc2nkyRmUhPMyJaZBLKbaCpow6y`, public `dpl_EaydzmhwF8f49aqgHhw4JAQLKyVJ`, controls137/98/105. Customer remainsc68e9ea7 with controls83/35. Both gateways are retained. The admission holder was explicitly released and its absence proved. See [release audit](../atlas/audits/2026-10-21/detail-production-release.md) for exact native IDs, receipts and observed interruption. Earlier dated release sections below are historical.
+
+Real signed-in archive/detail acceptance now found a report-reload return defect. The local correction and public-only successor plan are tracked in [report return audit](../atlas/audits/2026-10-21/report-return-reload.md). Do not replay any consumed packet or restart the retired native pair. The queued staff original-photo landing gallery and local ownership/collection work are excluded from this correction.
+
 ## Current Graded Cards production release — October 20, 2026 Pacific
 
 The staff **Graded cards** archive is deployed at `https://atlasgrading.com/admin/graded-cards`. It provides pure-white gallery/table views, server-wide search across recorded identity/certificate/staff/customer/order fields, category and inclusive UTC approval-date filters, and links to the exact saved card, report version and recorded submission. It reads existing approvals; it does not create ownership, listings or marketplace transactions. Ordinary staff sign-in is required after the release-binding update. **Technical deployment is complete. The owner signed in and supplied production screenshots showing four real approved cards, then approved the gallery design. Search/filter/table and destination-flow acceptance have not yet been fully observed.**

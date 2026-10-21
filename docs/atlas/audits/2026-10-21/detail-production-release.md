@@ -1,6 +1,6 @@
 # Detail, reviewed identity and staff history — production release
 
-Technical release completed October 21, 2026 UTC. Source `ca3a848d4d6eb28f149a8f253115df90b5fc60ac` now serves native, staff and public. SQL009 is installed. Ordinary signed-in real-card acceptance is pending a fresh staff sign-in; owner acceptance of experimental 3D and physical media quality remain separate.
+Technical release completed October 21, 2026 UTC. Source `ca3a848d4d6eb28f149a8f253115df90b5fc60ac` now serves native, staff and public. SQL009 is installed. Ordinary signed-in real-card checks subsequently passed archive interactions, four Front/Back details, optional3D controls, history and the normal report round trip, but exposed a report-reload return defect. See [correction and acceptance](report-return-reload.md). Acceptance remains open until that correction is deployed and observed. Owner acceptance of experimental3D and physical media quality remain separate.
 
 ## Released behavior and limits
 
@@ -76,7 +76,7 @@ Private evidence root: `/Users/markthomas/.codex/atlas-handoffs/atlas-detail-rel
 
 ## Remaining acceptance and next increment
 
-The actual owner Chrome reached the new canonical staff sign-in page. A fresh normal staff sign-in is needed to inspect real archive cards, detail Front/Back/3D, identity/history, exact report return and archive interactions. No session was forged and no sign-in SMS requested by the agent. Previous owner acceptance covers gallery design and visibility; it does not accept the new detail or 3D presentation.
+The owner completed a normal staff sign-in. All four real approved cards were inspected; name/category/UTCdate filtering and Gallery/Table worked. Jalen's saved version2 and prior version1 history remained distinct; ownership/custody were unrecorded and missing comp selections stayed empty. The same-tab exact report return worked until a full reload discarded its history context. This bounded defect is being corrected before closing acceptance. No session was forged or sign-in SMS requested by the agent. Previous owner acceptance covers gallery design and visibility; it does not accept the new detail or3D presentation.
 
 After real detail acceptance, continue ownership/My Collection, optional bounded curation/pricing and the complete R1 journey. The local ownership proposal still needs retained evidence binding, genuine independent reviewer authority, claim/transfer read workflows and a customer integration release. Its combined customer gateway permits reads and writes; a reader-only rollout must use a separately restricted read entrypoint. Keep ownership, custody, privacy, default Open to offers, recipient delivery and transaction eligibility independent.
 
