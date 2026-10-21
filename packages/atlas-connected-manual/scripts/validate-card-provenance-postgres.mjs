@@ -8,6 +8,7 @@ import { createOwnedManualFixture } from '../../atlas-manual-service/scripts/own
 import { canonical, digest } from '../../atlas-manual-service/src/contract.mjs';
 import { createCardProvenanceService, cardProvenanceGrantSQL, validateCardProvenanceConfiguration, publicCardProvenance } from '../src/card-provenance-service.mjs';
 import { cardProvenanceInput } from '../src/card-provenance-contract.mjs';
+import { createGradedCardsService, gradedCardsGrantSQL } from '../src/graded-cards.mjs';
 import { createConnectedHandler } from '../src/http.mjs';
 import { registeredMigrations } from '../../atlas-standalone-database/registered-migrations.mjs';
 import { applyStandaloneBaseline, applyStandaloneMigrations } from '../../atlas-standalone-database/migrate.mjs';
@@ -19,7 +20,9 @@ const fixture = await createOwnedManualFixture(process.argv.slice(2)), connectio
 let receipt;
 try {
   await fixture.cluster.sql(cardProvenanceGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
+  await fixture.cluster.sql(gradedCardsGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
   const { auth, boundary, manualClient } = connection, admin = fixture.admin, service = createCardProvenanceService({ auth, boundary });
+  const archive = createGradedCardsService({ auth, boundary });
   await validateCardProvenanceConfiguration({ client: manualClient });
   async function login(phone) {
     const boot = await auth.bootstrap(''), browser = `${fixture.config.cookies.browser}=${boot.browserToken}`;
@@ -50,11 +53,11 @@ try {
     if (published) await admin.$executeRawUnsafe(`UPDATE atlas_manual.publication SET state='PUBLISHED',manifest='{}',manifest_hash=$1,public_hash=$2,published_at=clock_timestamp() WHERE card_id=$3::uuid AND action_id=$4::uuid`, hashes.content, hashes.public, card.id, actionId);
     return actionId;
   }
-  async function seed({ identity = { playerName: 'Synthetic Jordan', year: '1992', manufacturer: 'Fleer', productSet: 'Fixture', cardNumber: '23' }, owner = actor.id, readers = [], approvedAt = '2026-01-10T23:59:59.999999Z', published = true, approved = true } = {}) {
+  async function seed({ identity = { playerName: 'Synthetic Jordan', year: '1992', manufacturer: 'Fleer', productSet: 'Fixture', cardNumber: '23' }, owner = actor.id, readers = [], editors = [], approvers = [], approvedAt = '2026-01-10T23:59:59.999999Z', published = true, approved = true } = {}) {
     const card = { id: randomUUID(), createId: randomUUID(), identity, owner, version: 0, token: `ar_${randomUUID().replaceAll('-', '').slice(0, 24)}`, certificate: `ATLAS-${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}` };
     await admin.$executeRawUnsafe(`INSERT INTO atlas_manual_intake.card(id,pair_id,owner_id,create_request_id,create_request_hash,label) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'Synthetic archive')`, card.id, randomUUID(), owner, card.createId, digest(card.createId));
     const mutable = '{"identity":{"playerName":"UNAPPROVED SECRET DRAFT"}}';
-    await admin.$executeRawUnsafe(`INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id,readers) VALUES($1::uuid,10,$2,$3,$4::uuid,$5::uuid[])`, card.id, mutable, digest(mutable), owner, readers);
+    await admin.$executeRawUnsafe(`INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id,readers,editors,approvers) VALUES($1::uuid,10,$2,$3,$4::uuid,$5::uuid[],$6::uuid[],$7::uuid[])`, card.id, mutable, digest(mutable), owner, readers, editors, approvers);
     if (approved) {
       await admin.$executeRawUnsafe('INSERT INTO atlas_manual.public_report_identity(card_id,public_token,report_number) VALUES($1::uuid,$2,$3)', card.id, card.token, card.certificate);
       card.actionId = await approve(card, { approvedAt, published });
@@ -92,21 +95,42 @@ try {
   const receiptId = randomUUID();
   await admin.$executeRawUnsafe(`INSERT INTO atlas_dealer.custody_event(id,card_id,sequence,request_id,input_hash,kind,actor_id,occurred_at,evidence) VALUES($1::uuid,$2::uuid,1,$3::uuid,$4,'ATLAS_RECEIVED',$5::uuid,clock_timestamp(),'{"reference":"Synthetic actual-receipt fixture"}')`, receiptId, customerCard, randomUUID(), hashes.content, actor.id);
   await admin.$executeRawUnsafe(`INSERT INTO atlas_dealer.manual_card_link(card_id,manual_card_id,received_event_id,actor_id,evidence_ref) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'Synthetic immutable binding')`, customerCard, first.id, receiptId, actor.id);
-  async function selectSales(card, revision, { bindingVersion = card.version, title = 'Synthetic saved sold listing' } = {}) {
+  async function selectSales(card, revision, { bindingVersion = card.version, title = 'Synthetic saved sold listing', slab = false } = {}) {
     const value = { version: 'atlas-report-presentation-v1', binding: { publicToken: card.token, approvalVersion: bindingVersion, publicHash: hashes.public }, revision,
       updatedAt: new Date().toISOString(), market: { observedAt: new Date().toISOString(), sales: [{ id: 'fixture-sale', title,
         listingUrl: 'https://www.ebay.com/itm/123456789012', grader: 'PSA', grade: '9', soldAt: '2026-01-01T00:00:00.000Z',
         priceMinor: 10000, currency: 'USD', priceBasis: 'sold' }] } };
+    if (slab) value.slabPhoto = { url: `/api/reports/${card.token}/presentation/image?v=${bindingVersion}&revision=${revision}`,
+      sha256: digest(`synthetic slab ${revision}`), byteCount: 12500, contentType: 'image/webp', width: 1200, height: 2000,
+      alt: 'Synthetic saved slab photograph' };
     const source = { version: 'atlas-selected-market-source-v1', previewId: randomUUID(), sourceHash: hashes.source,
       selectedIds: ['fixture-sale'], ref: { cardId: card.id, kind: 'MARKET_PREVIEW', sha256: hashes.content, privateStorageKey: 'PRIVATE_MARKET_REFERENCE' } };
     await admin.$executeRawUnsafe(`INSERT INTO atlas_manual.presentation(card_id,approval_action_id,revision,request_id,request_hash,actor_id,presentation,presentation_hash,market_source,market_source_hash)
       VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,$6::uuid,$7,$8,$9,$10)`, card.id, card.actionId, revision, randomUUID(), hashes.content, actor.id,
       canonical(value), digest(canonical(value)), canonical(source), digest(canonical(source)));
   }
+  // Exact synthetic retained label rows exercise the real009 join/projection.
+  // No renderer, storage upload, physical print or provider is invoked.
+  async function seedLabel(card, { labelActor = actor.id, ready = true } = {}) {
+    const id = randomUUID(), sheetId = randomUUID(), print = '<svg xmlns="http://www.w3.org/2000/svg"><text>SYNTHETIC PRINT</text></svg>',
+      preview = '<svg xmlns="http://www.w3.org/2000/svg"><text>SYNTHETIC PREVIEW</text></svg>';
+    await admin.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.label_sheet(id,actor_id,access_version,pool_hash,material_profile_id,renderer_profile_hash,jig_hash)
+      VALUES($1::uuid,$2::uuid,1,$3,'atlas-v4-gold-v1',$4,$5)`, sheetId, labelActor, digest(sheetId), hashes.source, hashes.content);
+    await admin.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.label_item(id,actor_id,access_version,card_id,action_id,approval_version,
+      source_revision,source_hash,report_hash,public_hash,purpose)
+      SELECT $1::uuid,$2::uuid,1,a.card_id,a.action_id,p.version,a.source_revision,a.source_hash,a.report_hash,COALESCE(p.public_hash,$5),'ORIGINAL'
+      FROM atlas_manual.approval a JOIN atlas_manual.publication p USING(card_id,action_id) WHERE a.card_id=$3::uuid AND a.action_id=$4::uuid`,
+    id, labelActor, card.id, card.actionId, hashes.public);
+    const complete = () => admin.$executeRawUnsafe(`UPDATE atlas_manual_connected.label_item SET state='READY',snapshot='{}',snapshot_hash=$1,
+      print_svg=$2,preview_svg=$3,artwork_hash=$4,renderer_profile_hash=$5,material_profile_id='atlas-v4-gold-v1',jig_hash=$1,
+      sheet_id=$6::uuid,slot=1,updated_at=clock_timestamp() WHERE id=$7::uuid`, hashes.content, print, preview, digest(print), hashes.source, sheetId, id);
+    if (ready) await complete();
+    return { id, artworkHash: digest(print), complete };
+  }
   await selectSales(first, 1); await selectSales(second, 1); await selectSales(third, 1, { bindingVersion: 2 });
   const read = (card, input) => service.read(reviewer.staff, card.id, input);
   const tables = ['atlas_manual.card', 'atlas_manual.action', 'atlas_manual.approval', 'atlas_manual.public_report_identity', 'atlas_manual.publication',
-    'atlas_manual.presentation', 'atlas_dealer.custody_event', 'atlas_dealer.manual_card_link', 'atlas_customer."CommerceOrder"', 'atlas_customer."CommercePayment"', 'atlas_customer."CommerceEffect"'];
+    'atlas_manual.presentation', 'atlas_manual_connected.label_item', 'atlas_manual_connected.label_sheet', 'atlas_dealer.custody_event', 'atlas_dealer.manual_card_link', 'atlas_customer."CommerceOrder"', 'atlas_customer."CommercePayment"', 'atlas_customer."CommerceEffect"'];
   const census = async () => {
     const rows = {};
     for (const table of tables) rows[table] = (await admin.$queryRawUnsafe(`SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb) rows FROM ${table} t`))[0].rows;
@@ -133,6 +157,55 @@ try {
   assert.equal((await read(shared)).card.cardId, shared.id);
   for (const denied of [hidden, deleted, { id: randomUUID() }]) await assert.rejects(read(denied), { code: 'CARD_PROVENANCE_NOT_FOUND' });
   checks.push('least-privilege per-card read preserves exact approval, report and custody source anchors; unknown ownership, no inferred live holder, pending reports private, hidden/discarded/unknown cards indistinguishable; no protected-row writes');
+
+  const mediaCard = await seed({ readers: [peer.id] }), mediaLabel = await seedLabel(mediaCard);
+  await selectSales(mediaCard, 1, { slab: true });
+  const mediaCensus = await census(), mediaDetail = await read(mediaCard);
+  const mediaGallery = (await archive.list(reviewer.staff, { q: mediaCard.certificate })).cards[0];
+  assert.deepEqual(mediaDetail.card.media, mediaGallery.media, 'real SQL detail and archive use the same approved optional media');
+  assert.deepEqual(Object.keys(mediaDetail.card.media), ['FRONT', 'BACK', 'SLAB', 'LABEL']);
+  assert.equal(mediaDetail.card.media.LABEL.itemId, mediaLabel.id);
+  assert.equal(mediaDetail.card.media.LABEL.artworkHash, mediaLabel.artworkHash);
+  assert.equal(mediaDetail.card.media.LABEL.sha256, undefined, 'print hash is not a preview byte digest');
+  assert.equal(mediaDetail.card.media.SLAB.presentationRevision, mediaDetail.card.savedComparables.presentationRevision);
+  const peerMedia = await service.read(other.staff, mediaCard.id);
+  assert.equal(peerMedia.card.media.LABEL, undefined, 'reader access never exposes another actor’s label route');
+  assert.ok(peerMedia.card.media.SLAB && peerMedia.card.media.FRONT && peerMedia.card.media.BACK);
+  assert.doesNotMatch(JSON.stringify(mediaDetail), /SYNTHETIC PRINT|SYNTHETIC PREVIEW|actor_id|preview_svg|print_svg|mediaEvidence/);
+  assert.doesNotMatch(JSON.stringify(publicCardProvenance(mediaDetail)), /artwork|renderer|itemId|SLAB|LABEL|media/);
+  assert.deepEqual(await census(), mediaCensus);
+  const editorCard = await seed({ owner: peer.id, editors: [actor.id] }); await seedLabel(editorCard);
+  assert.equal((await read(editorCard)).card.media.LABEL, undefined, 'same-actor label still requires owner or approver access');
+  const approverCard = await seed({ owner: peer.id, approvers: [actor.id] }), approverLabel = await seedLabel(approverCard);
+  assert.equal((await read(approverCard)).card.media.LABEL.itemId, approverLabel.id);
+  const wrongActorCard = await seed(); await seedLabel(wrongActorCard, { labelActor: peer.id });
+  assert.equal((await read(wrongActorCard)).card.media.LABEL, undefined, 'card ownership is not access to another actor’s saved item');
+  const pendingMediaCard = await seed({ published: false }); await seedLabel(pendingMediaCard);
+  assert.deepEqual((await read(pendingMediaCard)).card.media, {});
+  checks.push('real009 SQL and service exactly match008 gallery Front/Back/actual-slab/retained-label projection; label access needs the original actor plus current owner/approver permission; readers/editors/other actors and pending approvals cannot inherit private artwork; reads preserve labels and public redaction omits their identifiers');
+
+  const priorMedia = await read(mediaCard, { limit: 1 });
+  await selectSales(mediaCard, 2, { slab: true, title: 'New slab and sales after media snapshot' });
+  const retainedMedia = await read(mediaCard, { limit: 1, cursor: priorMedia.history.nextCursor });
+  assert.deepEqual(retainedMedia.card.media, priorMedia.card.media);
+  assert.deepEqual(retainedMedia.card.savedComparables, priorMedia.card.savedComparables);
+  assert.equal((await read(mediaCard)).card.media.SLAB.presentationRevision, 2);
+  await approve(mediaCard);
+  assert.equal((await read(mediaCard)).card.media.LABEL, undefined, 'a new approval cannot inherit old artwork');
+  assert.equal((await read(mediaCard, { limit: 1, cursor: priorMedia.history.nextCursor })).card.media.LABEL, undefined,
+    'a historical cursor must not advertise a label route whose current approval access has ended');
+  const newLabelCard = await seed(), beforeNewLabel = await read(newLabelCard, { limit: 1 });
+  const newLabel = await seedLabel(newLabelCard);
+  assert.equal((await read(newLabelCard)).card.media.LABEL.itemId, newLabel.id);
+  assert.equal((await read(newLabelCard, { limit: 1, cursor: beforeNewLabel.history.nextCursor })).card.media.LABEL, undefined);
+  const lateReadyCard = await seed(), lateLabel = await seedLabel(lateReadyCard, { ready: false });
+  const beforeReady = await read(lateReadyCard, { limit: 1 });
+  assert.equal(beforeReady.card.media.LABEL, undefined);
+  await lateLabel.complete();
+  assert.equal((await read(lateReadyCard)).card.media.LABEL.itemId, lateLabel.id);
+  assert.equal((await read(lateReadyCard, { limit: 1, cursor: beforeReady.history.nextCursor })).card.media.LABEL, undefined,
+    'a label created before the snapshot but READY afterward cannot enter a historical page');
+  checks.push('slab and saved-sales revisions stay snapshot-bound; label creation and READY update times both stay at/before snapshot; a later approval suppresses inaccessible historical artwork without replacing approved photographs');
 
   // Fixed recorded-time pagination includes immutable prior versions while a
   // newly approved report cannot replace the selected snapshot between pages.

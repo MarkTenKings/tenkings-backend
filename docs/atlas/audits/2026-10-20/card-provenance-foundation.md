@@ -76,3 +76,10 @@ node packages/atlas-connected-manual/scripts/validate-card-provenance-postgres.m
 ```
 
 These are source and synthetic local database results, not proof of live schema, production access, physical possession, verified ownership or marketplace eligibility. Root owns the final integrated build/browser qualification and release decision.
+
+
+## October 21 successor media correction
+
+The earlier SQL009 checksum above is historical. Final unreleased SQL009 now hashes to `5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b`. Actual backend review found that detail omitted the saved label and slab presentation although the gallery supplied them; the prior enriched preview fixture masked that difference. SQL009 now selects the same original-actor/owner-or-approver READY label and the service passes exact same-approval label/presentation evidence. Label creation and READY-update times must precede the cursor snapshot; inaccessible historical artwork after a newer approval is omitted. Approved Front/Back photographs remain independent. Released SQL008 is unchanged.
+
+Node22 focused checks passed24/24; owned PostgreSQL17 passed all10 groups, including actual008/009 media parity, label permissions, later revisions/READY transitions, upgrade preservation and HTTP session revocation. The owned cluster stopped and removed only its regenerable files. Staff production build/boundary passed35chunks/15traces/2030files. Evidence: `~/.codex/atlas-handoffs/atlas-detail-release-20261021/qualification/provenance-pg-01/postgres-result.json` and `preflight/`. SQL009 remains unapplied; production is still the archive release. See [media readiness](../2026-10-21/media-source-readiness.md).

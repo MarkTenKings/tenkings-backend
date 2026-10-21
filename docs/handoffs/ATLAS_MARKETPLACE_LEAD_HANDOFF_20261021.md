@@ -145,7 +145,9 @@ Other local audit sources:
 - [Card provenance foundation](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-20/card-provenance-foundation.md): staff read contract, ownership UNKNOWN, holder UNKNOWN, redaction and SQL009.
 - [Earlier next-R1 qualification](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-20/next-r1-integration-qualification.md): historical checkpoint, superseded by October 21 results where noted.
 
-SQL009 checksum at the verified detail checkpoint: `9e9361a6cfe6b057a306a347741d88911d4d9f654f3c01b71aefcbd95f74bc2f`. Verify it against final source and the manifest before release. Merely checking in SQL009 does not install it.
+Historical SQL009 checksum at the earlier detail checkpoint: `9e9361a6cfe6b057a306a347741d88911d4d9f654f3c01b71aefcbd95f74bc2f`. The successor source-only media parity correction is `5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b`, with24 focused checks,10 owned PostgreSQL17 groups and the staff production build passing. Final release must use the new manifest checksum. Merely checking in SQL009 does not install it.
+
+Fresh read-only observations at21:10–21:12UTC confirm native31c/f64dfc with zero main/worker restarts, unchanged gateway hashes, SQL008 installed and009 absent, and155 manual cards/28 published approvals. The earlier four-card screenshot is historical owner evidence. Vercel deployment inspection returned a team-authorization denial; the connector renewal is pending. No deployment, runtime replacement, holder acquisition or production migration has occurred. Actual source review found missing saved-label/slab inputs in the detail backend; the successor fix and real SQL parity tests supersede the enriched fixture's earlier parity assumption.
 
 ## 5. Owner decisions to preserve
 

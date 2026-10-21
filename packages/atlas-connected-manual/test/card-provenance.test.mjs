@@ -5,6 +5,7 @@ import { canonical, digest } from '@atlas/manual-service/contract';
 import { emptyAtlasSportsAttributes } from '@atlas/grading-core/identity';
 import { cardProvenanceInput, cardProvenanceQuery, OWNERSHIP_VERIFICATION } from '../src/card-provenance-contract.mjs';
 import { createCardProvenanceService, projectCardProvenance, publicCardProvenance, cardProvenanceGrantSQL, validateCardProvenanceConfiguration } from '../src/card-provenance-service.mjs';
+import { archiveApprovedMedia } from '../src/approved-card-media.mjs';
 
 const hash = 'a'.repeat(64), approvedAt = '2026-10-20T12:00:00.123456Z', publishedAt = '2026-10-20T13:00:00.123456Z', snapshot = '2026-10-20T14:00:00.123456Z';
 function fixture() {
@@ -172,4 +173,66 @@ test('approval snapshot corruption and current-event report swaps fail closed in
     f => f.publication.report.version = 1, f => f.publication.report.finalGrade = 8, f => f.approval.source.reportHash = hash]) {
     const f = detailFixture(); change(f); await assert.rejects(f.read(), { code: 'CARD_PROVENANCE_RESPONSE_INVALID' });
   }
+});
+
+function mediaFixture() {
+  const f = detailFixture(), card = f.card;
+  card.mediaEvidence.labelItem = { id: randomUUID(), card_id: card.cardId, action_id: card.approvalActionId,
+    approval_version: card.report.version, state: 'READY', source_revision: card.mediaEvidence.sourceRevision,
+    source_hash: card.mediaEvidence.sourceHash, report_hash: card.report.reportHash, public_hash: card.mediaEvidence.publicHash,
+    artwork_hash: 'd'.repeat(64), renderer_profile_hash: 'e'.repeat(64), material_profile_id: 'atlas-v4-gold-v1',
+    actor_id: randomUUID(), preview_svg: 'PRIVATE_RETAINED_PREVIEW', print_svg: 'PRIVATE_RETAINED_PRINT' };
+  f.presentation.slabPhoto = { url: `/api/reports/${card.report.publicToken}/presentation/image?v=${card.report.version}&revision=3`,
+    sha256: 'f'.repeat(64), byteCount: 12500, contentType: 'image/webp', width: 1200, height: 2000,
+    alt: 'Synthetic recorded slab photograph' };
+  f.savePresentation();
+  f.mediaInput = () => ({ cardId: card.cardId, approvalActionId: card.approvalActionId, publicToken: card.report.publicToken,
+    approvalVersion: card.report.version, publicationState: card.report.state, publicHash: card.mediaEvidence.publicHash,
+    reportHash: card.report.reportHash, sourceRevision: card.mediaEvidence.sourceRevision, sourceHash: card.mediaEvidence.sourceHash,
+    labelItem: card.mediaEvidence.labelItem, presentation: card.presentationEvidence });
+  return f;
+}
+
+test('real provenance projection preserves gallery media parity for the same saved label and slab source', async () => {
+  const f = mediaFixture(), before = structuredClone(f.result), value = await f.read();
+  assert.deepEqual(value.card.media, archiveApprovedMedia(f.mediaInput()));
+  assert.deepEqual(Object.keys(value.card.media), ['FRONT', 'BACK', 'SLAB', 'LABEL']);
+  assert.equal(value.card.media.LABEL.itemId, f.card.mediaEvidence.labelItem.id);
+  assert.equal(value.card.media.LABEL.artworkHash, 'd'.repeat(64));
+  assert.equal(value.card.media.LABEL.sha256, undefined, 'retained print hash is not the preview byte hash');
+  assert.equal(value.card.media.SLAB.presentationRevision, 3);
+  assert.equal(value.card.savedComparables.presentationRevision, value.card.media.SLAB.presentationRevision);
+  assert.doesNotMatch(JSON.stringify(value), /PRIVATE_|preview_svg|print_svg|actor_id|mediaEvidence|presentationEvidence/);
+  assert.doesNotMatch(JSON.stringify(publicCardProvenance(value)), /LABEL|SLAB|artwork|renderer|itemId|media|private/i);
+  assert.deepEqual(f.result, before, 'media projection cannot change retained approval, artwork or presentation');
+});
+
+test('provenance optional label rejects mismatched retained artwork while preserving the approved photographs and slab', async () => {
+  for (const [field, value] of [['id', '../label'], ['card_id', randomUUID()], ['action_id', randomUUID()],
+    ['approval_version', 99], ['source_revision', 99], ['source_hash', '0'.repeat(64)], ['report_hash', '0'.repeat(64)],
+    ['public_hash', '0'.repeat(64)], ['artwork_hash', null], ['renderer_profile_hash', 'unbound'],
+    ['material_profile_id', 'https://unbound.invalid'], ['state', 'PENDING_RENDER'], ['state', 'SUPERSEDED'], ['current', false]]) {
+    const f = mediaFixture(); f.card.mediaEvidence.labelItem[field] = value;
+    const result = await f.read();
+    assert.equal(result.card.media.LABEL, undefined, field);
+    assert.deepEqual(Object.keys(result.card.media), ['FRONT', 'BACK', 'SLAB'], field);
+    assert.equal(result.card.finalGrade, 9.5);
+  }
+});
+
+test('provenance slab uses the same snapshot and approval as saved references and rejects corrupt optional sources', async () => {
+  for (const change of [f => f.card.presentationEvidence.card_id = randomUUID(),
+    f => f.card.presentationEvidence.approval_action_id = randomUUID(), f => f.card.presentationEvidence.presentation_hash = hash,
+    f => f.card.presentationEvidence.createdAt = '2026-10-20T14:00:00.123457Z',
+    f => { f.presentation.binding.approvalVersion = 1; f.savePresentation(); },
+    f => { f.presentation.binding.publicHash = '0'.repeat(64); f.savePresentation(); },
+    f => { f.presentation.slabPhoto.url = 'https://unbound.invalid/slab.webp'; f.savePresentation(); },
+    f => { f.presentation.slabPhoto.sha256 = 'wrong'; f.savePresentation(); }]) {
+    const f = mediaFixture(); change(f); const result = await f.read();
+    assert.equal(result.card.media.SLAB, undefined);
+    assert.deepEqual(Object.keys(result.card.media), ['FRONT', 'BACK', 'LABEL']);
+    assert.equal(result.card.finalGrade, 9.5);
+  }
+  const pending = mediaFixture(); pending.card.report.state = 'PENDING'; pending.result.events = [pending.approval];
+  assert.deepEqual((await pending.read()).card.media, {});
 });

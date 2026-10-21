@@ -96,7 +96,10 @@ function projectCard(row, cardId, snapshot) {
   if (report.state === 'PUBLISHED') { check(hash(row.mediaEvidence?.publicHash)); report.publicHash = row.mediaEvidence.publicHash; }
   const media = archiveApprovedMedia({ cardId, approvalActionId: row.approvalActionId, publicToken: report.publicToken,
     approvalVersion: report.version, publicationState: report.state, reportHash: report.reportHash,
-    sourceRevision: row.mediaEvidence?.sourceRevision, sourceHash: row.mediaEvidence?.sourceHash, publicHash: row.mediaEvidence?.publicHash });
+    sourceRevision: row.mediaEvidence?.sourceRevision, sourceHash: row.mediaEvidence?.sourceHash, publicHash: row.mediaEvidence?.publicHash,
+    labelItem: row.mediaEvidence?.labelItem ?? null,
+    presentation: row.presentationEvidence && provenanceInstant(row.presentationEvidence.createdAt)
+      && row.presentationEvidence.createdAt <= snapshot ? row.presentationEvidence : null });
   return { cardId, certificateNumber: row.certificateNumber, identity, finalGrade: row.finalGrade, approvalActionId: row.approvalActionId,
     approvedAt: row.approvedAt, report, media, approvedSummary: approvedSummary(saved), savedComparables: savedComparables(row, report, snapshot),
     approver: person(row.approver), reviewers: Array.isArray(row.reviewers) ? row.reviewers.slice(0, 100).map(person).filter(Boolean) : [], submission: submission(row.submission) };

@@ -41,7 +41,15 @@ BEGIN
     ORDER BY pr.revision DESC LIMIT 1),
   'report',jsonb_build_object('state',CASE WHEN p.state='PUBLISHED' AND p.published_at<=snap THEN 'PUBLISHED' ELSE 'PENDING' END,
     'version',p.version,'publicToken',i.public_token,'reportHash',a.report_hash),
-  'mediaEvidence',jsonb_build_object('publicHash',p.public_hash,'sourceRevision',a.source_revision,'sourceHash',a.source_hash))
+  'mediaEvidence',jsonb_build_object('publicHash',p.public_hash,'sourceRevision',a.source_revision,'sourceHash',a.source_hash,
+    'labelItem',(SELECT jsonb_build_object('id',li.id,'card_id',li.card_id,'action_id',li.action_id,'approval_version',li.approval_version,
+      'state',li.state,'source_revision',li.source_revision,'source_hash',li.source_hash,'report_hash',li.report_hash,'public_hash',li.public_hash,
+      'artwork_hash',li.artwork_hash,'renderer_profile_hash',li.renderer_profile_hash,'material_profile_id',li.material_profile_id)
+     FROM atlas_manual_connected.label_item li WHERE li.card_id=c.id AND li.action_id=a.action_id AND li.actor_id=actor.id
+      AND (c.owner_id=actor.id OR actor.id=ANY(c.approvers)) AND li.state='READY' AND li.artwork_hash IS NOT NULL
+      AND li.created_at<=snap AND li.updated_at<=snap
+      AND NOT EXISTS(SELECT 1 FROM atlas_manual.publication newer WHERE newer.card_id=c.id AND newer.version>p.version)
+     ORDER BY li.created_at DESC,li.id DESC LIMIT 1)))
  INTO card_value
  FROM atlas_manual.card c JOIN atlas_manual_intake.card intake ON intake.id=c.id
  JOIN atlas_manual.public_report_identity i ON i.card_id=c.id
