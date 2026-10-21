@@ -9,7 +9,7 @@ October 20, 2026, local Pacific time. Source baseline `fbb2f2d2`, isolated branc
 - Card links open the existing detailed workflow and reports. Exact submission links open the existing order desk by a validated UUID, including orders outside its first queue page. Page authorization precedes interpreting the query. Duplicate/invalid hints are ignored. Navigation performs reads only.
 - Real approved photos, optional retained label and optional actual slab photo use the source-binding rules in the media audit. The digital holder remains illustrative and is labeled accordingly. No synthetic inventory is shipped in the application.
 - Order desk read requests now share an access-loss generation. A late queue/detail response cannot repopulate private data after either read loses access. Dispatched acknowledgment writes and uncertain/accepted recovery journals remain intact.
-- The signed staff proxy imports only the new pure archive query contract. Private service, HTTP handler and media implementation remain outside the staff serving artifact. Missing migration/grant causes private native startup to fail before listening.
+- The signed staff proxy imports only the new pure archive query contract. Private service, HTTP handler and media implementation remain outside the staff serving artifact. Missing migration/grant causes the private staff-serving process to fail before listening; the restricted variant process must not construct this human capability.
 
 ## Verification
 
@@ -46,3 +46,11 @@ This is the archive increment of Release 1, not completion of Release 1 or the m
 ## Subsequent live-baseline correction
 
 Fresh release preparation found that live native source `3256af83` was not an ancestor of the initial `fbb2f2d2`/archive branch. The source-local results above are historical evidence, not proof that all live behavior had been retained. Merge `c4b7cc85` explicitly joins archive `4a7a2fba` and live `3256af83`, retaining all five live shared-query modules byte-for-byte and public-photo source `eafcec14`. Finishing-test expectations were corrected to the actual live full-set/`psa9.5` behavior without changing that search behavior. Requalification passed staff 765/765, connected 873 passes plus two existing measurement skips, standalone 7/7, actual PostgreSQL six groups, and isolated candidate-image Linux 229/229. Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-marketplace-foundation-20261020/release-02/`. This correction and qualification do not themselves establish production activation.
+
+## Subsequent restricted-worker correction
+
+Final independent startup review found that the shared composition constructed and validated the human archive in the variant process, whose database role correctly lacks archive EXECUTE. The original c4b7 image is therefore superseded for activation. Native-only successor `31c6685e8ae49e05c8f78b748a6233d143776131` omits that capability in the actual worker environment while preserving main-process migration008 and privilege enforcement. No grants or SQL were broadened.
+
+Actual-composition regression tests exercise the real worker environment adapter with the restricted role; full release staff suite768/768 passes. The new isolated Linux image `sha256:f64dfc31485603df756ec9cd64976fda8cc5effe8b0155fa727a45fb82b4fa52` passes232/232 with zero skips/failures. Result SHA256 `9f54246dcd907776988d33748e053c33e2261ce8558784833895d338cb226508` is under release-02/native-corrected/result.json. All37 serving containers were unchanged.
+
+Qualified c4b7 web candidates retain their actual Git metadata and authentication binding. Their executed staff/public bundles do not import the changed native composition; the exact31c delta and14 staff traces are recorded in release-02/web/native-only-fix-proof.json (`a74023df5c413def995b4c23467d1c283bf85b90071e7a37f5972a95885b8337`). This is explicit separate native/web source qualification, not relabeling the old source upload. Production activation and ordinary authenticated archive acceptance remain pending.
