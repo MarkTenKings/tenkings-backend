@@ -9,6 +9,7 @@ import { approvedDate, approvedReportPath, archiveAccessFailure, gradedCardSubti
 import { cardHistoryPath, historyEventDetail, historyEventTitle, historyReportPath, mergeCardHistory, readCardHistory } from '../lib/card-history-client.mjs';
 import { ATLAS_SPORTS_ATTRIBUTE_LABELS as sportsLabels } from '@atlas/grading-core/identity';
 import { groupSoldReferences, saleAmountLabel, saleDateLabel, saleGradeLabel } from '@atlas/manual-workspace/sold-references';
+import { rememberCardDetailReportClick } from '@atlas/site-router/report-entry';
 import archive from './GradedCards.module.css';
 import styles from './CardHistory.module.css';
 
@@ -74,7 +75,7 @@ export function GradeSummary({ card, report }) {
         ...(card.reviewers?.length ? [['Review staff', card.reviewers.map(person => person.name || 'Name not recorded').join(', ')]] : []),
       ]}/>
       <div className={styles.reportCallout}><span className={styles.reportMark} aria-hidden="true">A</span><h3>The evidence, in full.</h3><p>Explore the findings in the report version saved with this approval.</p>
-        {report ? <a className={archive.primary} href={report}>Grade Report <span aria-hidden="true">↗</span></a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}
+        {report ? <a className={archive.primary} href={report} referrerPolicy="no-referrer" rel="noreferrer" onClick={event => rememberCardDetailReportClick(event, report, card.cardId)}>Grade Report <span aria-hidden="true">↗</span></a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}
         <Link className={styles.workspaceLink} href={`/manual/${card.cardId}`}>Grading workspace <span aria-hidden="true">↗</span></Link>
       </div>
     </div>
@@ -119,7 +120,7 @@ export function HistoryTimeline({ data }) {
       <div className={styles.eventTop}><time dateTime={event.occurredAt || event.recordedAt}>{approvedDate(event.occurredAt || event.recordedAt)}</time><span className={styles.recordType}>{event.verification === 'SUBMITTER_REPORTED' ? 'Submitter reported' : 'Verified record'}</span></div>
       <h3>{historyEventTitle(event)}</h3><p>{historyEventDetail(event)}</p>
       {event.occurredAt && event.occurredAt.slice(0, 10) !== event.recordedAt.slice(0, 10) && <p className={styles.recordedAt}>Recorded {approvedDate(event.recordedAt)}</p>}
-      {path && <a className={styles.reportLink} href={path}>View this report version <span aria-hidden="true">↗</span></a>}
+      {path && <a className={styles.reportLink} href={path} referrerPolicy="no-referrer" rel="noreferrer" onClick={event => rememberCardDetailReportClick(event, path, data.card.cardId)}>View this report version <span aria-hidden="true">↗</span></a>}
     </li>; })}</ol>
     {!data.history.events.length && <p className={styles.unavailableNote}>No recorded events are available for this card.</p>}
   </section>;
@@ -184,7 +185,7 @@ export default function CardHistory({ staff, cardId, request = api }) {
             <p className={styles.certificate}><span>Certificate</span><strong>{card.certificateNumber || 'Not recorded'}</strong></p>
             <div className={styles.grade}>
               <div className={styles.award}><span>ATLAS GRADE</span><strong>{recordedGrade(card)}</strong></div>
-              {report ? <a className={styles.reportTile} href={report} aria-label="Grade Report">
+              {report ? <a className={styles.reportTile} href={report} aria-label="Grade Report" referrerPolicy="no-referrer" rel="noreferrer" onClick={event => rememberCardDetailReportClick(event, report, card.cardId)}>
                 <svg className={styles.reportPaper} viewBox="0 0 126 146" fill="none" aria-hidden="true"><path className={styles.paperOutline} d="M8 1H102L125 24V138A7 7 0 0 1 118 145H8A7 7 0 0 1 1 138V8A7 7 0 0 1 8 1Z"/><path className={styles.paperFold} d="M102 1V17A7 7 0 0 0 109 24H125"/><path className={styles.paperLines} d="M20 34H51M20 43H66M20 52H58"/></svg>
                 <span className={styles.reportTileLabel}>Grade<br/>Report <span aria-hidden="true">↗</span></span>
               </a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}

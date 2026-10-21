@@ -10,6 +10,7 @@ import * as routes from '../lib/routes.mjs';
 import * as orderDesk from '../lib/order-desk-client.mjs';
 import * as soldReferences from '@atlas/manual-workspace/sold-references';
 import * as identity from '@atlas/grading-core/identity';
+import * as reportEntry from '@atlas/site-router/report-entry';
 
 const cardId = randomUUID(), token = `ar_${'a'.repeat(24)}`, action = randomUUID();
 const fixture = () => ({ schemaVersion: 1, card: { cardId, approvalActionId: action, certificateNumber: 'ATLAS-ABCDEF123456', identity: { playerName: 'Saved card' }, finalGrade: 8.5, approvedAt: '2026-10-20T00:00:00.000000Z', report: { state: 'PUBLISHED', version: 2, publicToken: token, path: `/reports/${token}?v=2` }, media: { FRONT: { url: `/api/reports/${token}/images/FRONT?v=2` } } }, ownership: { status: 'UNKNOWN', verification: 'UNKNOWN', history: [] }, custody: { status: 'UNKNOWN', currentPhysicalHolder: 'UNKNOWN' }, history: { scope: 'RECORDED_ATLAS_EVENTS', complete: false, snapshot: '2026-10-21T00:00:00.000000Z', events: [{ eventId: `publication:${randomUUID()}`, kind: 'REPORT_PUBLISHED', category: 'GRADING', verification: 'VERIFIED_RECORD', recordedAt: '2026-10-20T00:00:00.000000Z', report: { version: 2, finalGrade: 8.5, path: `/reports/${token}?v=2` } }], nextCursor: null } });
@@ -63,7 +64,7 @@ function harness() {
     useRef(initial) { const id = cursor++; if (!(id in slots)) slots[id] = { current: initial }; return slots[id]; },
     useEffect(fn, deps) { const id = cursor++, old = slots[id]; if (!old || deps.some((v, i) => v !== old.deps[i])) { slots[id] = { deps, cleanup: old?.cleanup }; effects.push(() => { old?.cleanup?.(); slots[id].cleanup = fn(); }); } },
   };
-  const f = { staff, calls, result: fixture(), hold: null, session: { staff }, failure: null };
+  const f = { staff, calls, result: fixture(), hold: null, session: { staff }, failure: null, reportEntries: [] };
   const request = async (path, options) => { calls.push({ path, options }); assert.equal(options.body, undefined); if (path === 'session') return f.session; if (f.hold) return f.hold.promise; if (f.failure) throw f.failure; return structuredClone(f.result); };
   vm.runInNewContext(source, { exports, AbortController, URL, Intl, window: { addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: name => listeners.delete(name) }, require(name) {
     if (name === 'react') return react;
@@ -72,6 +73,7 @@ function harness() {
     if (name === './ApprovedCardMedia') return { __esModule: true, default: 'ApprovedCardMedia' };
     if (name === '@atlas/manual-workspace/sold-references') return soldReferences;
     if (name === '@atlas/grading-core/identity') return identity;
+    if (name === '@atlas/site-router/report-entry') return { ...reportEntry, rememberCardDetailReportClick: (...args) => f.reportEntries.push(args) };
     if (name.endsWith('/order-desk-client.mjs')) return orderDesk;
     if (name.endsWith('/routes.mjs')) return routes;
     if (name.endsWith('/card-history-client.mjs')) return history;
@@ -135,6 +137,28 @@ test('card detail keeps a concise report link and moves operational context out 
   const media = f.find(node => node.type === 'ApprovedCardMedia');
   assert.equal(media.props.mode, 'detail'); assert.equal(media.props.card.approvalActionId, action);
   assert.equal(f.find(node => node.props?.role === 'tab' && node.props.id === 'card-tab-overview').props['aria-selected'], true);
+  f.dispose();
+});
+
+test('every detail report entry preserves its saved version and suppresses private-page referrers', async () => {
+  const f = harness(); await f.flush();
+  const reportPath = `/reports/${token}?v=2`, event = { button: 0 };
+  const links = [
+    f.find(node => node.type === 'a' && node.props['aria-label'] === 'Grade Report'),
+    findNode(f.component('GradeSummary', { card: fixture().card, report: reportPath }), node => node.type === 'a' && node.props.href === reportPath),
+    findNode(f.component('HistoryTimeline', { data: fixture() }), node => node.type === 'a' && node.props.href === reportPath),
+  ];
+  for (const link of links) {
+    assert.ok(link); assert.equal(link.props.href, reportPath);
+    assert.equal(link.props.referrerPolicy, 'no-referrer'); assert.equal(link.props.rel, 'noreferrer');
+    link.props.onClick(event);
+  }
+  assert.equal(f.reportEntries.length, 3);
+  for (const args of f.reportEntries) assert.deepEqual(args, [event, reportPath, cardId]);
+  const historical = fixture(); historical.history.events[0].report = { ...historical.history.events[0].report, version: 1, path: `/reports/${token}?v=1` };
+  const oldLink = findNode(f.component('HistoryTimeline', { data: historical }), node => node.type === 'a');
+  oldLink.props.onClick(event);
+  assert.deepEqual(f.reportEntries[3], [event, `/reports/${token}?v=1`, cardId]);
   f.dispose();
 });
 

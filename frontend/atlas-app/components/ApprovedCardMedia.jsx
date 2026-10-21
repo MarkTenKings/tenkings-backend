@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { STAFF_BASE_PATH } from '../lib/routes.mjs';
 import { gradedCardPath, gradedCardTitle } from '../lib/graded-cards-client.mjs';
@@ -8,6 +8,19 @@ import styles from './ApprovedCardMedia.module.css';
 
 const empty = { loading: false, url: null, error: null };
 const label = side => side === 'BACK' ? 'Back' : 'Front';
+// The 3D renderer and its dependencies are requested only on this optional tab.
+const Slab3D = lazy(() => import('./Slab3D'));
+
+/** A rejected optional chunk must not take down the saved card or its 2D views. */
+export class OptionalSlabBoundary extends Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    return this.state.failed ? <div className={styles.pending3D}>{this.props.fallback}
+      <p className={styles.pending3DNote} role="status">3D preview unavailable. Front and Back photographs remain available.</p>
+    </div> : this.props.children;
+  }
+}
 
 function useCardMedia(card, mode, enabled) {
   const [images, setImages] = useState({}), [blocked, setBlocked] = useState(false);
@@ -87,22 +100,32 @@ function PhotoState({ image, blocked, side, onRetry }) {
 
 function DetailMedia({ card }) {
   const media = useCardMedia(card, 'detail', true), [side, setSide] = useState('FRONT');
-  const selected = media.image(side), slab = media.image('SLAB'), artwork = media.image('LABEL');
+  const is3D = side === '3D', front = media.image('FRONT'), back = media.image('BACK');
+  const selected = media.image(is3D ? 'FRONT' : side), slab = media.image('SLAB'), artwork = media.image('LABEL');
   const actualSlab = side === 'FRONT' && Boolean(slab.url), photo = actualSlab ? slab : selected;
   const digital = Boolean(photo.url && !actualSlab && (side === 'BACK' || artwork.url));
   const loading = !photo.url && (selected.loading || side === 'FRONT' && slab.loading);
-  const retryKinds = (side === 'FRONT' ? ['SLAB', 'LABEL'] : []).filter(kind => media.image(kind).error);
+  const retryKinds = (is3D ? ['FRONT', 'BACK', 'LABEL'] : side === 'FRONT' ? ['SLAB', 'LABEL'] : []).filter(kind => media.image(kind).error);
+  const preview = <div className={styles.detailVisual}><ApprovedCardPresentation name={gradedCardTitle(card)} photo={photo} side={is3D ? 'FRONT' : side}
+    artwork={artwork} actualSlab={actualSlab} onImageError={media.fail}/></div>;
+  const ready3D = Boolean(front.url && back.url);
+  const fallback3D = front.url ? preview : <PhotoState image={front} blocked={media.blocked} side="FRONT" onRetry={() => media.retry('FRONT')}/>;
   return <section className={styles.detail} aria-label="Approved card photographs">
-    <div className={styles.photoStage} aria-busy={loading}>
-      {photo.url ? <div className={styles.detailVisual}><ApprovedCardPresentation name={gradedCardTitle(card)} photo={photo} side={side}
-        artwork={artwork} actualSlab={actualSlab} onImageError={media.fail}/></div>
+    <div className={styles.photoStage} aria-busy={is3D ? !ready3D && (front.loading || back.loading) : loading}>
+      {media.blocked ? <PhotoState image={empty} blocked side="FRONT"/>
+        : is3D ? ready3D ? <OptionalSlabBoundary fallback={fallback3D}><Suspense fallback={fallback3D}><Slab3D name={gradedCardTitle(card)} frontUrl={front.url} backUrl={back.url}
+          labelUrl={artwork.url} fallback={fallback3D}/></Suspense></OptionalSlabBoundary>
+          : <div className={styles.pending3D}>{fallback3D}<p className={styles.pending3DNote} role="status">{front.loading || back.loading
+            ? 'Opening saved photographs for 3D…' : '3D needs both saved photographs. Front and Back remain available.'}</p></div>
+        : photo.url ? preview
         : <PhotoState image={{ ...selected, loading }} blocked={media.blocked} side={side} onRetry={() => media.retry(side)}/>}
     </div>
-    <div className={styles.controls}><div className={styles.sideSwitch} role="group" aria-label="Photograph side">{['FRONT', 'BACK'].map(value =>
-      <button key={value} type="button" aria-pressed={side === value} onClick={() => setSide(value)}>{label(value)}</button>)}</div>
+    <div className={styles.controls}><div className={styles.sideSwitch} role="group" aria-label="Card view">{['FRONT', 'BACK', '3D'].map(value =>
+      <button key={value} type="button" aria-pressed={side === value} onClick={() => setSide(value)}>{value === '3D' ? '3D' : label(value)}</button>)}</div>
       {!!retryKinds.length && !media.blocked && <button type="button" onClick={() => retryKinds.forEach(media.retry)}>Retry preview</button>}
     </div>
-    {photo.url && <p className={styles.caption}>{actualSlab ? 'Recorded slab photograph' : digital ? `Digital slab preview · ${label(side)}` : `Approved ${side.toLowerCase()} photograph`}
+    {is3D && !media.blocked ? <p className={styles.caption}>Illustrative 3D slab · Saved card photographs<br/><span>Reverse label artwork not recorded.{!artwork.url && !artwork.loading ? ' Front label artwork unavailable.' : ''}</span></p>
+      : photo.url && <p className={styles.caption}>{actualSlab ? 'Recorded slab photograph' : digital ? `Digital slab preview · ${label(side)}` : `Approved ${side.toLowerCase()} photograph`}
       {side === 'BACK' && <><br/><span>Reverse label artwork not recorded.</span></>}
       {side === 'FRONT' && !actualSlab && !artwork.url && !artwork.loading && <><br/><span>Saved label artwork unavailable.</span></>}
     </p>}

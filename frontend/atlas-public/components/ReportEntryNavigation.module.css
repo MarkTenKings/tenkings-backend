@@ -1,0 +1,9 @@
+.navigation { max-width: 1516px; margin: 0 auto 12px; padding: 0 clamp(18px, 2.8vw, 44px); }
+.navigation a { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; color: #27745b; font-family: var(--atlas-sans, system-ui); font-size: 14px; font-weight: 600; text-decoration: none; }
+.navigation a:hover { color: #163e31; text-decoration: underline; text-underline-offset: 4px; }
+.navigation a:focus-visible { outline: 2px solid #27745b; outline-offset: 4px; border-radius: 2px; }
+.navigation a span { font-size: 20px; line-height: 1; }
+:global(.public-page) .navigation { padding: 0; }
+:global(.public-page) .navigation a { color: #dfc384; }
+:global(.public-page) .navigation a:hover { color: #f0d17d; }
+@media print { .navigation { display: none; } }

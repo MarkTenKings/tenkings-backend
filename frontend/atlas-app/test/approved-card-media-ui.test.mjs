@@ -16,7 +16,13 @@ function nodes(value, match, found = []) {
   if (Array.isArray(value)) value.forEach(item => nodes(item, match, found));
   else if (value && typeof value === 'object') {
     if (match(value)) found.push(value);
-    if (typeof value.type === 'function') nodes(value.type(value.props), match, found);
+    if (typeof value.type === 'function' && value.type.prototype?.render) {
+      const instance = new value.type(value.props); let children = [];
+      try { nodes(instance.render(), match, children); }
+      catch (error) { if (!value.type.getDerivedStateFromError) throw error;
+        children = []; instance.state = { ...instance.state, ...value.type.getDerivedStateFromError(error) }; nodes(instance.render(), match, children); }
+      found.push(...children);
+    } else if (typeof value.type === 'function') nodes(value.type(value.props), match, found);
     else nodes(value.props?.children, match, found);
   }
   return found;
@@ -29,8 +35,10 @@ function fixture(mode = 'detail', { label = false, slab = false } = {}) {
     url: '/admin/api/staff/manual-connected/labels/33333333-3333-4333-8333-333333333333/artwork?mode=preview', provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
   if (slab) card.media.SLAB = { url: `/api/reports/${token}/presentation/image?v=2&revision=1`, presentationRevision: 1,
     provenance: 'ACTUAL_SLAB_PHOTOGRAPH', sha256: 'd'.repeat(64), byteCount: 1024, contentType: 'image/jpeg' };
-  const slots = [], effects = [], window = new EventTarget(), loads = [], disposed = []; let cursor = 0, dirty = false, tree;
-  const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+  const slots = [], effects = [], window = new EventTarget(), loads = [], disposed = []; let cursor = 0, dirty = false, tree, lazyFailure = null;
+  const react = { Component: class { constructor(props) { this.props = props; } },
+    lazy: () => props => { if (lazyFailure) throw lazyFailure; return { type: 'Slab3D', props }; },
+    Suspense: 'Suspense', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => { const next = typeof value === 'function' ? value(slots[index]) : value; if (!Object.is(next, slots[index])) { slots[index] = next; dirty = true; } }]; },
     useRef(initial) { const index = cursor++; if (!(index in slots)) slots[index] = { current: initial }; return slots[index]; },
     useEffect(action, deps) { const index = cursor++, old = slots[index]; if (!old || deps.some((value, n) => value !== old.deps[n])) {
@@ -56,7 +64,7 @@ function fixture(mode = 'detail', { label = false, slab = false } = {}) {
   const find = predicate => nodes(tree, predicate);
   const button = title => find(node => node.type === 'button' && (text(node) === title || node.props['aria-label'] === title))[0];
   render();
-  return { card, loads, disposed, flush, find, button, render, revoke() { window.dispatchEvent(new Event(media.APPROVED_MEDIA_ACCESS_ENDED)); render(); },
+  return { card, loads, disposed, flush, find, button, render, rejectSlab(error) { lazyFailure = error; render(); }, revoke() { window.dispatchEvent(new Event(media.APPROVED_MEDIA_ACCESS_ENDED)); render(); },
     rehearse() { slots.forEach(slot => slot?.cleanup?.()); slots.forEach(slot => { if (slot?.action) slot.cleanup = slot.action(); }); render(); },
     close() { slots.forEach(slot => slot?.cleanup?.()); } };
 }
@@ -102,7 +110,7 @@ test('effect cleanup/setup rehearsal creates fresh resources and stale photo com
   assert.deepEqual(f.disposed.sort(), ['blob:old-back', 'blob:old-front']); f.close();
 });
 
-test('detail uses the identical gallery front composition and exposes only Front/Back controls', async () => {
+test('detail preserves the gallery front composition and adds an optional 3D control', async () => {
   const gallery = fixture('gallery', { label: true }), detail = fixture('detail', { label: true });
   for (const f of [gallery, detail]) {
     await f.flush(); f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
@@ -115,7 +123,9 @@ test('detail uses the identical gallery front composition and exposes only Front
     ['archive.slabShell', '/admin/brand/archive/slab-shell-front.svg'], ['archive.slabCard', 'blob:FRONT'],
     [undefined, '/admin/brand/archive/nfc-tag-reference.jpg'], ['archive.slabLabel', 'blob:LABEL'],
   ]);
-  assert.deepEqual(detail.find(node => node.type === 'button').map(node => text(node)), ['Front', 'Back']);
+  assert.deepEqual(detail.find(node => node.type === 'button').map(node => text(node)), ['Front', 'Back', '3D']);
+  assert.equal(detail.find(node => node.type === 'Slab3D').length, 0);
+  assert.equal(gallery.find(node => node.type === 'Slab3D').length, 0);
   assert.equal(detail.button('Front').props['aria-pressed'], true);
   assert.equal(detail.find(node => ['dialog', 'a', 'input'].includes(node.type)).length, 0);
   assert.equal(detail.find(node => /inspect|zoom/i.test(node.props['aria-label'] ?? '')).length, 0);
@@ -170,4 +180,43 @@ test('a recorded slab photograph takes priority on Front in both views and is ne
     }
     f.close();
   }
+});
+
+test('3D mounts only when selected with the verified Front/Back pair, never a slab photograph as a card texture', async () => {
+  const f = fixture('detail', { label: true, slab: true }); await f.flush();
+  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  assert.equal(f.find(node => node.type === 'Slab3D').length, 0);
+  f.button('3D').props.onClick(); f.render();
+  const scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontUrl, 'blob:FRONT'); assert.equal(scene.props.backUrl, 'blob:BACK'); assert.equal(scene.props.labelUrl, 'blob:LABEL');
+  assert.equal(f.button('3D').props['aria-pressed'], true);
+  f.button('Back').props.onClick(); f.render(); assert.equal(f.find(node => node.type === 'Slab3D').length, 0);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:BACK').length);
+  f.button('3D').props.onClick(); f.render(); f.revoke(); await f.flush();
+  assert.equal(f.find(node => node.type === 'Slab3D').length, 0); assert.equal(f.find(node => node.type === 'img').length, 0);
+  assert.ok(f.find(node => node.type === 'strong' && /Staff access ended/.test(text(node))).length); f.close();
+});
+
+test('3D retains a usable photograph and independent retry when Back is absent; missing label never becomes reverse artwork', async () => {
+  const f = fixture(); await f.flush(); f.loads[0].resolve('blob:front'); f.loads[1].reject(new Error('missing back')); await f.flush();
+  f.button('3D').props.onClick(); f.render();
+  assert.equal(f.find(node => node.type === 'Slab3D').length, 0);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:front').length);
+  assert.ok(f.find(node => node.type === 'p' && /3D needs both saved photographs/.test(text(node))).length);
+  f.button('Retry preview').props.onClick(); await f.flush(); f.loads[2].resolve('blob:back'); await f.flush();
+  const scene = f.find(node => node.type === 'Slab3D')[0]; assert.equal(scene.props.labelUrl, null);
+  assert.equal(scene.props.backUrl, 'blob:back'); assert.equal(scene.props.reverseLabelUrl, undefined); f.close();
+});
+
+test('a rejected lazy 3D chunk is contained inside the optional view and Front/Back stay usable', async () => {
+  const f = fixture('detail', { label: true }); await f.flush(); f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  f.button('3D').props.onClick(); f.render();
+  await Promise.reject(new Error('ChunkLoadError')).catch(error => f.rejectSlab(error));
+  assert.equal(f.find(node => node.type === 'Slab3D').length, 0);
+  assert.ok(f.find(node => node.type === 'p' && /3D preview unavailable\. Front and Back photographs remain available\./.test(text(node))).length);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:FRONT').length);
+  assert.equal(f.disposed.length, 0);
+  f.button('Back').props.onClick(); f.render(); assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:BACK').length);
+  f.button('Front').props.onClick(); f.render(); assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:FRONT').length);
+  f.close();
 });

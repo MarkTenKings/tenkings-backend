@@ -31,7 +31,8 @@
     "@aws-sdk/client-s3": "3.914.0",
     "@atlas/photo-core": "workspace:*",
     "@atlas/defect-analysis": "workspace:*",
-    "@atlas/finishing-station": "workspace:*"
+    "@atlas/finishing-station": "workspace:*",
+    "three": "0.186.1"
   },
   "devDependencies": {
     "eslint": "8.57.0",

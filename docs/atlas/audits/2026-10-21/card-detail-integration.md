@@ -1,5 +1,7 @@
 # Dedicated card detail — local integration, October 21, 2026
 
+> Historical initial integration record. Later owner-approved cleanup removed detail Inspect/zoom, reused the enlarged gallery slab and added the portrait Grade Report link. The optional 3D tab and contextual report return supersede the older preview/navigation description below; see `optional-3d-report-return.md` and `docs/handoffs/ATLAS_MARKETPLACE_LEAD_HANDOFF_20261021.md` for current source, preview and remaining work.
+
 The owner authorized three new Astra Ultra specialists for the next increment: card-detail interface, dependable Front/Back media, and reviewed identity/history records. The lead integrated and qualified their work in `codex/atlas-marketplace-foundation`, starting at `5721a4b7`. This increment is not deployed. Current production remains the completed archive release described in the Deploy Runbook.
 
 ## Result
