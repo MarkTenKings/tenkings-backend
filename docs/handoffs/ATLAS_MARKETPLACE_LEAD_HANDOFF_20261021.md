@@ -1,32 +1,32 @@
 # ATLAS marketplace — successor lead handoff, October 21, 2026
 
-**Current successor execution checkpoint:** see [fresh detail release preparation](../atlas/audits/2026-10-21/detail-release-preparation.md). Detail release source is now `ca3a848d`; ownership/collection local contracts are separately committed in `46621dad`. Production release is still pending connector team access and full coordinated qualification. The following original handoff retains historical starting evidence and is superseded by that checkpoint where status differs.
+**Current checkpoint: technical detail/identity/history production release complete.** See [production release](../atlas/audits/2026-10-21/detail-production-release.md). Native/staff/public source `ca3a848d` and SQL009 are live; canonical technical/report/photo/preservation checks passed, and the original admission holder was explicitly released with absence proof. Ordinary signed-in real-card acceptance is pending normal staff sign-in. Ownership/collection/curation source `46621dad` remains local and unregistered.
 
-**Original successor handoff after local 3D and report-return qualification.** This document is self-contained operational context for a new **Astra Ultra lead using Astra xHigh subagents**. It carries all 30 original master-plan requirement IDs, completed work, remaining work, the next execution sequence and a copy/paste kickoff prompt.
+This document carries all 30 original requirement IDs for an Astra Ultra lead with up to three Astra xHigh specialists. Earlier local qualification remains evidence; it is not a claim of owner or physical acceptance.
 
 The canonical scope ledger is [ATLAS_MARKETPLACE_MASTER_PLAN_20261020.md](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/plans/ATLAS_MARKETPLACE_MASTER_PLAN_20261020.md). This handoff does not narrow it to the archive or claim that all Foundation work is complete.
 
 ## 1. Immediate handoff state
 
-The **staff Graded Cards archive is live and its gallery design is owner-approved**. The dedicated detail page, dependable Front/Back media, reviewed Sports identity and read-only grading/custody history are locally implemented and qualified. Ownership/My Collection, bounded comp curation/pricing and the marketplace transaction system remain unfinished.
+The **staff Graded Cards archive is live and its gallery design is owner-approved**. The dedicated detail page, dependable Front/Back media, reviewed Sports identity and read-only grading/custody history are technically deployed and qualified. Ownership/My Collection, bounded comp curation/pricing and the marketplace transaction system remain unfinished.
 
-The latest requests are now **implemented and locally verified**: an optional experimental **3D** tab beside Front/Back and **← Card Detail** on the separate grade report. Front remains the default. The owner has not yet accepted the 3D prototype's appearance or committed to making it the primary presentation.
+The latest requests are now **implemented, locally verified and technically deployed**: an optional experimental **3D** tab beside Front/Back and **← Card Detail** on the separate grade report. Front remains the default. The owner has not yet accepted the 3D prototype's appearance or committed to making it the primary presentation.
 
 | Current state | Exact resume evidence |
 |---|---|
-| Integrated implementation commit | `c54e871f14fad9824ca98726e6b2ca50c99aaa6d` — Add optional Atlas slab 3D preview and report return navigation. A later docs-only handoff commit may be HEAD. |
+| Integrated implementation commit | `ca3a848d4d6eb28f149a8f253115df90b5fc60ac` is frozen deployed detail source; `46621dad` separately adds local ownership/collection/curation. Later docs-only commits may be HEAD. |
 | Optional 3D | Lazy Three.js0.186.1, beveled reusable geometry, exact native verified Front/Back photos and saved front label, drag/arrow/Home/End/reset, no idle animation. Static fallback survives deferred-import failure, WebGL/context loss, missing photos and unsupported texture size. Reverse label stays blank. Shell/internal geometry is illustrative; physical CAD/device quality is not proved. |
 | Report return | Exact token/version/origin-bound same-tab handoff; two-minute single use then30-minute report-history context. Correct-card return and reload verified; fresh direct/cert/NFC entry has no inherited private return. No return query parameter, private referrer or saved-report modification. Modified/new-tab clicks intentionally remain ordinary direct-report visits. |
 | Tests/builds | Final80/80 focused staff/media/3D/router tests; public specialist79/79. Staff production build/boundary35chunks/15traces/2030files; public14/14/682. Full receipts and caveats in the latest audit. |
 | Final preview | `http://127.0.0.1:58611/admin/graded-cards/3ad38eae-49cd-450c-ab08-10f8b44f386f` — task-owned process session71401. Synthetic records and saved public photo/report copies. IDs regenerate on restart. |
 | Browser evidence | Rotation/readable Back,320px nooverflow, deferred3D request, canvas removal onFront/access loss, forcedchunk503 fallback, accessible context-loss retry, exact report roundtrip/reload and direct-entry separation. Saved desktop/report screenshots below. |
-| Remaining acceptance | Owner visual review; physical phone/GPU performance; actual reverse artwork/CAD; full raw-resolution paired masters; production detail/identity/history release and real-card Sports acceptance. |
-| Production effects | **None in this increment.** Production stays webc4b7cc85/native31c6685e; SQL008installed, SQL009unapplied. No customer messages, paid provider calls, approvals, physical operations or financial effects. |
+| Remaining acceptance | Owner visual review; physical phone/GPU performance; actual reverse artwork/CAD; full raw-resolution paired masters; signed-in production detail/identity/history and real-card Sports acceptance. |
+| Production effects | **Technical release complete:** native/staff/publicca3a848d, SQL009 installed, controls137/98/105, holder explicitly released and absence proved. No customer messages, paid provider calls, approvals, physical operations or financial effects. |
 
 Final audit: [optional-3d-report-return.md](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-21/optional-3d-report-return.md).
 Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-marketplace-foundation-20261020/three-preview-20261021/` — `desktop-3d.png`, `report-return.png`, `mobile-320.png`, `focused-tests.log`, `staff-build.log`, `public-build-result.txt`. Public test/build details are in the specialist tool transcript; do not claim another root rerun.
 
-**Exact stopping point:** code and local integration are complete for this requested prototype/return increment. The current lead is handing off for the owner to review it and for the next lead to continue the whole master plan. Start by reading this handoff and checking source/preview availability; retain passing evidence on unchanged source. Apply any owner visual feedback, then prepare the fresh detail/identity/history release and ownership/My Collection contracts in section7. Keep3D optional and Front as default unless the owner changes that decision. Do not restart the design or interpret this prototype as completed manufacturing-quality media or a live marketplace.
+**Exact continuation point:** canonical technical release is complete. Owner Chrome tab2132133231 at `https://atlasgrading.com/admin` awaits normal staff sign-in; no sign-in SMS was requested by the agent. Complete real archive/detail/media/history/report-return interaction checks, retaining unchanged local failure/recovery evidence. Keep Front default and 3D optional. Then continue ownership/My Collection and optional curation integration; do not replay any consumed release packet. No claim of manufacturing-quality media or live marketplace.
 
 ## 2. Workspace and documents
 
@@ -36,7 +36,7 @@ Use this working directory:
 /Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean
 ```
 
-Branch: `codex/atlas-marketplace-foundation`. Integrated code commit is `c54e871f14fad9824ca98726e6b2ca50c99aaa6d`; preceding milestones are `6bd11d11` and `3689b44e`. The final handoff documentation may advance HEAD without source changes. Inspect Git before editing.
+Branch: `codex/atlas-marketplace-foundation`. Deployed code commit is `ca3a848d4d6eb28f149a8f253115df90b5fc60ac`; local ownership/collection/curation is `46621dad`. Earlier UI milestones are `c54e871f`, `6bd11d11` and `3689b44e`. The final handoff documentation may advance HEAD without source changes. Inspect Git before editing.
 
 Do not modify, reset, clean or repair the original dirty/conflicted checkout at `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`. Do not use the frozen `codex/atlas-archive-production` checkout as the development branch. Its archive release-02 operations have already been consumed and are retained evidence, not a release template to replay.
 
@@ -56,48 +56,28 @@ ATLAS is independently deployed and has its own database. Ten Kings V2's TKD buy
 
 ## 3. Production evidence — what is actually live
 
-These are the latest recorded release identities, not a fresh network observation by this document author. Reconcile them read-only before any new production action.
+Observed October21 technical release, not an inference from foundation HEAD. Reconcile current evidence before any later production action.
 
-| Surface | Recorded live state |
+| Surface | Observed live state |
 |---|---|
 | Canonical archive | [atlasgrading.com/admin/graded-cards](https://atlasgrading.com/admin/graded-cards) |
-| Staff web source | `c4b7cc85f01754eb5776042147e6c0fdf50f845a` |
-| Staff deployment | `dpl_AmUUXzXbNpHPB6ZSrcpCZ4VqjGbX`; `atlas-grading-staff-chbqd5o92-ten-kings.vercel.app` |
-| Public source/deployment | Same `c4b7cc85`; `dpl_CeohHmXm57UeSmktNQAP7JGioN1h`; `atlas-grading-public-75b283s70-ten-kings.vercel.app` |
-| Native source | `31c6685e8ae49e05c8f78b748a6233d143776131` |
-| Native image | `sha256:f64dfc31485603df756ec9cd64976fda8cc5effe8b0155fa727a45fb82b4fa52` |
-| Native main | `4137c69637f07ebed4c70463ae81d0d7030dd3859b54d3b294e3cd399f4d05a2` |
-| Native worker | `bb4840ec80850dce8a22eba59bc9e5ae56538696ffb31e6adbd4e97c3e178f80` |
-| Customer retained | Source `c68e9ea7c77b35fc53cab6ee162e063dfb02b0fe`; `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5` |
-| Schema | Registered additive SQL008 installed with manual-only EXECUTE. **SQL009 is source-only and not installed.** |
-| Release controls | Staff 136 / PublicReader 97 / STAFF SMS 104. Customer 83 / CUSTOMER SMS 35 retained. |
-| Inner gateway SHA256 | `51cd257774fb8032f8b10dd25fa42da5ce442a9977abd3a4c58ffd237a16f878` |
-| Outer gateway SHA256 | `c069ab6a230da62ca8df2632b6d91fefe81288a913a078b59068991b3e05fcb0` |
-| Admission holder | Explicitly released `2026-10-21T06:42:09.621Z`; absence independently proved at `06:42:37.838Z`. No hold remains from this release. |
+| Native/staff/public source | `ca3a848d4d6eb28f149a8f253115df90b5fc60ac` |
+| Staff | `dpl_2vc2nkyRmUhPMyJaZBLKbaCpow6y`; `atlas-grading-staff-2g0z630sk-ten-kings.vercel.app` |
+| Public | `dpl_EaydzmhwF8f49aqgHhw4JAQLKyVJ`; `atlas-grading-public-icw592c3b-ten-kings.vercel.app` |
+| Native image | `sha256:62db2a56541dcaf6dd51211302e7d4c53d569af693880ff7519c3672d3318b33` |
+| Main / worker | `467201614c92774c023a804b860b30588c34fc23b85cd2d55048bc75b3c2f30d` / `d4ce4e9b1cc3bfb0730e49a3aa0dc759b2270878f502cf7bd8d2100d442f71bb` |
+| Customer retained | Sourcec68e9ea7; `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5` |
+| Schema | Registered002–009;009 checksum `5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b`, manual-role-only EXECUTE |
+| Controls | Staff137 / Public98 / STAFF SMS105; Customer83 / CUSTOMER SMS35 retained |
+| Inner gateway | `51cd257774fb8032f8b10dd25fa42da5ce442a9977abd3a4c58ffd237a16f878` |
+| Outer gateway | `c069ab6a230da62ca8df2632b6d91fefe81288a913a078b59068991b3e05fcb0` |
+| Admission | Explicit release22:38:21.199Z; absence22:38:27.851Z, October21UTC. No release hold remains. |
 
-The native-only worker correction excludes human archive services from the restricted worker; it does not broaden worker grants. Web and native source differences are intentional and independently qualified.
+The restricted worker excludes human archive/provenance services without expanded grants. Gateways, project environments/settings and customer deployment were retained. The old pair stays stopped/detached; never restart it. Root recorded approximately11m54s native interruption, dynamic-IP accounting reconciliation through a new one-use continuation, and staff alias propagation finalized read-only. No consumed operation was replayed.
 
-The live archive has gallery/table, complete authorized search, category/UTC approval-date filters, snapshot pagination, immutable approved identity/grade/certificate, staff and recorded submission context, exact report versions and recorded order links. It creates no ownership, listing, offer, balance or sale. The live **Open card** still uses the manual grading workflow until the local detail increment is released.
+Fresh native qualification passed240/240 isolated Linux tests. Canonical technical acceptance passed27routes/assets/auth-boundary checks plus4reports/8original photo hashes. Final37-table preservation retained31READY provider results and26saved label commitments. The earlier four-card owner screenshot establishes gallery approval only; held baseline now recorded155manual cards/28published approvals. No paid search, approval, print, NFC, notification or money movement was used to test read features.
 
-The owner supplied signed-in production screenshots showing four real approved cards and approved the gallery. Search/filter/table/paging, exact order navigation and complete report/media flow acceptance remain outstanding. An early screenshot showed two unavailable images and later all four loaded. The historical HTTP cause is unproven; do not invent a diagnosis.
-
-Production qualification includes 232/232 corrected native Linux tests, 768/768 release staff tests, exact canonical asset/auth checks, four retained reports and eight photo byte hashes. Preservation retained business rows, 31 READY market results and saved labels. Native health showed zero application restarts. No grading approval, paid search, print, NFC operation, notification or financial transaction was used to test the archive.
-
-Release evidence root:
-
-```text
-/Users/markthomas/.codex/atlas-handoffs/atlas-marketplace-foundation-20261020/release-02/
-```
-
-The [production audit](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-20/graded-cards-archive-production.md) records all exact receipts and reconciliation exceptions. Useful anchors:
-
-- Canonical technical acceptance: `3fbcbc75b03081dccfb6203c84ab45e3b5607ceda8dac5c677e142f942d814c7`.
-- Reports/photos: `972479245ae23ecc89685c226850a10c3953de60b299f3bdf3b9b9b6ad7a796a`.
-- Final preservation: `ec377487a88c27827ab2c70e88d63c565987bd98e8e6c31298c1e66bf5b81789`.
-- Native health: `228d4a6da58b21dc693358717cca9373127336ed366645eeabfd07dbf9fdbef9`.
-- Holder absence: `6e2dda46e9012d8a9222f3d5491e857add29f22d6f7b10378d1cd0b520a5cc7e`.
-
-Private evidence files may contain private metadata or credentials; reference their paths/hashes without publishing their contents. Never copy signed URLs into the handoff.
+Current evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-detail-release-20261021/`. Exact receipt ledger and limits: [detail production audit](../atlas/audits/2026-10-21/detail-production-release.md). Technical acceptance `09ea2e4d…`, reports `42a88dab…`, final preservation `3b994f25…`, native postflight `bc113baa…`, absence `141dfe58…`. The older archive release-02 remains historical evidence only. Do not publish private receipt bodies or signed URLs.
 
 ## 4. Delivered milestones and local evidence
 
@@ -108,11 +88,11 @@ Checked items below mean the stated bounded milestone was actually completed; **
 - [x] **LOCAL VERIFIED — `3689b44e`:** Dedicated detail route and archive navigation, saved category facts/grade policy, reviewed Sports facts, saved same-approval sold references, submission/staff context and read-only History.
 - [x] **LOCAL VERIFIED — `3689b44e`:** Exact approved Front/Back transport with token/version/publicHash and byte verification, two-load concurrency, bounded transient retries, side-local recovery and access/account/unmount/pagehide cleanup.
 - [x] **LOCAL VERIFIED:** Optional reviewed serial/autograph/relic facts, ATLAS identification v5 proposals, original-photo human evidence checks, historical v3/v4 request compatibility and conservative expanded comp matching.
-- [x] **LOCAL VERIFIED:** Source-only SQL009 and staff provenance endpoint with session/role/card ACL/discard checks, fixed microsecond snapshot, same-approval selected sales and no ownership/custody invention.
+- [x] **TECHNICALLY DEPLOYED:** Installed SQL009 and staff provenance endpoint with session/role/card ACL/discard checks, fixed microsecond snapshot, same-approval selected sales and no ownership/custody invention.
 - [x] **LOCAL VERIFIED — `6bd11d11`:** Larger shared gallery/detail slab presentation; Front/Back retained; hero Approved Card/Human Approved and detail Inspect/zoom removed; portrait Grade Report link; honest missing reverse label.
 - [x] **OWNER DIRECTION RECORDED:** Listed cards use price + Buy Now; every ATLAS graded card defaults Open to offers, with owner opt-out per card/collection and independent privacy/ownership/delivery requirements.
 - [x] **LOCAL VERIFIED — `c54e871f`:** Optional3D tab and safe report ← Card Detail return, including deferred-import/context-loss recovery, accessible retry, exact saved textures and independent direct reports.
-- [ ] **NOT COMPLETE:** Production detail/identity/history release and ordinary signed-in acceptance; real Sports recognition acceptance; full-resolution paired slab masters; ownership/My Collection; bounded curation/pricing; marketplace backend.
+- [ ] **NOT COMPLETE:** Ordinary signed-in detail/identity/history acceptance; real Sports recognition acceptance; full-resolution paired slab masters; ownership/My Collection; bounded curation/pricing; marketplace backend.
 
 The [October 21 detail audit](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-21/card-detail-integration.md) records the initial detail milestone: 811 staff tests passed; 48 final focused tests passed after the dependency correction; 902 connected tests passed with two existing native-measurement environment skips; eight owned PostgreSQL 17 groups passed and cleanup confirmed `stoppedVerified:true`; staff production build/boundary passed with 32 browser chunks, 15 server traces and 2,016 traced files. The full staff run preceded the final dependency/CSS adjustments; focused tests/build/browser supplied the later evidence. Existing unrelated build warnings remain.
 
@@ -147,9 +127,9 @@ Other local audit sources:
 - [Card provenance foundation](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-20/card-provenance-foundation.md): staff read contract, ownership UNKNOWN, holder UNKNOWN, redaction and SQL009.
 - [Earlier next-R1 qualification](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-20/next-r1-integration-qualification.md): historical checkpoint, superseded by October 21 results where noted.
 
-Historical SQL009 checksum at the earlier detail checkpoint: `9e9361a6cfe6b057a306a347741d88911d4d9f654f3c01b71aefcbd95f74bc2f`. The successor source-only media parity correction is `5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b`, with24 focused checks,10 owned PostgreSQL17 groups and the staff production build passing. Final release must use the new manifest checksum. Merely checking in SQL009 does not install it.
+Historical SQL009 checksum at the earlier detail checkpoint: `9e9361a6cfe6b057a306a347741d88911d4d9f654f3c01b71aefcbd95f74bc2f`. The installed successor media parity correction is `5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b`, with24 focused checks,10 owned PostgreSQL17 groups and the staff production build passing. Production installation and exact definition/owner/ACL preservation are now recorded in the release audit.
 
-Fresh read-only observations at21:10–21:12UTC confirm native31c/f64dfc with zero main/worker restarts, unchanged gateway hashes, SQL008 installed and009 absent, and155 manual cards/28 published approvals. The earlier four-card screenshot is historical owner evidence. Vercel deployment inspection returned a team-authorization denial; the owner completed renewal and the same connector now verifies staff/public READY plus all three Ten Kings project identities. No deployment, runtime replacement, holder acquisition or production migration has occurred. Actual source review found missing saved-label/slab inputs in the detail backend; the successor fix and real SQL parity tests supersede the enriched fixture's earlier parity assumption.
+Historical21:10–21:12UTC preflight found native31c/f64dfc, SQL008 installed and SQL009 absent and155manual cards/28published approvals. The completed technical release supersedes those runtime/schema identities. Vercel team access was renewed through the same connector. Actual source review found missing saved-label/slab inputs in detail; the deployed parity correction and real SQL tests supersede the earlier enriched-fixture assumption.
 
 ## 5. Owner decisions to preserve
 
@@ -197,9 +177,9 @@ The original **30 bullets are reproduced in full below**, with stable 01–30 ID
   - [ ] Complete real search/filter/table/paging/destination acceptance; marketplace-order search waits for actual marketplace records.
 
 - [ ] **03.** **Detailed card pages:** Open front/back images, zoomable grading evidence, grade reports, sold comps, provenance, and marketplace information. Add genuine video/360° media where available.
-  - [x] **LOCAL VERIFIED:** Dedicated detail, shared slab Front/Back, separate exact Grade Report, category facts, saved comps and History. Owner's later direction moves zoom/findings to the separate report.
-  - [x] **LOCAL VERIFIED:** Optional illustrative3D tab and safe exact Card Detail return from the separate report; front/back remain available.
-  - [ ] Production detail release, owner3D acceptance/device quality, true paired full-resolution masters, genuine video/360 capture if available, and actual commerce context remain. An illustrative prototype does not satisfy genuine capture.
+  - [x] **TECHNICALLY DEPLOYED:** Dedicated detail, shared slab Front/Back, separate exact Grade Report, category facts, saved comps and History. Owner's later direction moves zoom/findings to the separate report.
+  - [x] **TECHNICALLY DEPLOYED:** Optional illustrative3D tab and safe exact Card Detail return from the separate report; front/back remain available.
+  - [ ] Signed-in real-card detail acceptance, owner3D acceptance/device quality, true paired full-resolution masters, genuine video/360 capture if available, and actual commerce context remain. An illustrative prototype does not satisfy genuine capture.
 
 - [ ] **04.** **Staff administration:** Include saved filters, exports, review queues, custody locations, fulfillment status, disputes, and audit history. Staff get the customer-facing experience plus controls appropriate to their role.
   - [x] **LIVE:** Existing staff review/order tools and archive permissions reused; private fields stay behind staff access.
@@ -210,42 +190,46 @@ The original **30 bullets are reproduced in full below**, with stable 01–30 ID
 
 - [ ] **06.** **Social “My Collection”:** Give customers searchable profiles, albums, follows, watchlists, saved searches, and alerts. Separate currently owned, previously owned, for-sale, and wanted cards. Allow visibility controls per card or album.
   - [x] **LIVE:** Existing My ATLAS submission/report history is retained. This is not ownership-based My Collection.
+  - [x] **LOCAL VERIFIED:** Owner-only collection projection and privacy/offer preview in46621dad; unsaved settings and no live route.
   - [ ] Current/past ownership, for-sale/wanted distinctions, authenticated collection, privacy per card/album and opt-in profiles/social/searches/alerts remain.
 
 - [ ] **07.** **Customer-visible provenance:** Show recorded ownership transfers, sales, grading, reholders, and corrections. Distinguish verified events, owner-reported information, and unknown history. Display consenting owner handles or “Private collector.”
-  - [x] **LOCAL VERIFIED:** Staff read-only sourced grading/custody events and safe public-fact redaction helper.
+  - [x] **TECHNICALLY DEPLOYED:** Staff read-only sourced grading/custody events. The public-fact redaction helper is not a customer endpoint.
   - [ ] Reviewed ownership/transfer/sale/reholder/correction events, consent and customer/public endpoint integration remain. The redaction helper alone is not publication.
 
 - [ ] **08.** **Ownership and custody:** Track who owns the card separately from who physically holds it. Support authenticated off-platform transfers and reviewed ownership claims. A cert number or QR scan alone cannot establish ownership.
-  - [x] **LOCAL VERIFIED:** Separate ownership UNKNOWN and current-holder UNKNOWN; recorded custody is independently sourced.
+  - [x] **TECHNICALLY DEPLOYED:** Separate ownership UNKNOWN and current-holder UNKNOWN; recorded custody is independently sourced.
+  - [x] **LOCAL VERIFIED:** Unregistered claims/participating-transfer/settings proposal,9unit and7owned PostgreSQL17 groups; evidence retention/reviewer provisioning still absent.
   - [ ] Authenticated off-platform transfers, reviewed claim authority, separate append-only custody/ownership writes and explicit dispute/correction handling remain.
 
 - [ ] **09.** **Numbered field:** Preserve the exact printed serial, such as `007/099`, plus its supporting image. Search comps using `/99`, not the individual copy number. Keep serial numbering separate from checklist numbers.
-  - [x] **LOCAL VERIFIED:** Exact printed serial, numerator/denominator, original-photo human evidence and normalized denominator query.
-  - [ ] Production release and fresh real-card serial/photo/comp acceptance remain.
+  - [x] **TECHNICALLY DEPLOYED:** Exact printed serial, numerator/denominator, original-photo human evidence and normalized denominator query.
+  - [ ] Fresh real-card serial/photo/comp acceptance remain.
 
 - [ ] **10.** **Autographed field:** Record signature presence and type—on-card, sticker, cut, facsimile, or unknown. Search using `auto`. Keep signature detection separate from authentication.
-  - [x] **LOCAL VERIFIED:** Reviewed signature presence/type, evidence checks and comp terms; no authentication inference.
-  - [ ] Production release and fresh real-card autograph/type/unknown acceptance remain.
+  - [x] **TECHNICALLY DEPLOYED:** Reviewed signature presence/type, evidence checks and comp terms; no authentication inference.
+  - [ ] Fresh real-card autograph/type/unknown acceptance remain.
 
 - [ ] **11.** **Patch/relic field:** Record material, individual relic windows, and manufacturer statements about game use, player wear, event wear, or unspecified origin. Preserve distinctions between different pieces on the same card.
-  - [x] **LOCAL VERIFIED:** Separate window/material/manufacturer-statement/use facts and conservative matching.
-  - [ ] Production release and fresh multi-window/manufacturer-statement acceptance remain.
+  - [x] **TECHNICALLY DEPLOYED:** Separate window/material/manufacturer-statement/use facts and conservative matching.
+  - [ ] Fresh multi-window/manufacturer-statement acceptance remain.
 
 - [ ] **12.** **AI-assisted identity review:** Google Vision OCR and Astra propose attributes from both sides; staff confirm or correct uncertain facts. Retain supporting evidence. “Not detected” stays unknown rather than automatically becoming “No.”
-  - [x] **LOCAL VERIFIED:** ATLAS v5 machine proposals with actual derivative binding; adoption clears machine observations and requires fresh human original-photo evidence; historical v3/v4 requests retained.
+  - [x] **TECHNICALLY DEPLOYED:** ATLAS v5 machine proposals with actual derivative binding; adoption clears machine observations and requires fresh human original-photo evidence; historical v3/v4 requests retained.
   - [ ] Fresh authorized real paired-photo/provider evidence, reviewer acceptance and deployed optical performance remain; synthetic tests are not recognition accuracy.
 
 - [ ] **13.** **Optional staff comp selection:** After the grade is finalized, staff select **1–5 recent, correctly matched sold comps**, or choose Skip/No suitable comps. Missing comps never block an approved report.
   - [x] **LIVE / LOCAL VERIFIED:** Existing saved sold-search/selection foundation retained; detail reads only saved same-approval references.
-  - [ ] Enforce and accept the optional post-grade 1–5 bound, recent matching evidence, Skip and No suitable comps without gating approval.
+  - [x] **LOCAL VERIFIED:** Optional1–5/Skip/No suitable comps contract and actual-component preview, with duplicate/exclusion guards.
+  - [ ] Persist and accept the optional post-grade 1–5 bound, recent matching evidence, Skip and No suitable comps without gating approval.
 
 - [ ] **14.** **Reliable pricing guidance:** Match printing, serial denominator, autograph, and relic details. Separate grading companies, grades, and special designations. Exclude mismatches, lots, and unknown accepted-offer amounts from calculations.
   - [x] **LIVE:** Shared identity query and separated grader/grade grouping retained.
-  - [x] **LOCAL VERIFIED:** Denominator/autograph/relic contradiction and uncertainty checks; lots and unknown accepted-offer amounts cannot drive new guidance.
-  - [ ] Release expanded matching, validate real returned evidence and integrate the bounded price-guidance eligibility contract.
+  - [x] **TECHNICALLY DEPLOYED:** Denominator/autograph/relic contradiction and uncertainty checks; lots and unknown accepted-offer amounts cannot drive new guidance.
+  - [ ] Validate real returned evidence and integrate the bounded price-guidance eligibility contract.
 
 - [ ] **15.** **Transparent suggested prices:** Show the selected sales, dates, sample size, range, and suggested starting price. Refresh stale guidance when listing while preserving the report’s original snapshot. Sellers control their asking price.
+  - [x] **LOCAL VERIFIED:** Selected-sale mean, range, sample size and dates preview; method acceptance/persistence remain.
   - [ ] Explainable versioned suggested starting price, dates/count/range/method and deliberate stale-listing refresh remain. Preserve report snapshots and seller control.
 
 - [ ] **16.** **Nearly one-click listing:** Reuse approved identity, media, report, and provenance. Once account and ownership checks are complete, the seller chooses a price, sees fees/net proceeds, and presses the **neon-green “List for sale” button**.
@@ -277,12 +261,12 @@ The original **30 bullets are reproduced in full below**, with stable 01–30 ID
 
 - [ ] **25.** **Visual direction:** Large authentic photographs, clear typography, restrained motion, fast browsing, accessible controls, and excellent mobile usability.
   - [x] **OWNER ACCEPTED / LIVE:** Gallery direction.
-  - [x] **LOCAL VERIFIED:** Pure-white shared slab detail, restrained emerald, responsive desktop/390px/320px and accessible controls; optional3D/report-return source, failure recovery and browser qualification completed; physical-device performance remains separate.
+  - [x] **TECHNICALLY DEPLOYED:** Pure-white shared slab detail, restrained emerald, responsive desktop/390px/320px and accessible controls; optional3D/report-return source, failure recovery and browser qualification completed; physical-device performance remains separate.
   - [ ] Carry the accepted system into unreleased collection/marketplace flows and qualify genuine device/media quality and performance; illustrative geometry is not physical CAD.
 
 - [ ] **26.** **Release 1 — Foundation:** Staff archive, expanded identity, permanent records, provenance, My Collection, and dependable comp curation.
   - [x] **LIVE:** Archive increment.
-  - [x] **LOCAL VERIFIED:** Reviewed identity and read-only detail/history increments.
+  - [x] **TECHNICALLY DEPLOYED:** Reviewed identity and read-only detail/history increments.
   - [ ] Permanent continuity, public/customer provenance, ownership/My Collection, dependable curation, paired media/release gaps and combined R1 acceptance remain.
 
 - [ ] **27.** **Release 2 — Marketplace pilot:** ATLAS-held cards, fixed-price listings, checkout, fulfillment, protection workflows, balances, and withdrawals.
@@ -300,19 +284,13 @@ The original **30 bullets are reproduced in full below**, with stable 01–30 ID
 
 ## 7. Recommended next execution order and three-agent boundaries
 
-### First: finish and freeze the current detail increment
+### First: complete signed-in real-card acceptance
 
-Read the final integration evidence, inspect the exact committed source and review the owner's latest feedback before changing it. Check both sides, optional 3D loading/fallback/access cleanup, exact report version, correct-card return and ordinary direct report/NFC behavior. Inspect desktop and 390px/320px. Confirm gallery/detail use the same source-bound slab and the gallery's accepted alignment remains intact. Historical audit supersession and the master plan were updated in this handoff. Preserve the current optional3D/standalone-report direction.
+Use the ordinary staff session on the canonical archive. Verify real archive search/filter/table/paging, actual detail Front/Back, optional3D, saved identity/history and exact report return. Do not request paid recognition, create approvals or modify a card merely to exercise a read. Record unavailable real examples honestly. Keep owner visual acceptance, technical behavior and physical media acceptance distinct. Retain unchanged local failure/recovery tests instead of repeating them without cause.
 
-If the final root evidence already establishes these checks on unchanged source, retain it; do not repeat all suites without a concrete reason.
+### Technical release is complete
 
-### Then: release the completed detail/identity/history increment
-
-Prepare a fresh release from the reconciled final source. The likely release includes staff/native changes, source-only SQL009 and the exact new history/detail route transport. The new report-return host code changes the public app as well as staff detail; include that actual public scope in fresh qualification. Customer-app publication is not implied. Verify current native composition still excludes staff-only reads from the worker.
-
-Qualify SQL008→009 with registered checksum/manifest, no-op second application, least privilege, rollback compatibility and current ACL/session/discard checks. Validate both gateway layers' exact method/path/raw-query allowlists and browser CSP. Build and test exact candidates, record a fresh plan before effects, perform the already-authorized release within its concrete scope, then obtain ordinary signed-in archive/detail interaction evidence. No general permission loop is needed to prepare or verify this work.
-
-The release is complete only when current serving source, canonical route/assets, saved reports/photos, data/control preservation, native health and holder release/absence are evidenced. Keep local implementation, technical publication, authenticated acceptance and real operational acceptance separate.
+The freshca3/SQL009/native/staff/public packet has completed source/build/served qualification, canonical report/photo preservation, native health and explicit admission release/absence. Every effect intent is consumed. Do not rerun prepare/execute from these packets or the older archive release-02. Any later release needs fresh observed inputs and a new reviewed plan. Customer publication and ownership activation were not part of this release.
 
 ### In parallel: prepare the next ownership/My Collection foundation
 
@@ -373,7 +351,7 @@ Primary source map, all below the foundation worktree:
 - `frontend/atlas-app/lib/card-history-client.mjs`: detail/history parsing, safe exact-version links and pagination.
 - `frontend/atlas-app/pages/graded-cards/[cardId].jsx`: dedicated staff route.
 - `packages/atlas-connected-manual/src/card-provenance-{contract,http,service}.mjs`: staff contract/transport/read projection.
-- `packages/atlas-standalone-database/sql/009-card-provenance.sql` and `migrations.manifest.json`: unapplied additive provenance read.
+- `packages/atlas-standalone-database/sql/009-card-provenance.sql` and `migrations.manifest.json`: installed additive provenance read, exact checksum5b014085.
 - `packages/atlas-grading-core/src/sports-attributes.ts` and `packages/atlas-connected-manual/src/identification-sports-attributes.mjs`: reviewed Sports fact and machine-proposal contracts.
 
 Full browser checks must cover actual components and real routes, desktop/phone, keyboard behavior, pure-white hover/background, no overflow, loading/missing media, and account/access changes. A fixture opening an already-public report proves navigation and saved bytes, not live native history grants. Real-photo recognition quality, physical slab/manufacturing fit, printing, tag readback/locking and real customer transactions require their own actual evidence.
@@ -387,7 +365,7 @@ Full browser checks must cover actual components and real routes, desktop/phone,
 - Docker timestamps have nine fractional digits; system Python 3.9 parsing lost compatibility. The successful file-only validator preserved full precision using Decimal. Do not weaken timestamp comparisons.
 - All earlier effect intents are single-use and consumed. Fresh recovery must use observed current state, monotonic controls, additive008/009-compatible readers and a successor image. Never restart the retired generation.
 - Existing approved reports, photographs, labels, serials, grades and provider receipts remain immutable. Do not reapprove/regrade, rerun paid searches, relabel, print, write tags or send customer messages merely to exercise read paths.
-- Old “current” dated headings are historical where superseded by the archive release or later session entries. In particular, public eafcec14/native3256 checkpoints precede current web c4b7/native31c.
+- Old “current” dated headings are historical where superseded by the archive release or later session entries. In particular, public eafcec14/native3256 and archive webc4b7/native31c checkpoints precede current native/staff/publicca3a848d.
 - No general ATLAS marketplace ownership/transfer, listing/offer/checkout/settlement/withdrawal system is completed. Existing grading-submission commerce or dealer-offer modules are not proof of the marketplace contract.
 
 ## 10. Copy/paste prompt for the new Astra Ultra lead
@@ -407,15 +385,15 @@ Read AGENTS.md and all its mandatory documents first, including the full Ten Kin
  /Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-21/optional-3d-report-return.md
 and the handoff's identity/provenance audits and latest SESSION_LOG entries.
 
-Inspect actual Git status and HEAD before editing. Implementation commit is c54e871f; the handoff-only successor commit may be HEAD. Do not touch the original dirty/conflicted checkout at /Users/markthomas/tenkings/ten-kings-mystery-packs-clean. Do not replay the frozen archive release-02 packet.
+Inspect actual Git status and HEAD before editing. Deployed source is ca3a848d; local ownership/collection/curation is46621dad; later documentation commits may be HEAD. Do not touch the original dirty/conflicted checkout at /Users/markthomas/tenkings/ten-kings-mystery-packs-clean. Do not replay the frozen archive release-02 packet.
 
-Current recorded production is web c4b7cc85, native31c6685e/f64dfc image, registered SQL008; customer retained c68e9ea7. The release holder is explicitly released. Dedicated detail, reliable approved media, Sports identity and staff history were locally implemented in 3689b44e and refined in 6bd11d11; SQL009 remains unapplied. Optional experimental3D beside Front/Back and safe "← Card Detail" return on the separate grade report are locally completed in c54e871f with80focusedtests,79publictests, both production builds and browser recovery/roundtrip checks. Owner3D acceptance and production release remain outstanding; Front remains the default. Do not describe local source or a preview as production.
+Current observed production is native/staff/public ca3a848d with image62db2a and installed SQL009; customer stays c68e9ea7. Controls137/98/105, customer83/35 retained. Canonical technical/report/photo/preservation and native postflight passed. The original holder was explicitly released22:38:21.199Z and absence proved22:38:27.851Z October21UTC. No release hold remains. Full IDs/hashes and reconciliation are in detail-production-release.md. Ordinary signed-in real-card acceptance and owner3D/physical acceptance remain pending; Front remains default. Ownership/collection/curation46621dad is local only. Never describe that preview as production or replay consumed release packets.
 
 Preserve pure white #ffffff, restrained emerald #047857, gallery card text/actions aligned to slab edges, the larger SAME source-bound ATLAS slab on detail, Front/Back, no detail Inspect/zoom, no Approved Card/Human Approved hero labels, and the portrait Grade Report link. Keep the standalone report and exact report versions/NFC URLs. A missing reverse label is missing. Current1350×1858 approved photos are not full-resolution raw masters; illustrative 3D is not calibrated physical geometry or complete paired-master output.
 
 All ATLAS graded cards DEFAULT Open to offers; owners may disable per card/collection. Do not revert to opt-in. Privacy, verified ownership, actual recipient delivery and transaction eligibility remain independent. Listed cards use price+Buy Now; unlisted eligible cards use Open to offers+Make Offer. Email/in-app Accept/Decline/Counter workflow is planned; no email-GET mutation or SMS without separate setup/consent. Carry forward the proposed state-aware report host header View Listing / Make Offer only once an actual public card/listing projection exists; do not hardcode marketplace state into the saved report. This increment only adds the Card Detail return. R2 is the ATLAS-held fixed-price pilot; the offer engine remains R3 unless I explicitly reorder it.
 
-First inspect the final local preview at http://127.0.0.1:58611/admin/graded-cards/3ad38eae-49cd-450c-ab08-10f8b44f386f and my latest feedback. The source already passed the desktop/320px detail→Front/Back/3D→Grade Report→Card Detail checks; retain that evidence on unchanged source rather than repeating everything. Keep the optional3D prototype separate from a decision to make it primary. Resolve any actual remaining integration issue. Then prepare and qualify the fresh detail/identity/history release, including SQL009, native roles, both gateways and exact source preservation; use existing authorization and concrete runbook evidence rather than stopping for a general permission question.
+First finish ordinary signed-in real-card acceptance at https://atlasgrading.com/admin/graded-cards; Chrome handoff tab2132133231 awaits staff sign-in. Retain existing unchanged local desktop/320px failure/recovery and report-roundtrip evidence. Keep optional3D separate from making it primary. Resolve any actual integration defect, then continue the ownership/My Collection foundation. The detail/identity/history technical release is completed; no general approval loop or replay is needed.
 
 In parallel assign three xHigh lanes: (1) detail/media and paired-master/source binding, (2) record/ownership/claim/transfer/custody contracts and owned disposable-DB qualification, (3) customer My Collection/privacy followed by bounded1–5 comp curation and explainable pricing. You own shared integration, package/lockfile coordination, docs, commits, browser/build qualification and every release effect. Do not infer legal ownership from staff ACL, submission, custody or NFC.
 

@@ -1,4 +1,6 @@
-# Detail, identity and history — fresh release preparation
+# Detail, identity and history — historical release preparation
+
+**Superseded by the completed [production release](detail-production-release.md).** SQL009/native/staff/public are deployed from ca3a848d, canonical checks passed and admission was explicitly released. Ordinary signed-in real-card acceptance remains pending. The timed observations and pending statements below record preparation, not current production.
 
 October21 successor execution, on `codex/atlas-marketplace-foundation`. The original dirty/conflicted checkout was not modified. This evidence does not authorize replay of the consumed archive release-02 packet.
 

@@ -1,12 +1,22 @@
 # Ten Kings Master Product Context
 
-Current ATLAS successor checkpoint (October21): detail source `ca3a848d` fixes backend saved-label/slab parity and clean-container report-return packaging; SQL009 remains unapplied. Separately committed `46621dad` adds qualified, unregistered ownership contracts and collection/curation previews. No production integration is claimed. Full scope and release gates: `docs/atlas/audits/2026-10-21/detail-release-preparation.md` and the30-item marketplace master plan.
+## Current ATLAS detail, identity and staff history release — October 21, 2026
 
-## Local dedicated card-detail increment — October21,2026
+Technical production release is complete. Native, staff and public serve `ca3a848d4d6eb28f149a8f253115df90b5fc60ac`; additive SQL009 is installed with manual-role-only EXECUTE. The archive now opens dedicated detail with the larger shared slab, Front/Back, optional experimental 3D, portrait Grade Report, reviewed Sports facts, saved comps and staff grading/custody history. The separate exact report supports Card Detail return. Real signed-in acceptance is pending a fresh ordinary staff sign-in; owner 3D and physical media acceptance are not claimed.
+
+Staff is `dpl_2vc2nkyRmUhPMyJaZBLKbaCpow6y`, public `dpl_EaydzmhwF8f49aqgHhw4JAQLKyVJ`. Native image is `sha256:62db2a56541dcaf6dd51211302e7d4c53d569af693880ff7519c3672d3318b33`, main `467201614c92…`, worker `d4ce4e9b1cc3…`, both with zero restarts. Controls are Staff137/Public98/STAFF SMS105; Customer83/CUSTOMER SMS35 and customer source/deployment c68e9ea7/dpl_2aW7K6CTUftYNKaWanBouvgUaDS5 remain retained. Both gateways are unchanged; no gateway reload or project-environment mutation occurred.
+
+Fresh native qualification passed 240/240 tests. Canonical acceptance passed 27 route/asset/auth-boundary checks, four retained reports and eight original photo hashes. Final preservation checked 37 fixed tables, 31 READY provider responses and 26 saved label commitments. The original admission holder was explicitly released at `2026-10-21T22:38:21.199Z`; absence was proved at `22:38:27.851Z`. Native service was interrupted for approximately 11m54s during the controlled cutover; the audit records reconciliation and web-binding propagation. No paid search, approval, print, NFC write, notification or money movement was used for these checks.
+
+Full evidence and exact IDs/hashes: [detail production release](../atlas/audits/2026-10-21/detail-production-release.md). Ownership/collection/curation source `46621dad` remains locally qualified and excluded from production. Complete detail real-card acceptance, then ownership/My Collection, optional curation/pricing and the full R1 journey before R2 fixed-price pilot and R3 expansion. All 30 requirements remain tracked in the marketplace master plan. Current approved photos are 1350×1858, not raw masters; illustrative 3D is not calibrated manufacturing geometry.
+
+The following dated sections are historical checkpoints. Their release identities and source-only statements are superseded by the current section above.
+
+## Historical local dedicated card-detail increment — October21,2026
 
 Three Astra Ultra specialists implemented dedicated staff card details, verified Front/Back media/zoom/retry, and approval-bound category/identity/history/saved-sale projections. Root integrated the approved white/emerald design and gallery navigation. This is local source on `codex/atlas-marketplace-foundation`, not a deployed release. SQL009 remains source-only; current production identities below are unchanged.811 staff tests passed;48 final focused tests passed after the final hook dependency correction;902 connected tests passed with2 existing native-measurement skips;8 owned PostgreSQL17 groups passed with cleanup verified. Production build/boundary passed. Browser evidence and remaining gates are in `docs/atlas/audits/2026-10-21/card-detail-integration.md`. Ownership/My Collection, bounded comp curation/pricing and marketplace transactions remain future work. Raw intake masters and calibrated paired slab composition are not claimed by the approved1350×1858-photo viewer.
 
-## Current Graded Cards production release — October 20, 2026 Pacific
+## Historical Graded Cards production release — October 20, 2026 Pacific
 
 The staff **Graded cards** archive is deployed at `https://atlasgrading.com/admin/graded-cards`. It provides pure-white gallery/table views, server-wide search across recorded identity/certificate/staff/customer/order fields, category and inclusive UTC approval-date filters, and links to the exact saved card, report version and recorded submission. It reads existing approvals; it does not create ownership, listings or marketplace transactions. Ordinary staff sign-in is required after the release-binding update. **Technical deployment is complete. The owner signed in and supplied production screenshots showing four real approved cards, then approved the gallery design. Search/filter/table and destination-flow acceptance have not yet been fully observed.**
 
