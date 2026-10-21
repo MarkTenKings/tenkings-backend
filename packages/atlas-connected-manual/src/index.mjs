@@ -8,6 +8,7 @@ import { createReportImageRetry } from './report-image-retry.mjs';
 import { createStoredGradingPhotoReader } from './grading-photo-reader.mjs';
 import { recordCardImageIntent } from './card-image-store.mjs';
 import { createThumbnailReader } from './thumbnails.mjs';
+import { createGallerySnapshot, createStaffCardGallery } from './staff-card-gallery.mjs';
 import { createManualIntake } from '@atlas/manual-intake';
 import { createIntakeRepository } from '@atlas/manual-intake/repository';
 import { createIntakeIngestionRepository, createIntakeIngestionWorker } from '@atlas/manual-intake/ingestion';
@@ -76,6 +77,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   },
     pairCommitted:autonomous?recordBatchPreparedPair:null,includeIngestionStatus:autonomous});
   const limited=createWorkLimiter(processing.nativeConcurrency,{maxQueue:64}),photoProcessor=createPhotoProcessor({storage,keyPrefix,decodeLimits:limits.decode});
+  const galleryLimited=createWorkLimiter(2,{maxQueue:8});
   const intake=createManualIntake({repository:intakeRepository,storage,artifacts,processPhoto:input=>limited(()=>photoProcessor(input)),
     sourcePrepared:async(staff,cardId,uploadId)=>{
       void reportImages?.wake();
@@ -247,6 +249,8 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       return {...extras,savedIdentification:{fields:savedDetails.details.fields,sourceHash:savedDetails.details.sourceHash},...(variantReview?{variantVerification:await variantReview.status(input.staff,input.card.cardId)}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),marketAutomaticEnabled:Boolean(marketJobs),researchEnabled:Boolean(research)};
     },
     thumbnails:createThumbnailReader({intake,workflow,readManifest:manifest,imageReadUrl,readCleanDescriptor,readGradingPhoto,gradingPhotoStatus:gradingPhotos?.photoStatus}),
+    gallery:createStaffCardGallery({snapshot:createGallerySnapshot({boundary,intakeRepository}),intake,storage,
+      limited:work=>galleryLimited(()=>limited(work))}),
     open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl,readGradingPhoto,gradingPhotoStatus:gradingPhotos?.photoStatus}),
     machineBatchSnapshot:createMachineBatchSnapshot({intakeRepository,workflow,details,identification}),
     async initialize(staff,cardId,input){

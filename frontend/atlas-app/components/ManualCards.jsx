@@ -6,6 +6,9 @@ import React,{useCallback,useEffect,useRef,useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/router';
 import Shell from './Shell';
+import StaffCardGallery from './StaffCardGallery';
+import {staffCardGalleryScope} from '../lib/staff-card-gallery-client.mjs';
+import galleryStyles from './StaffWorkspace.module.css';
 import {createIntakeClient,createBrowserIntakeJournal} from '@atlas/manual-intake/client';
 import {createManualClient} from '@atlas/manual-workflow/client';
 import {recoverManualReview} from '../lib/manual-review-startup.mjs';
@@ -46,7 +49,12 @@ function detailErrors(details,changes){
 export default function ManualCards({staff,cardId=null,embedded=false,reviewSession,onBusyChange,onQueued,onNameChange}){
   const router=useRouter(),client=useRef(null),session=useRef(null),auto=useRef(new Set()),generation=useRef(0);
   const savedRef=useRef(null),changesRef=useRef({}),activity=useRef(null),uploadLocks=useRef({}),reads=useRef({next:0,applied:0}),pendingRead=useRef(0);
-  const [cards,setCards]=useState([]),[saved,setSaved]=useState(null),[pending,setPending]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(''),[screen,setScreen]=useState('intake');
+  const [saved,setSaved]=useState(null),[pending,setPending]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(''),[screen,setScreen]=useState('intake');
+  const scope=staffCardGalleryScope(staff),renderedStaff=useRef(staff),galleryRead=useRef({ended:false,page:null});renderedStaff.current=staff;
+  const [gallery,setGallery]=useState(null);
+  const [galleryStartup,setGalleryStartup]=useState(0);
+  const galleryCurrent=gallery?.staff===staff&&gallery.scope===scope,dashboardStaff=cardId?null:staff;
+  const endGalleryAccess=useCallback(()=>{galleryRead.current.ended=true;galleryRead.current.page=null;reads.current.next++;setGallery(old=>old?{...old,cards:[],nextCursor:null,loading:false,loadingMore:false,access:'ENDED',error:null}:null);setPending([]);setError('');},[]);
   useEffect(()=>{if(saved?.details?.sourceHash===saved?.card?.sourceHash&&saved?.details?.fields?.name)onNameChange?.(saved.details.fields.name);},[saved?.details?.sourceHash,saved?.card?.sourceHash,saved?.details?.fields?.name,onNameChange]);
   const [identifying,setIdentifying]=useState(false),[changes,setChanges]=useState({}),[localReady,setLocalReady]=useState(false);
   const [commandPending,setCommandPending]=useState(null);
@@ -54,7 +62,6 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   const reviewEntry=useRef(null);
   const [workspaceBusy,setWorkspaceBusy]=useState(false);
   const workspaceBusyChanged=useCallback(value=>{setWorkspaceBusy(value);onBusyChange?.(value);},[onBusyChange]);
-  const [nextCursor,setNextCursor]=useState(null);
   const [uploadState,setUploadState]=useState({}),[invalidDetails,setInvalidDetails]=useState({});
   const discarder=useRef(null),leavingDeleted=useRef(false),[deletePending,setDeletePending]=useState(false);
   const commandKey=`atlas-connected-command:${staff.id}:${cardId??'new'}`;
@@ -73,7 +80,30 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
       const current=savedRef.current;
       if(current&&(sequence<reads.current.applied||value.card.revision<current.card.revision||value.revision<current.revision||value.manual?.revision<current.manual?.revision))return current;
       reads.current.applied=sequence;savedRef.current=value;setSaved(value);return value;}
-    const result=await client.current.list();if(started===generation.current&&sequence>=reads.current.applied){reads.current.applied=sequence;setCards(result.cards??[]);setNextCursor(result.nextCursor??null);}
+    const owner=client.current,ownerStaff=staff;
+    if(!scope||galleryRead.current.ended||!owner||renderedStaff.current!==ownerStaff)return null;
+    galleryRead.current.page=null;
+    setGallery(old=>({...old,staff:ownerStaff,scope,cards:old?.staff===ownerStaff?old.cards:[],nextCursor:null,loading:true,loadingMore:false,access:'READY',error:null}));
+    const current=()=>started===generation.current&&renderedStaff.current===ownerStaff&&client.current===owner&&!galleryRead.current.ended&&sequence===reads.current.next;
+    try{
+      const result=await owner.list();if(!current())return null;
+      if(result?.staffId!==ownerStaff.id)throw {code:'MANUAL_STAFF_CHANGED',status:403};
+      if(!Array.isArray(result.cards))throw {code:'GALLERY_REPLY_INVALID',status:503};
+      reads.current.applied=sequence;setError('');setGallery({staff:ownerStaff,scope,cards:result.cards,nextCursor:result.nextCursor??null,loading:false,loadingMore:false,access:'READY',error:null});return result;
+    }catch(failure){if(current()){if([401,403].includes(failure?.status)||failure?.code==='SIGN_IN_REQUIRED')endGalleryAccess();else setGallery(old=>({...old,loading:false,error:manualMessage(failure)}));}throw failure;}
+  }
+  async function loadMoreCards(){
+    if(!galleryCurrent||!gallery.nextCursor||gallery.loading||gallery.loadingMore||galleryRead.current.ended||galleryRead.current.page)return;
+    const started=generation.current,owner=client.current,ownerStaff=staff,cursor=gallery.nextCursor,sequence=reads.current.next,token={};
+    if(!owner)return;galleryRead.current.page=token;setGallery(old=>({...old,loadingMore:true,error:null}));
+    const current=()=>started===generation.current&&renderedStaff.current===ownerStaff&&owner===client.current&&!galleryRead.current.ended&&galleryRead.current.page===token&&sequence===reads.current.next;
+    try{
+      const result=await owner.list({cursor});if(!current())return;
+      if(result?.staffId!==ownerStaff.id)throw {code:'MANUAL_STAFF_CHANGED',status:403};
+      if(!Array.isArray(result.cards))throw {code:'GALLERY_REPLY_INVALID',status:503};
+      setGallery(old=>({...old,cards:[...old.cards,...result.cards.filter(card=>!old.cards.some(value=>value.cardId===card.cardId))],nextCursor:result.nextCursor??null,loadingMore:false,error:null}));
+    }catch(failure){if(current()){if([401,403].includes(failure?.status)||failure?.code==='SIGN_IN_REQUIRED')endGalleryAccess();else setGallery(old=>({...old,loadingMore:false,error:manualMessage(failure)}));}}
+    finally{if(galleryRead.current.page===token)galleryRead.current.page=null;}
   }
   async function pendingList(){const started=generation.current,sequence=++pendingRead.current,result=await client.current.pending();if(started===generation.current&&sequence===pendingRead.current)setPending(result);}
   async function leaveDeletedCard(){
@@ -117,12 +147,13 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
   useEffect(()=>{
     const started=++generation.current;let stopped=false,journal,batchJournal,ownedClient,cleanup;
     savedRef.current=null;changesRef.current={};uploadLocks.current={};activity.current=null;reads.current={next:0,applied:0};leavingDeleted.current=false;
+    galleryRead.current={ended:false,page:null};setGallery(cardId?null:{staff,scope,cards:[],nextCursor:null,loading:true,loadingMore:false,access:'READY',error:null});
     setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setImageStatusError('');setIdentifying(false);setCommandPending(null);reviewEntry.current=null;setPending([]);setScreen('intake');setLocalReady(false);
     (async()=>{
       const currentSession=await request('/api/staff/session');
-      if(stopped)return;
+      if(stopped||!cardId&&renderedStaff.current!==staff)return;
       if(!currentSession.staff)throw {code:'SIGN_IN_REQUIRED'};
-      if(currentSession.staff.id!==staff.id)throw {code:'MANUAL_STAFF_CHANGED'};
+      if(currentSession.staff.id!==staff.id||!cardId&&(!scope||staffCardGalleryScope(currentSession.staff)!==scope))throw {code:'MANUAL_STAFF_CHANGED',status:403};
       session.current=currentSession;
       journal=createBrowserIntakeJournal({staffId:staff.id});
       ownedClient=createIntakeClient({request:(path,options)=>manualRequest(path,{...options,csrf:currentSession.csrf}),journal,isPaused:()=>hasPendingDiscard(localStorage,staff.id)});client.current=ownedClient;
@@ -133,11 +164,16 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
       // batch entries that would otherwise never contact the server again.
       if(cleanup.pending()){await cleanup.recover();if(stopped)return;setDeletePending(cleanup.pending());}
       else void cleanup.reconcile().then(()=>{if(!stopped)return pendingList();}).catch(failure=>{if(!stopped)setError(manualMessage(failure));});
-      setCommandPending(JSON.parse(localStorage.getItem(commandKey)??'null'));setLocalReady(true);await pendingList();if(stopped)return;const result=await refresh();
+      setCommandPending(JSON.parse(localStorage.getItem(commandKey)??'null'));if(cardId)setLocalReady(true);await pendingList();if(stopped)return;if(!cardId)setLocalReady(true);const result=await refresh();
       if(!stopped&&result?.manual?.current)setScreen('workspace');
-    })().catch(error=>{if(!stopped)setError(manualMessage(error));});
+    })().catch(error=>{if(!stopped){if(!cardId&&([401,403].includes(error?.status)||error?.code==='SIGN_IN_REQUIRED'))endGalleryAccess();else{setError(manualMessage(error));if(!cardId)setGallery(old=>({...old,loading:false,error:manualMessage(error)}));}}});
     return()=>{stopped=true;generation.current++;if(client.current===ownedClient)client.current=null;if(discarder.current===cleanup)discarder.current=null;void journal?.close();void batchJournal?.close();};
-  },[cardId,staff.id]);
+  },[cardId,staff.id,dashboardStaff,galleryStartup,scope,endGalleryAccess]);
+  useEffect(()=>{
+    if(cardId)return;
+    window.addEventListener('atlas:verified-image-access-ended',endGalleryAccess);window.addEventListener('pagehide',endGalleryAccess);
+    return()=>{window.removeEventListener('atlas:verified-image-access-ended',endGalleryAccess);window.removeEventListener('pagehide',endGalleryAccess);};
+  },[cardId,endGalleryAccess]);
   useEffect(()=>{
     const changed=event=>{
       if(event.type==='storage'&&event.key!==discardKey(staff.id)||event.detail?.staffId&&event.detail.staffId!==staff.id)return;
@@ -153,7 +189,7 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
     const online=()=>{void discarder.current?.reconcile().then(()=>{setDeletePending(hasPendingDiscard(localStorage,staff.id));return Promise.all([refresh(),pendingList()]);}).catch(failure=>setError(manualMessage(failure)));};
     window.addEventListener('storage',changed);window.addEventListener(discardEvent,changed);window.addEventListener('online',online);
     return()=>{window.removeEventListener('storage',changed);window.removeEventListener(discardEvent,changed);window.removeEventListener('online',online);};
-  },[staff.id,cardId]);
+  },[staff.id,cardId,dashboardStaff,scope]);
   async function removeCards(selected=null){
     if(!discarder.current||activity.current||Object.keys(uploadLocks.current).length||staff.role!=='REVIEWER')return;
     await attempt(async()=>{
@@ -288,16 +324,14 @@ export default function ManualCards({staff,cardId=null,embedded=false,reviewSess
       {!item.value.uploadId&&item.value.planRefusal&&item.value.planUncertain===false&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.discardUnplanned(item.id),'Clearing the refused upload…')}>Discard refused upload</button>}
     </div>)}</section>}
   </>;
-  return <Container {...(embedded?{}:{staff,title:'Card review',manual:true})}><div className={embedded?'mc-inline-card-review':'mc-page'}>
-    {!openReviewDirectly&&notices}
+  return <Container {...(embedded?{}:{staff,title:cardId?'Card review':'Your grading workspace',manual:true,...(!cardId?{className:galleryStyles.shell}:{})})}><div className={embedded?'mc-inline-card-review':cardId?'mc-page':galleryStyles.page}>
+    {!openReviewDirectly&&(cardId?notices:galleryCurrent&&gallery.access==='READY'&&<div className={galleryStyles.recovery}>{notices}</div>)}
     {cardId&&saved&&!inWorkspace&&!openReviewDirectly&&<ReviewAttention issues={reviewIssues} identity={`${cardId}:intake`}/>}
-    {!cardId?<>
-      <header className="mc-heading mc-dashboard-heading"><div><p className="mc-kicker">THE ATLAS GRADING STUDIO</p><h1>Every card.<br/><em>A clearer story.</em></h1><p>Your cards, from the first photograph to a fully explained final grade.</p></div>
-        {staff.role==='REVIEWER'&&<div className="mc-actions"><Link className="primary" href="/batch?tab=INTAKE">+ Add cards</Link><button disabled={!localReady||Boolean(busy)||uploading} onClick={()=>void removeCards()}>Delete all cards</button></div>}</header>
-      <div className="mc-section-title"><h2>Your cards</h2><span>{cards.length}{nextCursor?'+':''} in this view</span></div>
-      <div className="mc-card-list">{cards.map(card=><Link href={`/manual/${card.cardId}`} key={card.cardId}><span className="mc-card-monogram" aria-hidden="true">A<span>↗</span></span><strong>{card.label||'Untitled card'}</strong><span className="mc-card-photostatus"><i data-ready={Boolean(card.sides.FRONT.upload?.source)}>Front {card.sides.FRONT.upload?.source?'ready':'needed'}</i><i data-ready={Boolean(card.sides.BACK.upload?.source)}>Back {card.sides.BACK.upload?.source?'ready':'needed'}</i></span><small>{new Date(card.createdAt).toLocaleString()}</small></Link>)}{localReady&&!cards.length&&<div className="mc-empty-collection"><span aria-hidden="true">✧</span><h3>Your next discovery starts here.</h3><p>Add Front and Back photos to the queue. ATLAS starts preparing and grading each card automatically.</p></div>}</div>
-      {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
-    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:inWorkspace?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:workspaceBusy,onExit:()=>router.push('/manual')})}><ManualWorkspace key={`${staff.id}:${cardId}`} identificationProposal={saved.identification?.result?.sportsAttributesProposal} onNameChange={onNameChange} staff={staff} cardId={cardId} csrf={session.current.csrf} reviewSession={reviewSession} onBusyChange={workspaceBusyChanged} onQueued={onQueued} onPhotos={()=>{setScreen('photos');perform(()=>refresh(),'Loading saved photos…');}}/></WorkspaceShell>:openReviewDirectly?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:Boolean(busy)||Boolean(commandPending),onExit:()=>router.push('/manual')})}><section className="mc-rapid-stage" aria-label="Opening card review">{notices}{!error&&!commandPending&&!pendingPhotos&&<p role="status">Opening saved review…</p>}{error&&!commandPending&&!busy&&<button type="button" onClick={()=>perform(saved.manual?replace:initialize,'Opening review…')}>Retry opening review</button>}</section></WorkspaceShell>:<>
+    {!cardId?<StaffCardGallery staff={staff} cards={galleryCurrent?gallery.cards:[]} cardsScope={galleryCurrent?gallery.scope:null} nextCursor={galleryCurrent?gallery.nextCursor:null}
+      loading={!galleryCurrent||gallery.loading} loadingMore={galleryCurrent&&gallery.loadingMore} error={galleryCurrent?gallery.error:null}
+      accessState={galleryCurrent?gallery.access:'READY'} onAccessLost={endGalleryAccess} onRetryList={()=>client.current&&localReady?void refresh().catch(()=>{}):setGalleryStartup(value=>value+1)} onLoadMore={()=>void loadMoreCards()}
+      actions={staff.role==='REVIEWER'&&localReady&&<div className={galleryStyles.actions}><Link className={galleryStyles.add} href="/batch?tab=INTAKE">+ Add cards</Link><details className={galleryStyles.manage}><summary>Manage cards</summary><button type="button" disabled={Boolean(busy)||uploading} onClick={()=>void removeCards()}>Delete all cards</button></details></div>}/>
+    :deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:inWorkspace?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:workspaceBusy,onExit:()=>router.push('/manual')})}><ManualWorkspace key={`${staff.id}:${cardId}`} identificationProposal={saved.identification?.result?.sportsAttributesProposal} onNameChange={onNameChange} staff={staff} cardId={cardId} csrf={session.current.csrf} reviewSession={reviewSession} onBusyChange={workspaceBusyChanged} onQueued={onQueued} onPhotos={()=>{setScreen('photos');perform(()=>refresh(),'Loading saved photos…');}}/></WorkspaceShell>:openReviewDirectly?<WorkspaceShell {...(embedded?{}:{title:(saved.details?.sourceHash===saved.card.sourceHash&&saved.details?.fields?.name)||saved.card.label,busy:Boolean(busy)||Boolean(commandPending),onExit:()=>router.push('/manual')})}><section className="mc-rapid-stage" aria-label="Opening card review">{notices}{!error&&!commandPending&&!pendingPhotos&&<p role="status">Opening saved review…</p>}{error&&!commandPending&&!busy&&<button type="button" onClick={()=>perform(saved.manual?replace:initialize,'Opening review…')}>Retry opening review</button>}</section></WorkspaceShell>:<>
       <header className="mc-heading"><div><Link className="mc-back" href="/manual">← All cards</Link>{staff.role==='REVIEWER'&&<button className="mc-delete-card" disabled={Boolean(busy)||uploading} onClick={()=>void removeCards(cardId)}>Delete this card</button>}<p className="mc-kicker">01 / PHOTOGRAPHS &amp; IDENTITY</p><h1>{saved.card.label||'New card'}</h1><p>Choose Front and Back photographs. ATLAS prepares each side, then identifies and inspects the card.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
       <ol className="mc-journey" aria-label="Grading journey"><li aria-current="step"><b>01</b><span>Capture<small>Original photographs</small></span></li><li><b>02</b><span>Measure<small>Edges &amp; centering</small></span></li><li><b>03</b><span>Inspect<small>Every finding</small></span></li><li><b>04</b><span>Explain<small>The final report</small></span></li></ol>
       <section className="mc-photo-pair">{['FRONT','BACK'].map(side=>{const slot=saved.card.sides[side],sideName=side==='FRONT'?'Front':'Back';

@@ -1,0 +1,22 @@
+# Staff original-photo workspace gallery
+
+The login destination `/admin/grading` aliases ManualCards. Its intake query reads the authenticated staff principal's assigned cards, excludes discarded records, sorts newest upload first and pages 30 records. It includes unfinished and completed reviews. It does not establish legal ownership or list all site inventory.
+
+## Implemented and locally verified
+
+The heading is **Your grading workspace**, with an explicit scope explanation. A white, emerald gallery replaces the monogram tiles. Each card uses the complete human-uploaded Front frame in a bounded display preview; no generated slab, background replacement or grading crop is used. Current saved approval, draft, changed review, changed photos and unrecorded status remain distinct. Missing photos have an honest placeholder; failures can retry. Cards and original photos open the existing card workflow. Pagination, reviewer Add cards and upload recovery remain. Existing bulk deletion is under Manage cards; no deletion was invoked.
+
+The preview reads the retained decoded original frame, verifies its source/upload/hash/dimensions, resizes inside 768 pixels and returns a JPEG under 768 KiB. This is an uncropped display derivative, not original bytes or grading evidence. Both the list and gallery replies bind the current staff ID. SELECT snapshots refresh authorization, check intake/manual ACL and source/current-approval bindings, and never initialize missing details. Preview generation rechecks access after queue waits and before returning. Client cleanup aborts work and revokes object URLs on account/access/page changes. New routes are GET-only, private no-store and strictly bound; both retained gateway matchers already admit them, so no gateway delta is needed.
+
+The isolated release source is `c18151157aeddc0b98ebf83f8045e4c75837a6b7`, an exact child of public report-fix source105270bc. It contains11serving and10qualification changes, excludes ownership/collection/curation proposals, and changes no migration, dependency or lockfile. This checkpoint is local qualification; production remains native/staffca3 and public105.
+
+## Evidence
+
+- Full staff suite859/859 passes. The added final online-reconnect regression subsequently passes with the other five ManualCards scope/race tests. Existing recovery73 and defect-workspace69 checks pass. Initial failures came from harness component imports and an inaccurate useCallback mock; corrected harnesses retain original assertions.
+- Connected/intake suite1001 passes with2 existing native-measurement environment skips. Gallery media checks include the real native HEIF decoder; its ignored local helper build is recorded separately.
+- Final staff production build and explicit boundary pass:35browser chunks,15server traces,2030traced files. Pre-existing unrelated warnings remain. The later change only adds a regression test.
+- Six actual owned PostgreSQL17 groups pass: real staff/list owner scope, snapshot status/current approval, absent details without INSERT, source replacement409, ACL and revoked-session denial. Seventeen-table censuses remain unchanged around reads. Exact cluster shutdown reports stoppedVerified:true.
+- Actual-component local browser checks pass at1440/1024/390/320px, with4/3/2/2columns and no horizontal overflow. Full-frame photo, retry, missing/loading, source-change clearing, foreign-account denial,30→36pagination, account replacement, keyboard navigation and actual Shell sign-out cleanup pass. After sign-out33created blob URLs are33revoked; peak reads2. The fixture repeats one existing Cubone camera photo across synthetic IDs/statuses with inert navigation/auth; it is not production inventory or physical-device acceptance. The temporary server was stopped and viewport override reset.
+- Offline exact gateway-regex plus actual handler checks pass; no live gateway reload or Caddy-runtime check is claimed. Independent integration review found no remaining regression.
+
+Private evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-staff-gallery-20261021/qualification-01/evidence.json`, source-01, browser-01 and gateways-01. Actual PostgreSQL receipt is under `atlas-detail-release-20261021/qualification/gallery-snapshot-pg-01`. Evidence receipts and failed historical qualification attempts remain intact. Fresh native/web release qualification and signed-in real-card gallery acceptance are still required.

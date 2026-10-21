@@ -16,10 +16,10 @@ Existing `atlas_manual.public_report_identity` already provides a permanent cert
 
 ### Additional owner request — staff landing gallery, October 21
 
-- [ ] After the active detail/report acceptance correction, redesign the `/admin/grading` / “Your cards” landing view as a spacious image gallery consistent with the archive/marketplace direction: white background, restrained emerald, aligned card metadata/actions and responsive layout.
-- [ ] Clarify the staff workspace scope and naming. Do not equate workspace access with legal ownership, or assume all returned records are ungraded; show each card's actual recorded grading status.
-- [ ] Display the original human-uploaded front photograph of the raw card. Do not substitute generated/background-edited pixels or compose an ATLAS graded slab for this intake/workspace gallery. Preserve authorized source binding, access cleanup, pagination and honest missing-photo states.
-- [x] Explain the source-confirmed landing behavior: login explicitly opens `/admin/grading`; this is the signed-in staff member's assigned intake workspace, includes unfinished and completed reviews, excludes discarded cards and pages30at a time. It is neither all-site admin inventory nor legal ownership. Implementation remains queued after the active report correction, as the owner requested.
+- [x] Implemented and locally verified white/emerald original-photo gallery with aligned metadata/actions and responsive layout at1440/1024/390/320px.
+- [x] Clarified **Your grading workspace**: assigned staff intake cards, including unfinished and completed reviews; excludes discarded records and pages30at a time. Staff access is not legal ownership or all-site inventory.
+- [x] Source-bound original Front display previews, accurate saved review states, missing/retry/access cleanup and pagination qualified without generated slabs or grading writes.
+- [ ] Fresh isolated native/web production release and real signed-in original-photo acceptance. Local sourcec1815115 is not deployed at this checkpoint. See [gallery qualification](../audits/2026-10-21/staff-workspace-gallery.md).
 
 “Planned” means still required; it is not a claim that a prototype or isolated helper implements the feature. Source/test/release evidence belongs in SESSION_LOG. R1 is Foundation, R2 the Marketplace Pilot, and R3 Expansion.
 
@@ -107,9 +107,11 @@ Local tests, disposable database qualification, browser acceptance, released cod
 - [x] Local, unregistered ownership claims/transfers/settings proposal:9unit and7owned PostgreSQL17 groups including independent lock-race review; no title inferred from staff/submission/custody/NFC.
 - [x] Local collection/privacy and bounded comp preview:37focused tests and1280px/320px actual-component browser checks. All preferences unsaved; delivery unavailable; arithmetic method proposed.
 - [x] Restored Vercel team access; completed native/SQL009/staff/public technical release, canonical checks and explicit holder release/absence. No consumed release-02 replay.
-- [ ] Complete ordinary signed-in real-card detail/identity/history/report-return acceptance, full archive interactions and owner 3D review.
+- [x] Ordinary signed-in four-card detail/media/history, archive Gallery/Table/filter and exact report/reload return acceptance passed.
+- [ ] Owner3D aesthetic review, physical media/device checks, real optical Sports recognition and live multi-page archive acceptance remain.
 - [x] Local separate collection reader, GET-only account route/paging and access teardown qualified:9reader+41customer+11integrated checks,4owned PostgreSQL groups, customer build and1280px/320px browser checks. No production activation; see [reader audit](../audits/2026-10-21/collection-reader-foundation.md).
+- [x] Disabled/unregistered retained-evidence and genuine reviewer-authority proposal qualified:9unit checks,5owned PostgreSQL groups with actual waiter-before-expiry proof; original writer unchanged. No operational proof policy/grants/upload transport enabled.
 - [ ] Connect reviewed evidence retention and genuine reviewer-authority provisioning, register/qualify the ownership migration and private routes, and complete authenticated collection persistence/approved-media joins/customer provenance.
 - [ ] Persist reviewed optional curation and settle its method/rights/recency choices; complete the combined R1 journey before R2/R3. All30 requirement IDs above remain in scope.
 
-Held release baseline recorded155 manual cards/28 published approvals. Final37-table preservation retains31 READY market results and26 saved label commitments. Native ca3/62db2a has zero restarts and unchanged gateways. The holder was explicitly released22:38:21.199Z and absence proved22:38:27.851Z. This technical release is not real-card, owner3D or physical acceptance.
+Held release baseline recorded155 manual cards/28 published approvals. Final37-table preservation retains31 READY market results and26 saved label commitments. Native ca3/62db2a has zero restarts and unchanged gateways. The holder was explicitly released22:38:21.199Z and absence proved22:38:27.851Z. Later signed-in four-card/archive/report acceptance passed. Owner3D aesthetic and physical acceptance remain separate.

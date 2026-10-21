@@ -1,0 +1,24 @@
+.shell{background:#fff;color:#20242c;color-scheme:light;min-height:100svh}
+.shell :global(.mc-shell-header){background:#141519;border-color:#303238;color:#fff;gap:24px;padding:12px 4%}
+.shell :global(.mc-shell-header nav){gap:22px;font-size:12px}
+.shell :global(.mc-shell-header a),.shell :global(.mc-staff-name){color:#e6e7e9}
+.shell :global(.mc-shell-header .atlas-brand-copy){color:#fff}
+.shell :global(.mc-shell-header .atlas-brand-copy small){color:#b9bdc4}
+.shell :global(.mc-shell-header a.mc-nav-current){color:#fff;border-color:#047857}
+.shell :global(.mc-shell-header button){background:#23252b;border-color:#4e525b;color:#fff;min-height:44px}
+.shell :global(.fixture-strip){background:#f6f7f8;border-color:#e6e7ea;color:#5d6471;text-align:center}
+.page{background:#fff;min-height:75vh}
+.actions{display:flex;align-items:flex-start;flex-wrap:wrap;gap:10px}
+.actions .add{display:inline-flex;align-items:center;min-height:44px;padding:10px 16px;border-radius:5px;background:#047857;border:1px solid #047857;color:#fff;font:600 12px/1.4 var(--atlas-sans,system-ui);text-decoration:none}
+.actions .add:hover{background:#065f46;border-color:#065f46}
+.manage{position:relative;font:600 12px/1.4 var(--atlas-sans,system-ui)}
+.manage summary{display:flex;align-items:center;min-height:44px;padding:10px 14px;border:1px solid #d5dce2;border-radius:5px;cursor:pointer;list-style:none}
+.manage summary::-webkit-details-marker{display:none}
+.manage[open] summary{border-color:#889b96}
+.manage button{position:absolute;z-index:2;top:50px;right:0;white-space:nowrap;box-shadow:0 4px 18px #1a263b12!important}
+.actions a:focus-visible,.manage summary:focus-visible{outline:3px solid #047857;outline-offset:4px}
+.recovery:not(:empty){max-width:1600px;margin:0 auto;padding:18px 4% 0}
+.recovery :global(.mc-notice){background:#f8faf9;color:#394c44;border:1px solid #cddbd5}
+.recovery :global(.mc-notice.error){background:#fff8f7;color:#8b3730;border-color:#e5c4c0}
+.recovery button{background:#fff;color:#273c33;border:1px solid #bfcec6;min-height:44px}
+@media(max-width:640px){.shell :global(.mc-shell-header){gap:12px;padding:10px 4%}.shell :global(.mc-shell-header nav){gap:12px;font-size:11px}.actions{width:100%}}
