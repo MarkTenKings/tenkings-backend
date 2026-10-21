@@ -1,6 +1,6 @@
 # ATLAS marketplace — successor lead handoff, October 21, 2026
 
-**Current checkpoint: technical detail/identity/history production release complete.** See [production release](../atlas/audits/2026-10-21/detail-production-release.md). Native/staff/public source `ca3a848d` and SQL009 are live; canonical technical/report/photo/preservation checks passed, and the original admission holder was explicitly released with absence proof. Normal staff sign-in and real-card checks now succeeded for archive/media/history and normal report return; full report reload exposed a Next bootstrap defect. A locally qualified public-only correction is pending release; see [reload correction](../atlas/audits/2026-10-21/report-return-reload.md). Ownership/collection/curation source `46621dad` and subsequent separate reader/account workspace remain local and unregistered; see [reader foundation](../atlas/audits/2026-10-21/collection-reader-foundation.md).
+**Current checkpoint: technical detail/identity/history production release complete.** See [production release](../atlas/audits/2026-10-21/detail-production-release.md). Native/staff source `ca3a848d` and SQL009 are live; public is now isolated105270bc/dpl_QrEgUVB8qLb8hkru4ojhD8xqq4BZ with PublicReaderControl99; canonical technical/report/photo/preservation checks passed, and the original admission holder was explicitly released with absence proof. Normal staff sign-in and real-card checks now succeeded for archive/media/history and normal report return; full report reload exposed a Next bootstrap defect. The public-only correction is now deployed and actual reload→exact-card return plus direct-entry separation pass; see [reload correction](../atlas/audits/2026-10-21/report-return-reload.md). Ownership/collection/curation source `46621dad` and subsequent separate reader/account workspace remain local and unregistered; see [reader foundation](../atlas/audits/2026-10-21/collection-reader-foundation.md).
 
 This document carries all 30 original requirement IDs for an Astra Ultra lead with up to three Astra xHigh specialists. Earlier local qualification remains evidence; it is not a claim of owner or physical acceptance.
 
@@ -20,13 +20,13 @@ The latest requests are now **implemented, locally verified and technically depl
 | Tests/builds | Final80/80 focused staff/media/3D/router tests; public specialist79/79. Staff production build/boundary35chunks/15traces/2030files; public14/14/682. Full receipts and caveats in the latest audit. |
 | Final preview | `http://127.0.0.1:58611/admin/graded-cards/3ad38eae-49cd-450c-ab08-10f8b44f386f` — task-owned process session71401. Synthetic records and saved public photo/report copies. IDs regenerate on restart. |
 | Browser evidence | Rotation/readable Back,320px nooverflow, deferred3D request, canvas removal onFront/access loss, forcedchunk503 fallback, accessible context-loss retry, exact report roundtrip/reload and direct-entry separation. Saved desktop/report screenshots below. |
-| Remaining acceptance | Owner visual review; physical phone/GPU performance; actual reverse artwork/CAD; full raw-resolution paired masters; signed-in production detail/identity/history and real-card Sports acceptance. |
-| Production effects | **Technical release complete:** native/staff/publicca3a848d, SQL009 installed, controls137/98/105, holder explicitly released and absence proved. No customer messages, paid provider calls, approvals, physical operations or financial effects. |
+| Remaining acceptance | Owner visual review; physical phone/GPU performance; actual reverse artwork/CAD; full raw-resolution paired masters; new serial/autograph/relic real-card optical acceptance. Signed-in detail/media/history/report-return now pass. |
+| Production effects | **Technical release complete:** native/staffca3a848d, public105270bc, SQL009 installed, controls137/99/105, holder explicitly released and absence proved. No customer messages, paid provider calls, approvals, physical operations or financial effects. |
 
 Final audit: [optional-3d-report-return.md](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/audits/2026-10-21/optional-3d-report-return.md).
 Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-marketplace-foundation-20261020/three-preview-20261021/` — `desktop-3d.png`, `report-return.png`, `mobile-320.png`, `focused-tests.log`, `staff-build.log`, `public-build-result.txt`. Public test/build details are in the specialist tool transcript; do not claim another root rerun.
 
-**Exact continuation point:** canonical technical release is complete. Owner Chrome tab2132133231 has a normal signed-in staff session. Archive search/category/date/Table and four real card Front/Back details passed; optional3D and versioned history passed. Correct and release the report-reload Card Detail loss, then recheck exact same-tab return and fresh direct entry. Retain unchanged local failure/recovery evidence. Keep Front default and 3D optional. Then continue ownership/My Collection and optional curation integration; do not replay any consumed release packet. No claim of manufacturing-quality media or live marketplace.
+**Exact continuation point:** canonical technical release is complete. Owner Chrome tab2132133231 has a normal signed-in staff session. Archive search/category/date/Table and four real card Front/Back details passed; optional3D and versioned history passed. The report-reload correction is now deployed and the actual same-tab reload/return and fresh direct-entry checks pass. Continue the queued staff original-photo gallery and ownership/My Collection foundations. Retain unchanged local failure/recovery evidence. Keep Front default and 3D optional. Then continue ownership/My Collection and optional curation integration; do not replay any consumed release packet. No claim of manufacturing-quality media or live marketplace.
 
 ## 2. Workspace and documents
 
@@ -61,14 +61,15 @@ Observed October21 technical release, not an inference from foundation HEAD. Rec
 | Surface | Observed live state |
 |---|---|
 | Canonical archive | [atlasgrading.com/admin/graded-cards](https://atlasgrading.com/admin/graded-cards) |
-| Native/staff/public source | `ca3a848d4d6eb28f149a8f253115df90b5fc60ac` |
+| Native/staff source | `ca3a848d4d6eb28f149a8f253115df90b5fc60ac` |
+| Public source | `105270bcf29db376d5bf756edd91b29516420a98` |
 | Staff | `dpl_2vc2nkyRmUhPMyJaZBLKbaCpow6y`; `atlas-grading-staff-2g0z630sk-ten-kings.vercel.app` |
-| Public | `dpl_EaydzmhwF8f49aqgHhw4JAQLKyVJ`; `atlas-grading-public-icw592c3b-ten-kings.vercel.app` |
+| Public | `dpl_QrEgUVB8qLb8hkru4ojhD8xqq4BZ`; `atlas-grading-public-6wppxvez9-ten-kings.vercel.app` |
 | Native image | `sha256:62db2a56541dcaf6dd51211302e7d4c53d569af693880ff7519c3672d3318b33` |
 | Main / worker | `467201614c92774c023a804b860b30588c34fc23b85cd2d55048bc75b3c2f30d` / `d4ce4e9b1cc3bfb0730e49a3aa0dc759b2270878f502cf7bd8d2100d442f71bb` |
 | Customer retained | Sourcec68e9ea7; `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5` |
 | Schema | Registered002–009;009 checksum `5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b`, manual-role-only EXECUTE |
-| Controls | Staff137 / Public98 / STAFF SMS105; Customer83 / CUSTOMER SMS35 retained |
+| Controls | Staff137 / Public99 / STAFF SMS105; Customer83 / CUSTOMER SMS35 retained |
 | Inner gateway | `51cd257774fb8032f8b10dd25fa42da5ce442a9977abd3a4c58ffd237a16f878` |
 | Outer gateway | `c069ab6a230da62ca8df2632b6d91fefe81288a913a078b59068991b3e05fcb0` |
 | Admission | Explicit release22:38:21.199Z; absence22:38:27.851Z, October21UTC. No release hold remains. |
@@ -365,7 +366,7 @@ Full browser checks must cover actual components and real routes, desktop/phone,
 - Docker timestamps have nine fractional digits; system Python 3.9 parsing lost compatibility. The successful file-only validator preserved full precision using Decimal. Do not weaken timestamp comparisons.
 - All earlier effect intents are single-use and consumed. Fresh recovery must use observed current state, monotonic controls, additive008/009-compatible readers and a successor image. Never restart the retired generation.
 - Existing approved reports, photographs, labels, serials, grades and provider receipts remain immutable. Do not reapprove/regrade, rerun paid searches, relabel, print, write tags or send customer messages merely to exercise read paths.
-- Old “current” dated headings are historical where superseded by the archive release or later session entries. In particular, public eafcec14/native3256 and archive webc4b7/native31c checkpoints precede current native/staff/publicca3a848d.
+- Old “current” dated headings are historical where superseded by the archive release or later session entries. In particular, public eafcec14/native3256 and archive webc4b7/native31c checkpoints precede current native/staffca3a848d and public105270bc.
 - No general ATLAS marketplace ownership/transfer, listing/offer/checkout/settlement/withdrawal system is completed. Existing grading-submission commerce or dealer-offer modules are not proof of the marketplace contract.
 
 ## 10. Copy/paste prompt for the new Astra Ultra lead
@@ -387,7 +388,7 @@ and the handoff's identity/provenance audits and latest SESSION_LOG entries.
 
 Inspect actual Git status and HEAD before editing. Deployed source is ca3a848d; local ownership/collection/curation is46621dad; later documentation commits may be HEAD. Do not touch the original dirty/conflicted checkout at /Users/markthomas/tenkings/ten-kings-mystery-packs-clean. Do not replay the frozen archive release-02 packet.
 
-Current observed production is native/staff/public ca3a848d with image62db2a and installed SQL009; customer stays c68e9ea7. Controls137/98/105, customer83/35 retained. Canonical technical/report/photo/preservation and native postflight passed. The original holder was explicitly released22:38:21.199Z and absence proved22:38:27.851Z October21UTC. No release hold remains. Full IDs/hashes and reconciliation are in detail-production-release.md. Ordinary signed-in real-card acceptance and owner3D/physical acceptance remain pending; Front remains default. Ownership/collection/curation46621dad is local only. Never describe that preview as production or replay consumed release packets.
+Current observed production is native/staffca3a848d with image62db2a and installedSQL009; public105270bc/dpl_QrEgUVB8qLb8hkru4ojhD8xqq4BZ; customer staysc68e9ea7. Controls137/99/105, customer83/35 retained. Canonical checks and actual signed-in four-card archive/detail/history plus report reload/exact return/direct-entry checks pass. The original holder was explicitly released22:38:21.199Z with absence proof; no new holder or native restart was used for the public correction. Full receipts are in detail-production-release.md and report-return-reload.md. Owner3D aesthetic/physical acceptance and new Sports optical accuracy remain separate; Front staysdefault. Continue original-photo staff gallery and local ownership/collection/evidence work, then optional curation and remaining30-item plan. No local ownership/collection source is live. Never replay consumed releases.
 
 Preserve pure white #ffffff, restrained emerald #047857, gallery card text/actions aligned to slab edges, the larger SAME source-bound ATLAS slab on detail, Front/Back, no detail Inspect/zoom, no Approved Card/Human Approved hero labels, and the portrait Grade Report link. Keep the standalone report and exact report versions/NFC URLs. A missing reverse label is missing. Current1350×1858 approved photos are not full-resolution raw masters; illustrative 3D is not calibrated physical geometry or complete paired-master output.
 

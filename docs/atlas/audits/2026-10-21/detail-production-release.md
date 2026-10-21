@@ -1,6 +1,6 @@
 # Detail, reviewed identity and staff history — production release
 
-Technical release completed October 21, 2026 UTC. Source `ca3a848d4d6eb28f149a8f253115df90b5fc60ac` now serves native, staff and public. SQL009 is installed. Ordinary signed-in real-card checks subsequently passed archive interactions, four Front/Back details, optional3D controls, history and the normal report round trip, but exposed a report-reload return defect. See [correction and acceptance](report-return-reload.md). Acceptance remains open until that correction is deployed and observed. Owner acceptance of experimental3D and physical media quality remain separate.
+Technical detail release completed October21,2026UTC from `ca3a848d4d6eb28f149a8f253115df90b5fc60ac`, with SQL009 installed. The table and receipt ledger below preserve that release checkpoint. Native/staff remain onca3; public was subsequently superseded by isolated report-return correction105270bc/dpl_QrEgUVB8qLb8hkru4ojhD8xqq4BZ and PublicReaderControl99. Signed-in archive interactions, four Front/Back details, optional3D controls, history and exact report round trip passed. The observed report-reload gap is now fixed and verified in the actual owner Chrome session; fresh direct entry has no private return. See [correction and acceptance](report-return-reload.md). Owner acceptance of experimental3D appearance and physical media quality remain separate.
 
 ## Released behavior and limits
 

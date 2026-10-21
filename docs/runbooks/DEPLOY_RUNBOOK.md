@@ -1,10 +1,12 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current detail release and active correction — October 21, 2026
+## Current detail and report-return release — October 21, 2026
 
-Current native/staff/public source is `ca3a848d4d6eb28f149a8f253115df90b5fc60ac`; SQL009 is installed. Staff deployment `dpl_2vc2nkyRmUhPMyJaZBLKbaCpow6y`, public `dpl_EaydzmhwF8f49aqgHhw4JAQLKyVJ`, controls137/98/105. Customer remainsc68e9ea7 with controls83/35. Both gateways are retained. The admission holder was explicitly released and its absence proved. See [release audit](../atlas/audits/2026-10-21/detail-production-release.md) for exact native IDs, receipts and observed interruption. Earlier dated release sections below are historical.
+Native/staff retain source `ca3a848d4d6eb28f149a8f253115df90b5fc60ac`; public now serves isolated `105270bcf29db376d5bf756edd91b29516420a98`, deployment `dpl_QrEgUVB8qLb8hkru4ojhD8xqq4BZ`. Staff stays `dpl_2vc2nkyRmUhPMyJaZBLKbaCpow6y`; SQL009 is installed; controls137/99/105. Customer remainsc68e9ea7 with controls83/35. Both gateways are retained. The earlier admission holder was explicitly released; the public-only correction acquired no holder and restarted no process.
 
-Real signed-in archive/detail acceptance now found a report-reload return defect. The local correction and public-only successor plan are tracked in [report return audit](../atlas/audits/2026-10-21/report-return-reload.md). Do not replay any consumed packet or restart the retired native pair. The queued staff original-photo landing gallery and local ownership/collection work are excluded from this correction.
+Signed-in archive/detail/history and actual report reload→Card Detail/direct-entry checks pass. See [report-return audit](../atlas/audits/2026-10-21/report-return-reload.md) for exact one-use staging/activation and read-only reconciliation receipts. The public promotion's empty cron bookkeeping was reconciled by a filesystem-only supplemental verifier; no CAS or promotion replay occurred. See [detail release audit](../atlas/audits/2026-10-21/detail-production-release.md) for retained native IDs and the earlier observed interruption.
+
+Do not replay consumed packets or restart the retired native pair. The staff original-photo landing gallery and local ownership/collection work remain excluded from this release. Earlier dated sections below are historical.
 
 ## Current Graded Cards production release — October 20, 2026 Pacific
 
