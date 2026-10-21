@@ -1,6 +1,8 @@
 # ATLAS marketplace — successor lead handoff, October 21, 2026
 
-**Final successor handoff after local 3D and report-return qualification.** This document is self-contained operational context for a new **Astra Ultra lead using Astra xHigh subagents**. It carries all 30 original master-plan requirement IDs, completed work, remaining work, the next execution sequence and a copy/paste kickoff prompt.
+**Current successor execution checkpoint:** see [fresh detail release preparation](../atlas/audits/2026-10-21/detail-release-preparation.md). Detail release source is now `ca3a848d`; ownership/collection local contracts are separately committed in `46621dad`. Production release is still pending connector team access and full coordinated qualification. The following original handoff retains historical starting evidence and is superseded by that checkpoint where status differs.
+
+**Original successor handoff after local 3D and report-return qualification.** This document is self-contained operational context for a new **Astra Ultra lead using Astra xHigh subagents**. It carries all 30 original master-plan requirement IDs, completed work, remaining work, the next execution sequence and a copy/paste kickoff prompt.
 
 The canonical scope ledger is [ATLAS_MARKETPLACE_MASTER_PLAN_20261020.md](/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean/docs/atlas/plans/ATLAS_MARKETPLACE_MASTER_PLAN_20261020.md). This handoff does not narrow it to the archive or claim that all Foundation work is complete.
 
@@ -147,7 +149,7 @@ Other local audit sources:
 
 Historical SQL009 checksum at the earlier detail checkpoint: `9e9361a6cfe6b057a306a347741d88911d4d9f654f3c01b71aefcbd95f74bc2f`. The successor source-only media parity correction is `5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b`, with24 focused checks,10 owned PostgreSQL17 groups and the staff production build passing. Final release must use the new manifest checksum. Merely checking in SQL009 does not install it.
 
-Fresh read-only observations at21:10–21:12UTC confirm native31c/f64dfc with zero main/worker restarts, unchanged gateway hashes, SQL008 installed and009 absent, and155 manual cards/28 published approvals. The earlier four-card screenshot is historical owner evidence. Vercel deployment inspection returned a team-authorization denial; the connector renewal is pending. No deployment, runtime replacement, holder acquisition or production migration has occurred. Actual source review found missing saved-label/slab inputs in the detail backend; the successor fix and real SQL parity tests supersede the enriched fixture's earlier parity assumption.
+Fresh read-only observations at21:10–21:12UTC confirm native31c/f64dfc with zero main/worker restarts, unchanged gateway hashes, SQL008 installed and009 absent, and155 manual cards/28 published approvals. The earlier four-card screenshot is historical owner evidence. Vercel deployment inspection returned a team-authorization denial; the owner completed renewal and the same connector now verifies staff/public READY plus all three Ten Kings project identities. No deployment, runtime replacement, holder acquisition or production migration has occurred. Actual source review found missing saved-label/slab inputs in the detail backend; the successor fix and real SQL parity tests supersede the enriched fixture's earlier parity assumption.
 
 ## 5. Owner decisions to preserve
 

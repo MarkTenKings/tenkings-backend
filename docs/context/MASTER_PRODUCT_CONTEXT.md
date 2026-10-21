@@ -1,5 +1,7 @@
 # Ten Kings Master Product Context
 
+Current ATLAS successor checkpoint (October21): detail source `ca3a848d` fixes backend saved-label/slab parity and clean-container report-return packaging; SQL009 remains unapplied. Separately committed `46621dad` adds qualified, unregistered ownership contracts and collection/curation previews. No production integration is claimed. Full scope and release gates: `docs/atlas/audits/2026-10-21/detail-release-preparation.md` and the30-item marketplace master plan.
+
 ## Local dedicated card-detail increment — October21,2026
 
 Three Astra Ultra specialists implemented dedicated staff card details, verified Front/Back media/zoom/retry, and approval-bound category/identity/history/saved-sale projections. Root integrated the approved white/emerald design and gallery navigation. This is local source on `codex/atlas-marketplace-foundation`, not a deployed release. SQL009 remains source-only; current production identities below are unchanged.811 staff tests passed;48 final focused tests passed after the final hook dependency correction;902 connected tests passed with2 existing native-measurement skips;8 owned PostgreSQL17 groups passed with cleanup verified. Production build/boundary passed. Browser evidence and remaining gates are in `docs/atlas/audits/2026-10-21/card-detail-integration.md`. Ownership/My Collection, bounded comp curation/pricing and marketplace transactions remain future work. Raw intake masters and calibrated paired slab composition are not claimed by the approved1350×1858-photo viewer.
