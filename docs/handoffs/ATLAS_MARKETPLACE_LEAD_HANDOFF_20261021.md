@@ -1,6 +1,6 @@
 # ATLAS marketplace — successor lead handoff, October 21, 2026
 
-**Current checkpoint: technical detail/identity/history production release complete.** See [production release](../atlas/audits/2026-10-21/detail-production-release.md). Native/staff/public source `ca3a848d` and SQL009 are live; canonical technical/report/photo/preservation checks passed, and the original admission holder was explicitly released with absence proof. Ordinary signed-in real-card acceptance is pending normal staff sign-in. Ownership/collection/curation source `46621dad` remains local and unregistered.
+**Current checkpoint: technical detail/identity/history production release complete.** See [production release](../atlas/audits/2026-10-21/detail-production-release.md). Native/staff/public source `ca3a848d` and SQL009 are live; canonical technical/report/photo/preservation checks passed, and the original admission holder was explicitly released with absence proof. Ordinary signed-in real-card acceptance is pending normal staff sign-in. Ownership/collection/curation source `46621dad` and subsequent separate reader/account workspace remain local and unregistered; see [reader foundation](../atlas/audits/2026-10-21/collection-reader-foundation.md).
 
 This document carries all 30 original requirement IDs for an Astra Ultra lead with up to three Astra xHigh specialists. Earlier local qualification remains evidence; it is not a claim of owner or physical acceptance.
 
@@ -190,7 +190,7 @@ The original **30 bullets are reproduced in full below**, with stable 01–30 ID
 
 - [ ] **06.** **Social “My Collection”:** Give customers searchable profiles, albums, follows, watchlists, saved searches, and alerts. Separate currently owned, previously owned, for-sale, and wanted cards. Allow visibility controls per card or album.
   - [x] **LIVE:** Existing My ATLAS submission/report history is retained. This is not ownership-based My Collection.
-  - [x] **LOCAL VERIFIED:** Owner-only collection projection and privacy/offer preview in46621dad; unsaved settings and no live route.
+  - [x] **LOCAL VERIFIED:** Owner-only collection projection and privacy/offer preview in46621dad; subsequent separate reader/GET route/account paging qualified locally. No runtime reader, registered SQL, grant or live collection; settings remain unsaved.
   - [ ] Current/past ownership, for-sale/wanted distinctions, authenticated collection, privacy per card/album and opt-in profiles/social/searches/alerts remain.
 
 - [ ] **07.** **Customer-visible provenance:** Show recorded ownership transfers, sales, grading, reholders, and corrections. Distinguish verified events, owner-reported information, and unknown history. Display consenting owner handles or “Private collector.”

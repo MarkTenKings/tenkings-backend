@@ -57,6 +57,24 @@ export function parseOwnerCollection(value, accountId) {
   return { schema: value.schema, accountId, preferences, cards, nextCardId: value.nextCardId };
 }
 
+/** Strict page boundary for the authenticated reader. Unlike the synthetic
+ * preview, this accepts only the reader's UUIDv4 keyset pagination contract. */
+export function parseOwnerCollectionPage(value, accountId, { afterCardId = null, limit = 25 } = {}) {
+  const id = v => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
+  check(id(accountId) && (afterCardId === null || id(afterCardId)) && Number.isInteger(limit) && limit >= 1 && limit <= 50);
+  const page = parseOwnerCollection(value, accountId);
+  check(page.cards.length <= limit);
+  let previous = afterCardId;
+  for (const card of page.cards) {
+    check(id(card.cardId) && id(card.approvedCard.approvalActionId)
+      && /^ATLAS-[A-F0-9]{12}$/.test(card.approvedCard.certificateNumber)
+      && (previous === null || card.cardId > previous));
+    previous = card.cardId;
+  }
+  check(page.nextCardId === null || page.cards.length === limit && page.nextCardId === previous);
+  return page;
+}
+
 export function collectionScopeKey(collection) {
   return JSON.stringify([collection.accountId, collection.preferences.revision, collection.cards.map(card => [
     card.cardId, card.ownership.revision, card.cardPreferenceRevision, card.approvedCard.approvalActionId,

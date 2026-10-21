@@ -2,6 +2,7 @@ import { BoundaryError, deny, keys, privateHeaders, profile, UUID } from './poli
 import { cardInput, createInput, identityInput, revision, CustomerIntakeError } from '@atlas/customer-intake/contract';
 import { CustomerServiceError } from '@atlas/service-bridge/customer-service';
 import {dealerRoute} from './dealer.mjs';
+import { createOwnershipReadHandler } from './ownership-read.mjs';
 
 export function createHandler(resolveRuntime) {
     return async (req, res) => {
@@ -11,6 +12,7 @@ export function createHandler(resolveRuntime) {
             state.assertRequest(req);
             const path = (req.url ?? '').split('?')[0], method = req.method;
             const known = [
+                ['GET', /^\/api\/customer\/collection$/],
                 ['POST', /^\/api\/customer\/dealer\/handoffs\/(read|confirm)$/],
                 ['POST', /^\/api\/customer\/orders\/[a-f0-9-]{36}\/handoff$/],
                 ['GET', /^\/api\/customer\/session$/], ['GET', /^\/api\/customer\/dealer\/(session|memberships)$/], ['POST', /^\/api\/customer\/dealer\/(session|logout)$/], ['POST', /^\/api\/customer\/auth\/(request|verify|logout)$/],
@@ -36,6 +38,7 @@ export function createHandler(resolveRuntime) {
             } else if (req.headers['sec-fetch-site'] && !['same-origin', 'none'].includes(req.headers['sec-fetch-site'])) deny(403, 'ORIGIN_NOT_ALLOWED');
             const auth = state.auth, cookieHeader = req.headers.cookie, csrf = req.headers['x-atlas-customer-csrf'];
             const client = state.clientAddress(req); let body;
+            if (path === '/api/customer/collection') return createOwnershipReadHandler(state)(req, res);
             if (dealerRoute(path)) {
                 if (!state.dealer) deny(503, 'DEALER_ACCESS_NOT_ENABLED');
                 body = await state.dealer.handle(req,res);
