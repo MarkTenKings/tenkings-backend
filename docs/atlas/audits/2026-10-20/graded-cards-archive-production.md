@@ -1,6 +1,6 @@
 # ATLAS Graded Cards — production release
 
-October20,2026 Pacific / October21 UTC. **Technical deployment completed; ordinary signed-in archive acceptance is pending the owner's login.** No admission hold remains. The canonical route is https://atlasgrading.com/admin/graded-cards and correctly redirects unauthenticated visitors to normal staff sign-in. The user confirmed availability for the final check; no code or fabricated session was requested.
+October20,2026 Pacific / October21 UTC. **Technical deployment completed; owner screenshots now confirm signed-in gallery access and design approval. Full interaction acceptance remains outstanding.** No admission hold remains. The canonical route is https://atlasgrading.com/admin/graded-cards and correctly redirects unauthenticated visitors to normal staff sign-in. The user confirmed availability for the final check; no code or fabricated session was requested.
 
 ## Delivered behavior and scope
 
@@ -58,3 +58,7 @@ Consumed intents must not be rerun. Recovery requires a new observed/reviewed pl
 ## Remaining human acceptance
 
 After the owner signs in normally: confirm real approved cards in Gallery/Table; search a visible certificate and verify category/same-dayUTC filters; open the exact saved card/report and compare identity/grade/front-back photos; inspect an exact linked order if such a record is present. Record missing examples as unavailable, not passed. Current screenshot `acceptance/production-sign-in.png` establishes normal sign-in only. Real archive access and browser acceptance are not yet claimed.
+
+## Owner gallery review — October20,2026 at23:51–23:52 Pacific
+
+The owner supplied three Chrome screenshots at the canonical production archive, displaying four approved cards, and stated the page looks good. The later screenshots show all four slab previews. The first shows two Photo unavailable placeholders; record image-delivery reliability for investigation without assuming a cause. These screenshots establish actual signed-in gallery access and owner approval of the gallery design, but do not prove search/filter/table/paging, exact linked-order navigation or complete report/media interactions. The owner says the clicked-card destination needs work; Open card currently opens the existing manual grading workspace, and the dedicated card-detail design remains planned. No user-supplied login code was accessed and no new production effects were performed during this review.

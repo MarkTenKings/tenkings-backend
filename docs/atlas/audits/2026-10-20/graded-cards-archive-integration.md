@@ -1,6 +1,6 @@
 # ATLAS graded-card archive — integrated source acceptance
 
-**Subsequent production status:** archive activation and technical checks completed on October20 Pacific; see [the production audit](graded-cards-archive-production.md). Normal signed-in archive acceptance is still pending. Statements below about no production effects describe the earlier source-qualification checkpoints.
+**Subsequent production status:** archive activation and technical checks completed on October20 Pacific; see [the production audit](graded-cards-archive-production.md). Owner screenshots now confirm real signed-in gallery access and design approval; complete interaction acceptance remains outstanding. Statements below about no production effects describe the earlier source-qualification checkpoints.
 
 October 20, 2026, local Pacific time. Source baseline `fbb2f2d2`, isolated branch `codex/atlas-marketplace-foundation`. Three `gpt-6-astra` agents at `ultra` effort delivered the archive backend, staff UI and approved-media contract, with lead integration and browser review. The original dirty/conflicted checkout was not modified.
 
