@@ -2,10 +2,8 @@
 .galleryRetry.galleryRetry.galleryRetry:hover{transform:translateX(-50%)}
 .compactRetry.compactRetry.compactRetry{bottom:0;padding:3px;font-size:8px;min-height:25px;max-width:65px;white-space:normal}
 .detail{width:100%;min-width:0;color:#20242c}
-.photoStage{display:grid;place-items:center;min-height:340px;height:clamp(390px,48vw,540px);background:#fff;position:relative}
-.inspectPhoto.inspectPhoto.inspectPhoto{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;width:100%;height:100%;border:0;background:#fff!important;padding:0;color:#65716c;box-shadow:none;border-radius:0}
-.inspectPhoto.inspectPhoto.inspectPhoto:hover{background:#fff!important;transform:none}
-.inspectPhoto img{display:block;width:100%;height:100%;object-fit:contain;filter:none;max-width:100%;min-height:0}
+.photoStage{--detail-media-height:clamp(390px,48vw,540px);display:grid;place-items:center;min-height:340px;height:var(--detail-media-height);background:#fff;position:relative}
+.detailVisual{height:100%;width:auto;aspect-ratio:80.264/135.382;max-width:100%;display:flex;align-items:center;justify-content:center}
 .controls{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:16px;margin:18px 0 10px}
 .sideSwitch{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid #dbe5de;border-radius:7px;background:#f6f8f7}
 .sideSwitch button{min-width:74px;padding:8px 14px}
@@ -16,18 +14,6 @@
 .state>span{font:500 20px/1.5 var(--atlas-serif,Georgia);letter-spacing:.15em;color:#9c8b66}
 .state strong{font-size:13px;font-weight:550;line-height:1.6}
 .state p{font-size:11px;line-height:1.7;margin:0}
-.dialog{background:#fff;color:#20242c;border:1px solid #dce4df;border-radius:12px;width:min(1120px,calc(100vw - 32px));max-width:calc(100vw - 32px);max-height:calc(100svh - 32px);padding:0;box-shadow:0 12px 80px #162b2040;overflow:auto}
-.dialog::backdrop{background:#101b16b3}
-.dialogHeader{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid #e3e9e5}
-.dialogHeader>div{display:flex;flex-direction:column;gap:5px;min-width:0}.dialogHeader strong{font-size:16px;overflow-wrap:anywhere}.dialogHeader span{font-size:11px;color:#69746e}
-.dialogHeader button{flex-shrink:0}
-.inspectionControls{display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;padding:14px 22px}
-.inspectionControls a{font-size:11px;color:#047857;min-height:44px;display:flex;align-items:center;text-underline-offset:3px}
-.zoomControls{display:flex;gap:7px;align-items:center}.zoomControls button{min-width:42px;padding:8px 12px}.zoomControls output{font-size:11px;min-width:40px;text-align:center}
-.viewport{--photo-fit-height:min(65vh,700px);height:65vh;max-height:700px;overflow:auto;overscroll-behavior:contain;background:#f7f9f8;border-block:1px solid #e3e9e5;scrollbar-gutter:stable}
-.zoomCanvas{display:flex;justify-content:center;align-items:flex-start;min-width:100%}
-.zoomPhoto{display:block;object-fit:contain;width:100%;height:auto;max-height:calc(var(--photo-fit-height) * var(--photo-zoom,1));max-width:none;filter:none}
-.dialogNote{font-size:10px!important;color:#69746e!important;line-height:1.7;padding:12px 22px;margin:0!important}
-.detail button:focus-visible,.detail a:focus-visible,.viewport:focus-visible{outline:3px solid #047857;outline-offset:3px}
-@media(max-width:600px){.photoStage{height:450px;min-height:300px}.controls{gap:10px}.dialog{width:calc(100vw - 16px);max-width:calc(100vw - 16px);max-height:calc(100svh - 16px)}.dialogHeader{padding:14px 12px;gap:8px}.dialogHeader strong{font-size:14px}.dialogHeader span{font-size:10px}.inspectionControls{padding:12px;gap:8px}.inspectionControls a{font-size:10px}.zoomControls{gap:4px}.zoomControls button{padding:8px;min-width:36px}.viewport{--photo-fit-height:min(60vh,700px);height:60vh}.dialogNote{padding:10px 12px}}
-@media(max-width:360px){.photoStage{height:380px}.dialogHeader>button{font-size:10px!important;padding:8px}.sideSwitch button{min-width:64px}.controls{gap:8px}}
+.detail button:focus-visible{outline:3px solid #047857;outline-offset:3px}
+@media(max-width:600px){.photoStage{--detail-media-height:450px;min-height:300px}.controls{gap:10px}}
+@media(max-width:360px){.photoStage{--detail-media-height:380px}.sideSwitch button{min-width:64px}.controls{gap:8px}}

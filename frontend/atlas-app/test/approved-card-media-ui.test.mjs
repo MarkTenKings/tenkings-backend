@@ -21,10 +21,14 @@ function nodes(value, match, found = []) {
   }
   return found;
 }
-function fixture(mode = 'detail') {
+function fixture(mode = 'detail', { label = false, slab = false } = {}) {
   const token = `ar_${'Q'.repeat(24)}`, card = { cardId: '11111111-1111-4111-8111-111111111111', approvalActionId: '22222222-2222-4222-8222-222222222222',
     identity: { playerName: 'Synthetic fixture' }, report: { state: 'PUBLISHED', publicToken: token, version: 2, publicHash: 'c'.repeat(64) },
     media: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { url: `/api/reports/${token}/images/${side}?v=2`, provenance: 'APPROVED_GRADING_PHOTOGRAPH' }])) };
+  if (label) card.media.LABEL = { itemId: '33333333-3333-4333-8333-333333333333',
+    url: '/admin/api/staff/manual-connected/labels/33333333-3333-4333-8333-333333333333/artwork?mode=preview', provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
+  if (slab) card.media.SLAB = { url: `/api/reports/${token}/presentation/image?v=2&revision=1`, presentationRevision: 1,
+    provenance: 'ACTUAL_SLAB_PHOTOGRAPH', sha256: 'd'.repeat(64), byteCount: 1024, contentType: 'image/jpeg' };
   const slots = [], effects = [], window = new EventTarget(), loads = [], disposed = []; let cursor = 0, dirty = false, tree;
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => { const next = typeof value === 'function' ? value(slots[index]) : value; if (!Object.is(next, slots[index])) { slots[index] = next; dirty = true; } }]; },
@@ -37,7 +41,7 @@ function fixture(mode = 'detail') {
   vm.runInNewContext(code, { exports, window, require(name) {
     if (name === 'react') return react;
     if (name === 'next/link') return ({ children, ...props }) => ({ type: 'a', props: { ...props, children } });
-    if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
+    if (name.endsWith('.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => `${name.includes('GradedCards') ? 'archive' : 'media'}.${String(key)}` }) };
     if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/admin' };
     if (name.endsWith('/graded-cards-client.mjs')) return graded;
     if (name.endsWith('/approved-card-media.mjs')) return { ...media, createApprovedMediaResource: () => media.createApprovedMediaResource({
@@ -75,16 +79,17 @@ test('real detail component distinguishes loading from unavailable and preserves
   f.close(); assert.deepEqual(f.disposed.sort(), ['blob:back', 'blob:front']);
 });
 
-test('real detail access event removes images and full-size links, aborts pending work and revokes ready bytes', async () => {
-  const f = fixture(); await f.flush(); f.loads[0].resolve('blob:front'); await f.flush();
-  assert.ok(f.find(node => node.type === 'a' && node.props.href === 'blob:front').length);
+test('real detail access event removes the composed preview, aborts pending work and revokes photo and label bytes', async () => {
+  const f = fixture('detail', { label: true }); await f.flush();
+  f.loads[0].resolve('blob:front'); f.loads[2].resolve('blob:label'); await f.flush();
+  assert.ok(f.find(node => node.type === 'span' && node.props.className === 'archive.slab').length);
   f.revoke(); await f.flush();
   assert.equal(f.find(node => node.type === 'img').length, 0);
   assert.equal(f.find(node => node.type === 'a' && node.props.href?.startsWith('blob:')).length, 0);
   assert.ok(f.find(node => node.type === 'strong' && /Staff access ended/.test(text(node))).length);
-  assert.equal(f.loads[1].signal.aborted, true); assert.deepEqual(f.disposed, ['blob:front']);
+  assert.equal(f.loads[1].signal.aborted, true); assert.deepEqual(f.disposed.sort(), ['blob:front', 'blob:label']);
   f.loads[1].resolve('blob:late-back'); await f.flush();
-  assert.equal(f.find(node => node.type === 'img').length, 0); assert.deepEqual(f.disposed, ['blob:front', 'blob:late-back']); f.close();
+  assert.equal(f.find(node => node.type === 'img').length, 0); assert.deepEqual(f.disposed.sort(), ['blob:front', 'blob:label', 'blob:late-back']); f.close();
 });
 
 test('effect cleanup/setup rehearsal creates fresh resources and stale photo completion cannot publish', async () => {
@@ -97,13 +102,72 @@ test('effect cleanup/setup rehearsal creates fresh resources and stale photo com
   assert.deepEqual(f.disposed.sort(), ['blob:old-back', 'blob:old-front']); f.close();
 });
 
-test('both inspection triggers restore their own focus only after the modal closes', async () => {
-  const f = fixture(); await f.flush(); f.loads[0].resolve('blob:front'); f.loads[1].resolve('blob:back'); await f.flush();
-  for (const name of ['Inspect approved front photograph of Synthetic fixture', 'Inspect / zoom ↗']) {
-    let focused = 0;
-    f.button(name).props.onClick({ currentTarget: { isConnected: true, focus() { focused++; } } }); f.render();
-    f.button('Close photograph inspection').props.onClick(); f.render(); assert.equal(focused, 0);
-    f.find(node => node.type === 'dialog')[0].props.onClose(); f.render(); assert.equal(focused, 1);
+test('detail uses the identical gallery front composition and exposes only Front/Back controls', async () => {
+  const gallery = fixture('gallery', { label: true }), detail = fixture('detail', { label: true });
+  for (const f of [gallery, detail]) {
+    await f.flush(); f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
   }
+  const presentation = f => f.find(node => node.type === 'span' && node.props.role === 'img')[0];
+  // JSON omits only event functions. Asset placement classes, dimensions, source
+  // URLs, accessible meaning and DOM composition must match between both views.
+  assert.equal(JSON.stringify(presentation(detail)), JSON.stringify(presentation(gallery)));
+  assert.deepEqual(detail.find(node => node.type === 'img').map(node => [node.props.className, node.props.src]), [
+    ['archive.slabShell', '/admin/brand/archive/slab-shell-front.svg'], ['archive.slabCard', 'blob:FRONT'],
+    [undefined, '/admin/brand/archive/nfc-tag-reference.jpg'], ['archive.slabLabel', 'blob:LABEL'],
+  ]);
+  assert.deepEqual(detail.find(node => node.type === 'button').map(node => text(node)), ['Front', 'Back']);
+  assert.equal(detail.button('Front').props['aria-pressed'], true);
+  assert.equal(detail.find(node => ['dialog', 'a', 'input'].includes(node.type)).length, 0);
+  assert.equal(detail.find(node => /inspect|zoom/i.test(node.props['aria-label'] ?? '')).length, 0);
+  gallery.close(); detail.close();
+});
+
+test('Back uses only its verified photograph and the same shell, never the front label or NFC reference', async () => {
+  const f = fixture('detail', { label: true }); await f.flush();
+  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  f.button('Back').props.onClick(); f.render();
+  assert.deepEqual(f.find(node => node.type === 'img').map(node => [node.props.className, node.props.src]), [
+    ['archive.slabShell', '/admin/brand/archive/slab-shell-front.svg'], ['archive.slabCard', 'blob:BACK'],
+  ]);
+  assert.ok(f.find(node => node.type === 'p' && /Reverse label artwork not recorded\./.test(text(node))).length);
+  assert.equal(f.button('Back').props['aria-pressed'], true);
+  const image = f.find(node => node.type === 'img' && node.props.src === 'blob:BACK')[0];
+  image.props.onError(); f.render(); assert.deepEqual(f.disposed, ['blob:BACK']);
+  f.button('Retry back photo').props.onClick(); await f.flush();
+  assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'BACK']);
+  f.loads[3].resolve('blob:BACK-retry'); await f.flush();
+  f.button('Front').props.onClick(); f.render();
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:FRONT').length);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:LABEL').length);
   f.close();
+});
+
+test('label failure preserves the approved front photo and retry restores the saved composition independently', async () => {
+  const f = fixture('detail', { label: true }); await f.flush();
+  f.loads[0].resolve('blob:front'); f.loads[1].resolve('blob:back'); f.loads[2].reject(new Error('label unavailable')); await f.flush();
+  assert.equal(f.find(node => node.type === 'img').length, 1);
+  assert.equal(f.find(node => node.type === 'img')[0].props.src, 'blob:front');
+  assert.ok(f.find(node => node.type === 'p' && /Saved label artwork unavailable\./.test(text(node))).length);
+  f.button('Retry preview').props.onClick(); await f.flush();
+  assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL']);
+  assert.deepEqual(f.disposed, []);
+  f.loads[3].resolve('blob:label'); await f.flush();
+  assert.ok(f.find(node => node.type === 'span' && node.props.className === 'archive.slab').length);
+  assert.equal(f.button('Retry preview'), undefined); f.close();
+});
+
+test('a recorded slab photograph takes priority on Front in both views and is never substituted for Back', async () => {
+  for (const mode of ['gallery', 'detail']) {
+    const f = fixture(mode, { label: true, slab: true }); await f.flush();
+    f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+    assert.equal(f.find(node => node.type === 'img').length, 1);
+    assert.equal(f.find(node => node.type === 'img')[0].props.src, 'blob:SLAB');
+    assert.match(f.find(node => node.type === 'img')[0].props.alt, /recorded slab photograph/);
+    if (mode === 'detail') {
+      f.button('Back').props.onClick(); f.render();
+      assert.equal(f.find(node => node.type === 'img' && node.props.src === 'blob:SLAB').length, 0);
+      assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:BACK').length);
+    }
+    f.close();
+  }
 });

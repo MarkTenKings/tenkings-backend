@@ -24,7 +24,7 @@ function useCardMedia(card, mode, enabled) {
     // An effect owns its resource so StrictMode's rehearsal can safely create
     // a fresh instance after the previous one has been irrevocably disposed.
     const owned = createApprovedMediaResource(); resource.current = owned;
-    sources.current = Object.fromEntries((mode === 'detail' ? ['FRONT', 'BACK'] : ['FRONT', 'SLAB', 'LABEL'])
+    sources.current = Object.fromEntries((mode === 'detail' ? ['FRONT', 'BACK', 'SLAB', 'LABEL'] : ['FRONT', 'SLAB', 'LABEL'])
       .map(kind => [kind, approvedMediaSource(card, kind)]));
     setImages({});
     for (const source of Object.values(sources.current)) if (source)
@@ -37,6 +37,21 @@ function useCardMedia(card, mode, enabled) {
   };
   const image = kind => blocked ? empty : images[kind] ?? { ...empty, loading: Boolean(approvedMediaSource(card, kind)) };
   return { image, retry, fail: (kind, url) => resource.current?.fail(kind, url), blocked };
+}
+
+/** Shared gallery composition. The holder is illustrative; each photograph and
+ * front label remain the exact saved assets. No reverse label/NFC is invented. */
+export function ApprovedCardPresentation({ name, photo, side = 'FRONT', artwork, actualSlab = false, onImageError }) {
+  const digital = !actualSlab && (artwork?.url || side === 'BACK');
+  return digital ? <span className={archive.slab} role="img" aria-label={side === 'FRONT'
+    ? `${name}. Digital slab preview using the approved front photograph and saved ATLAS label. Physical holder and NFC completion are separate.`
+    : `${name}. Digital slab preview using the approved back photograph in an illustrative holder. Reverse label artwork is not recorded. Physical holder and NFC completion are separate.`}>
+    <img className={archive.slabShell} src={`${STAFF_BASE_PATH}/brand/archive/slab-shell-front.svg`} width="803" height="1354" alt="" aria-hidden="true" loading="lazy"/>
+    <img className={archive.slabCard} src={photo.url} onError={() => onImageError(side, photo.url)} alt="" aria-hidden="true" decoding="async"/>
+    {side === 'FRONT' && <><span className={archive.slabNfc} aria-hidden="true"><img src={`${STAFF_BASE_PATH}/brand/archive/nfc-tag-reference.jpg`} alt="" loading="lazy"/></span>
+      <img className={archive.slabLabel} src={artwork.url} onError={() => onImageError('LABEL', artwork.url)} alt="" aria-hidden="true"/></>}
+  </span> : <img className={`${archive.photo}${actualSlab ? ` ${archive.slabPhoto}` : ''}`} src={photo.url}
+    onError={() => onImageError(actualSlab ? 'SLAB' : side, photo.url)} alt={`${name} · ${actualSlab ? 'recorded slab photograph' : `approved ${side.toLowerCase()} photograph`}`} decoding="async"/>;
 }
 
 function GalleryMedia({ card, compact }) {
@@ -54,12 +69,7 @@ function GalleryMedia({ card, compact }) {
   const retryKinds = ['FRONT', 'SLAB', 'LABEL'].filter(kind => media.image(kind).error);
   return <div ref={root} aria-busy={loading} className={`${archive.media}${compact ? ` ${archive.compactMedia}` : ''}`}>
     <Link href={gradedCardPath(card)} className={archive.photoLink} aria-label={`Open ${name}, ${card.certificateNumber || 'certificate not recorded'}`}>
-      {photo.url ? digital ? <span className={archive.slab} role="img" aria-label={`${name}. Digital slab preview using the approved front photograph and saved ATLAS label. Physical holder and NFC completion are separate.`}>
-        <img className={archive.slabShell} src={`${STAFF_BASE_PATH}/brand/archive/slab-shell-front.svg`} width="803" height="1354" alt="" aria-hidden="true" loading="lazy"/>
-        <img className={archive.slabCard} src={photo.url} onError={() => media.fail('FRONT', photo.url)} alt="" aria-hidden="true" decoding="async"/>
-        <span className={archive.slabNfc} aria-hidden="true"><img src={`${STAFF_BASE_PATH}/brand/archive/nfc-tag-reference.jpg`} alt="" loading="lazy"/></span>
-        <img className={archive.slabLabel} src={artwork.url} onError={() => media.fail('LABEL', artwork.url)} alt="" aria-hidden="true"/>
-      </span> : <img className={`${archive.photo}${actualSlab ? ` ${archive.slabPhoto}` : ''}`} src={photo.url} onError={() => media.fail(actualSlab ? 'SLAB' : 'FRONT', photo.url)} alt={`${name} · ${actualSlab ? 'recorded slab photograph' : 'approved front photograph'}`} decoding="async"/>
+      {photo.url ? <ApprovedCardPresentation name={name} photo={photo} artwork={artwork} actualSlab={actualSlab} onImageError={media.fail}/>
         : <span className={archive.noPhoto} role="status"><span aria-hidden="true">ATLAS</span><strong>{media.blocked ? 'Access ended' : loading ? 'Loading photograph…' : 'Photo unavailable'}</strong><small>{loading ? 'Opening saved evidence' : 'Open the saved card'}</small></span>}
     </Link>
     {!compact && <span className={archive.mediaCaption}>{digital ? 'Digital slab preview' : actualSlab ? 'Recorded slab photograph' : photo.url ? 'Approved front photograph' : loading ? 'Loading saved photograph' : 'Saved grade retained'}</span>}
@@ -70,53 +80,32 @@ function GalleryMedia({ card, compact }) {
 function PhotoState({ image, blocked, side, onRetry }) {
   return <div className={styles.state} role="status"><span aria-hidden="true">ATLAS</span>
     <strong>{blocked ? 'Staff access ended' : image.loading ? `Loading approved ${side.toLowerCase()} photograph…` : `Approved ${side.toLowerCase()} photograph unavailable`}</strong>
-    <p>{blocked ? 'Sign in again to inspect saved evidence.' : image.loading ? 'Opening this saved report’s photograph.' : 'The saved grade and report are retained.'}</p>
+    <p>{blocked ? 'Sign in again to view saved evidence.' : image.loading ? 'Opening this saved report’s photograph.' : 'The saved grade and report are retained.'}</p>
     {!blocked && image.error && <button type="button" onClick={onRetry}>Retry {side.toLowerCase()} photo</button>}
   </div>;
 }
 
 function DetailMedia({ card }) {
-  const media = useCardMedia(card, 'detail', true), [side, setSide] = useState('FRONT'), [inspect, setInspect] = useState(false), [zoom, setZoom] = useState(1);
-  const dialog = useRef(null), viewport = useRef(null), opener = useRef(null), [decoded, setDecoded] = useState([]);
-  const selected = media.image(side), name = gradedCardTitle(card), ready = Boolean(selected.url && decoded.includes(selected.url));
-  const open = event => { opener.current = event.currentTarget; setInspect(true); };
-  const close = () => { setInspect(false); setZoom(1); };
-  const closed = () => {
-    setInspect(false); setZoom(1);
-    if (!media.blocked && opener.current?.isConnected) opener.current.focus();
-  };
-  useEffect(() => {
-    if (inspect && !media.blocked) dialog.current?.showModal();
-    else dialog.current?.close();
-  }, [inspect, media.blocked]);
-  useEffect(() => { setZoom(1); viewport.current?.scrollTo(0, 0); }, [side]);
-  useEffect(() => {
-    const region = viewport.current;
-    if (inspect && region) region.scrollTo(Math.max(0, (region.scrollWidth - region.clientWidth) / 2), Math.max(0, (region.scrollHeight - region.clientHeight) / 2));
-  }, [zoom, inspect, side]);
-  const sides = <div className={styles.sideSwitch} role="group" aria-label="Photograph side">{['FRONT', 'BACK'].map(value => <button key={value} type="button" aria-pressed={side === value} onClick={() => setSide(value)}>{label(value)}</button>)}</div>;
-  const photo = selected.url ? <img src={selected.url} alt={`${name} · approved ${side.toLowerCase()} grading photograph`}
-    onLoad={() => setDecoded(previous => previous.includes(selected.url) ? previous : [...previous, selected.url])} onError={() => media.fail(side, selected.url)} decoding="async"/> : null;
+  const media = useCardMedia(card, 'detail', true), [side, setSide] = useState('FRONT');
+  const selected = media.image(side), slab = media.image('SLAB'), artwork = media.image('LABEL');
+  const actualSlab = side === 'FRONT' && Boolean(slab.url), photo = actualSlab ? slab : selected;
+  const digital = Boolean(photo.url && !actualSlab && (side === 'BACK' || artwork.url));
+  const loading = !photo.url && (selected.loading || side === 'FRONT' && slab.loading);
+  const retryKinds = (side === 'FRONT' ? ['SLAB', 'LABEL'] : []).filter(kind => media.image(kind).error);
   return <section className={styles.detail} aria-label="Approved card photographs">
-    <div className={styles.photoStage} aria-busy={selected.loading || Boolean(selected.url && !ready)}>
-      {photo ? <button type="button" className={styles.inspectPhoto} onClick={open} aria-label={`Inspect approved ${side.toLowerCase()} photograph of ${name}`}>{photo}</button>
-        : <PhotoState image={selected} blocked={media.blocked} side={side} onRetry={() => media.retry(side)}/>}
+    <div className={styles.photoStage} aria-busy={loading}>
+      {photo.url ? <div className={styles.detailVisual}><ApprovedCardPresentation name={gradedCardTitle(card)} photo={photo} side={side}
+        artwork={artwork} actualSlab={actualSlab} onImageError={media.fail}/></div>
+        : <PhotoState image={{ ...selected, loading }} blocked={media.blocked} side={side} onRetry={() => media.retry(side)}/>}
     </div>
-    <div className={styles.controls}>{sides}<button type="button" disabled={!ready || media.blocked} onClick={open}>Inspect / zoom ↗</button></div>
-    <p className={styles.caption}>Approved grading photograph · {label(side)}<br/><span>The saved report image, shown without retouching.</span></p>
-    <dialog ref={dialog} className={styles.dialog} aria-label={`${name} approved photograph inspection`} onCancel={close} onClose={closed}>
-      <header className={styles.dialogHeader}><div><strong>{name}</strong><span>Full-size approved photograph · {label(side)}</span></div><button type="button" autoFocus onClick={close} aria-label="Close photograph inspection">Close ✕</button></header>
-      <div className={styles.inspectionControls}>{sides}<div className={styles.zoomControls} role="group" aria-label="Photograph zoom">
-        <button type="button" onClick={() => setZoom(value => Math.max(1, value - .5))} disabled={zoom === 1 || !selected.url} aria-label="Zoom out">−</button>
-        <output aria-live="polite">{Math.round(zoom * 100)}%</output><button type="button" onClick={() => setZoom(value => Math.min(4, value + .5))} disabled={zoom === 4 || !selected.url} aria-label="Zoom in">+</button>
-        <button type="button" onClick={() => { setZoom(1); viewport.current?.scrollTo(0, 0); }}>Fit photo</button>
-      </div>{selected.url && !media.blocked && <a href={selected.url} target="_blank" rel="noreferrer">Open full-size photo ↗</a>}</div>
-      <div ref={viewport} className={styles.viewport} tabIndex="0" role="region" aria-label="Approved photograph. Zoom with the buttons, then scroll to inspect." aria-busy={selected.loading}>
-        {selected.url && !media.blocked ? <div className={styles.zoomCanvas} style={{ width: `${zoom * 100}%`, minHeight: `${zoom * 100}%`, '--photo-zoom': zoom }}><img className={styles.zoomPhoto} src={selected.url} alt={`${name} · approved ${side.toLowerCase()} grading photograph`} onError={() => media.fail(side, selected.url)}/></div>
-          : <PhotoState image={selected} blocked={media.blocked} side={side} onRetry={() => media.retry(side)}/>}
-      </div>
-      <p className={styles.dialogNote}>Zoom changes the viewing scale only. The approved image and report are unchanged.</p>
-    </dialog>
+    <div className={styles.controls}><div className={styles.sideSwitch} role="group" aria-label="Photograph side">{['FRONT', 'BACK'].map(value =>
+      <button key={value} type="button" aria-pressed={side === value} onClick={() => setSide(value)}>{label(value)}</button>)}</div>
+      {!!retryKinds.length && !media.blocked && <button type="button" onClick={() => retryKinds.forEach(media.retry)}>Retry preview</button>}
+    </div>
+    {photo.url && <p className={styles.caption}>{actualSlab ? 'Recorded slab photograph' : digital ? `Digital slab preview · ${label(side)}` : `Approved ${side.toLowerCase()} photograph`}
+      {side === 'BACK' && <><br/><span>Reverse label artwork not recorded.</span></>}
+      {side === 'FRONT' && !actualSlab && !artwork.url && !artwork.loading && <><br/><span>Saved label artwork unavailable.</span></>}
+    </p>}
   </section>;
 }
 

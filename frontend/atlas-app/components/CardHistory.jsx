@@ -74,7 +74,8 @@ export function GradeSummary({ card, report }) {
         ...(card.reviewers?.length ? [['Review staff', card.reviewers.map(person => person.name || 'Name not recorded').join(', ')]] : []),
       ]}/>
       <div className={styles.reportCallout}><span className={styles.reportMark} aria-hidden="true">A</span><h3>The evidence, in full.</h3><p>Explore the findings in the report version saved with this approval.</p>
-        {report ? <a className={archive.primary} href={report}>Open approved report <span aria-hidden="true">↗</span></a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}
+        {report ? <a className={archive.primary} href={report}>Grade Report <span aria-hidden="true">↗</span></a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}
+        <Link className={styles.workspaceLink} href={`/manual/${card.cardId}`}>Grading workspace <span aria-hidden="true">↗</span></Link>
       </div>
     </div>
     {available && <details className={styles.policy}><summary>Exact scores &amp; grading policy</summary><Facts rows={[
@@ -176,14 +177,18 @@ export default function CardHistory({ staff, cardId, request = api }) {
       <div className={styles.navigation}><Link href="/graded-cards"><span aria-hidden="true">←</span> Graded cards</Link><button type="button" disabled={loading || loadingMore} onClick={() => setRefresh(value => value + 1)}>Refresh record <span aria-hidden="true">↻</span></button></div>
       {error && <div className={archive.errorBox} role="alert"><p>{error}</p>{accessLost ? <a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a> : <button type="button" onClick={() => void read(visible?.history.nextCursor ?? undefined)}>Try again</button>}</div>}
       {loading ? <div className={archive.loading} role="status"><span className={archive.loadingMark} aria-hidden="true">A</span><p>Opening the saved card.</p></div> : visible && <>
-        <section className={styles.hero} aria-label="Approved card">
+        <section className={styles.hero} aria-label="Card details">
           <div className={styles.heroMedia}><ApprovedCardMedia key={`${card.cardId}:${card.approvalActionId}`} card={card} mode="detail"/></div>
-          <div className={styles.identity}><p className={styles.eyebrow}>{categories[card.identity?.category] || 'ATLAS ARCHIVE'} <span aria-hidden="true">/</span> APPROVED CARD</p><h1>{gradedCardTitle(card)}</h1>
+          <div className={styles.identity}><p className={styles.eyebrow}>{categories[card.identity?.category] || 'ATLAS ARCHIVE'}</p><h1>{gradedCardTitle(card)}</h1>
             {gradedCardSubtitle(card) && <p className={styles.subtitle}>{gradedCardSubtitle(card)}</p>}{gradedCardVariation(card) && <p className={styles.variation}>{gradedCardVariation(card)}</p>}
             <p className={styles.certificate}><span>Certificate</span><strong>{card.certificateNumber || 'Not recorded'}</strong></p>
-            <div className={styles.grade}><div className={styles.award}><span>ATLAS GRADE</span><strong>{recordedGrade(card)}</strong></div><div className={styles.approval}><span className={styles.approved}><span aria-hidden="true">✓</span> Human approved</span><time dateTime={card.approvedAt}>{approvedDate(card.approvedAt)} <span>UTC</span></time>{card.report?.version && <p>Report version {card.report.version}</p>}</div></div>
-            <div className={styles.actions}>{report ? <a className={archive.primary} href={report}>Open approved report <span aria-hidden="true">↗</span></a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}<p>The photographs, findings and measurements behind this grade.</p></div>
-            <Link className={styles.workspaceLink} href={`/manual/${cardId}`}>Grading workspace <span aria-hidden="true">↗</span></Link>
+            <div className={styles.grade}>
+              <div className={styles.award}><span>ATLAS GRADE</span><strong>{recordedGrade(card)}</strong></div>
+              {report ? <a className={styles.reportTile} href={report} aria-label="Grade Report">
+                <svg className={styles.reportPaper} viewBox="0 0 126 146" fill="none" aria-hidden="true"><path className={styles.paperOutline} d="M8 1H102L125 24V138A7 7 0 0 1 118 145H8A7 7 0 0 1 1 138V8A7 7 0 0 1 8 1Z"/><path className={styles.paperFold} d="M102 1V17A7 7 0 0 0 109 24H125"/><path className={styles.paperLines} d="M20 34H51M20 43H66M20 52H58"/></svg>
+                <span className={styles.reportTileLabel}>Grade<br/>Report <span aria-hidden="true">↗</span></span>
+              </a> : <p className={styles.unavailableNote}>Public report publication is pending.</p>}
+            </div>
           </div>
         </section>
         <div className={styles.tabs} role="tablist" aria-label="Card details">{sections.map(([id, label], index) => <button type="button" key={id} role="tab" id={`card-tab-${id}`} aria-controls={`card-panel-${id}`} aria-selected={section === id} tabIndex={section === id ? 0 : -1} onKeyDown={event => selectWithKeyboard(event, index)} onClick={() => setSection(id)}>{label}</button>)}</div>

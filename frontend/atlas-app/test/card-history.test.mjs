@@ -123,11 +123,15 @@ function findNode(value, predicate) {
   return findNode(value.props?.children, predicate);
 }
 
-test('card detail keeps the exact report primary and the grading workspace secondary', async () => {
+test('card detail keeps a concise report link and moves operational context out of the hero', async () => {
   const f = harness(); await f.flush();
   const report = f.find(node => node.type === 'a' && node.props.href === `/reports/${token}?v=2`);
-  assert.ok(report); assert.match(JSON.stringify(report), /Open approved report/);
-  assert.ok(f.find(node => node.type === 'a' && node.props.href === `/manual/${cardId}`));
+  assert.ok(report); assert.equal(report.props['aria-label'], 'Grade Report');
+  const hero = f.find(node => node.type === 'section' && node.props['aria-label'] === 'Card details');
+  assert.doesNotMatch(JSON.stringify(hero), /Human approved|APPROVED CARD|Report version|Grading workspace|Open approved report/);
+  const summary = f.component('GradeSummary', { card: fixture().card, report: `/reports/${token}?v=2` });
+  assert.ok(findNode(summary, node => node.type === 'a' && node.props.href === `/manual/${cardId}`));
+  assert.match(JSON.stringify(summary), /Approved \(UTC\)|Report version|Version/);
   const media = f.find(node => node.type === 'ApprovedCardMedia');
   assert.equal(media.props.mode, 'detail'); assert.equal(media.props.card.approvalActionId, action);
   assert.equal(f.find(node => node.props?.role === 'tab' && node.props.id === 'card-tab-overview').props['aria-selected'], true);

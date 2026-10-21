@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
+import { renderLabelV4 } from '../../../packages/atlas-finishing/src/label-v4.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..'), app = resolve(root, 'frontend/atlas-app');
 const require = createRequire(resolve(root, 'packages/atlas-manual-workspace/package.json'));
 const { build } = require('esbuild');
@@ -39,6 +40,21 @@ const cards = Array.from({ length: 26 }, (_, index) => {
     media: !published ? {} : Object.fromEntries((index === 4 ? ['FRONT'] : ['FRONT', 'BACK']).map(side => [side, { url: `/api/reports/${token}/images/${side}?v=1`, provenance: 'APPROVED_GRADING_PHOTOGRAPH' }])),
     sample };
 });
+// Local-only labels use the same deterministic renderer as the application,
+// bound to these synthetic certificates. This neither saves a production label
+// nor claims that the reference photograph's physical slab has been finished.
+const fixtureLabels = new Map();
+for (const [index, card] of cards.entries()) {
+  if (card.report.state !== 'PUBLISHED' || index === 6) continue;
+  const itemId = randomUUID();
+  const rendered = renderLabelV4({ identity: card.identity, finalGrade: card.finalGrade,
+    reportNumber: card.certificateNumber, approvalVersion: card.report.version,
+    cardProfile: card.identity.category });
+  if (rendered.state !== 'READY') throw Error('Synthetic label needs layout.');
+  fixtureLabels.set(itemId, rendered.previewSvg);
+  card.media.LABEL = { itemId, url: `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview`,
+    provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
+}
 // A clearly synthetic sold-reference case exercises UI without fetching eBay,
 // inventing a market estimate, or attaching fixture sales to a real card record.
 cards[1].savedComparables = { state: 'SAVED', selection: 'SAVED_REPORT_SELECTION', source: 'EBAY_SOLD_LISTINGS', observedAt: '2026-10-26T12:00:00.000Z', presentationRevision: 1,
@@ -80,6 +96,13 @@ const server = createServer(async (req, res) => {
   if (req.url === '/bundle.js' || req.url === '/style.css') { res.setHeader('content-type', req.url.endsWith('.js') ? 'text/javascript' : 'text/css'); res.end(req.url.endsWith('.js') ? js : css); return; }
   if (/^\/admin\/brand\/(?:atlas-grading-logo\.png|fonts\/original-[1-4]\.woff2|archive\/(?:slab-shell-front\.svg|nfc-tag-reference\.jpg))$/.test(url.pathname)) { const file = resolve(app, 'public', url.pathname.slice('/admin/'.length)); res.setHeader('content-type', file.endsWith('.png') ? 'image/png' : file.endsWith('.svg') ? 'image/svg+xml' : file.endsWith('.jpg') ? 'image/jpeg' : 'font/woff2'); res.end(await readFile(file)); return; }
   if (url.pathname === '/admin/api/staff/session') { json(denySession ? { error: 'SIGN_IN_REQUIRED' } : { staff, csrf: 'synthetic' }, denySession ? 401 : 200); return; }
+  const labelArtwork = /^\/admin\/api\/staff\/manual-connected\/labels\/([a-f0-9-]+)\/artwork$/.exec(url.pathname);
+  if (labelArtwork) {
+    if (denySession) { json({ error: 'SIGN_IN_REQUIRED' }, 401); return; }
+    const artwork = fixtureLabels.get(labelArtwork[1]);
+    if (!artwork || url.searchParams.get('mode') !== 'preview') { json({ error: 'ARTWORK_UNAVAILABLE' }, 404); return; }
+    res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' }); res.end(artwork); return;
+  }
   if (url.pathname === '/admin/api/staff/manual-connected/graded-cards') {
     if (failure) { const status = failure; failure = null; json({ error: status === 401 ? 'SIGN_IN_REQUIRED' : 'TEMPORARILY_UNAVAILABLE' }, status); return; }
     const q = (url.searchParams.get('q') || '').toLowerCase(), category = url.searchParams.get('category'), from = url.searchParams.get('from'), to = url.searchParams.get('to'), cursor = url.searchParams.get('cursor');
