@@ -46,9 +46,9 @@ test('both recorded policies survive full approval, public serialization, finish
 });
 test('approved unknown metadata publishes, renders a label and prepares sales without inventing identity or reapproving', async () => {
   for (const [cardProfile, identity, query] of [
-    ['SPORTS', { playerName: 'Stephen Curry', year: null, manufacturer: 'Topps', productSet: 'Flagship', parallel: 'Base', insert: null, cardNumber: '135' }, 'Topps Stephen Curry #135 graded 9.5'],
-    ['SPORTS', { playerName: 'Synthetic sports card', year: null, manufacturer: null, productSet: 'Local only', parallel: null, insert: null, cardNumber: 'B-013' }, 'Synthetic sports card #B-013 graded 9.5'],
-    ['POKEMON', { cardName: 'Synthetic Pokémon', year: null, productSet: 'Local only', parallel: null, cardNumber: '025/165', layoutType: 'POKEMON' }, 'Pokémon Local only Synthetic Pokémon #025/165 graded 9.5'],
+    ['SPORTS', { playerName: 'Stephen Curry', year: null, manufacturer: 'Topps', productSet: 'Flagship', parallel: 'Base', insert: null, cardNumber: '135' }, 'Topps Flagship Stephen Curry #135 psa 9.5'],
+    ['SPORTS', { playerName: 'Synthetic sports card', year: null, manufacturer: null, productSet: 'Local only', parallel: null, insert: null, cardNumber: 'B-013' }, 'Local only Synthetic sports card #B-013 psa 9.5'],
+    ['POKEMON', { cardName: 'Synthetic Pokémon', year: null, productSet: 'Local only', parallel: null, cardNumber: '025/165', layoutType: 'POKEMON' }, 'Pokémon Local only Synthetic Pokémon #025/165 psa 9.5'],
   ]) {
     const f = await publicationFixture({ cardProfile, identity });
     const approval = { actionId: f.row.action_id, report: f.row.report, reportHash: f.row.report_hash, sourceHash: f.row.source_hash, result: f.row.result };

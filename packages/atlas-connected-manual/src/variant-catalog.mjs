@@ -4,7 +4,7 @@ import { canonicalJson, normalizeVariantIdentity,
   createScrydexVariantProvider, createScrydexMetadataReader, createVariantProviderImageReader, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
 import { variantCodexChoice, variantCodexAliases, codexLibraryKey, validateCodexLibrary, codexPhotoPoolKey, validateCodexPhotoPool,
   codexReadingKey, reassociateCodexReading, CODEX_LABEL_POLICY, CODEX_LABEL_MODEL } from './variant-codex.mjs';
-import {prepareVariantListingRequest,variantChecklistListingIdentity,variantChecklistListingYears} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest,variantChecklistListingIdentity,variantChecklistListingYears,VARIANT_LISTING_REVISION,VARIANT_LISTING_LEGACY_REVISION} from './variant-listing-provider.mjs';
 
 const abort = signal => signal?.throwIfAborted();
 const fail = code => Object.assign(new Error(code), { code });
@@ -85,8 +85,8 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
       // worker lease; image reads have their own bounded transport/byte checks.
       if(typeof executeListingSource!=='function')problems.push('LISTING_SOURCE_NOT_CONFIGURED');
       else {
-        // One durable, shared request for each catalog printing, never for each
-        // staff visit. Bound fan-out; absent photos do not hide known choices.
+        // Keep every catalog printing for comparison and historical journals.
+        // New acquisition is shared by the complete saved card identity.
         const named = candidates.filter(c => c.parallel && !c.warnings.includes('SET_NAME_REQUIRES_REVIEW'));
         // A missing sports year may use each exact retained manufacturer row
         // as its source-bound search identity;
@@ -104,9 +104,16 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
         // Identical transport requests may serve competing source releases;
         // retain every member and require each one's own reference association.
         const searches = [...searchGroups.values()];
-        const listingRequest = (printing, generation = null, retainedYear = null) => prepareVariantListingRequest(
-          {...variantChecklistListingIdentity(identity,[printing.candidate],retainedYear??printing.year,{retainedOnly:retainedYear!==null}),cardNumber:printing.cardNumber},
-          {name:printing.name,language:printing.language},{...(generation?{generation}:{})});
+        const listingRequest = (printing, generation = null, retainedYear = null, revision = VARIANT_LISTING_REVISION) => prepareVariantListingRequest(
+          {...variantChecklistListingIdentity(identity,[printing.candidate],retainedYear??printing.year,{retainedOnly:retainedYear!==null}),
+            cardNumber:revision===VARIANT_LISTING_LEGACY_REVISION?printing.cardNumber:identity.cardNumber},
+          {name:printing.name,language:printing.language},{revision,...(generation?{generation}:{})});
+        const identitySearches=new Map();
+        for(const printing of searches){
+          const request=listingRequest(printing);
+          if(!identitySearches.has(request.requestKey))identitySearches.set(request.requestKey,{request,activeRequest:listingGeneration?listingRequest(printing,listingGeneration):request,printings:[]});
+          identitySearches.get(request.requestKey).printings.push(printing);
+        }
         const populated=new Set(),choiceKeys=new Set(named.map(candidate=>variantCodexChoice(candidate).key)),readings=new Map();
         const revisitReadings=async photos=>{
           for(const image of photos){
@@ -168,38 +175,52 @@ export function createVariantCatalogService({ providers, cache = null, scrydex =
               await checkpoint();
             }
         };
-        // R8 libraries contained only matched photos. Read every current
-        // printing's ordinary journals first, even when its library is full,
-        // so unmatched siblings can populate the shared pool before any new
-        // printing acquires a source. A probe cannot reserve or dispatch.
-        const retained=new Map();let bootstrapFailed=false;
-        for(const printing of searches)try{
-          const states=[];
-          const requests = new Map();
-          for (const member of printing.members) for (const year of variantChecklistListingYears(identity,member)) {
-            const request=listingRequest({...printing,candidate:member},null,year); requests.set(request.requestKey,request);
-          }
-          for(const request of requests.values()){
-            abort(signal);
-            const saved=await executeListingSource(request,()=>{throw fail('VARIANT_LISTING_READ_ONLY');},{retainedOnly:true});
-            if(!['MISSING','UNKNOWN','REUSED'].includes(saved.state))throw fail('VARIANT_LISTING_READ_ONLY');
-            states.push(saved.state);
-            if(saved.state==='REUSED')await acquireRetainedPhotos(request,saved,{retainedOnly:true});
-          }
-          // An old unknown transport outcome remains unknown even if another
-          // spelling has a response. Reuse every response; never buy around it.
-          retained.set(printing,states.includes('UNKNOWN')?'UNKNOWN':states.includes('REUSED')?'REUSED':'MISSING');
-        }catch(error){abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;bootstrapFailed=true;problems.push('LISTING_SOURCE_UNAVAILABLE');}
+        // Read exact v3 printing journals before v4 identity journals, including
+        // source-proven year aliases. Probes never reserve or dispatch. A saved
+        // old response still suppresses an ordinary purchase for that printing.
+        const legacyOrdinary=new Map(),legacyActive=listingGeneration?new Map():legacyOrdinary,probed=new Map();let bootstrapFailed=false;
+        const readRequest=async request=>{
+          if(probed.has(request.requestKey))return probed.get(request.requestKey);
+          abort(signal);
+          const saved=await executeListingSource(request,()=>{throw fail('VARIANT_LISTING_READ_ONLY');},{retainedOnly:true});
+          if(!['MISSING','UNKNOWN','REUSED'].includes(saved.state))throw fail('VARIANT_LISTING_READ_ONLY');
+          if(saved.state==='REUSED')await acquireRetainedPhotos(request,saved,{retainedOnly:true});
+          probed.set(request.requestKey,saved.state);return saved.state;
+        };
+        const sourceFailure=error=>{abort(signal);if(error.code==='VARIANT_GRADING_PRIORITY_DEFERRED')throw error;bootstrapFailed=true;problems.push('LISTING_SOURCE_UNAVAILABLE');};
+        const readLegacy=async(printing,generation,target)=>{
+          try{
+            const requests=new Map();
+            for(const member of printing.members)for(const year of variantChecklistListingYears(identity,member)){
+              const request=listingRequest({...printing,candidate:member},generation,year,VARIANT_LISTING_LEGACY_REVISION);requests.set(request.requestKey,request);
+            }
+            const states=[];for(const request of requests.values())states.push(await readRequest(request));
+            target.set(printing,states.includes('UNKNOWN')?'UNKNOWN':states.includes('REUSED')?'REUSED':'MISSING');
+          }catch(error){sourceFailure(error);}
+        };
         for(const printing of searches){
-          if(hasReference(printing))continue;
-          if(!listingGeneration&&retained.get(printing)==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
+          await readLegacy(printing,null,legacyOrdinary);
+          // A pre-upgrade refresh may already have dispatched v3 under this
+          // generation. Its saved or unknown outcome cannot be repurchased.
+          if(listingGeneration)await readLegacy(printing,listingGeneration,legacyActive);
         }
-        // One permanent ordinary request; deliberate missing-reference
-        // generations retain their separate authority for a fresh search.
-        const pending=searches.filter(printing=>!hasReference(printing)&&(listingGeneration||retained.get(printing)==='MISSING'));
-        if(!localOnly&&(!bootstrapFailed||listingGeneration))for (const printing of pending) try {
-          abort(signal);if(hasReference(printing))continue;
-          const request=listingRequest(printing,listingGeneration);
+        for(const group of identitySearches.values()){
+          try{group.ordinaryState=await readRequest(group.request);}catch(error){sourceFailure(error);}
+          if(listingGeneration){try{group.activeState=await readRequest(group.activeRequest);}catch(error){sourceFailure(error);}}
+          else group.activeState=group.ordinaryState;
+        }
+        const missingReferences=group=>group.printings.some(printing=>!hasReference(printing));
+        const unknown=group=>group.activeState==='UNKNOWN'||group.printings.some(printing=>legacyActive.get(printing)==='UNKNOWN');
+        for(const group of identitySearches.values())if(missingReferences(group)&&unknown(group))problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
+        // One new request can cover several printings, so an unknown outcome in
+        // ANY member fences that shared request. Explicit fresh generations can
+        // bypass ordinary history, but never their own prior dispatch outcome.
+        const pending=[...identitySearches.values()].filter(group=>missingReferences(group)&&group.activeState==='MISSING'
+          &&group.printings.every(printing=>['MISSING','REUSED'].includes(legacyActive.get(printing)))
+          &&group.printings.some(printing=>!hasReference(printing)&&legacyActive.get(printing)==='MISSING'));
+        if(!localOnly&&(!bootstrapFailed||listingGeneration))for (const group of pending) try {
+          abort(signal);if(!missingReferences(group))continue;
+          const request=group.activeRequest;
           const saved=await executeListingSource(request,()=>listingProvider.fetchSource(request,{signal}));
           if(saved.state==='UNKNOWN')problems.push('LISTING_SOURCE_OUTCOME_UNKNOWN');
           else await acquireRetainedPhotos(request,saved);

@@ -14,18 +14,18 @@ async function source({ category = 'SPORTS', identity, grade = 9, rawGrade = gra
   packet.report.grade.overall = { rawGrade, displayGrade: rawGrade };
   return { packet, publicHash: digest(JSON.stringify(packet)) };
 }
-const sports = { manufacturer: 'Panini', year: '2025', playerName: 'Jaxson Dart', productSet: 'Donruss Optic',
+const sports = { manufacturer: 'Panini', year: '2025', playerName: 'Jaxson Dart', productSet: 'Mosaic Football — Center Stage',
   cardNumber: '7', parallel: 'Red', insert: 'Rated Rookie' };
 const pokemon = { year: '2024', cardName: 'Alakazam ex', productSet: 'Scarlet & Violet — Paldean Fates',
   cardNumber: '215/091', parallel: null };
 
 test('approved sports and Pokémon examples use the recorded final award and exact collector number', async () => {
   for (const [input, expected] of [
-    [{ identity: sports, grade: 8, rawGrade: 7.64684128229908 }, 'Panini 2025 Jaxson Dart #7 graded 8'],
-    [{ identity: sports, grade: 9, rawGrade: 8.5 }, 'Panini 2025 Jaxson Dart #7 graded 9'],
-    [{ category: 'POKEMON', identity: pokemon }, 'Pokémon 2024 Scarlet & Violet Paldean Fates Alakazam ex #215/091 graded 9'],
+    [{ identity: sports, grade: 8, rawGrade: 7.64684128229908 }, 'Panini 2025 Mosaic Football Center Stage Jaxson Dart #7 psa 8'],
+    [{ identity: sports, grade: 9, rawGrade: 8.5 }, 'Panini 2025 Mosaic Football Center Stage Jaxson Dart #7 psa 9'],
+    [{ category: 'POKEMON', identity: pokemon }, 'Pokémon 2024 Scarlet & Violet Paldean Fates Alakazam ex #215/091 psa 9'],
     [{ category: 'POKEMON', identity: { ...pokemon, productSet: 'Scarlet & Violet–Surging Sparks', cardName: 'Sylveon ex', cardNumber: '#086/191' } },
-      'Pokémon 2024 Scarlet & Violet Surging Sparks Sylveon ex #086/191 graded 9'],
+      'Pokémon 2024 Scarlet & Violet Surging Sparks Sylveon ex #086/191 psa 9'],
   ]) {
     const saved = await source(input), before = structuredClone(saved), context = publishedMarketQuery(saved);
     assert.equal(context.query, expected); assert.equal(context.input.queryOverride, expected);
@@ -37,12 +37,21 @@ test('approved sports and Pokémon examples use the recorded final award and exa
 test('missing descriptive fields stay omitted and historical half-point awards remain exact', async () => {
   const half = { grade: 8.5, rawGrade: 8.35, policy: 'atlas-final-half-point-v1' };
   const saved = await source({ ...half, identity: { ...sports, manufacturer: null, year: null, productSet: null, cardNumber: null } });
-  assert.equal(publishedMarketQuery(saved).query, 'Jaxson Dart graded 8.5');
+  assert.equal(publishedMarketQuery(saved).query, 'Jaxson Dart psa 8.5');
   const partial = await source({ ...half, category: 'POKEMON', identity: { ...pokemon, year: null, productSet: null,
     cardName: 'Ho-Oh', cardNumber: '## 025/165' } });
-  assert.equal(publishedMarketQuery(partial).query, 'Pokémon Ho-Oh #025/165 graded 8.5');
+  assert.equal(publishedMarketQuery(partial).query, 'Pokémon Ho-Oh #025/165 psa 8.5');
   const season = await source({ identity: { ...sports, year: '2025-26', cardNumber: '#BD-013' } });
-  assert.equal(publishedMarketQuery(season).query, 'Panini 2025-26 Jaxson Dart #BD-013 graded 9');
+  assert.equal(publishedMarketQuery(season).query, 'Panini 2025-26 Mosaic Football Center Stage Jaxson Dart #BD-013 psa 9');
+});
+
+test('saved graded searches retain exact wording and input when fresh searches use psa', async () => {
+  const saved = await source({ identity: sports, grade: 8.5, rawGrade: 8.35, policy: 'atlas-final-half-point-v1' });
+  const oldQuery = 'Panini 2025 Jaxson Dart #7 graded 8.5';
+  const context = publishedMarketQuery(saved, { savedQuery: oldQuery }), before = structuredClone(context);
+  assert.deepEqual(publishedMarketQuery(saved, { savedQuery: oldQuery, savedInput: context.input }), context);
+  assert.equal(publishedMarketQuery(saved).query, 'Panini 2025 Mosaic Football Center Stage Jaxson Dart #7 psa 8.5');
+  assert.deepEqual(context, before);
 });
 
 test('saved historical market query and bound input remain selectable without mutation', async () => {

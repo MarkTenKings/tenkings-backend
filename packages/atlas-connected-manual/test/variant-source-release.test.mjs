@@ -70,7 +70,7 @@ test('same transport group preserves every source choice; the populated last mem
  const candidates=(await provider().prepare(base)).candidates,photo=labelPhoto().image,lib=library(candidates[1],photo);let paid=0,probes=0;
  const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates,problems:[],truncated:false})}],cache:{getRetained:async key=>key===codexLibraryKey(lib.choice)?lib:null},listingProvider:{fetchSource:async()=>{paid++;return{};},acquireImages:async()=>({})}});
  const result=await service.prepare({identity:base,reuseJobKey:null},{executeListingSource:async(_request,dispatch,{retainedOnly=false}={})=>{if(retainedOnly){probes++;return{state:'MISSING'};}await dispatch();return{state:'SAVED',source:{sha256:digest('response')}};}});
- assert.equal(result.candidates.length,2);assert.equal(paid,1);assert.equal(probes,1);assert.equal(result.referencePhotos.length,1);
+ assert.equal(result.candidates.length,2);assert.equal(paid,1);assert.equal(probes,2);assert.equal(result.referencePhotos.length,1);
 });
 
 test('source title aliases share current keys, retain old literal aliases, and historical paid request bytes remain readable',async()=>{
@@ -86,7 +86,7 @@ test('transport probes the union of member-approved historical years once and UN
  const identity={...base,year:'1992-93'},p=createManufacturerChecklistVariantProvider({catalog:{schemaVersion:'manufacturer-checklist/v1',complete:false,sources:[source('football','1992-93 Leaf Metal Draft Football',{year:'1992-93'}),source('basketball','1992-93 Leaf Metal Draft Basketball',{year:'1992-93'})],rows:[[0,...row],[1,...row]]}}),result=await p.prepare(identity);let paid=0;const years=[];
  const service=createVariantCatalogService({providers:[{prepare:async()=>result}],listingProvider:{fetchSource:async()=>{paid++;assert.fail('Unknown original outcome');},acquireImages:async()=>assert.fail('No saved response')}});
  const catalog=await service.prepare({identity,reuseJobKey:null},{executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>{assert(retainedOnly);years.push(request.identity.year);return{state:request.identity.year==='1992'?'UNKNOWN':'MISSING'};}});
- assert.deepEqual(years,['1992-93','1992']);assert.equal(paid,0);assert(catalog.problems.includes('LISTING_SOURCE_OUTCOME_UNKNOWN'));
+ assert.deepEqual(years,['1992-93','1992','1992-93']);assert.equal(paid,0);assert(catalog.problems.includes('LISTING_SOURCE_OUTCOME_UNKNOWN'));
 });
 
 test('actual Nick rows with authored legacy libraries reuse every source-proven reading across short/full names without paid work',async()=>{

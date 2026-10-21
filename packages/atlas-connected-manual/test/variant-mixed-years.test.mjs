@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createManufacturerChecklistVariantProvider} from '../../card-catalog-evidence/src/manufacturer-checklist.mjs';
-import {variantChecklistListingIdentity,prepareVariantListingRequest} from '../src/variant-listing-provider.mjs';
+import {variantChecklistListingIdentity,prepareVariantListingRequest,VARIANT_LISTING_LEGACY_REVISION} from '../src/variant-listing-provider.mjs';
 import {createVariantJobStore} from '../src/variant-job-store.mjs';
 const identity={category:'SPORTS',manufacturer:'Panini',year:null,setName:'Panini Elite Basketball',name:'Ray Allen',cardNumber:'1',language:null};
 test('real retained exact-year release survives discovery of a different season without broadening season aliases',async()=>{
@@ -25,6 +25,6 @@ test('real store independently proves mixed-release exact year and printing befo
  const request=prepareVariantListingRequest({...identity,year:'2009'},{name:'ARCeologists',language:null});
  await assert.rejects(store.reserveListingSource(job,request,{retainedOnly:true}),e=>e===sentinel);assert.equal(calls,1);
  for(const patch of [{year:'2010'},{name:'Other Athlete'}])await assert.rejects(store.reserveListingSource(job,prepareVariantListingRequest({...request.identity,...patch},request.printing),{retainedOnly:true}),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
- await assert.rejects(store.reserveListingSource(job,prepareVariantListingRequest(request.identity,{name:'Invented printing',language:null}),{retainedOnly:true}),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
+ await assert.rejects(store.reserveListingSource(job,prepareVariantListingRequest(request.identity,{name:'Invented printing',language:null},{revision:VARIANT_LISTING_LEGACY_REVISION}),{retainedOnly:true}),{code:'VARIANT_LISTING_REQUEST_CHANGED'});
  assert.equal(calls,1,'Invalid year/player/printing never enters SQL boundary');
 });

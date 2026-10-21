@@ -7,13 +7,13 @@ import {prepareVariantLabelRequest,projectVariantLabelResponse,VARIANT_LABEL_POL
 import {labelCatalog,labelPhoto,labelHash,labelResponse} from './variant-label-fixture.mjs';
 import {variantIdentity} from './variant-fixture.mjs';
 
-test('all48known printings retain returned photos without a per-printing cap; seller title never establishes the association',async()=>{
+test('all48known printings remain alongside96returned photos from one search; seller titles never establish associations',async()=>{
  const catalog=labelCatalog({count:48}),calls=[];
  const service=createVariantCatalogService({providers:[{prepare:async()=>({candidates:catalog.candidates,problems:[],truncated:false})}],listingProvider:{acquireImages:async({request},{imageLimit})=>{
-  assert.equal(imageLimit,undefined);calls.push(request.printing.name);const index=catalog.candidates.findIndex(c=>c.label.toLowerCase()===request.printing.name.toLowerCase());assert(index>=0);
-  return {referencePhotos:[labelPhoto(index*2,'fixture').image,labelPhoto(index*2+1,'fixture').image]};}}});
+  assert.equal(imageLimit,undefined);assert.equal(request.printing,undefined);calls.push(request.query);
+  return {referencePhotos:Array.from({length:96},(_,index)=>labelPhoto(index,'fixture').image)};}}});
  const snapshot=await service.prepare({identity:variantIdentity},{executeListingSource:async(_r,_d,{retainedOnly=false}={})=>retainedOnly?{state:'MISSING'}:{state:'SAVED',source:{sha256:labelHash('fixture')}}});
- assert.equal(calls.length,48);assert.equal(new Set(calls).size,48);assert.equal(snapshot.candidates.length,48);assert.equal(snapshot.referencePhotos.length,96);assert(snapshot.candidates.every(c=>c.images.length===0));
+ assert.equal(calls.length,1);assert.equal(snapshot.candidates.length,48);assert.equal(snapshot.referencePhotos.length,96);assert(snapshot.candidates.every(c=>c.images.length===0));
 });
 test('stable manufacturer IDs exclude retained checklist bytes; provider card+printing IDs remain explicit',()=>{
  const make=source=>labelCatalog({source,candidateTransform:c=>{c.authority='provider_candidate';c.canonical=null;c.applicability='unknown';c.source.provider='manufacturer_checklist';c.source.recordId=`manufacturer-row:v1:${labelHash(source)}`;c.source.url='https://www.paniniamerica.net/checklist.html';c.warnings=['APPLICABILITY_UNCONFIRMED'];}});
@@ -64,7 +64,7 @@ test('explicit missing-only refresh skips completed printings and keeps unmatche
  const service=createVariantCatalogService({cache,providers:[{prepare:async()=>({candidates:catalog.candidates,problems:[],truncated:false})}],listingProvider:{acquireImages:async({request},options)=>{
   assert.equal(request.generation,generation);assert.equal(options.isKnownReference,undefined);return {referencePhotos:[known]};}}});
  const result=await service.prepare({identity:variantIdentity,generation},{executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>{if(retainedOnly)return {state:'MISSING'};requests.push(request);return {state:'REUSED',source:{sha256:labelHash('fixture')}};}});
- assert.equal(requests.length,1);assert.notEqual(requests[0].printing.name,complete.label.toLowerCase());assert.equal(result.referencePhotos.length,2);assert(result.referencePhotos.some(p=>p.sha256===library.references[0].image.sha256));
+ assert.equal(requests.length,1);assert.equal(requests[0].printing,undefined);assert.equal(result.referencePhotos.length,2);assert(result.referencePhotos.some(p=>p.sha256===library.references[0].image.sha256));
 });
 
 test('a new printing ordered first reuses unmatched siblings from a completed old printing before any acquisition',async()=>{
@@ -77,8 +77,8 @@ test('a new printing ordered first reuses unmatched siblings from a completed ol
  const cache={getRetained:async key=>key===codexLibraryKey(choice)?library:key===codexReadingKey({policy:VARIANT_LABEL_POLICY,model:VARIANT_PHOTO_MODEL},image.sha256)?reading:null},lookups=[],replays=[];
  const service=createVariantCatalogService({cache,providers:[{prepare:async()=>({candidates:expanded.candidates,problems:[],truncated:false})}],
   listingProvider:{fetchSource:()=>assert.fail('Never repurchase'),acquireImages:async({request},{retainedOnly})=>{assert(retainedOnly);replays.push(request.printing.name);return {referencePhotos:original.referencePhotos};}}});
- const snapshot=await service.prepare({identity:variantIdentity},{executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>{assert.equal(retainedOnly,true,'No new source acquisition is allowed');lookups.push(request.printing.name);return request.printing.name==='base'?{state:'REUSED',source:{sha256:image.sourceResponseSha256}}:{state:'MISSING'};}});
- assert.deepEqual(lookups,[finish.toLowerCase(),'base']);assert.deepEqual(replays,['base']);assert.equal(snapshot.referencePhotos.length,2);assert(!snapshot.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
+ const snapshot=await service.prepare({identity:variantIdentity},{executeListingSource:async(request,_dispatch,{retainedOnly=false}={})=>{assert.equal(retainedOnly,true,'No new source acquisition is allowed');lookups.push(request.printing?.name??'shared identity');return request.printing?.name==='base'?{state:'REUSED',source:{sha256:image.sourceResponseSha256}}:{state:'MISSING'};}});
+ assert.deepEqual(lookups,[finish.toLowerCase(),'base','shared identity']);assert.deepEqual(replays,['base']);assert.equal(snapshot.referencePhotos.length,2);assert(!snapshot.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
  assert.equal(projectCodexReading(reading.reading,snapshot,reading.choices).candidateId,expanded.candidates[0].candidateId);assert.equal(reading.reading.candidateKey,null);
  const completed=createVariantCatalogService({cache,providers:[{prepare:async()=>({candidates:original.candidates,problems:[],truncated:false})}],listingProvider:{fetchSource:()=>assert.fail('No new source'),acquireImages:()=>assert.fail('No saved source exists')}});
  const known=await completed.prepare({identity:variantIdentity},{executeListingSource:async(_r,_d,{retainedOnly})=>{assert(retainedOnly);return {state:'UNKNOWN'};}});

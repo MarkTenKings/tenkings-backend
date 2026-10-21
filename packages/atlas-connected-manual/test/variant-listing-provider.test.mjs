@@ -8,11 +8,12 @@ import { VARIANT_LABEL_POLICY, VARIANT_PHOTO_MODEL } from '../src/variant-photo-
 import { labelCatalog } from './variant-label-fixture.mjs';
 import { variantIdentity } from './variant-fixture.mjs';
 import { prepareVariantListingRequest as prepare, projectVariantListingSource as project,
-  createVariantListingProvider as provider, VARIANT_LISTING_LIMITS as limits } from '../src/variant-listing-provider.mjs';
+  createVariantListingProvider as provider, VARIANT_LISTING_LIMITS as limits, VARIANT_LISTING_LEGACY_REVISION } from '../src/variant-listing-provider.mjs';
 import { importScrydexVariantCandidates, validateVariantCandidate, createVariantReviewSnapshot,
   canonicalJson, isVariantPhotoComparable, scrydexVariantSearchUrl, createManufacturerChecklistVariantProvider } from '@tenkings/card-catalog-evidence';
 
 const sha = v => createHash('sha256').update(v).digest('hex');
+const prepareLegacy=(input,printing)=>prepare(input,printing,{revision:VARIANT_LISTING_LEGACY_REVISION});
 const capturedAt = '2026-10-10T10:00:00.000Z', now = () => Date.parse(capturedAt);
 const identity = { category: 'POKEMON', name: 'Mewtwo', year: '2016', setName: 'Evolutions',
   cardNumber: '051/108', manufacturer: null, language: null };
@@ -47,7 +48,7 @@ test('explicit refresh proceeds when a historical source probe fails, while pres
   const service = createVariantCatalogService({ providers: [{ prepare: async () => ({ candidates: catalog.candidates, problems: [], truncated: false }) }],
     listingProvider: { acquireImages: async (_input, { retainedOnly }) => { assert.equal(retainedOnly, false); return { referencePhotos: [] }; } } });
   const snapshot = await service.prepare({ identity: variantIdentity, generation }, { executeListingSource: async (request, _dispatch, { retainedOnly = false } = {}) => {
-    if (retainedOnly) throw new Error('Corrupt historical journal'); requests.push(request);
+    if (retainedOnly) { if(!request.generation)throw new Error('Corrupt historical journal');return {state:'MISSING'}; } requests.push(request);
     return { state: 'SAVED', source: { sha256: sha('new response') } };
   } });
   assert.equal(requests.length, 1); assert.equal(requests[0].generation, generation); assert(snapshot.problems.includes('LISTING_SOURCE_UNAVAILABLE'));
@@ -119,12 +120,12 @@ test('worker cancellation ends stalled source body without another paid request'
   assert.equal(calls, 1); assert.equal(cancelled, 1);
 });
 
-test('named requests share a durable public printing key and reject language conflicts or injected fields',()=>{
+test('named requests share one durable public identity key and reject language conflicts or injected fields',()=>{
  const a=prepare(identity,{name:'Reverse Holofoil',language:'English'});
  assert.deepEqual(a,prepare({...identity},{name:' reverse holofoil ',language:'en'}));
- assert.match(a.query,/reverse holo/i);assert.doesNotMatch(a.query,/holofoil/i);assert.doesNotMatch(a.query,/english/i,'English seller titles often omit the language; contradictory languages are rejected from returned evidence');
- assert.notEqual(a.requestKey,prepare(identity,{name:'Holofoil',language:'en'}).requestKey);
- assert.notEqual(a.requestKey,prepare(identity).requestKey);
+ assert.equal(a.query,'Pokémon 2016 Evolutions Mewtwo #051/108');assert.equal(a.printing,undefined);
+ assert.equal(a.requestKey,prepare(identity,{name:'Holofoil',language:'en'}).requestKey);
+ assert.equal(a.requestKey,prepare(identity).requestKey);
  assert.throws(()=>prepare({...identity,language:'ja'},{name:'Reverse Holofoil',language:'en'}),/LANGUAGE/);
  assert.throws(()=>prepare(identity,{name:'Reverse Holofoil',language:'en',cardId:'private'}),/PRINTING/);
 });
@@ -133,8 +134,8 @@ test('a Scrydex exact image does not suppress the durable listing search for its
  choice.images[0].relationship='exact';choice.images[0].imageId=`scrydex:variant-image:v1:${sha('synthetic exact image')}`;validateVariantCandidate(choice);let dispatched=0;
  const service=createVariantCatalogService({now,providers:[{prepare:async()=>({candidates:[choice],problems:[],truncated:false})}],
   listingProvider:{fetchSource:async()=>{throw Error('should use journal');}}});
- const result=await service.prepare({identity},{executeListingSource:async request=>{dispatched++;assert.equal(request.printing.name,'snowflake stamp');return{state:'UNKNOWN'};}});
- assert.equal(dispatched,1);assert.equal(result.candidates[0].label,'Snowflake Stamp');assert.ok(result.problems.includes('LISTING_SOURCE_OUTCOME_UNKNOWN'));
+ const result=await service.prepare({identity},{executeListingSource:async(request,_dispatch,{retainedOnly})=>{dispatched++;assert(retainedOnly);return{state:'UNKNOWN'};}});
+ assert.equal(dispatched,2,'Historical printing and current identity are probed without a dispatch');assert.equal(result.candidates[0].label,'Snowflake Stamp');assert.ok(result.problems.includes('LISTING_SOURCE_OUTCOME_UNKNOWN'));
 });
 
 test('all catalog choices are checkpointed before acquisition; saved photos append without becoming verified choices',async()=>{
@@ -145,10 +146,10 @@ test('all catalog choices are checkpointed before acquisition; saved photos appe
   assert.equal(checkpoints[0].candidates.length,choices.length);assert(checkpoints[0].problems.includes('REFERENCE_ACQUISITION_PENDING'));
   assert.equal(checkpoints[0].referencePhotos?.length??0,0);
   if(retainedOnly)return {state:'MISSING'};requests.push(request);return {state:'SAVED',source:source(request,[item(1,'Mewtwo PSA 9')])};}});
- assert.equal(requests.length,choices.length);assert(requests.every(r=>!r.query.includes('graded')&&!r.query.includes('PSA')));
+ assert.equal(requests.length,1);assert(requests.every(r=>!r.query.includes('graded')&&!r.query.includes('PSA')));
  assert.equal(result.referencePhotos.length,1);assert.equal(result.candidates.length,choices.length);
  assert(result.candidates.every(c=>c.images.every(i=>i.relationship!=='listing_photo')));
- assert.equal(checkpoints.length,choices.length+1);assert.equal(checkpoints.at(-1).referencePhotos.length,1);
+ assert.equal(checkpoints.length,2);assert.equal(checkpoints.at(-1).referencePhotos.length,1);
  assert(checkpoints.every(snapshot=>snapshot.problems.includes('REFERENCE_ACQUISITION_PENDING')));
  assert(!result.problems.includes('REFERENCE_ACQUISITION_PENDING'));
 });
@@ -223,7 +224,8 @@ test('a complete 240-photo pool survives acquisition and catalog projection beyo
  assert.equal(calls,240);
 });
 
-test('one concise printing query preserves printed numbers, admits raw cards and keeps stamping terms',()=>{
+test('historical v3 printing query keeps its exact printed numbers and stamping terms',()=>{
+ const prepare=prepareLegacy;
  const reshiram={...identity,name:'Reshiram ex',setName:'Prismatic Evolutions',year:'2025',cardNumber:'030/159'};
  const stamped=prepare(reshiram,{name:'expansion Stamp',language:'en'});
  assert.equal(stamped.query,'reshiram ex 030/159 stamped');

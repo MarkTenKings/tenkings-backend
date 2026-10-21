@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {canonical,digest,object,requireThat,uuid} from '@atlas/manual-service/contract';
 import {authorizeManualCard} from '@atlas/defect-memory/repository';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
-import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION,retainedListingImageBodyKey,validateRetainedListingImageBody} from './variant-listing-provider.mjs';
+import {prepareVariantListingRequest,variantChecklistListingIdentity,VARIANT_LISTING_REVISION,VARIANT_LISTING_LEGACY_REVISION,retainedListingImageBodyKey,validateRetainedListingImageBody} from './variant-listing-provider.mjs';
 import {CODEX_ASSOCIATION_REVISION,variantCodexAliases,codexChoices,codexLibraryKey,codexPhotoPoolKey,validateCodexPhotoPool,codexReadingKey,codexImageReservationKey,validateCodexLibrary,validateVariantReferenceLabels,projectCodexReading} from './variant-codex.mjs';
 import {prepareVariantLabelRequest,projectVariantLabelResponse,readVariantLabelResponse,VARIANT_LABEL_POLICY,VARIANT_PHOTO_MODEL,VARIANT_PHOTO_LIMITS,VARIANT_LABEL_CREDIT_ERROR,variantLabelCreditRejected} from './variant-photo-provider.mjs';
 
@@ -407,19 +407,21 @@ export function createVariantJobStore({boundary,intakeRepository=null,leaseMs=18
       });
     },
     async reserveListingSource(job,request,{retainedOnly=false}={}){
+      const legacy=request.revision===VARIANT_LISTING_LEGACY_REVISION;
+      requireThat(typeof retainedOnly==='boolean'&&(request.revision===VARIANT_LISTING_REVISION||legacy&&retainedOnly),409,'VARIANT_LISTING_REQUEST_CHANGED');
       // Only immutable local manufacturer evidence may fill a missing year
       // for a reference request. Never trust a supplied catalog or request year.
       const discovered=job.input.identity.category==='SPORTS'?await checklist.prepare(job.input.identity):null;
       const resolvedIdentity=discovered?variantChecklistListingIdentity(job.input.identity,discovered.candidates,request.identity?.year,{retainedOnly}):job.input.identity;
       requireThat(compareVariantCardNumber(resolvedIdentity.cardNumber,request.identity?.cardNumber)==='match',409,'VARIANT_LISTING_REQUEST_CHANGED');
-      const listingIdentity={...resolvedIdentity,cardNumber:request.identity.cardNumber};
+      const listingIdentity=legacy?{...resolvedIdentity,cardNumber:request.identity.cardNumber}:resolvedIdentity;
       const identityEvidence=discovered&&(!job.input.identity.year||discovered.candidates.some(c=>c.source.season))?discovered.candidates.filter(c=>{
         try{return canonical(request)===canonical(prepareVariantListingRequest(
-          {...variantChecklistListingIdentity(job.input.identity,[c],listingIdentity.year,{retainedOnly}),cardNumber:request.identity.cardNumber},
-          {name:c.label,language:c.identity.language},{...(request.generation?{generation:request.generation}:{})}));}catch{return false;}
+          {...variantChecklistListingIdentity(job.input.identity,[c],listingIdentity.year,{retainedOnly}),cardNumber:listingIdentity.cardNumber},
+          {name:c.label,language:c.identity.language},{revision:request.revision,...(request.generation?{generation:request.generation}:{})}));}catch{return false;}
       }).map(c=>({candidateId:c.candidateId,source:c.source})):null;
       requireThat(!identityEvidence||identityEvidence.length>0,409,'VARIANT_LISTING_REQUEST_CHANGED');
-      requireThat(typeof retainedOnly==='boolean'&&request.revision===VARIANT_LISTING_REVISION&&(!request.generation||job.input.reuseJobKey!==null&&request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,request.printing??null,{...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
+      requireThat((!request.generation||job.input.reuseJobKey!==null&&request.generation===job.input.generation)&&canonical(request)===canonical(prepareVariantListingRequest(listingIdentity,request.printing??null,{revision:request.revision,...(request.generation?{generation:request.generation}:{})})),409,'VARIANT_LISTING_REQUEST_CHANGED');return machine(async({tx})=>{
       await listingLock(tx,request.requestKey);
       const [live]=await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active} AND j.state='RUNNING' FOR UPDATE`,job.key,job.claim_id);
       requireThat(live,409,'VARIANT_LEASE_LOST');
