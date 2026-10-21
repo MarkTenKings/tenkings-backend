@@ -46329,3 +46329,11 @@ Added a validated orderId navigation hint to the existing customer-operations pa
 ## 2026-10-20 — Archive release source reconciliation
 
 Fresh production inspection showed native3256 shared-search successor was not an ancestor of archive4a7; the earlier fbb baseline assumption was incorrect. Merge preserves all five live shared-query/variant runtime paths and their tests, plus current publiceafcec and archive changes. Reconcile finishing-test expectations to live full-set/PSA query semantics, without changing behavior. No production mutation. New candidate must pass complete tests/build/frozen-source qualification before release.
+
+
+### 2026-10-20 — Restricted worker startup correction before archive activation
+- Independent source review found that the archive service was constructed and validated in the restricted variant-worker process. Migration 008 intentionally grants archive access only to the manual role; the unchanged worker adapter selects a separate restricted role. The previous c4b7 native image therefore cannot be activated despite its earlier isolated test pass.
+- The worker now omits the human archive capability and its validation; the serving process still constructs it and requires migration 008 plus the narrow EXECUTE grant. No SQL, role grant, queue, provider or credential change. The next-R1 worktree applies the same guard to the private Card history capability and retains main-process migration 009 validation.
+- Added actual composition regression coverage using variantWorkerSettings and variantWorkerEnvironment with an archive-denied database client. It verifies cold construction, restricted-role selection, required variant schema/grants and main-process archive enforcement. Focused lane suites: release 19/19 and next-R1 20/20. Root reran the new actual-composition tests: release 3/3 and next-R1 4/4.
+- No production activation has occurred. The corrected native source/image must be freshly qualified; the existing qualified c4b7 web candidates may be retained only with explicit separate native/web source bindings and unchanged web dependency evidence.
+- The user is available for normal staff sign-in after cutover. No login code, replacement credential or diagnostic SMS is requested.
