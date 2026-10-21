@@ -57,6 +57,21 @@ test('isolated packaged catalog resolves Jordan, Nick Kurtz and LaMelo offline a
   }
  }finally{await rm(temporary,{recursive:true,force:true});await rm(temporary+'.manifest.json',{force:true});}
 });
+test('isolated serving router closure resolves every exported entry including detail report return',async()=>{
+ const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-router-'));
+ try{
+  const {files}=await collectManualSource();
+  for(const file of files.filter(file=>file.path.startsWith('packages/atlas-site-router/'))){
+   const path=join(temporary,file.path);await mkdir(dirname(path),{recursive:true});await writeFile(path,file.bytes);
+  }
+  const router=join(temporary,'packages/atlas-site-router');
+  const manifest=JSON.parse(await readFile(join(router,'package.json'),'utf8'));
+  for(const entry of Object.values(manifest.exports)){
+   const result=spawnSync(process.execPath,['--input-type=module','-e',`await import(${JSON.stringify(join(router,entry))})`],{encoding:'utf8'});
+   assert.equal(result.status,0,`${entry}: ${result.stderr}`);
+  }
+ }finally{await rm(temporary,{recursive:true,force:true});}
+});
 test('unverified native archives fail before creating a source output',async()=>{
  const temporary=await mkdtemp(join(tmpdir(),'atlas-package-rejection-'));
  try{

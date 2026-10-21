@@ -46597,3 +46597,11 @@ Ownership specialist will apply only its new unregistered ownership proposal to 
 - Both fresh gateway hashes match recorded production; their generic manual route admits provenance. Strict frontend/signed-native GET and query authorization remains the functional boundary. Retain both gateway configs; no needless reload planned.
 - Independent cross-review found ownership lock-wait revocation and duplicate comp-alias concerns in the new unreleased lanes; specialists are correcting them before qualification. They remain unregistered/unexposed.
 - Next preparation exports only an explicit committed detail source, packages its exact native dependency closure with verified vendor tarballs, and records a fresh manifest outside the checkout. No deployment/restart/migration is authorized by the packaging action itself; those effects require a concrete fresh coordinated runbook sequence and restored Vercel team access.
+
+
+### 2026-10-21 — Fresh source closure corrected before Linux build
+
+- Detail media fix committed as `eb104bfb96fb89423ca6108899778b19c67481ad`. Committed-source export and each of2426 packaged file hashes matched that commit, excluding ongoing unregistered ownership/collection work.
+- Independent release review found the explicit native source closure omitted new root-level `packages/atlas-site-router/report-entry.mjs`; local Next builds had access to the full checkout and did not expose the omission. The eb104bfb package is retained preparation evidence and is not a deployable candidate.
+- Added that exact module to explicit required source. New isolated router-closure test imports every declared router export from only packaged files. All5 manual-container tests pass under Node22, including source tamper/path/symlink refusal and offline catalog qualification. Evidence: `atlas-detail-release-20261021/preflight/manual-container-02.log`. Regenerate a fresh pinned package from the successor commit before Linux qualification.
+- No production migration, restart, deployment, provider request or business-row write.

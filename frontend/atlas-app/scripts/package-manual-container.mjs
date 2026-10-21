@@ -23,7 +23,7 @@ const staticRequired=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.ya
   ...LABEL_V4_SOURCES,
   'frontend/atlas-shared/RapidCardCamera.jsx','frontend/atlas-shared/RapidCardCamera.module.css','frontend/atlas-shared/rapid-camera.mjs',
   'frontend/atlas-app/next.config.mjs','frontend/atlas-app/.eslintrc.json','frontend/atlas-app/prisma/schema.prisma',
-  'packages/atlas-site-router/routes.mjs','packages/atlas-site-router/proof.mjs','packages/atlas-site-router/server.mjs',
+  'packages/atlas-site-router/routes.mjs','packages/atlas-site-router/report-entry.mjs','packages/atlas-site-router/proof.mjs','packages/atlas-site-router/server.mjs',
   'frontend/atlas-app/scripts/generate-database.mjs','frontend/atlas-app/scripts/check-boundary.mjs',
   'frontend/atlas-app/scripts/verify-manual-container.mjs',
   'packages/atlas-grading-core/scripts/build.mjs','packages/atlas-grading-core/extraction-manifest.json',
