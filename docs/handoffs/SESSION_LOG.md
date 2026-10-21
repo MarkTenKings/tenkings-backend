@@ -46374,3 +46374,14 @@ Locally added a read-only Card history page and archive links for the forthcomin
 - New remote branch `origin/codex/atlas-archive-production` published without force; `git ls-remote` confirms exact `c4b7cc85f01754eb5776042147e6c0fdf50f845a`. Main is unchanged.
 - Final next-R1 connected suite after identity freeze: 900 tests, 898 pass, zero failures, two existing native-measurement environment skips. Standalone database plus actual Card history/client checks: 14/14. The actual disposable-PostgreSQL DTO passes the real browser client's exact-card/report/photo guards. Expanded identity focused suite 160/160 plus final comp checks 27/27.
 - Detailed integration evidence and source hashes are in `docs/atlas/audits/2026-10-20/next-r1-integration-qualification.md`; log `/tmp/atlas-marketplace-foundation-checks/r1-connected-final2.log`. No production ownership, sales, payments or R1 migration 009 were performed.
+
+### 2026-10-20 — Next-R1 checkpoint and staged staff qualification
+- Saved reviewed sports identity and recorded Card history as commit `d257510f` on `codex/atlas-marketplace-foundation`. This successor is not the production archive candidate; c4b7 remains frozen and excludes migration 009.
+- Unassigned staff candidate `dpl_AmUUXzXbNpHPB6ZSrcpCZ4VqjGbX` is READY. Qualification `4e6c64f6bf9d72e84bc04d0c9e605cc7102a3e85675ab2528ed7a7903869dec6` verifies 2,652 provider-tree files, 117 current source-path readbacks, 2,535 retained qualified bytes, the staff build boundary, archive lambda and served archive JavaScript. Authenticated real archive acceptance remains pending. Existing production targets/controls/environments are unchanged.
+
+### 2026-10-20 — Planned unassigned public routing candidate
+- Execute only `candidates.mjs create public` with already reviewed plan `fa0721f14ec3e765e8c1d0a179b88f153f9176f0d29c56c0e2189b87d8664ad2`, followed by inspection/source-build-asset qualification. Both build/runtime routing must point to qualified `https://atlas-grading-staff-chbqd5o92-ten-kings.vercel.app` and retained `https://atlas-grading-customer-3pykjnz60-ten-kings.vercel.app`.
+- Public source remains byte-identical to current eafcec; auto-assignment of custom domains is disabled. No alias/promotion, project environment, control, database, gateway or serving change is authorized by this candidate step. Effective forwarding and real authenticated access remain explicit later checks.
+
+### 2026-10-20 — Retained report regression coverage
+- Added the already-qualified `report-sports-identity.test.mjs` to version control in a follow-up checkpoint. It verifies identical staff/public card-fact display, exact printed serial, explicit autograph-authentication limitation, retained manufacturer statement, exclusion of private observations/image hashes, and unchanged historical identity rows. This was included in the identity lane's 160-test run; no runtime change or expanded test claim.
