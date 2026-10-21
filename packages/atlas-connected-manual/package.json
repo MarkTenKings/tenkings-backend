@@ -34,7 +34,8 @@
     "./variant-job-store": "./src/variant-job-store.mjs",
     "./variant-worker": "./src/variant-worker.mjs",
     "./variant-service": "./src/variant-service.mjs",
-    "./variant-worker-grants": "./src/variant-worker-grants.mjs"
+    "./variant-worker-grants": "./src/variant-worker-grants.mjs",
+    "./graded-cards": "./src/graded-cards.mjs"
   },
   "scripts": {
     "test": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node --test test/*.test.mjs"

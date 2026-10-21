@@ -1,3 +1,4 @@
+import { GRADED_CARDS_PATH, gradedCardsQuery } from './graded-cards-contract.mjs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { MANUAL_STREAM_HEADER, MANUAL_STREAM_PROTOCOL } from '@atlas/manual-service/response';
 
@@ -64,11 +65,15 @@ export function isManualServicePath(value) {
     || /[\\\s\0#]/.test(value)) return false;
   let url;
   try { url = new URL(value, PUBLIC_BASE); } catch { return false; }
+  if (url.pathname === GRADED_CARDS_PATH) {
+    try { if (/%(?![a-fA-F0-9]{2})/.test(url.search)) return false; gradedCardsQuery(url); } catch { return false; }
+  }
   return url.origin === PUBLIC_BASE && url.pathname + url.search === value && !url.pathname.includes('%')
     && (/^\/api\/staff\/(?:manual|manual-intake|manual-connected)\/cards(?:\/[A-Za-z0-9-]+)*$/.test(url.pathname)
       || /^\/api\/staff\/manual-connected\/stations(?:\/(?:challenge|enroll|arm|acknowledge|complete))?$/.test(url.pathname)
       || RETURN_LABEL_PATH.test(url.pathname)
       || ORDER_DESK_PATH.test(url.pathname)
+      || url.pathname === GRADED_CARDS_PATH
       || LABEL_SHEET_PATH.test(url.pathname) && (!url.search
         || /^\/api\/staff\/manual-connected\/label-sheets\?cursor=(?:0|[1-9]\d{0,6})$/.test(value))
       || LABEL_ITEM_PATH.test(url.pathname) && (!url.search || LABEL_ARTWORK_PATH.test(value))

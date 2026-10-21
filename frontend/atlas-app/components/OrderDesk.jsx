@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/client';
+import { selectedOrderFromQuery } from '../lib/order-desk-client.mjs';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { custodyNames, journalLock } from '../lib/customer-operations.mjs';
 import { ORDER_DESK_POLL_MS, ORDER_STAGES, acknowledgmentConfirmed, acknowledgmentJournal, cardSubtitle, cardTitle, isAccessFailure, mergeOrderPage, orderDate, orderDeskMessage, orderDeskPath, orderDetailPath, orderLabelBytes, orderMoney, orderPhotoPath, retainedSelection, stageLabel } from '../lib/order-desk-client.mjs';
@@ -13,18 +14,20 @@ const photoReady = (card, side) => card?.photos?.[side]?.state === 'READY';
 const shippingUnpaid = order => ['UNQUOTED_UNPAID', 'UNQUOTED', 'UNPAID', 'NOT_QUOTED', 'AWAITING_PAYMENT', 'PAYMENT_REQUIRED'].includes(order.shippingPayment?.state);
 const shippingConcern = order => shippingUnpaid(order) ? 'Shipping unquoted or unpaid' : ({ UNKNOWN: 'Shipping payment outcome unconfirmed', FAILED: 'Shipping payment needs attention', PROCESSING: 'Shipping payment processing', NOT_RECORDED: 'Shipping payment not recorded' }[order.shippingPayment?.state] ?? '');
 
-export default function OrderDesk({ staff, disabled = false, readDisabled = false, onAction, renderCardActions, renderReturnShipping, request = api, active = true }) {
+export default function OrderDesk({ staff, initialOrderId = null, disabled = false, readDisabled = false, onAction, renderCardActions, renderReturnShipping, request = api, active = true }) {
+  const linkedOrder = selectedOrderFromQuery(initialOrderId);
   const [q, setQ] = useState(''), [search, setSearch] = useState(''), [stage, setStage] = useState('all'), [view, setView] = useState('all');
   const [queue, setQueue] = useState({ orders: [], counts: null, nextCursor: null }), [loading, setLoading] = useState(true), [updating, setUpdating] = useState(false), [error, setError] = useState(''), [accessLost, setAccessLost] = useState(false), [updatedAt, setUpdatedAt] = useState(null);
-  const [selectedId, setSelectedId] = useState(null), [details, setDetails] = useState({}), [detailErrors, setDetailErrors] = useState({}), [mobileDetail, setMobileDetail] = useState(false);
+  const [selectedId, setSelectedId] = useState(linkedOrder), [details, setDetails] = useState({}), [detailErrors, setDetailErrors] = useState({}), [mobileDetail, setMobileDetail] = useState(Boolean(linkedOrder));
   const [pendingAck, setPendingAck] = useState(null), [ackReady, setAckReady] = useState(false), [ackBusy, setAckBusy] = useState(false), [ackError, setAckError] = useState(''), [ackMessage, setAckMessage] = useState('');
-  const selected = useRef(null), queueToken = useRef(0), live = useRef(true), ackStore = useRef(null), ackRunning = useRef(false), queueRequest = useRef(null), detailRequests = useRef(new Map()), refresh = useRef(null), lastRead = useRef(0), filterKey = `${search}\n${stage}\n${view}`;
+  const selected = useRef(linkedOrder), queueToken = useRef(0), live = useRef(true), ackStore = useRef(null), ackRunning = useRef(false), queueRequest = useRef(null), detailRequests = useRef(new Map()), refresh = useRef(null), lastRead = useRef(0), filterKey = `${search}\n${stage}\n${view}`;
+  const readGeneration = useRef(0), readAccessLost = useRef(false);
   const filters = useRef({ q: search, stage, view }); filters.current = { q: search, stage, view };
   useEffect(() => { const timer = setTimeout(() => setSearch(q.trim()), 350); return () => clearTimeout(timer); }, [q]);
   useEffect(() => {
     live.current = true;
     try {
-      const saved = retainedSelection(window.sessionStorage, staff.id);
+      const saved = linkedOrder ?? retainedSelection(window.sessionStorage, staff.id);
       if (saved) { selected.current = saved; setSelectedId(saved); }
     } catch { /* Selection persistence is optional; never stores customer details. */ }
     try { ackStore.current = acknowledgmentJournal(window.localStorage, staff.id); setPendingAck(ackStore.current.read()); setAckReady(true); }
@@ -35,42 +38,55 @@ export default function OrderDesk({ staff, disabled = false, readDisabled = fals
     };
     window.addEventListener('storage', changed);
     return () => { live.current = false; queueRequest.current?.abort(); for (const controller of detailRequests.current.values()) controller.abort(); window.removeEventListener('storage', changed); };
-  }, [staff.id]);
+  }, [staff.id, linkedOrder]);
 
+  function endReadAccess(cause) {
+    readAccessLost.current = true; readGeneration.current++; queueToken.current++;
+    queueRequest.current?.abort(); queueRequest.current = null;
+    for (const controller of detailRequests.current.values()) controller.abort();
+    detailRequests.current.clear();
+    selected.current = null; setSelectedId(null); setMobileDetail(false);
+    setDetails({}); setDetailErrors({}); setQueue({ orders: [], counts: null, nextCursor: null });
+    setAccessLost(true); setError(orderDeskMessage(cause)); setUpdatedAt(null); setUpdating(false); setLoading(false);
+    // Keep acknowledgment journals and dispatched writes intact until their exact outcome is known.
+  }
   async function readDetail(id) {
-    if (!id) return null;
+    if (!id || !live.current || readAccessLost.current) return null;
+    const generation = readGeneration.current;
     detailRequests.current.get(id)?.abort();
     const controller = new AbortController(); detailRequests.current.set(id, controller);
     try {
       const data = await request(orderDetailPath(id), { signal: controller.signal });
-      if (!live.current || controller.signal.aborted) return null;
+      if (!live.current || generation !== readGeneration.current || controller.signal.aborted) return null;
       if (data.order?.id !== id) throw new Error('The order reply did not match the selected order.');
       setDetails(old => ({ ...old, [id]: data.order })); setDetailErrors(old => ({ ...old, [id]: '' }));
       return data.order;
     } catch (e) {
-      if (live.current && !controller.signal.aborted) {
-        if (isAccessFailure(e)) { setAccessLost(true); setDetails({}); setQueue({ orders: [], counts: null, nextCursor: null }); }
-        setDetailErrors(old => ({ ...old, [id]: orderDeskMessage(e) }));
+      if (live.current && generation === readGeneration.current && !controller.signal.aborted) {
+        if (isAccessFailure(e)) endReadAccess(e);
+        else setDetailErrors(old => ({ ...old, [id]: orderDeskMessage(e) }));
       }
       return null;
     } finally { if (detailRequests.current.get(id) === controller) detailRequests.current.delete(id); }
   }
   async function readQueue({ append = false, cursor, initial = false } = {}) {
+    if (!live.current || readAccessLost.current) return;
+    const generation = readGeneration.current;
     const token = ++queueToken.current;
     queueRequest.current?.abort(); const controller = new AbortController(); queueRequest.current = controller;
     setUpdating(true); if (initial) setLoading(true);
     try {
       const data = await request(orderDeskPath({ ...filters.current, ...(append ? { cursor } : {}) }), { signal: controller.signal });
-      if (!live.current || token !== queueToken.current || controller.signal.aborted) return;
+      if (!live.current || generation !== readGeneration.current || token !== queueToken.current || controller.signal.aborted) return;
       if (!Array.isArray(data.orders) || !data.counts) throw new Error('The order queue reply could not be verified.');
       setQueue(old => ({ ...data, orders: mergeOrderPage(old.orders, data.orders, append) })); setError(''); setAccessLost(false); setUpdatedAt(new Date().toISOString()); lastRead.current = Date.now();
       if (!selected.current && data.orders[0]) { selected.current = data.orders[0].id; setSelectedId(data.orders[0].id); }
     } catch (e) {
-      if (live.current && token === queueToken.current && !controller.signal.aborted) {
-        if (isAccessFailure(e)) { setAccessLost(true); setDetails({}); setQueue({ orders: [], counts: null, nextCursor: null }); }
-        setError(orderDeskMessage(e));
+      if (live.current && generation === readGeneration.current && token === queueToken.current && !controller.signal.aborted) {
+        if (isAccessFailure(e)) endReadAccess(e);
+        else setError(orderDeskMessage(e));
       }
-    } finally { if (live.current && token === queueToken.current) { setUpdating(false); setLoading(false); } }
+    } finally { if (live.current && generation === readGeneration.current && token === queueToken.current) { setUpdating(false); setLoading(false); } }
   }
   refresh.current = () => { if (!active || document.visibilityState !== 'visible') return; void readQueue(); if (selected.current) void readDetail(selected.current); };
   useEffect(() => { if (active) void readQueue({ initial: !queue.counts }); }, [filterKey, active]);
@@ -83,11 +99,12 @@ export default function OrderDesk({ staff, disabled = false, readDisabled = fals
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
   }, [active]);
   function selectOrder(id) {
+    if (readAccessLost.current) return;
     selected.current = id; setSelectedId(id); setMobileDetail(true);
     try { retainedSelection(window.sessionStorage, staff.id, id); } catch { /* Keep this tab’s selection. */ }
   }
   async function checkAcknowledgment() {
-    if (ackRunning.current || !ackStore.current) return;
+    if (ackRunning.current || readAccessLost.current || !ackStore.current) return;
     ackRunning.current = true; setAckBusy(true); setAckError('');
     try {
       await journalLock(navigator, ackStore.current.key, async () => {
@@ -100,7 +117,7 @@ export default function OrderDesk({ staff, disabled = false, readDisabled = fals
     finally { ackRunning.current = false; if (live.current) setAckBusy(false); }
   }
   async function acknowledge(orderId, retry = false) {
-    if (ackRunning.current || !ackReady || accessLost || !ackStore.current) return;
+    if (ackRunning.current || !ackReady || readAccessLost.current || !ackStore.current) return;
     ackRunning.current = true; setAckBusy(true); setAckError(''); setAckMessage('');
     try {
       const store = ackStore.current;
@@ -111,6 +128,7 @@ export default function OrderDesk({ staff, disabled = false, readDisabled = fals
         try {
           const session = await request('session');
           if (!session.csrf || session.staff?.id !== staff.id || session.staff.role !== 'REVIEWER') throw new Error('Sign in as the same reviewer before acknowledging this order.');
+          if (readAccessLost.current) throw new Error('Sign in again before acknowledging this order.');
           if (first) { saved = { version: 1, staffId: staff.id, orderId, requestId: crypto.randomUUID(), accepted: false }; store.save(saved); setPendingAck(saved); }
           attempted = true;
           const result = await request(`${orderDetailPath(saved.orderId)}/acknowledge`, { body: { requestId: saved.requestId }, csrf: session.csrf });

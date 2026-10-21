@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 802.64 1353.82" role="img">
+  <title>Illustrative ATLAS holder, front view</title>
+  <desc>Front-view design illustration using owner-supplied exterior proportions. Internal profiles are illustrative; this is not a photograph or calibrated manufacturing model.</desc>
+  <defs>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fcfdff"/><stop offset=".08" stop-color="#c8cdd2"/><stop offset=".18" stop-color="#f7f8fa"/><stop offset=".48" stop-color="#b8bec4"/><stop offset=".67" stop-color="#f5f7f9"/><stop offset=".9" stop-color="#c7ccd1"/><stop offset="1" stop-color="#fafbfc"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7f9fb" stop-opacity=".85"/><stop offset=".28" stop-color="#eef1f4" stop-opacity=".5"/><stop offset=".76" stop-color="#f8f9fb" stop-opacity=".65"/><stop offset="1" stop-color="#e0e4e8" stop-opacity=".85"/>
+    </linearGradient>
+    <linearGradient id="recess" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b5bcc4"/><stop offset=".22" stop-color="#f6f8fa"/><stop offset=".6" stop-color="#e4e8eb"/><stop offset="1" stop-color="#afb7bf"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#d6dce2"/><stop offset=".07" stop-color="#ffffff"/><stop offset=".93" stop-color="#f1f4f7"/><stop offset="1" stop-color="#c5cdd4"/>
+    </linearGradient>
+  </defs>
+  <rect x="5" y="5" width="792.64" height="1343.82" rx="27" fill="url(#edge)" stroke="#bfc6cd" stroke-width="3"/>
+  <rect x="15" y="15" width="772.64" height="1323.82" rx="23" fill="url(#body)" stroke="#ffffff" stroke-width="4"/>
+  <rect x="29" y="29" width="744.64" height="1295.82" rx="18" fill="none" stroke="#c9cfd6" stroke-width="2"/>
+  <rect x="36" y="36" width="730.64" height="1281.82" rx="14" fill="none" stroke="#ffffff" stroke-opacity=".9" stroke-width="3"/>
+  <rect x="49" y="54" width="704.64" height="225" rx="11" fill="url(#recess)" stroke="#b7bfc7" stroke-width="2"/>
+  <rect x="56" y="61" width="690.64" height="211" rx="7" fill="#d9dde1" stroke="#ffffff" stroke-width="3"/>
+  <path d="M44 294H758.64 M44 302H758.64" stroke="#c4cbd2" stroke-width="3"/>
+  <path d="M44 297H758.64" stroke="#ffffff" stroke-width="3"/>
+  <rect x="76" y="324" width="650.64" height="910" rx="10" fill="url(#recess)" stroke="#b6bec6" stroke-width="2"/>
+  <rect x="81.32" y="330" width="640" height="900" rx="5" fill="#edf0f3" stroke="#ffffff" stroke-width="3"/>
+  <path d="M65 346V1213 M737.64 346V1213" stroke="url(#inner)" stroke-width="11"/>
+  <path d="M72 345V1212 M730.64 345V1212" stroke="#c3cad1" stroke-width="2"/>
+  <path d="M50 1244H752.64 M50 1251H752.64" stroke="#d0d6dc" stroke-width="3"/>
+  <path d="M50 1247H752.64" stroke="#ffffff" stroke-width="3"/>
+  <path d="M60 1293H742.64" stroke="#c5ccd3" stroke-width="7" stroke-linecap="round"/>
+  <path d="M61 1289H741.64" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M20 62V1268 M781 69V1274" stroke="#ffffff" stroke-width="5" opacity=".8"/>
+  <path d="M43 31H741 M44 1323H740" stroke="#ffffff" stroke-width="4" opacity=".8"/>
+</svg>

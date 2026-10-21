@@ -16,12 +16,12 @@ const blankCustody = () => ({ kind: '', occurredAt: '', reference: '', note: '',
 function Field({ label, children }) { return <label className={styles.field}><span>{label}</span>{children}</label>; }
 function Entry({ label, value, onChange, ...props }) { return <Field label={label}><input value={value ?? ''} onChange={event => onChange(event.target.value)} {...props}/></Field>; }
 
-export default function CustomerOperations({ staff }) {
+export default function CustomerOperations({ staff, initialOrderId = null }) {
   if (staff?.role !== 'REVIEWER') return <Shell staff={staff} manual title="Order desk"><main className={styles.main}><h1>Order desk</h1><p>A reviewer staff account is required.</p></main></Shell>;
-  return <Operations staff={staff}/>;
+  return <Operations staff={staff} initialOrderId={initialOrderId}/>;
 }
 
-export function Operations({ staff }) {
+export function Operations({ staff, initialOrderId = null }) {
   const resource = useStaffResource(base), [tab, setTab] = useState('orders'), [pending, setPending] = useState(null), [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   const running = useRef(false), journal = useRef(null), currentStaff = useRef(staff.id);
   useEffect(() => {
@@ -99,7 +99,7 @@ export function Operations({ staff }) {
     </section>}
     <nav className={styles.tabs} aria-label="Customer operations sections">{[['orders', 'Order desk'], ['locations', 'Kiosk setup'], ['memberships', 'Dealer access']].map(([key, label]) => <button type="button" key={key} aria-current={tab === key ? 'page' : undefined} onClick={() => setTab(key)}>{label}</button>)}</nav>
     {tab === 'orders' && resource.error && <div className={deskStyles.notice} role="alert"><p>Physical operations access could not be checked. Custody and return-label actions stay unavailable until the saved records can be read.</p><button type="button" onClick={resource.reload}>Check operations access</button>{resource.signedOut && <a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a>}</div>}
-    <div hidden={tab !== 'orders'}><OrderDesk staff={staff} active={tab === 'orders'} disabled={disabled} readDisabled={busy || !resource.session} onAction={runAction}
+    <div hidden={tab !== 'orders'}><OrderDesk staff={staff} initialOrderId={initialOrderId} active={tab === 'orders'} disabled={disabled} readDisabled={busy || !resource.session} onAction={runAction}
       renderCardActions={props => <div className={deskStyles.legacyActions}><CustodyCard {...props}/></div>}
       renderReturnShipping={props => <div className={deskStyles.legacyActions}><ReturnShippingLabel {...props}/></div>}/></div>
     {tab !== 'orders' && (resource.loading ? <p role="status">Loading current staff records…</p> : resource.error ? <div className={styles.panel}><p role="alert">{resource.error}</p><button type="button" onClick={resource.reload}>Try reading again</button>{resource.signedOut && <p><a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a></p>}</div> : !resource.data ? <p>No verified staff roster is available.</p> : <>

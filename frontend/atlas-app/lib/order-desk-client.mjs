@@ -9,6 +9,9 @@ export const ORDER_STAGES = Object.freeze([
 ]);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export const validOrderId = value => typeof value === 'string' && uuid.test(value);
+// A navigation hint only. The existing order-detail API checks staff authority.
+export const selectedOrderFromQuery = value => validOrderId(value) ? value : null;
+export const orderDeskPagePath = orderId => validOrderId(orderId) ? `/customer-operations?orderId=${orderId}` : null;
 export const stageLabel = value => ORDER_STAGES.find(([key]) => key === value)?.[1] ?? ({ WAITING_FOR_ARRIVAL: 'Awaiting arrival', GRADING: 'In grading', HUMAN_REVIEW: 'Human review', FINISHING: 'Finishing', READY_FOR_RETURN: 'Ready for return', ATTENTION: 'Needs attention', MIXED: 'Mixed card stages' }[value] ?? 'Stage not available');
 export function orderDeskPath({ q = '', stage = 'all', view = 'all', cursor, limit = 30 } = {}) {
   const search = new URLSearchParams();

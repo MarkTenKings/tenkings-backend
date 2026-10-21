@@ -4,7 +4,10 @@ import {readFile} from 'node:fs/promises';
 import {registeredMigrations,validateLedger} from '../registered-migrations.mjs';
 const baseline=JSON.parse(await readFile(new URL('../baseline.manifest.json',import.meta.url),'utf8'));
 test('registered additive suffix seals SQL independently of original baseline',async()=>{
- const migrations=await registeredMigrations();assert.equal(migrations.length,6);
+ const migrations=await registeredMigrations();assert.equal(migrations.length,7);
+ assert.equal(migrations[6].version,'atlas-standalone-008-graded-cards-archive');
+ assert.match(migrations[6].sql,/CREATE FUNCTION atlas_manual.graded_cards/);
+ assert.doesNotMatch(migrations[6].sql,/CREATE TABLE|INSERT INTO|UPDATE atlas_manual\.|DELETE FROM|TRUNCATE/i);
  assert.equal(migrations[5].version,'atlas-standalone-007-label-layout-retry');
  assert.match(migrations[5].sql,/label_item_layout_successor/);
  assert.doesNotMatch(migrations[5].sql,/CREATE TABLE|DELETE FROM|TRUNCATE|UPDATE atlas_manual\./i);

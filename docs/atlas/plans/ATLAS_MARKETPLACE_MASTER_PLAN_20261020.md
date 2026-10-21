@@ -1,0 +1,76 @@
+# ATLAS card archive, collection and marketplace
+
+Owner direction: Mark Thomas, October 20, 2026. This document carries forward every item in the attached marketplace master plan and the subsequent approved gallery design. It is ATLAS scope; it does not change Ten Kings V2, its records, payments or customer rights.
+
+## Delivery and current work
+
+Build in three releases with usable, independently verified increments. Approval of the gallery establishes its visual direction; it does not establish production ownership, money movement or fulfillment behavior.
+
+The current increment is **approved card → searchable staff archive → exact report, media and submission context**. Implement against the existing standalone ATLAS application. Source baseline is `fbb2f2d2`, including the October 20 public-photo release, with the newer shared-search source reconciled separately. The original dirty checkout is preserved. Development is on `codex/atlas-marketplace-foundation` in the managed worktree of that name.
+
+Three Astra Ultra specialists own staff UI, archive data/auth/search, and approved media. The lead owns integration, full scope tracking and acceptance. Runtime capacity is three specialists plus the lead; later assignments reuse those slots.
+
+Existing `atlas_manual.public_report_identity` already provides a permanent certificate/token across report versions. Use it rather than minting a competing card identifier. The archive reads approved identity and grade snapshots, not mutable drafts. A staff workspace owner, grading submitter, recorded custodian and legal owner are different facts. Existing paid submission links provide order context, not verified current ownership.
+
+## Complete scope and acceptance ledger
+
+“Planned” means still required; it is not a claim that a prototype or isolated helper implements the feature. Source/test/release evidence belongs in SESSION_LOG. R1 is Foundation, R2 the Marketplace Pilot, and R3 Expansion.
+
+| ID | Release | Requirement and completion evidence | Current state |
+|---|---|---|---|
+| 01 | R1 | One permanent physical-card record links approved identity, cert, reports, photos, ownership, custody, listings and sales. Regrade/reholder retains continuity, exact prior versions and an explicit association. | Existing cert/report identity reused; ownership and reholder lifecycle extensions planned. |
+| 02 | R1 | Staff **Graded Cards** gallery/table searches the complete authorized archive by name, cert, approval date, grader/reviewer, approver, customer, submission order, marketplace order, dealer and mail/drop-off origin. Pagination must not silently limit search to an intake page. | Implemented and locally qualified: gallery/table, bounded full-archive query, dates, staff and paid submission/dealer context. Not deployed. Marketplace-order search follows R2 records. |
+| 03 | R1–R3 | Card detail opens exact front/back media, zoomable findings, grade report, sold comps, provenance and commerce context. Genuine video/360 media appears only when available. | Existing report/evidence/comps reused; provenance and commerce extensions planned. |
+| 04 | R1–R2 | Role-appropriate staff controls: saved filters, exports, review queues, custody locations, fulfillment, disputes and audit history. Public features remain accessible without exposing private staff/customer fields. | Existing review/order tools reused; remaining archive administration planned. |
+| 05 | R2 | Public marketplace filters player/name, set, year, grade, price, numbered edition, autograph, relic and relevant identity attributes. Separate available listings from collection displays. | Planned. |
+| 06 | R1/R3 | **My Collection** separates current ownership, past ownership, for-sale and wanted cards. Searchable opt-in profiles, albums, follows, watchlists, saved searches and alerts; privacy per card/album. | Current My ATLAS submission/report history exists; ownership-based collection R1, expanded social R3. |
+| 07 | R1 | Customer-visible **provenance** shows recorded transfers, sales, grading, reholdering and corrections. Verified, owner-reported and unknown histories are distinct. Consenting handles or “Private collector”; no silent personal-data publication. | Planned. |
+| 08 | R1 | Ownership and physical custody have separate histories. Off-platform transfer requires authenticated participation or reviewed claim evidence. Cert/QR/NFC knowledge alone grants no ownership. | Planned; archive makes no inferred ownership claim. |
+| 09 | R1 | Numbered identity preserves exact `007/099`, numerator, denominator and image evidence; query uses `/99`, separate from checklist number. | Expanded reviewed identity planned; existing approved snapshots retained unchanged. |
+| 10 | R1 | Autograph records presence and on-card/sticker/cut/facsimile/unknown type. Comps use `auto`; presence does not imply authentication. | Planned. |
+| 11 | R1 | Relics record material, each window/piece and exact manufacturer use/wear statements, with game/player/event/unspecified distinctions. | Planned. |
+| 12 | R1 | Google Vision OCR and Astra propose identity from both saved sides; staff confirm/correct and retain evidence. Not detected remains unknown. | Existing OCR/Astra workflow reused; new attributes require versioned additions and review. |
+| 13 | R1 | Optional post-grade curation selects 1–5 recent matching sold comps or Skip/No suitable comps. Missing comps never block approval. | Existing saved market search/selection reused; exact bounded curation acceptance remains. |
+| 14 | R1 | Comp matching checks printing, denominator, autograph and relic; grading company/grade/designation stay separate. Mismatches, lots and undisclosed accepted-offer amounts are excluded from guidance. | Existing matching reused and audited; expanded attribute coverage planned. |
+| 15 | R1–R2 | Explain suggestion using selected sales/dates/count/range and method. Preserve report snapshot while refreshing stale listing guidance. Seller always controls asking price. | Planned; no automatic repricing of historical reports. |
+| 16 | R2 | Ownership/account-approved seller enters price, reviews exact fee/net, presses **List for sale**. Reuse approved identity/media/report/provenance. | Planned; approved emerald replaces the attachment's earlier neon green. |
+| 17 | R2 | Purchase shows exact card/report/seller, fulfillment route, ETA, protection and full total. One card cannot sell to two buyers; payment retries reconcile exactly once. | Planned. |
+| 18 | R2 | Before grading return shipment, offer **Ship to me** or **Hold and list** with actual consent/custody. | Planned. |
+| 19 | R2 | Evaluate proposed 8% including ordinary domestic processing, no listing fee/buyer premium/standard withdrawal percentage. Separately disclose shipping, verification and optional instant payout charges. Validate low-value bundles and lower high-value tiers. | Business proposal, not a launched fee contract. |
+| 20 | R2/R3 | Begin with actual ATLAS-held cards; add approved dealer-held inventory, then qualified direct shipping. Higher-risk verification routes disclose extra cost/time. | ATLAS-held pilot R2; dealer/direct expansion R3. |
+| 21 | R2 | Protection uses card/holder intake and packing evidence, tracked covered parcels, timed missing-scan investigation, inspected returns and appeals. | Planned; exact terms, evidence and timelines required before pilot. |
+| 22 | R2 | Reusable fitted inserts, second seal, replacement tamper seals, clean label area and clear resale instructions; replacement kit option. | Packaging prototype and physical validation planned. |
+| 23 | R2 | **ATLAS Balance** displays real USD Pending, Available, Reserved, Withdrawal processing and Paid out. Verified bank withdrawals and eligible instant payouts show timing/fees. | Planned; separate from Ten Kings TKD and never a fabricated balance. |
+| 24 | R3 | Spending proceeds on cards requires the provider-approved arrangement. Earnings/withdrawals can launch first. Reconcile every balance; no unsupported bank/insurance claims. | Provider/product configuration to establish. |
+| 25 | All | Pure-white backgrounds, large authentic slabs, spacious layout, aligned metadata/actions, restrained motion, accessible controls and fast mobile browsing. | Gallery direction owner-approved. Integrated staff archive visually qualified at 1280px, 390px and 320px, including exact slab/text/action alignment and pure-white media backgrounds. |
+| 26 | R1 | Foundation complete only after archive, expanded identity, permanent continuity, provenance, My Collection and dependable curation work together. | In progress; this archive increment is not all of R1. |
+| 27 | R2 | ATLAS-held fixed-price pilot joins listings, checkout, fulfillment, protection, balances and withdrawals with a real end-to-end transaction. | Planned. |
+| 28 | R3 | Dealer fulfillment, qualified direct shipping, offers, expanded social and approved spending from balance. | Planned. |
+| 29 | Pre-pilot | Resolve ownership/consignment authority, transfer/payout timing, returns, privacy defaults, comp-data usage rights, shipping/coverage costs and payment-provider responsibilities. | Required operational inputs; independent implementation continues. |
+| 30 | All | Measure listing time, conversion, repeat purchases, staff handling time, comp accuracy, disputes, payout reliability and actual contribution profit. | Instrument real events by release; no synthetic activity in customer metrics. |
+
+## Approved presentation and media
+
+- The owner-approved visual reference is the current `atlas-marketplace-design` prototype: pure white `#ffffff`, restrained black navigation, emerald `#047857`, and card text, price and action aligned with the actual slab's edges. Keep generous spacing and responsive columns. Staff controls can sit above the shared gallery; they must not crowd each card.
+- Remove redundant grade badges over the image. The approved label remains the displayed grade authority. A source-bound image may show its actual NFC insert; do not represent a static link or decorative insert as authentication proof.
+- Final image pipeline: untouched full-resolution intake Front + Back, their orientation/source descriptors, and the exact human-approved label/report revision produce paired presentation masters and responsive derivatives automatically. Keep originals accessible as evidence. Do not invent missing backs, retouch defects or change a previously approved image frame.
+- A render manifest must identify physical card, approval/report hashes, each source image/hash/side/dimensions, exact retained label/artwork profile/hash, shell/template version, output dimensions and generation status. Changing a source creates a new version, never mixed Front/Back approvals.
+- Gallery thumbnails are not the high-resolution masters. Use purpose-sized derivatives for browsing, then fetch the exact full-resolution source when inspecting. Source-limited resolution must be reported honestly; upscaling is not added evidence.
+- The current prototype's shell is illustrative, not calibrated CAD. Its fictitious DEMO labels/cards are never imported as inventory. Real approved report photos and actual optional slab photos can be shown immediately. Final physical front/back geometry and automatic composition still need qualification.
+
+## Foundation sequence after the archive increment
+
+1. Archive source qualification completed: real local PostgreSQL, signed HTTP, staff tests, production build/boundary and actual-component desktop/mobile browser checks. Live migration, native/staff release and both external gateway path checks remain a separate release step. See the integration and backend audits.
+2. Add reviewed numbered/autograph/relic attributes to the existing identity contract with historical-reader compatibility. Extend the current comp builder and review flow without changing Ten Kings defaults or rerunning historical provider requests.
+3. Extend the permanent record with sourced append-only ownership/custody events and private/public projections. Never seed ownership from staff ACLs, submission history or a scan.
+4. Build My Collection on those facts and permissions; add opt-in profile/album visibility and customer-readable provenance.
+5. Complete optional 1–5 curation and transparent, versioned price guidance; retain the original report snapshot and permit deliberate listing refresh.
+6. Verify the combined R1 journey, then build the ATLAS-held marketplace pilot against real listing/settlement/fulfillment contracts.
+
+## Pilot readiness and verification
+
+Use integer minor units for money, server-derived totals, unique idempotency references, transactional reservation and compensating/reconciliation paths. A displayed balance needs provider and internal ledger evidence. Stripe Connect is a candidate integration, not proof that every desired stored-value or spend-from-balance feature is supported for this business.
+
+Before pilot launch, validate the actual provider agreement/configuration, fee economics, consignment/transfer point, custody and insurance, delivery/returns/disputes, payout holds and privacy/comp-data rights. These choices do not prevent building the archive and collection foundations.
+
+Local tests, disposable database qualification, browser acceptance, released code and real operational acceptance must be reported separately. Run native/web route and both gateway allowlist checks for new endpoints before any later release. Do not repeat grading, approve cards, print labels, write tags, send customer notifications or dispatch paid searches merely to test archive reads.

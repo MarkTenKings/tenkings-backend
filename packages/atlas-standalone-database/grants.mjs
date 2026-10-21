@@ -1,3 +1,4 @@
+import { gradedCardsGrantSQL } from '../atlas-connected-manual/src/graded-cards.mjs';
 import { staffGrantSQL } from '../../frontend/atlas-app/lib/server/access/privileges.mjs';
 import { customerGrantSQL } from '../../frontend/atlas-customer/lib/server/database.mjs';
 import { customerPrivateGrantSQL } from '../atlas-connected-manual/scripts/customer-database.mjs';
@@ -34,7 +35,7 @@ export function manualRuntimeGrantSQL(role) {
     learningGrantSQL, batchGrantSQL, publicationGrantSQL, presentationGrantSQL,
     earlyGeometryGrantSQL, reportImageGrantSQL, marketJobGrantSQL, variantJobGrantSQL,
     dealerStaffGrantSQL, orderDeskGrantSQL, orderDeskInboxGrantSQL, finishingStationGrantSQL, labelGrantSQL]
-    .map(grant => grant(role)).join('\n') + `\nGRANT EXECUTE ON FUNCTION atlas_manual_connected.read_grading_photo(uuid,uuid,text,text) TO \"${role}\";`; 
+    .map(grant => grant(role)).join('\n') + `\nDO $archive$ BEGIN IF to_regprocedure('atlas_manual.graded_cards(text,text,jsonb,text[],jsonb)') IS NOT NULL THEN ${gradedCardsGrantSQL(role)} END IF; END $archive$;` + `\nGRANT EXECUTE ON FUNCTION atlas_manual_connected.read_grading_photo(uuid,uuid,text,text) TO \"${role}\";`;
 }
 
 // Credentials are deliberately absent. The release operator binds fresh LOGIN

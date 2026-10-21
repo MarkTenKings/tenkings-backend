@@ -3,7 +3,18 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID, webcrypto } from 'node:crypto';
 import { acknowledgmentConfirmed, acknowledgmentJournal, mergeOrderPage, orderDeskPath, orderLabelBytes, orderMoney, orderPhotoPath, retainedSelection, stageLabel } from '../lib/order-desk-client.mjs';
 import { staffApiPath, validOrderDeskQueryPath } from '../lib/routes.mjs';
+import { orderDeskPagePath, selectedOrderFromQuery } from '../lib/order-desk-client.mjs';
 const storage = () => { const rows = new Map(); return { getItem: k => rows.get(k) ?? null, setItem: (k, v) => rows.set(k, v), removeItem: k => rows.delete(k) }; };
+
+test('archive order navigation accepts one exact order ID without authority or alternate URLs', () => {
+  const id = randomUUID();
+  assert.equal(orderDeskPagePath(id), `/customer-operations?orderId=${id}`);
+  assert.equal(selectedOrderFromQuery(id), id);
+  for (const invalid of [undefined, null, '', [id], [id, randomUUID()], `../${id}`, `${id}&admin=true`, 'https://example.com']) {
+    assert.equal(orderDeskPagePath(invalid), null);
+    assert.equal(selectedOrderFromQuery(invalid), null);
+  }
+});
 
 test('order desk queries safely encode customer text while unrelated paths keep the existing strict boundary', () => {
   for (const q of ['Maya Chen', 'mark+desk@example.com', 'O’Neil / 台灣', '100% & paid', 'O\'Brien']) {

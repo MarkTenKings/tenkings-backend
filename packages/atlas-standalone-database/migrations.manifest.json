@@ -30,6 +30,11 @@
       "version": "atlas-standalone-007-label-layout-retry",
       "file": "sql/007-label-layout-retry.sql",
       "sqlSha256": "4ff9745a5553fe8252f37b1c311ea8b63c1f4b1f4c5636bed4ada92924ad26e3"
+    },
+    {
+      "version": "atlas-standalone-008-graded-cards-archive",
+      "file": "sql/008-graded-cards-archive.sql",
+      "sqlSha256": "734094259335780542e0b53ae5b4d663a057283d670d700119f4cbc4cf05f063"
     }
   ]
 }
