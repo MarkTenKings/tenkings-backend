@@ -1,3 +1,4 @@
+import * as galleryClient from '../lib/staff-card-gallery-client.mjs';
 import {reviewImagePreview} from '@atlas/manual-workspace';
 import {reportAwardedGrade} from '../../../packages/atlas-manual-workspace/src/report-review-ui.mjs';
 import {reviewedMemoryState} from '../../../packages/atlas-manual-workspace/src/astra-review-ui.mjs';
@@ -54,6 +55,9 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
   vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: storage,
     setInterval: (callback, ms) => { timers.set(ms, callback); return ms; }, clearInterval: id => timers.delete(id),
     window: { addEventListener() {}, removeEventListener() {}, location:{reload(){f.pageReloads=(f.pageReloads??0)+1;}} }, require(name) {
+      if (name === './StaffCardGallery') return {__esModule:true,default:'StaffCardGallery'};
+      if (name === '../lib/staff-card-gallery-client.mjs') return galleryClient;
+      if (name.endsWith('.css')) return {};
       if (name === 'react') return react;
       if (name === '../lib/variant-review-client.mjs') return variantReview;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;

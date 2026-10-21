@@ -1,4 +1,5 @@
 import {reviewImagePreview} from '@atlas/manual-workspace';
+import * as galleryClient from '../lib/staff-card-gallery-client.mjs';
 import * as reviewIdentity from '../lib/review-identity.mjs';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import * as reviewStartup from '../lib/manual-review-startup.mjs';
@@ -34,7 +35,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
     useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
     useEffect(action, deps) { const i = cursor++, before = slots[i]; if (!before || deps.some((v, n) => v !== before[n])) { slots[i] = deps; effects.push(()=>{cleanups[i]?.();cleanups[i]=action();}); } },
-    useCallback: action => action,
+    useCallback(action,deps) { const i=cursor++,old=slots[i]; if(!old||deps.some((value,n)=>value!==old.deps[n]))slots[i]={deps,action};return slots[i].action; },
   };
   const card = { revision: 1, card: { ready: false, sourceHash: 'source', sides: { FRONT: { version: 0 }, BACK: { version: 0 } } },
     identification: { state: 'UNAVAILABLE' }, details: { fields: {}, profile: 'SPORTS' } };
@@ -47,6 +48,9 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
       if (name === '../lib/manual-review-startup.mjs') return reviewStartup;
       if (name === '../lib/review-identity.mjs') return reviewIdentity;
+      if (name === './StaffCardGallery') return {__esModule:true,default:'StaffCardGallery'};
+      if (name === '../lib/staff-card-gallery-client.mjs') return galleryClient;
+      if (name.endsWith('.css')) return {};
       if (name === './ReviewIdentityPanel') return {__esModule:true,default:'ReviewIdentityPanel'};
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};

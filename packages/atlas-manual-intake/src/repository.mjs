@@ -174,7 +174,7 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, 
           ORDER BY created_at DESC,id DESC LIMIT $3`, principal.id, cursor, limit + 1);
         const page = rows.slice(0, limit), cards = [];
         for (const row of page) cards.push(await view(tx, row));
-        return { cards, nextCursor: rows.length > limit ? page.at(-1).id : null };
+        return { staffId: principal.id, cards, nextCursor: rows.length > limit ? page.at(-1).id : null };
       });
     },
     async processingList(staff, { limit = 100 } = {}) {
