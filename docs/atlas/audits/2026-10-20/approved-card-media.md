@@ -53,3 +53,7 @@ Use one content-addressed composition recipe inside the existing ATLAS service/p
 - Measured render latency, memory, master/derivative size, cache behavior and sustained throughput before claiming scale. Local unit tests do not prove production capacity.
 
 The new projection passed six focused Node 22 test groups. These use synthetic descriptors and exercise binding, safe omission and nonmutation. They neither certify a real card nor qualify a digital holder as a finished-slab photograph.
+
+## Subsequent live-baseline correction
+
+Fresh release preparation found that live native source `3256af83` was not an ancestor of the initial `fbb2f2d2`/archive branch. The source-local results above are historical evidence, not proof that all live behavior had been retained. Merge `c4b7cc85` explicitly joins archive `4a7a2fba` and live `3256af83`, retaining all five live shared-query modules byte-for-byte and public-photo source `eafcec14`. Finishing-test expectations were corrected to the actual live full-set/`psa9.5` behavior without changing that search behavior. Requalification passed staff 765/765, connected 873 passes plus two existing measurement skips, standalone 7/7, actual PostgreSQL six groups, and isolated candidate-image Linux 229/229. Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-marketplace-foundation-20261020/release-02/`. This correction and qualification do not themselves establish production activation.

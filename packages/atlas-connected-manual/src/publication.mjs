@@ -1,5 +1,6 @@
 import { digest, canonical, requireThat } from '@atlas/manual-service/contract';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { projectAtlasSportsAttributes } from '@atlas/grading-core/identity';
 import { parseGeometryWorkspace, geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { inspectionPreviewMedia } from './inspection-preview.mjs';
@@ -34,6 +35,7 @@ export function projectApprovedManualReport({ row, approval, full, geometry, ima
   requireThat(included.every(f => f.reviewResult !== 'UNREVIEWED'), 503, 'MANUAL_PUBLICATION_REVIEW_REQUIRED');
   const report = { ...pick(full, ['version','ruleVersion','cardProfile','identity','draftRevision','inspection','grade','finalGrade','finalGradePolicy']),
     findings: included.map(publicManualFinding), findingCounts: { total: included.length, included: included.length, removed: 0, unreviewed: 0 } };
+  if (report.identity.sportsAttributes) report.identity.sportsAttributes = projectAtlasSportsAttributes(report.identity.sportsAttributes);
   const packet = publicPacket({ version: 'atlas-public-manual-report-v2', publicToken: row.public_token, reportNumber: row.report_number,
     approvalVersion: row.version, approvedAt: new Date(row.approved_at).toISOString(), mode: row.mode, reportHash: row.report_hash,
     report, images, geometry: Object.fromEntries(SIDES.map(side => {

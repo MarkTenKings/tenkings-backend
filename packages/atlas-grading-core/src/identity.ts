@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { atlasSportsAttributesSchema } from './sports-attributes';
+export * from './sports-attributes';
 
 export type SpeedsterCardProfile = "SPORTS" | "POKEMON";
 export const SPEEDSTER_POKEMON_LAYOUT_TYPES = ["POKEMON", "TRAINER", "ENERGY"] as const;
@@ -20,6 +22,8 @@ const sportsIdentitySchema = z.object({
   parallel: optionalText("Parallel"),
   insert: optionalText("Insert"),
   cardNumber: optionalText("Card number"),
+  // Never materialize this key for historical identities.
+  sportsAttributes: atlasSportsAttributesSchema.optional(),
 }).strict();
 
 const pokemonIdentitySchema = z.object({

@@ -1,3 +1,4 @@
+import {emptyAtlasSportsAttributes,atlasPrintedSerial} from '@atlas/grading-core/identity';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -40,7 +41,7 @@ const all=(node,predicate,out=[])=>{if(Array.isArray(node))node.forEach(child=>a
 const text=node=>Array.isArray(node)?node.map(text).join(''):node&&typeof node==='object'?text(node.props?.children):node??'';
 function render(overrides={}){
  const callbacks=[],exports={},props={identity:pokemon,onEdit(){callbacks.push('edit');},onCancel(){callbacks.push('cancel');},onSave(){callbacks.push('save');},onChange(key,value){callbacks.push([key,value]);},...overrides};
- vm.runInNewContext(compiled,{exports,require(name){if(name==='react')return{createElement:(type,props,...children)=>({type,props:{...props,children}}),useEffect(){},useRef:()=>({current:null})};if(name==='../lib/review-identity.mjs')return identity;if(name.endsWith('.module.css'))return{__esModule:true,default:new Proxy({},{get:(_target,key)=>key})};return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);}});
+ vm.runInNewContext(compiled,{exports,require(name){if(name==='react')return{createElement:(type,props,...children)=>({type,props:{...props,children}}),useEffect(){},useRef:()=>({current:null})};if(name==='../lib/review-identity.mjs')return identity;if(name==='./SportsAttributesFields')return{__esModule:true,default:()=>null,SportsAttributesSummary:()=>null};if(name.endsWith('.module.css'))return{__esModule:true,default:new Proxy({},{get:(_target,key)=>key})};return nextRequire(name.startsWith('@babel/runtime/')?`next/dist/compiled/${name}`:name);}});
  const tree=exports.default(props);return{tree,callbacks,find:predicate=>all(tree,predicate)[0],text:()=>text(tree)};
 }
 test('compact saved summary shows every supported field, with gentle missing values and no mandatory review',()=>{
@@ -63,4 +64,16 @@ test('editor has prefilled accessible controls, optional missing fields and one 
 test('in-flight identity save disables all changes and Escape cannot discard it',()=>{
  const f=render({draft:{...pokemon,year:'2023'},saving:true});assert.equal(f.find(node=>node.type==='fieldset').props.disabled,true);
  assert.ok(all(f.tree,node=>node.type==='button').every(node=>node.props.disabled));const form=f.find(node=>node.type==='form');form.props.onSubmit({preventDefault(){}});form.props.onKeyDown({key:'Escape'});assert.deepEqual(f.callbacks,[]);
+});
+
+test('adopting a machine suggestion creates only editable facts and requires fresh human photograph evidence',()=>{
+ const attributes=emptyAtlasSportsAttributes();attributes.serial={presence:'PRESENT',...atlasPrintedSerial('007/099'),evidence:[{side:'BACK',imageSha256:'a'.repeat(64),observation:'Synthetic derivative: 007/099.'}]};
+ const proposal={version:'atlas-sports-attributes-proposal-v1',authority:'MACHINE_PROPOSAL',sourceHash:'b'.repeat(64),attributes,confidence:{serial:'high',autograph:'unknown',relic:'unknown'}};
+ assert.equal(identity.draftSportsAttributesProposal(proposal,'c'.repeat(64)),null);
+ const draft=identity.draftSportsAttributesProposal(proposal,proposal.sourceHash);assert.equal(draft.serial.printed,'007/099');assert.deepEqual(draft.serial.evidence,[]);
+ assert.throws(()=>identity.reviewIdentityEdit(sports,{...sports,sportsAttributes:draft}));
+ draft.serial.evidence.push({side:'BACK',imageSha256:'d'.repeat(64),observation:'Reviewer: back lower edge reads 007/099.'});
+ const saved=identity.reviewIdentityEdit(sports,{...sports,sportsAttributes:draft});assert.equal(saved.identity.sportsAttributes.serial.denominator,99);
+ assert.equal(proposal.attributes.serial.evidence[0].imageSha256,'a'.repeat(64));
+ assert.equal(identity.reviewIdentityEdit(saved.identity,structuredClone(saved.identity)),null);
 });

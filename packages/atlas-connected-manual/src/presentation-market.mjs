@@ -6,6 +6,7 @@ import { EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_V
 
 import { publishedResearchQuery } from './research-market-query.mjs';
 import { cardIdentitySearchQuery } from './sold-query-identity.mjs';
+import { sportsAttributeSearch, matchSportsAttributeEvidence } from './sports-attribute-comps.mjs';
 
 export const MARKET_UNAVAILABLE_REASONS = Object.freeze(['PROVIDER_NOT_CONFIGURED', 'PROVIDER_CONFIGURATION_ERROR', 'PROVIDER_QUOTA_REACHED', 'PROVIDER_REQUEST_LIMITED']);
 
@@ -41,9 +42,10 @@ export function publishedMarketQuery({ packet, publicHash }, { savedQuery, saved
   const identityInput = { matchingPolicy: 'ATLAS_IDENTITY_V1', category: parsed.report.cardProfile, year: identity.year, productSet: identity.productSet,
     ...(parsed.report.cardProfile === 'SPORTS' ? { playerName: identity.playerName, manufacturer: identity.manufacturer }
       : { cardName: identity.cardName }), parallel: identity.parallel, cardNumber: identity.cardNumber,
-    ...('insert' in identity ? { insert: identity.insert } : {}) };
+    ...('insert' in identity ? { insert: identity.insert } : {}),
+    ...(identity.sportsAttributes ? { variantIdentity: sportsAttributeSearch(identity.sportsAttributes).variantIdentity } : {}) };
   const identityQuery = cardIdentitySearchQuery({ category: parsed.report.cardProfile, manufacturer: identity.manufacturer,
-    year: identity.year, setName: identity.productSet, name: identity.playerName ?? identity.cardName, cardNumber: identity.cardNumber });
+    year: identity.year, setName: identity.productSet, name: identity.playerName ?? identity.cardName, cardNumber: identity.cardNumber, sportsAttributes: identity.sportsAttributes });
   const currentQuery = [identityQuery, 'psa', parsed.report.finalGrade].filter(value => value !== '').join(' ');
   // Saved queries are immutable evidence bound by the job/preview to this exact
   // publication. Recovery and page continuation preserve that exact query.
@@ -58,7 +60,8 @@ export function publishedMarketQuery({ packet, publicHash }, { savedQuery, saved
     input = structuredClone(savedInput);
   }
   return { binding: { publicToken: parsed.publicToken, approvalVersion: parsed.approvalVersion, publicHash },
-    identityHash: digest(canonical(identity)), input, query, atlasGrade: parsed.report.finalGrade };
+    identityHash: digest(canonical(identity)), input, query, atlasGrade: parsed.report.finalGrade,
+    ...(identity.sportsAttributes ? { sportsAttributes: identity.sportsAttributes } : {}) };
 }
 
 export const marketPreviewHash = preview => digest(canonical(preview, {
@@ -77,9 +80,13 @@ function prepareSlabPreview(context, result) {
   const counts = { returned: result.items.length, missingImage: 0, unreadGrade: 0, differentIdentity: 0, outsideGrade: 0, raw: 0, graded: 0, recommended: 0, shown: 0 };
   const labelProcessing = { state: 'COMPLETE', completed: 0, failed: 0, unknown: 0, unavailable: 0, reasons: [] };
   const readings = result.items.map(item => {
-    const reading = result.imageMatch.readings.find(value => value.rowId === item.id)
+    const savedReading = result.imageMatch.readings.find(value => value.rowId === item.id)
       ?? { rowId: item.id, imageUrl: item.imageUrl, sha256: null, numericGrade: null, gradingCompany: null, labelText: null,
         identityMatch: 'UNCERTAIN', evidenceKind: 'UNCERTAIN', reason: 'Photograph has not been read.' };
+    const attributeEvidence = matchSportsAttributeEvidence(context.sportsAttributes, { title: item.title, labelText: savedReading.labelText });
+    const reading = attributeEvidence && attributeEvidence.status !== 'MATCH' ? { ...savedReading,
+      identityMatch: attributeEvidence.status === 'CONTRADICTORY' ? 'DIFFERENT' : savedReading.identityMatch === 'DIFFERENT' ? 'DIFFERENT' : 'UNCERTAIN',
+      reason: [savedReading.reason, ...attributeEvidence.reasonCodes].filter(Boolean).join(' · ') } : savedReading;
     if (!item.imageUrl) counts.missingImage++;
     const outcome = reading.outcome ?? (!item.imageUrl ? 'UNAVAILABLE' : reading.labelText || Number.isFinite(reading.numericGrade) || reading.evidenceKind === 'RAW' ? 'COMPLETE' : 'FAILED');
     requireThat(['COMPLETE','FAILED','UNKNOWN','UNAVAILABLE'].includes(outcome), 502, 'MARKET_PROVIDER_RESULT_INVALID');
@@ -92,7 +99,9 @@ function prepareSlabPreview(context, result) {
     if (reading.identityMatch === 'DIFFERENT') counts.differentIdentity++;
     const nearbyGrade = Number.isFinite(reading.numericGrade) && Math.abs(reading.numericGrade - context.atlasGrade) <= 1;
     if (Number.isFinite(reading.numericGrade) && !nearbyGrade) counts.outsideGrade++;
-    const recommended = reading.identityMatch === 'MATCH' && nearbyGrade;
+    const saleSupported = !context.sportsAttributes || (item.priceBasis === 'EXACT' && Number.isSafeInteger(item.soldPriceCents) && item.soldPriceCents > 0
+      && !/\b(?:lot|bundle|collection|reprint|reproduction|proxy)\b/i.test(item.title));
+    const recommended = reading.identityMatch === 'MATCH' && nearbyGrade && saleSupported;
     if (recommended) counts.recommended++;
     return { ...reading, evidenceKind, nearbyGrade, recommended };
   });
@@ -140,10 +149,11 @@ function preparePreview(context, result) {
     card_number: context.input.cardNumber ?? null, variant: context.input.parallel ?? null, card_type: null };
   for (const candidate of result.candidates) {
     const titleEvidence = inspectIdentity(description, candidate);
+    const attributeEvidence = matchSportsAttributeEvidence(context.sportsAttributes, { title: candidate.title });
     const saleEvidence = inspectStaffInventoryResearchSale(candidate);
     const contradictory = titleEvidence.reason_codes.some(code => ['sport_conflict', 'product_title_conflict', 'variant_title_conflict',
       'release_year_conflict', 'card_number_conflict'].includes(code));
-    if (contradictory || candidate.parallelMatch === 'CONTRADICTORY' || candidate.variantEvidence?.status === 'CONTRADICTORY') { excluded.contradictory++; continue; }
+    if (attributeEvidence?.status === 'CONTRADICTORY' || contradictory || candidate.parallelMatch === 'CONTRADICTORY' || candidate.variantEvidence?.status === 'CONTRADICTORY') { excluded.contradictory++; continue; }
     if (!saleEvidence.supported) { excluded.undisclosedOrUnsupported++; continue; }
     const identityEvidence = { status: titleEvidence.estimate_anchored ? 'MATCH' : 'UNKNOWN', reasonCodes: titleEvidence.reason_codes };
     let sale;
@@ -153,9 +163,9 @@ function preparePreview(context, result) {
       || typeof candidate.matchReason !== 'string' || candidate.matchReason.length > 2000) {
       excluded.undisclosedOrUnsupported++; continue;
     }
-    const match = candidate.parallelMatch === 'MATCH' && identityEvidence.status === 'MATCH' ? 'MATCH' : 'UNKNOWN';
+    const match = candidate.parallelMatch === 'MATCH' && identityEvidence.status === 'MATCH' && (!attributeEvidence || attributeEvidence.status === 'MATCH') ? 'MATCH' : 'UNKNOWN';
     candidates.push({ sale, match, matchScore: candidate.matchScore,
-      matchReason: candidate.matchReason, identityEvidence, ...(candidate.variantEvidence ? { variantEvidence: candidate.variantEvidence } : {}), requiresReview: true });
+      matchReason: candidate.matchReason, identityEvidence, ...(attributeEvidence ? { sportsAttributeEvidence: attributeEvidence } : {}), ...(candidate.variantEvidence ? { variantEvidence: candidate.variantEvidence } : {}), requiresReview: true });
   }
   return { version: 'atlas-market-preview-v1', ...context, source: result.source, engineVersion: result.engineVersion,
     retrievedAt: result.retrievedAt, candidates, excluded,

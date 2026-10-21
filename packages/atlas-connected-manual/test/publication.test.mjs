@@ -2,11 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical,digest } from '@atlas/manual-service/contract';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { emptyAtlasSportsAttributes, atlasPrintedSerial } from '@atlas/grading-core/identity';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { approvedPublicationSource } from '../src/publication-repository.mjs';
 import { projectApprovedManualReport, publicManualFinding } from '../src/publication.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 const publish=f=>f.publication.publish({},f.cardId,f.actionId);
+test('new sports facts reach public report while private evidence and approval bytes remain exact', async () => {
+ const attributes=emptyAtlasSportsAttributes();
+ attributes.serial={presence:'PRESENT',...atlasPrintedSerial('007/099'),evidence:[{side:'BACK',imageSha256:'a'.repeat(64),observation:'Private staff observation: back serial 007/099.'}]};
+ const f=await publicationFixture({identity:{playerName:'Synthetic serial card',year:'2026',manufacturer:'Fixture',productSet:'Local only',sportsAttributes:attributes}});
+ const before={report:f.row.report,reportHash:f.row.report_hash,result:f.row.result},privateBefore=structuredClone({full:f.full,approval:f.approval});await publish(f);const p=await packet(f);
+ assert.equal(p.report.identity.sportsAttributes.serial.printed,'007/099');assert.equal(p.report.identity.sportsAttributes.serial.denominator,99);
+ assert.doesNotMatch(JSON.stringify(p.report.identity),/Private staff|imageSha256|observation|evidence/);
+ assert.deepEqual(p.report.grade,f.full.grade);assert.equal(p.report.finalGrade,f.full.finalGrade);
+ assert.deepEqual({report:f.row.report,reportHash:f.row.report_hash,result:f.row.result},before);
+ assert.deepEqual(parsePublicManualReport(p),p);
+ assert.deepEqual({full:f.full,approval:f.approval},privateBefore);
+});
 async function packet(f){const m=JSON.parse(f.row.manifest);return f.artifacts.read(m.packet.ref,{cardId:f.cardId,kind:'PUBLIC_REPORT',sourceHash:m.packet.sourceHash});}
 test('publication delivers exact approved grades, traces, geometry and two media hashes with a versioned stable link',async()=>{
  const f=await publicationFixture(),before=structuredClone({draft:f.draft,full:f.full,geometry:f.geometry}),status=await publish(f),p=await packet(f);

@@ -143,7 +143,8 @@ try {
   await assert.rejects(service.list(reviewer.staff), { code: 'SIGN_IN_REQUIRED' });
   checks.push('actual connected HTTP handler reaches authenticated database service and cache-private DTO; revoked session fails on the next list read');
 
-  const manifest = await registeredMigrations(), current = manifest.at(-1); assert.equal(current.version, 'atlas-standalone-008-graded-cards-archive');
+  const manifest = await registeredMigrations(), archiveIndex = manifest.findIndex(m => m.version === 'atlas-standalone-008-graded-cards-archive');
+  assert(archiveIndex >= 0); const current = manifest[archiveIndex], suffix = manifest.slice(archiveIndex);
   // Replay the additive release against a separately owned prefix-007 database.
   // Its rows come only from the synthetic database above, never a live source.
   const { Client } = createRequire(import.meta.url)(process.argv[process.argv.indexOf('--pg-module') + 1]);
@@ -153,7 +154,7 @@ try {
   await upgrade.connect();
   try {
     await applyStandaloneBaseline(upgrade);
-    for (const migration of manifest.slice(0, -1)) {
+    for (const migration of manifest.slice(0, archiveIndex)) {
       await upgrade.query('BEGIN');
       await upgrade.query(migration.sql);
       await upgrade.query('INSERT INTO atlas_staff._standalone_migrations(version,checksum) VALUES($1,$2)', [migration.version, migration.sqlSha256]);
@@ -177,14 +178,14 @@ try {
     };
     const preserved = await censusUpgrade(), ledger = (await upgrade.query('SELECT version,checksum,applied_at FROM atlas_staff._standalone_migrations ORDER BY version')).rows;
     const applied = await applyStandaloneMigrations(upgrade);
-    assert.equal(applied.status, 'APPLIED'); assert.deepEqual(applied.applied, [{ version: current.version, checksum: current.sqlSha256 }]);
+    assert.equal(applied.status, 'APPLIED'); assert.deepEqual(applied.applied, suffix.map(m => ({ version: m.version, checksum: m.sqlSha256 })));
     assert.deepEqual(await censusUpgrade(), preserved);
-    assert.deepEqual((await upgrade.query('SELECT version,checksum,applied_at FROM atlas_staff._standalone_migrations ORDER BY version')).rows.filter(row => row.version !== current.version), ledger);
+    assert.deepEqual((await upgrade.query('SELECT version,checksum,applied_at FROM atlas_staff._standalone_migrations ORDER BY version')).rows.filter(row => !suffix.some(m => m.version === row.version)), ledger);
     assert.equal((await applyStandaloneMigrations(upgrade)).status, 'NO_OP');
     assert.deepEqual(await censusUpgrade(), preserved);
   } finally { await upgrade.end(); }
-  checks.push('registered008 upgrades actual prefix007 with approval/report/card/staff rows and prior ledger unchanged; complete baseline plus002–008 and repeated release no-op pass');
-  receipt = { status: 'GRADED_CARDS_POSTGRES_PASS', migration: { version: current.version, checksum: current.sqlSha256 }, checks, groups: checks.length, productionQueries: 0, providerCalls: 0, directory: fixture.cluster.directory };
+  checks.push('registered008 and current suffix upgrade actual prefix007 with approval/report/card/staff rows and prior ledger unchanged; complete current baseline and repeated release no-op pass');
+  receipt = { status: 'GRADED_CARDS_POSTGRES_PASS', migration: { version: current.version, checksum: current.sqlSha256 }, registeredSuffix: suffix.map(m => ({ version: m.version, checksum: m.sqlSha256 })), checks, groups: checks.length, productionQueries: 0, providerCalls: 0, directory: fixture.cluster.directory };
 } finally { await connection.close(); await fixture.stop(); }
 receipt.cleanup = JSON.parse(await readFile(fixture.cluster.directory + '/cleanup.json', 'utf8')); assert.equal(receipt.cleanup.stoppedVerified, true);
 await writeFile(output + '/postgres-result.json', JSON.stringify(receipt, null, 2) + '\n', { mode: 0o600 });

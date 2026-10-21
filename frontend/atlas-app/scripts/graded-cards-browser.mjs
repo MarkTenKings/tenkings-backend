@@ -25,7 +25,7 @@ const cards = Array.from({ length: 26 }, (_, index) => {
     sample, labelId };
 });
 const globalStyles = ['./styles/global.css', './styles/grading.css', '@atlas/report-view/styles.css', '@atlas/manual-workspace/styles.css', '@atlas/manual-workspace/focused-geometry.css', '@atlas/manual-workspace/defects.css', './styles/manual.css', './styles/atlas-brand.css', './styles/atlas-theme.css', '@atlas/manual-workspace/report-review.css'];
-const source = `${globalStyles.map(path => `import '${path}';`).join('')}import React from 'react';import{createRoot}from'react-dom/client';import GradedCards from './components/GradedCards.jsx';createRoot(document.getElementById('app')).render(<GradedCards staff={${JSON.stringify(staff)}}/>);`;
+const source = `${globalStyles.map(path => `import '${path}';`).join('')}import React from 'react';import{createRoot}from'react-dom/client';import GradedCards from './components/GradedCards.jsx';import CardHistory from './components/CardHistory.jsx';const id=/^\\/admin\\/graded-cards\\/([a-f0-9-]+)$/.exec(location.pathname)?.[1];createRoot(document.getElementById('app')).render(id?<CardHistory staff={${JSON.stringify(staff)}} cardId={id}/>:<GradedCards staff={${JSON.stringify(staff)}}/>);`;
 const bundle = await build({ logLevel: 'error', stdin: { contents: source, resolveDir: app, sourcefile: 'graded-cards-fixture.jsx', loader: 'jsx' }, bundle: true, jsx: 'automatic', write: false, outdir: '/fixture', format: 'esm', platform: 'browser', target: 'chrome120', define: { 'process.env.NODE_ENV': '"production"', 'process.env': '{}' }, external: ['/admin/brand/*'], plugins: [{ name: 'isolated-next-runtime', setup(build) {
   build.onResolve({ filter: /^next\/(link|head|router)$/ }, args => ({ path: args.path, namespace: 'fixture-next' }));
   build.onLoad({ filter: /.*/, namespace: 'fixture-next' }, args => ({ contents: args.path === 'next/link' ? `export default function Link({href,children,...props}){return <a href={'/admin'+href}{...props}>{children}</a>}` : args.path === 'next/head' ? `export default function Head(){return null}` : `export function useRouter(){return {pathname:'/graded-cards',query:{}}}`, loader: 'jsx', resolveDir: app }));
@@ -48,7 +48,7 @@ const server = createServer(async (req, res) => {
     if (action === 'restore-photos') brokenPhoto = false;
     json({ failure, hold, held: held.length, denySession, brokenPhoto, writes: requests.filter(request => request.method !== 'GET').length }); return;
   }
-  if (req.url === '/') {
+  if (req.url === '/' || /^\/admin\/graded-cards(?:\/[a-f0-9-]+)?$/.test(url.pathname)) {
     res.setHeader('content-type', 'text/html; charset=utf-8');
     const controls = ['fail-read', 'hold-reads', 'release-reads', 'deny-session', 'allow-session', 'break-photos', 'restore-photos'];
     res.end('<!doctype html><meta charset="utf-8"><title>ATLAS graded cards · synthetic qualification</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><div id="fixture-controls" style="background:#fff;color:#334155;padding:8px 4%;font:11px system-ui;border-bottom:1px solid #ddd"><details><summary>Synthetic qualification controls · no production data</summary><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+controls.map(action=>'<button type="button" data-fixture-action="'+action+'" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">'+action+'</button>').join('')+'<button type="button" id="revoke-access" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">revoke-access</button></div><pre id="fixture-status" style="white-space:pre-wrap"></pre></details></div><div id="app"></div><script type="module" src="/bundle.js"></script><script>document.querySelectorAll("[data-fixture-action]").forEach(button=>button.addEventListener("click",async()=>{document.getElementById("fixture-status").textContent=JSON.stringify(await(await fetch("/fixture-controls?action="+button.dataset.fixtureAction)).json())}));document.getElementById("revoke-access").addEventListener("click",()=>window.dispatchEvent(new Event("atlas:verified-image-access-ended")));</script>'); return;
@@ -62,6 +62,23 @@ const server = createServer(async (req, res) => {
     const rows = cards.filter(card => (!q || JSON.stringify(card).toLowerCase().includes(q)) && (!category || card.identity.category === category) && (!from || card.approvedAt.slice(0, 10) >= from) && (!to || card.approvedAt.slice(0, 10) <= to));
     const offset = cursor ? Number(cursor.slice(4)) : 0, size = Number(url.searchParams.get('limit') || 24);
     const result = { schemaVersion: 1, cards: rows.slice(offset, offset + size), nextCursor: rows.length > offset + size ? `page${offset + size}` : null };
+    if (hold) { held.push(() => json(result)); return; } json(result); return;
+  }
+  const provenance = /^\/admin\/api\/staff\/manual-connected\/cards\/([a-f0-9-]+)\/provenance$/.exec(url.pathname);
+  if (provenance) {
+    const card = cards.find(value => value.cardId === provenance[1]);
+    if (!card) { json({ error: 'CARD_UNAVAILABLE' }, 404); return; }
+    if (failure) { const status = failure; failure = null; json({ error: 'TEMPORARILY_UNAVAILABLE' }, status); return; }
+    const at = card.approvedAt;
+    const event = (kind, category, verification, index) => ({ eventId: `${category.toLowerCase()}:${card.cardId}:${index}`, kind, category, verification, occurredAt: at, recordedAt: at,
+      ...(category === 'GRADING' ? { report: { version: 1, finalGrade: card.finalGrade, path: card.report.state === 'PUBLISHED' ? card.report.path : null } } : {}) });
+    const result = { schemaVersion: 1, card: { ...card, media: card.media.FRONT ? { FRONT: card.media.FRONT } : {} },
+      ownership: { status: 'UNKNOWN', verification: 'UNKNOWN', history: [], reason: 'NO_REVIEWED_OWNERSHIP_RECORD' },
+      custody: { status: card.submission ? 'RECORDED' : 'UNKNOWN', latestRecorded: null, currentPhysicalHolder: 'UNKNOWN' },
+      history: { scope: 'RECORDED_ATLAS_EVENTS', complete: false, snapshot: '2026-10-31T00:00:00.000000Z', nextCursor: null,
+        events: [...(card.report.state === 'PUBLISHED' ? [event('REPORT_PUBLISHED', 'GRADING', 'VERIFIED_RECORD', 1)] : []), event('REPORT_APPROVED', 'GRADING', 'VERIFIED_RECORD', 2),
+          ...(card.submission ? [event('ATLAS_RECEIVED', 'CUSTODY', 'VERIFIED_RECORD', 3), event('DEPOSIT_DECLARED', 'CUSTODY', 'SUBMITTER_REPORTED', 4)] : [])] },
+      capabilities: { ownershipClaims: false, ownershipTransfers: false, reholder: false } };
     if (hold) { held.push(() => json(result)); return; } json(result); return;
   }
   const photo = /^\/api\/reports\/(ar_[A-Za-z0-9_-]{24})\/images\/(FRONT|BACK)$/.exec(url.pathname);

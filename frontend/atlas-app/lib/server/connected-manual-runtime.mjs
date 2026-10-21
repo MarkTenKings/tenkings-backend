@@ -1,4 +1,5 @@
 import { createGradedCardsService, validateGradedCardsConfiguration } from '@atlas/connected-manual/graded-cards';
+import { createCardProvenanceService, validateCardProvenanceConfiguration } from '@atlas/connected-manual/card-provenance';
 import { createReportImageProvider } from '@atlas/connected-manual/report-image-provider';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { createPhotoStorage } from '@atlas/photo-storage';
@@ -222,11 +223,12 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const orderDesk=dealerOperations?createOrderDeskService({auth,boundary,photos:orderPhotos}):null;
   const orderDeskInbox=dealerOperations?createOrderDeskInboxService({auth,boundary}):null;
   const gradedCards=createGradedCardsService({auth,boundary});
+  const cardProvenance=createCardProvenanceService({auth,boundary});
   const marketAutomaticEnabled=env.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED==='true';
   const marketLabeler=marketAutomaticEnabled&&marketProvider?createMarketSlabLabeler({boundary,apiKey:env.ATLAS_MANUAL_OPENAI_KEY}):null;
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
   requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
-  const connected=createConnectedManual({orderDesk,orderDeskInbox,gradedCards,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,marketLabeler,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
+  const connected=createConnectedManual({orderDesk,orderDeskInbox,gradedCards,cardProvenance,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,marketLabeler,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
     labelStorage,readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
@@ -238,6 +240,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers});
   const validateConfiguration=async()=>{
     await validateGradedCardsConfiguration({client:manualClient});
+    await validateCardProvenanceConfiguration({client:manualClient});
     await validateReportImageRuntimeConfiguration({enabled:Boolean(reportImageSettings),client:manualClient});
     await validateOrderDeskConfiguration({enabled:Boolean(orderDesk),client:manualClient});
     await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});

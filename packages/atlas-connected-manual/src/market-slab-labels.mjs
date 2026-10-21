@@ -42,6 +42,7 @@ const PROMPT = [
   'Leading zeros in collector numbers are typography: 025/165 and 25/165 agree. A missing denominator is incomplete evidence; a visibly different denominator or prefix is a contradiction. Common short set names and full set names can agree.',
   'A raw card or unreadable slab has no verified company/grade. Never infer the submitted physical card grade, and never approve or change a user decision.',
 ].join(' ');
+const ATTRIBUTE_PROMPT = 'The target includes reviewed sportsAttributes. Compare the printed serial denominator, not the individual copy numerator or checklist card number. On-card, sticker, cut and facsimile signatures are distinct; signature presence is not authentication. Compare each visible relic window/material and exact manufacturer use/wear statement: game-used, player-worn, event-worn and not associated are distinct. A missing or unreadable attribute is UNCERTAIN, never an inferred absence or MATCH. Transcribe visible attribute evidence in labelText/reason; never invent the unseen reverse.';
 function schema(photos) {return {type:'object',additionalProperties:false,required:['readings'],properties:{readings:{type:'array',items:{type:'object',additionalProperties:false,
   required:['sha256','gradingCompany','numericGrade','labelText','identityMatch','reason','evidenceKind'],properties:{sha256:{type:'string',enum:photos.map(p=>p.sha256)},
     evidenceKind:{type:'string',enum:['RAW','SLABBED','UNCERTAIN']},gradingCompany:{type:['string','null']},numericGrade:{type:['number','null']},labelText:{type:['string','null']},
@@ -113,7 +114,8 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
       requireThat(catalog.snapshotHash===found.catalog_hash,503,'MARKET_CATALOG_CHANGED');const candidate=catalog.candidates.find(c=>c.candidateId===found.candidate_id);
       requireThat(candidate,503,'MARKET_CATALOG_CHANGED');choice=variantCodexChoice(candidate);}
     const normalized=Object.fromEntries(Object.entries(identity).map(([k,v])=>[k,typeof v==='string'?v.normalize('NFC').toLowerCase().replace(/\s+/gu,' ').trim():v]));
-    return {key:choice?.key??`approved-identity:${hash(normalized)}`,identity:choice?{...choice.identity,parallel:choice.parallel}:normalized,
+    const targetIdentity=choice?{...choice.identity,parallel:choice.parallel,...(identity.sportsAttributes?{sportsAttributes:identity.sportsAttributes}:{})}:normalized;
+    return {key:identity.sportsAttributes?`approved-attributes:${hash({choice:choice?.key??null,identity:targetIdentity})}`:choice?.key??`approved-identity:${hash(normalized)}`,identity:targetIdentity,
       canonicalCardKey:choice?.cardKey??null,canonicalPrintingKey:choice?.key??null};
   }
   async function published(request,saved,images){const readings=responseReadings(saved,request).filter(r=>!r.outcome);
@@ -141,7 +143,7 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     const previous=await read(tx,codexReadingKey({policy:CODEX_LABEL_POLICY,model:CODEX_LABEL_MODEL},photo.sha256));
     const r=previous?.reading;if(!r||previous.schemaVersion!=='atlas-codex-reading/v1'||previous.policy!==CODEX_LABEL_POLICY||r.sha256!==photo.sha256)return null;
     const grade=Number.isFinite(r.numericGrade)?r.numericGrade:null;
-    const identityMatch = r.candidateKey && target.canonicalPrintingKey ? r.candidateKey === target.canonicalPrintingKey ? 'MATCH' : 'DIFFERENT' : 'UNCERTAIN';
+    const identityMatch = r.candidateKey && target.canonicalPrintingKey ? r.candidateKey === target.canonicalPrintingKey && !target.identity.sportsAttributes ? 'MATCH' : r.candidateKey !== target.canonicalPrintingKey ? 'DIFFERENT' : 'UNCERTAIN' : 'UNCERTAIN';
     const reading={sha256:photo.sha256,gradingCompany:r.gradingCompany??null,numericGrade:grade,labelText:r.labelText,identityMatch,
       evidenceKind:r.evidenceKind??(grade!==null?'SLABBED':'UNCERTAIN'),reason:r.reason??'Reused the saved reference photograph reading. No new OCR request was needed.'};
     await lock(tx,readingKey(target,photo.sha256));const concurrent=await read(tx,readingKey(target,photo.sha256));if(concurrent)return concurrent.reading;
@@ -172,7 +174,7 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     const content=[{type:'input_text',text:stableJson({target})}];for(const p of request.photos){const image=photos.find(x=>x.sha256===p.sha256);
       content.push({type:'input_text',text:`Photograph SHA-256 ${p.sha256}`},{type:'input_image',image_url:`data:${image.mimeType};base64,${image.bytes.toString('base64')}`,detail:'high'});}
     let saved;
-    try {const dispatch=()=>boundedProviderOperation(null,modelTimeoutMs,async signal=>{const response=await fetchImpl(ENDPOINT,{method:'POST',redirect:'error',signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:CODEX_LABEL_MODEL,store:false,reasoning:{effort:'xhigh'},max_output_tokens:12000,input:[{role:'system',content:PROMPT},{role:'user',content}],text:{verbosity:'low',format:{type:'json_schema',name:'atlas_market_slab_labels',strict:true,schema:schema(request.photos)}}})});
+    try {const dispatch=()=>boundedProviderOperation(null,modelTimeoutMs,async signal=>{const response=await fetchImpl(ENDPOINT,{method:'POST',redirect:'error',signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:CODEX_LABEL_MODEL,store:false,reasoning:{effort:'xhigh'},max_output_tokens:12000,input:[{role:'system',content:target.identity.sportsAttributes?`${PROMPT} ${ATTRIBUTE_PROMPT}`:PROMPT},{role:'user',content}],text:{verbosity:'low',format:{type:'json_schema',name:'atlas_market_slab_labels',strict:true,schema:schema(request.photos)}}})});
       // Fetch implementations can ignore cancellation. A late response is not
       // allowed to publish after the timeout released the serial model slot.
       if(signal.aborted){void response.body?.cancel().catch(()=>{});signal.throwIfAborted();}

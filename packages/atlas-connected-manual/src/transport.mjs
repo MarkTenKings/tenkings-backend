@@ -1,4 +1,5 @@
 import { GRADED_CARDS_PATH, gradedCardsQuery } from './graded-cards-contract.mjs';
+import { cardProvenanceRoute, cardProvenanceQuery } from './card-provenance-contract.mjs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { MANUAL_STREAM_HEADER, MANUAL_STREAM_PROTOCOL } from '@atlas/manual-service/response';
 
@@ -65,6 +66,9 @@ export function isManualServicePath(value) {
     || /[\\\s\0#]/.test(value)) return false;
   let url;
   try { url = new URL(value, PUBLIC_BASE); } catch { return false; }
+  if (/\/provenance(?:\/|$)/.test(url.pathname)) {
+    try { if (!cardProvenanceRoute(url.pathname)) return false; cardProvenanceQuery(url); } catch { return false; }
+  }
   if (url.pathname === GRADED_CARDS_PATH) {
     try { if (/%(?![a-fA-F0-9]{2})/.test(url.search)) return false; gradedCardsQuery(url); } catch { return false; }
   }
@@ -82,6 +86,7 @@ export function isManualServicePath(value) {
 function requestParts(req, bytes, timestamp, nonce) {
   requireTransport(isManualServicePath(req.url), 404, 'NOT_FOUND');
   requireTransport(req.method === 'GET' || req.method === 'POST', 405, 'MANUAL_METHOD_NOT_ALLOWED');
+  if (cardProvenanceRoute(new URL(req.url, PUBLIC_BASE).pathname)) requireTransport(req.method === 'GET', 405, 'MANUAL_METHOD_NOT_ALLOWED');
   const parts = [VERSION, req.method, req.url, sha256(bytes), sha256(header(req, 'cookie', 16384)),
     sha256(header(req, 'x-atlas-csrf', 512)), header(req, 'origin'), header(req, 'content-type', 256), timestamp, nonce];
   const scope = workspaceScope(req);

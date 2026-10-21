@@ -5,6 +5,20 @@ export const STAFF_APPLICATION = 'atlas-staff';
 export const STAFF_SIGN_IN_PATH = STAFF_BASE_PATH;
 export const STAFF_REAUTHENTICATE_PATH = `${STAFF_BASE_PATH}?reauthenticate=1`;
 export const STAFF_GRADING_PATH = `${STAFF_BASE_PATH}/grading`;
+export function validCardHistoryQueryPath(path) {
+    if (typeof path !== 'string' || path.length > 1200) return false;
+    const match = /^manual-connected\/cards\/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\/provenance(?:\?([a-zA-Z0-9_=&-]+))?$/.exec(path);
+    if (!match) return false;
+    if (!match[1]) return true;
+    const values = new URLSearchParams(match[1]), seen = new Set();
+    for (const [key, value] of values) {
+        if (seen.has(key) || !['cursor', 'limit'].includes(key)) return false;
+        seen.add(key);
+        if (key === 'limit' && !/^(?:[1-9][0-9]?|100)$/.test(value)) return false;
+        if (key === 'cursor' && !/^[A-Za-z0-9_-]{1,768}$/.test(value)) return false;
+    }
+    return values.toString() === match[1];
+}
 export function validGradedCardsQueryPath(path) {
     if (typeof path !== 'string' || !path.startsWith('manual-connected/graded-cards?') || path.length > 2048) return false;
     const query = path.slice('manual-connected/graded-cards?'.length);
@@ -48,6 +62,7 @@ export function staffApiPath(path) {
     if (typeof path !== 'string' || path.length > 2048
         || (path.startsWith('manual-connected/order-desk?') ? !validOrderDeskQueryPath(path)
             : path.startsWith('manual-connected/graded-cards?') ? !validGradedCardsQueryPath(path)
+                : path.startsWith('manual-connected/cards/') && path.includes('/provenance') ? !validCardHistoryQueryPath(path)
                 : !/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*(?:\?[a-zA-Z0-9_=&-]+)?$/.test(path)))
         throw new Error('INVALID_STAFF_PATH');
     return `${STAFF_BASE_PATH}/api/staff/${path}`;

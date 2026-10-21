@@ -1,4 +1,5 @@
 export { groupSoldReferences, saleAmountLabel } from './sold-reference-ui.mjs';
+import { ATLAS_SPORTS_ATTRIBUTE_LABELS as attributeNames } from '@atlas/grading-core/identity';
 // Display helpers only. Identity, sale evidence and offers come from the server;
 // none of these functions calculates a grade or creates a market valuation.
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -14,6 +15,13 @@ export function reportIdentityRows(report, details) {
     ['Variant', details?.variant], ['Card type', details?.cardType],
     ['Layout', ({ POKEMON: 'Pokémon', TRAINER: 'Trainer', ENERGY: 'Energy' })[identity.layoutType]],
   ];
+  const attributes = identity.sportsAttributes;
+  if (attributes) {
+    pairs.push(['Printed serial', attributes.serial.presence === 'PRESENT' ? attributes.serial.printed : attributeNames[attributes.serial.presence]],
+      ['Autograph', `${attributeNames[attributes.autograph.presence]}${attributes.autograph.presence === 'PRESENT' ? ` · ${attributeNames[attributes.autograph.type]} (presence is not authentication)` : ''}`],
+      ['Relic', attributeNames[attributes.relic.presence]]);
+    for (const window of attributes.relic.windows) pairs.push([`Relic · ${window.position}`, [window.material || 'Material unknown', attributeNames[window.use], window.manufacturerStatement && `“${window.manufacturerStatement}”`].filter(Boolean).join(' · ')]);
+  }
   return pairs.filter(([, value]) => nonempty(value));
 }
 

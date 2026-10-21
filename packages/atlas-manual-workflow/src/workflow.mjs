@@ -4,7 +4,7 @@ import { applyGeometryEdit, markPrintedBorderAbsent, canDetectMissingPhysical, c
 import { beginDefectEdit, applyDefectMeasurement, confirmDefectFindings, createDefectWorkspace, defectBase,
   markDefectSideInspected, markDefectFindingReviewed, invalidateDefectFindingReviews, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement-runtime';
-import { canonicalizeNewSpeedsterSessionIdentity, SpeedsterIdentityValidationError } from '@atlas/grading-core/identity';
+import { canonicalizeNewSpeedsterSessionIdentity, SpeedsterIdentityValidationError, assertAtlasSportsAttributePhotos } from '@atlas/grading-core/identity';
 
 import { proposalEdit, checkProposalReview, invalidateDefectConfirmation } from './proposal-review.mjs';
 import { collectivelyConfirmDefects, confirmationBudget } from './collective-confirmation.mjs';
@@ -110,6 +110,12 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
         frame:frameFromGeometry(geometry,side),cornerShape:geometry.sides[side].cornerShape}).state;}}
       else defects = initialDefects(geometry);
       draft = { ...draft, version: 'atlas-manual-workflow-v2', source: replaced.source };
+      // Claims on a replaced photograph need a fresh human review. Prior
+      // identity/action/report snapshots remain immutable and readable.
+      if (draft.identity.sportsAttributes) {
+        const { sportsAttributes: _prior, ...identity } = draft.identity;
+        draft = { ...draft, identity, identityRevision: draft.identityRevision + 1 };
+      }
       delete draft.finalReview; delete draft.geometryBeforeEdit;
     } else if (action.type === 'SET_PHOTO_BACKGROUND') {
       object(action, ['type', 'side', 'base', 'matColor']);
@@ -191,6 +197,12 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       // confirmations.
     } else if (action.type === 'IDENTITY_EDIT') {
       object(action, ['type', 'identity']);
+      if (action.identity?.sportsAttributes) {
+        requireThat(principal.actorKind !== 'MACHINE', 403, 'MANUAL_HUMAN_REQUIRED');
+        try { assertAtlasSportsAttributePhotos(action.identity.sportsAttributes,
+          Object.fromEntries(SIDES.map(side => [side, geometry.sides[side].image.originalSha256]))); }
+        catch (error) { if (error.message === 'ATLAS_SPORTS_ATTRIBUTE_PHOTO_STALE') throw new ManualServiceError(409, 'MANUAL_IDENTITY_PHOTO_STALE'); throw error; }
+      }
       draft = { ...draft, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, action.identity), identityRevision: draft.identityRevision + 1 };
     } else {
       const editingFinal = finalReview && preparedForReview(geometry)

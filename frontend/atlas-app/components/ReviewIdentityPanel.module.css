@@ -19,5 +19,13 @@
 .actions{display:flex;align-items:center;gap:8px;margin-top:12px}
 .panel .actions p{flex:1;margin:0;color:#64716a;font-size:12px}
 .actions .save{background:#244e3b;border-color:#244e3b;color:#fff}
+.attributes{grid-column:1/-1;border-top:1px solid #e5e3dc;padding-top:14px;margin-top:8px;min-width:0}
+.attributes h3{font-size:14px;margin:0 0 8px}.attributes h4{font-size:13px;margin:0;grid-column:1/-1}
+.attributeNote{font-size:12px;line-height:1.5;color:#64716a;margin:10px 0}
+.attributeGroup,.relicWindow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:14px 0;border-top:1px solid #e5e3dc}
+.observations{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;grid-column:1/-1}
+.relicWindow,.wideAttribute{grid-column:1/-1}.relicWindow{padding:14px;background:#fafbf9;border:1px solid #e5e3dc;border-radius:8px}
+.statement{display:block;margin-top:4px;line-height:1.5}.attributeGroup small{font-weight:400;color:#64716a}
+@media(max-width:600px){.attributeGroup,.relicWindow,.observations{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:760px){.summary,.fields{grid-template-columns:repeat(2,minmax(0,1fr))}.panel{padding:12px}.panel .fields :is(input,select){font-size:16px}.panel button{min-height:40px}}
 @media(max-width:400px){.heading{align-items:flex-start}.actions{flex-wrap:wrap}.actions p{flex-basis:100%}.actions button{flex:1}.summary,.fields{gap:10px}}

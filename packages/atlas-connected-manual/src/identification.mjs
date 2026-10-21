@@ -151,7 +151,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
     const cardId=seedRow.card_id, pair={sourceHash:seedRow.source_hash};
     let row=recovery?null:seedRow, claimError=null, claimStarted=false;
     const verifiedOcr=new Set();
-      requireThat(['atlas-identification-layout-v3',ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(saved.engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+      requireThat(['atlas-identification-layout-v3','atlas-identification-layout-v4',ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(saved.engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
       let dispatched=false;
       const effect=kind=>async(request,context)=>{
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');

@@ -4,6 +4,7 @@ import Shell from './Shell';
 import { api } from '../lib/client';
 import { STAFF_BASE_PATH, STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { orderDeskPagePath } from '../lib/order-desk-client.mjs';
+import { cardHistoryPagePath } from '../lib/card-history-client.mjs';
 import { approvedDate, approvedReportPath, archiveAccessFailure, gradedCardPath, gradedCardSubtitle, gradedCardTitle,
   gradedCardVariation, gradedCardsFormFilters, gradedCardsMessage, gradedCardsPath, mergeGradedCards, readGradedCardsPage, recordedGrade, submissionOrigin } from '../lib/graded-cards-client.mjs';
 import styles from './GradedCards.module.css';
@@ -60,6 +61,7 @@ function GalleryCard({ card, orderLinks }) {
       <div className={styles.gradeLine}><strong>ATLAS <span>{recordedGrade(card)}</span></strong><span>Approved<br/>{approvedDate(card.approvedAt)}</span></div>
       <Link className={styles.primary} href={gradedCardPath(card)}>Open card <span aria-hidden="true">↗</span></Link>
       <div className={styles.cardLinks}>{report ? <a href={report}>View approved report ↗</a> : <span>Public report pending</span>}<span>{submissionOrigin(card)}</span></div>
+      <div className={styles.cardLinks}><Link href={cardHistoryPagePath(card.cardId)}>Card history ↗</Link></div>
       {card.submission?.reference && <div className={styles.submissionLink}><SubmissionReference card={card} enabled={orderLinks}/></div>}
     </div>
   </article>;
@@ -73,7 +75,7 @@ function CardsTable({ cards, orderLinks }) {
       <td><strong className={styles.tableGrade}>{recordedGrade(card)}</strong></td><td>{approvedDate(card.approvedAt)}</td><td>{card.approver?.name || 'Not recorded'}</td>
       <td>{card.reviewers?.length ? card.reviewers.map(person => person.name || 'Name not recorded').join(', ') : 'Not recorded'}</td>
       <td>{card.submission ? <>{card.submission.customer?.name || 'Name not recorded'}<small>{card.submission.reference ? <SubmissionReference card={card} enabled={orderLinks}/> : 'Reference not recorded'}</small></> : 'No linked submission'}</td>
-      <td>{submissionOrigin(card)}</td><td>{report ? <a href={report}>Open report ↗</a> : 'Pending publication'}</td>
+      <td>{submissionOrigin(card)}</td><td>{report ? <a href={report}>Open report ↗</a> : 'Pending publication'}<small><Link href={cardHistoryPagePath(card.cardId)}>Card history ↗</Link></small></td>
     </tr>; })}</tbody>
   </table></div>;
 }

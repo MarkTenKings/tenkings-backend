@@ -65,7 +65,7 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
     try{return await work();}finally{const next=waiting.shift();if(next)next();else active--;}
   };
 }
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketLabeler=null,marketAutomaticEnabled=false,marketConcurrency=2,variantReviewEnabled=false,variantReadReferenceImage=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,orderDesk=null,orderDeskInbox=null,gradedCards=null,reportImageProvider=null,reportImageConcurrency=2,readOnlyGradingImages=false,
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketLabeler=null,marketAutomaticEnabled=false,marketConcurrency=2,variantReviewEnabled=false,variantReadReferenceImage=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,orderDesk=null,orderDeskInbox=null,gradedCards=null,cardProvenance=null,reportImageProvider=null,reportImageConcurrency=2,readOnlyGradingImages=false,
   labelStorage=null,processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null,variantReview=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
@@ -240,7 +240,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,learningEnabled,provider:defectProvider,receiptClient,onWorkerError});
   variantReview=variantJobs?createVariantReviewService({store:variantJobs,workflow,readReferenceImage:variantReadReferenceImage}):null;
-  const connected={labels,labelWorker,variantReview,variantJobs,dealerOperations,orderDesk,orderDeskInbox,gradedCards,marketWorker,marketJobs,reportImages,retryGradingImage,readGradingPhoto,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  const connected={labels,labelWorker,variantReview,variantJobs,dealerOperations,orderDesk,orderDeskInbox,gradedCards,cardProvenance,marketWorker,marketJobs,reportImages,retryGradingImage,readGradingPhoto,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status,savedDetails]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
         details.read(input.staff,input.card.cardId)]);

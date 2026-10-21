@@ -1,3 +1,4 @@
+import {emptySportsAttributesModelProposal} from '../src/identification-sports-attributes.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -42,7 +43,7 @@ function deferred() {
 // stores. Transactions serialize, roll back on errors, and enforce row CAS and
 // unique effect claims. They do not establish PostgreSQL or staff-session proof.
 async function fixture({ category = 'Sports cards', values = {}, pauseModel = false,
-  engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false,
+  engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,layoutProposal={value:null,confidence:'unknown',evidence:null},sportsProposal=emptySportsAttributesModelProposal(),pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false,
   clock=()=>Date.now(), limited, readGradingPhoto=null, isCleanPhotoPrepared=null, catalogReader } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID(), edit: true };
   const sourceHash = digest('original synthetic pair'), objects = new Map();
@@ -199,7 +200,7 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
       }] });
       assert.equal(parsed.href, 'https://api.openai.com/v1/responses');
       modelEntered.resolve(); if (pauseModel) await modelRelease.promise;
-      return Response.json(modelError?{error:modelError}:modelReply(body.text?.format?.schema?.required?.includes('layout_type')?{...proposed,layout_type:layoutProposal}:proposed), { status: httpStatus });
+      return Response.json(modelError?{error:modelError}:modelReply(body.text?.format?.schema?.required?.includes('layout_type')?{...proposed,layout_type:layoutProposal,...(body.text?.format?.schema?.required?.includes('sports_attributes')?{sports_attributes:sportsProposal}:{})}:proposed), { status: httpStatus });
     },
   });
   const details = createDetailsStore({ boundary, intakeRepository });
@@ -569,7 +570,7 @@ test('core timeout after MODEL dispatch retains its late raw response receipt wi
     assert.equal(receipt.request_hash, dispatch.request_hash);
     const { ref } = JSON.parse(receipt.evidence);
     const response = await f.artifacts.read(ref, { cardId: f.cardId, kind: 'IDENTIFICATION_RESPONSE', sourceHash: f.sourceHash });
-    const expected = raw(modelReply({...f.proposed,layout_type:{value:null,confidence:'unknown',evidence:null}}));
+    const expected = raw(modelReply({...f.proposed,layout_type:{value:null,confidence:'unknown',evidence:null},sports_attributes:emptySportsAttributesModelProposal()}));
     assert.equal(response.engineVersion, ATLAS_IDENTIFICATION_LAYOUT_VERSION); assert.equal(response.status, 200);
     assert.deepEqual(Buffer.from(response.base64, 'base64'), expected); assert.equal(response.sha256, digest(expected));
     assert.deepEqual(response.usage, { input_tokens: 120, output_tokens: 80 });
@@ -911,7 +912,7 @@ for(const category of ['Sports cards','Pokémon'])test(`current generated-image 
  const result=await current.identification.run(current.staff,current.cardId);assert.equal(result.state,'COMPLETE');
  const request=current.calls.http.find(call=>call.url.hostname==='api.openai.com').body;
  assert.deepEqual(request.reasoning,{effort:'xhigh'});assert.equal(request.max_output_tokens,32768);
- assert.equal(request.text.format.name,'atlas_card_details_layout_v4');
+ assert.equal(request.text.format.name,'atlas_card_details_layout_v5');
  const images=request.input[0].content.filter(part=>part.type==='input_image');
  assert.equal(images.length,category==='Pokémon'?3:2);assert(images.every(part=>part.detail==='high'));
  assert.equal(result.result.provenance.reasoning_effort,'xhigh');
@@ -1152,4 +1153,20 @@ test('a model answer near its deadline survives a subsequent catalog timeout and
   assert.equal((await f.details.read(f.staff,f.cardId)).details.fields.set_name,'Fixture set');
   await f.restart().run(f.staff,f.cardId);assert.equal(f.calls.http.length,3);assert.equal(f.db.attempts.size,1);
  }finally{f.modelRelease.resolve();t.mock.timers.reset();}
+});
+
+test('v5 saves actual both-side machine evidence separately and never adopts sports claims into reviewed identity',async()=>{
+ const sportsProposal=emptySportsAttributesModelProposal();
+ sportsProposal.serial={printed:'007/099',confidence:'high',evidence:[{side:'BACK',observation:'Back lower edge: 007/099.'}]};
+ sportsProposal.autograph={presence:'PRESENT',type:'STICKER',confidence:'medium',evidence:[{side:'BACK',observation:'Back signature lies on a sticker.'}]};
+ const f=await fixture({sportsProposal}),result=await f.identification.run(f.staff,f.cardId);
+ assert.equal(result.state,'COMPLETE');const proposal=result.result.sportsAttributesProposal,input=JSON.parse(f.currentRow().input).input;
+ assert.equal(proposal.authority,'MACHINE_PROPOSAL');assert.equal(proposal.sourceHash,f.sourceHash);
+ assert.equal(proposal.attributes.serial.printed,'007/099');assert.equal(proposal.attributes.serial.denominator,99);
+ assert.equal(proposal.attributes.serial.evidence[0].imageSha256,input.photos.back.sha256);
+ assert.notEqual(proposal.attributes.serial.evidence[0].imageSha256,f.originalPair.sides.BACK.photo.original.sha256);
+ const details=(await f.details.read(f.staff,f.cardId)).details;assert.equal(Object.hasOwn(gradingIdentity(details),'sportsAttributes'),false);
+ const replay=await f.restart().run(f.staff,f.cardId);assert.deepEqual(replay.result, result.result);assert.equal(f.calls.http.length,3);
+ const malformed=structuredClone(result.result);malformed.sportsAttributesProposal.attributes.autograph.evidence[0].imageSha256='f'.repeat(64);
+ assert.throws(()=>parseAtlasIdentificationResult(malformed,input));
 });

@@ -4,15 +4,33 @@ import { randomUUID } from 'node:crypto';
 import { createManualWorkflow } from '../src/workflow.mjs';
 import { createManualArtifactStore } from '../../atlas-manual-service/src/artifacts.mjs';
 import { canonical, digest, inputCommand, requireThat, stateDocument } from '../../atlas-manual-service/src/contract.mjs';
-import { createGeometryWorkspace, applyGeometryEdit, applyPreparedFrame, confirmBothGeometry, geometryBase, preparationBase } from '../../atlas-manual-workspace/src/geometry-actions.mjs';
+import { createGeometryWorkspace, replaceGeometryImage, applyGeometryEdit, applyPreparedFrame, confirmBothGeometry, geometryBase, preparationBase } from '../../atlas-manual-workspace/src/geometry-actions.mjs';
 import { defectBase, reviewedDefectFindingIds, runDefectMeasurement } from '../../atlas-manual-workspace/src/defect-actions.mjs';
 import { traceAction } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 import { decodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY, calculateAtlasFinalGrade } from '@atlas/grading-core/manual-report';
+import { emptyAtlasSportsAttributes, atlasPrintedSerial } from '@atlas/grading-core/identity';
 
 const SIDES = ['FRONT', 'BACK'], hash = letter => letter.repeat(64), clone = value => structuredClone(value);
 const physical = [{ x: .125, y: .1 }, { x: .875, y: .1 }, { x: .875, y: .9 }, { x: .125, y: .9 }];
+test('reviewed sports attributes save through the real identity action while measurements stay exact', async () => {
+  const f = await fixture(), before = await f.state(), original = f.card(), attributes = emptyAtlasSportsAttributes();
+  attributes.serial = { presence: 'PRESENT', ...atlasPrintedSerial('007/099'), evidence: [{ side: 'BACK', imageSha256: before.geometry.sides.BACK.image.originalSha256, observation: 'Back lower edge: 007/099.' }] };
+  const identity = { ...original.draft.identity, sportsAttributes: attributes };
+  await f.execute({ type: 'IDENTITY_EDIT', identity });
+  assert.deepEqual(f.card().draft.identity, identity); assert.equal(f.card().draft.identityRevision, original.draft.identityRevision + 1);
+  const after = await f.state(); assert.deepEqual(after.geometry, before.geometry); assert.deepEqual(after.defects, before.defects);
+  assert.equal(f.measured.length, 0); assert.equal(f.publications.length, 0);
+  const saved = f.card(); identity.sportsAttributes.serial.evidence[0].imageSha256 = hash('f');
+  await assert.rejects(f.execute({ type: 'IDENTITY_EDIT', identity }), { code: 'MANUAL_IDENTITY_PHOTO_STALE' });
+  assert.deepEqual(f.card(), saved);
+});
+test('machine proposals cannot acquire reviewed sports identity through the human action', async () => {
+  const f = await fixture({ actorKind: 'MACHINE' }), before = f.card();
+  await assert.rejects(f.execute({ type: 'IDENTITY_EDIT', identity: { ...before.draft.identity, sportsAttributes: emptyAtlasSportsAttributes() } }), { code: 'MANUAL_HUMAN_REQUIRED' });
+  assert.deepEqual(f.card(), before);
+});
 const printed = [{ x: .04, y: .06 }, { x: .94, y: .06 }, { x: .94, y: .96 }, { x: .04, y: .96 }];
 function geometry(cardId, printedQuad = printed) {
   let state = createGeometryWorkspace({ cardId, profile: 'SPORTS', sides: Object.fromEntries(SIDES.map((side, i) => [side, {
@@ -31,7 +49,7 @@ function geometry(cardId, printedQuad = printed) {
   }
   return confirmBothGeometry(state, { actor: 'HUMAN', reviewed: true, base: Object.fromEntries(SIDES.map(side => [side, geometryBase(state, side, 'REVIEW')])) }).state;
 }
-async function fixture({resolveVariantConfirmation=null,actorKind=null,printedQuad=printed}={}) {
+async function fixture({resolveVariantConfirmation=null,actorKind=null,printedQuad=printed,replaceSources=null}={}) {
   const cardId = randomUUID(), staff = { id: randomUUID() }, principal = { id: staff.id, canCertify: true, ...(actorKind?{actorKind}:{}) };
   let card;
   const commands = new Map(), objects = new Map(), proposals = new Map(), f = { commits: [], measured: [], publications: [], publisher: async () => {}, resolve: null,
@@ -62,7 +80,7 @@ async function fixture({resolveVariantConfirmation=null,actorKind=null,printedQu
     async read({ key }) { f.artifactGets.push(key); if (f.onArtifactRead) await f.onArtifactRead(key);
       return key === f.corruptKey ? { ...objects.get(key), bytes: Buffer.from('corrupt') } : objects.get(key); },
   } });
-  const workflow = createManualWorkflow({ repository, artifacts, resolveVariantConfirmation,
+  const workflow = createManualWorkflow({ repository, artifacts, resolveVariantConfirmation, replaceSources,
     assertCurrent: async () => { requireThat(!f.photosChanged, 409, 'MANUAL_PHOTOS_CHANGED'); },
     resolveProposal: async ({ staff: actor, card: current, analysisId, proposalId }) => { authorize(actor, current.cardId); const found = proposals.get(`${analysisId}:${proposalId}`);
       requireThat(found, 404, 'MANUAL_PROPOSAL_NOT_FOUND'); return f.resolve ? f.resolve(clone(found)) : clone(found); },
@@ -317,4 +335,18 @@ test('variant confirmation preserves completed geometry/findings and permits exa
  const approved=await f.execute({type:'APPROVE_REPORT',reportHash:(await f.workflow.service.previewReport(f.staff,f.cardId)).reportHash,reviewed:true});
  assert.deepEqual(approved.card.draft.geometry,before.draft.geometry);assert.deepEqual(approved.card.draft.defects,before.draft.defects);assert.equal(f.commits.at(-1).approval.identity.parallel,'Gold Refractor');
  const machine=await fixture({resolveVariantConfirmation:resolve,actorKind:'MACHINE'});await assert.rejects(machine.execute({type:'VARIANT_CONFIRM'}),{code:'VARIANT_CONFIRMATION_UNAVAILABLE'});assert.equal(resolutions,2);
+});
+
+test('replacing photographs clears only the new draft claims and preserves prior reviewed approval bytes',async()=>{
+ const f=await fixture({replaceSources:async({card,geometry:before,sourceHash})=>{
+  const fresh=replaceGeometryImage(before,{side:'BACK',base:geometryBase(before,'BACK','IMAGE'),image:{...before.sides.BACK.image,version:before.sides.BACK.image.version+1,originalSha256:hash('9')}}).state;
+  return {geometry:fresh,source:{sourceHash},changedSides:['BACK']};
+ }});
+ const original=(await f.state()).geometry,attributes=emptyAtlasSportsAttributes();attributes.serial={presence:'PRESENT',...atlasPrintedSerial('007/099'),evidence:[{side:'BACK',imageSha256:original.sides.BACK.image.originalSha256,observation:'Back lower edge: 007/099.'}]};
+ await f.execute({type:'IDENTITY_EDIT',identity:{...f.card().draft.identity,sportsAttributes:attributes}});await f.inspect();await f.confirm();
+ const before=clone(f.approval),card=f.card(),approved=await f.workflow.service.previewReport(f.staff,f.cardId);
+ await f.execute({type:'REPLACE_SOURCES',sourceHash:hash('8')});
+ assert.equal(Object.hasOwn(f.card().draft.identity,'sportsAttributes'),false);assert.equal(f.card().draft.identityRevision,card.draft.identityRevision+1);assert.deepEqual(f.approval,before);
+ assert.equal(approved.review.report.identity.sportsAttributes.serial.printed,'007/099');
+ assert.equal((await f.state()).geometry.sides.BACK.image.originalSha256,hash('9'));
 });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { parseSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
+import { atlasPublicSportsAttributesSchema } from '@atlas/grading-core/identity';
 
 // A distinct, strict projection. The frozen legacy public-report-v1 reader and
 // its original displayGrade semantics are intentionally independent.
@@ -17,7 +18,7 @@ const grade = z.strictObject({ front: sideGrade, back: sideGrade,
 const identity = z.union([
   // Physical grading does not require a fully resolved descriptive identity.
   // Preserve those nulls through delivery instead of inventing metadata.
-  z.strictObject({ playerName: text.nullable(), year: z.string().min(1).max(24).nullable(), manufacturer: text.nullable(), productSet: text.nullable(), parallel: optionalText, insert: optionalText, cardNumber: optionalText }),
+  z.strictObject({ playerName: text.nullable(), year: z.string().min(1).max(24).nullable(), manufacturer: text.nullable(), productSet: text.nullable(), parallel: optionalText, insert: optionalText, cardNumber: optionalText, sportsAttributes: atlasPublicSportsAttributesSchema.optional() }),
   // Preserve the optional manufacturer admitted by the authoritative Pokémon
   // identity contract. Historical reports must keep this field omitted.
   z.strictObject({ cardName: text.nullable(), year: z.string().min(1).max(24).nullable(), manufacturer: z.string().min(1).max(120).optional(), productSet: text.nullable(), parallel: optionalText, cardNumber: optionalText, layoutType: z.enum(['POKEMON', 'TRAINER', 'ENERGY']).nullable().optional() }),

@@ -35,6 +35,11 @@
       "version": "atlas-standalone-008-graded-cards-archive",
       "file": "sql/008-graded-cards-archive.sql",
       "sqlSha256": "734094259335780542e0b53ae5b4d663a057283d670d700119f4cbc4cf05f063"
+    },
+    {
+      "version": "atlas-standalone-009-card-provenance",
+      "file": "sql/009-card-provenance.sql",
+      "sqlSha256": "2ce701a8d22ca0b2dfa81381919331046358f7acff308440220f1a9c3faa1a6a"
     }
   ]
 }

@@ -7,7 +7,7 @@ const repo = resolve(app, '../..');
 const pages = JSON.parse(readFileSync(resolve(app, '.next/server/pages-manifest.json'), 'utf8'));
 const routes = JSON.parse(readFileSync(resolve(app, '.next/routes-manifest.json'), 'utf8'));
 assert.equal(routes.basePath, '/admin', 'Staff artifact must mount only at /admin');
-assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/staff/[...path]', '/grading', '/add-cards', '/manual', '/manual/[cardId]', '/batch', '/labels', '/station', '/customer-operations', '/graded-cards'].sort());
+assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/staff/[...path]', '/grading', '/add-cards', '/manual', '/manual/[cardId]', '/batch', '/labels', '/station', '/customer-operations', '/graded-cards', '/graded-cards/[cardId]'].sort());
 function files(dir) { return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(resolve(dir, entry.name)) : [resolve(dir, entry.name)]); }
 const forbidden = /@tenkings\/|requireAdminSession|buildAdminHeaders|QueenWidget|ATLAS_ADMIN_PHONES|AC_SYNTHETIC_ATLAS|VA_SYNTHETIC_ATLAS|__(?:Host|Secure)-atlas_staff/;
 const chunks = files(resolve(app, '.next/static')).filter(p => p.endsWith('.js'));
@@ -32,7 +32,7 @@ for (const trace of traces) {
             && realpathSync(full) === realpathSync(resolve(repo, 'packages/atlas-manual-service'));
         // The archive shares only its pure query contract with the proxy. Its
         // private handler, database service and approved-media builder stay out.
-        const manualPackage = /^packages\/atlas-(?:connected-manual\/(?:package\.json|src\/(?:transport|graded-cards-contract)\.mjs)|manual-service\/(?:package\.json|src\/(?:response|contract)\.mjs)|manual-intake\/(?:package\.json|src\/(?:client|photo-bytes)\.mjs)|manual-workflow\/(?:package\.json|src\/(?:client|action-workspace)\.mjs)|manual-workspace\/package\.json)$/.test(rel);
+        const manualPackage = /^packages\/atlas-(?:connected-manual\/(?:package\.json|src\/(?:transport|graded-cards-contract|card-provenance-contract)\.mjs)|manual-service\/(?:package\.json|src\/(?:response|contract)\.mjs)|manual-intake\/(?:package\.json|src\/(?:client|photo-bytes)\.mjs)|manual-workflow\/(?:package\.json|src\/(?:client|action-workspace)\.mjs)|manual-workspace\/package\.json)$/.test(rel);
         const sharedCamera = ['frontend/atlas-shared/RapidCardCamera.jsx', 'frontend/atlas-shared/RapidCardCamera.module.css', 'frontend/atlas-shared/rapid-camera.mjs'].includes(rel);
         const browserReportTour = /^packages\/atlas-manual-workspace\/dist\/ApprovedReportTourDialog-[A-Z0-9]{8}\.js$/.test(rel);
         assert.ok(manualResponseLink || manualPackage || sharedCamera || browserReportTour || rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json' || rel === 'packages/atlas-grading-core/package.json' || rel.startsWith('packages/atlas-grading-core/dist/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-service-bridge/')

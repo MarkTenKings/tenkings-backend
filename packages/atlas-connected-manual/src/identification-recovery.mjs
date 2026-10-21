@@ -73,7 +73,7 @@ export async function identificationRetryCount(row, access) {
 /** Recovery never infers OCR or substitutes photos. The original model request
  * contains the exact JPEGs whose hashes are in the immutable engine input. */
 export async function prepareIdentificationRecovery(row, access, model = null, { rateLimit = false } = {}) {
-  refuse(['atlas-identification-layout-v3',ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(JSON.parse(row.input)?.engineVersion));
+  refuse(['atlas-identification-layout-v3','atlas-identification-layout-v4',ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(JSON.parse(row.input)?.engineVersion));
   refuse(row.state === 'UNKNOWN' && row.result === null && row.finished_at != null);
   model ??= await recordedIdentificationEffect(row, 'MODEL', access);
   refuse(rateLimit ? isRateLimitRejection(model) : isCreditBalanceRejection(model));
