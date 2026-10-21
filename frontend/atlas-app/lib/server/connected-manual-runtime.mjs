@@ -222,8 +222,9 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     limits:{maxObjectBytes:256*1024*1024,timeoutMs:90000}}),limited:createWorkLimiter(1,{maxQueue:24})}):null;
   const orderDesk=dealerOperations?createOrderDeskService({auth,boundary,photos:orderPhotos}):null;
   const orderDeskInbox=dealerOperations?createOrderDeskInboxService({auth,boundary}):null;
-  const gradedCards=createGradedCardsService({auth,boundary});
-  const cardProvenance=createCardProvenanceService({auth,boundary});
+  // The variant process has no staff HTTP listener or archive/history database grants.
+  const gradedCards=env.ATLAS_VARIANT_WORKER_ENABLED==='true'?null:createGradedCardsService({auth,boundary});
+  const cardProvenance=env.ATLAS_VARIANT_WORKER_ENABLED==='true'?null:createCardProvenanceService({auth,boundary});
   const marketAutomaticEnabled=env.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED==='true';
   const marketLabeler=marketAutomaticEnabled&&marketProvider?createMarketSlabLabeler({boundary,apiKey:env.ATLAS_MANUAL_OPENAI_KEY}):null;
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
@@ -239,8 +240,8 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   }):null;
   const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers});
   const validateConfiguration=async()=>{
-    await validateGradedCardsConfiguration({client:manualClient});
-    await validateCardProvenanceConfiguration({client:manualClient});
+    if(gradedCards)await validateGradedCardsConfiguration({client:manualClient});
+    if(cardProvenance)await validateCardProvenanceConfiguration({client:manualClient});
     await validateReportImageRuntimeConfiguration({enabled:Boolean(reportImageSettings),client:manualClient});
     await validateOrderDeskConfiguration({enabled:Boolean(orderDesk),client:manualClient});
     await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
