@@ -26,7 +26,7 @@ test('approved next steps expose label, NFC setup, explicit comps and report wit
   assert.match(text(tree), /Print the label/); assert.match(text(tree), /enrolled Mac station and a qualified tag profile/);
   assert.match(text(tree), /Automatic after approval/); assert.doesNotMatch(text(tree), /NFC verified|Printed|Searching/);
   const buttons = all(tree, node => node.type === 'button');
-  assert.deepEqual(buttons.map(text), ['Open label & print', 'Review sold comps']);
+  assert.deepEqual(buttons.map(text), ['Open legacy label & station', 'Review sold comps']);
   buttons[1].props.onClick(); assert.equal(opened, 1);
   const links = all(tree, node => node.type === 'a');
   assert.equal(links[0].props.href, '/station'); assert.equal(links[1].props.href, 'https://atlasgrading.com/report/approved');
@@ -46,13 +46,13 @@ test('unavailable sold search remains visible and disabled, without hiding repor
 });
 test('failed label shows a review action and busy gating does not imply physical success', () => {
   const tree = render({ labelState: 'FAILED', disabled: true, marketAvailable: true, onToggleLabel() {}, onToggleMarket() {} });
-  assert.match(text(tree), /Label needs attention/); assert.match(text(tree), /Review label issue/);
+  assert.match(text(tree), /Label needs attention/); assert.match(text(tree), /Review legacy label issue/);
   assert.ok(all(tree, node => node.type === 'button').every(node => node.props.disabled));
   assert.doesNotMatch(text(tree), /Label printed|NFC verified/);
 });
 test('open tools have explicit collapse controls and a missing report URL is not invented', () => {
   const tree = render({ reportHref: null, labelOpen: true, marketOpen: true, marketAvailable: true, onToggleLabel() {}, onToggleMarket() {} });
-  assert.deepEqual(all(tree, node => node.type === 'button').map(text), ['Hide label', 'Hide sold comps']);
+  assert.deepEqual(all(tree, node => node.type === 'button').map(text), ['Hide legacy label', 'Hide sold comps']);
   assert.ok(all(tree, node => node.type === 'button').every(node => node.props['aria-expanded']));
   assert.match(text(tree), /Report link unavailable/); assert.equal(all(tree, node => node.type === 'a').length, 1);
 });
@@ -64,10 +64,27 @@ test('provider access alone does not claim approval-triggered searches are enabl
 });
 
 
-test('published card links to actual label sheets and preserves its explicit legacy station action', () => {
-  const tree = render({ cardId: 'published-card', labelState: 'READY', onToggleLabel() {} });
-  assert.ok(all(tree, node => node.type === 'a' && node.props.href === '/labels?cardId=published-card').length);
-  assert.ok(all(tree, node => node.type === 'a' && node.props.href === '/station').length);
-  assert.ok(all(tree, node => node.type === 'button' && text(node) === 'Open legacy label & station').length);
-  assert.match(text(tree), /Check saved sheet status/); assert.doesNotMatch(text(tree), /Label printed|NFC verified/);
+test('published card opens its saved current labels without any legacy artwork launch', () => {
+  for (const labelState of ['IDLE', 'LOADING', 'READY', 'FAILED']) {
+    let legacyOpened = 0;
+    const tree = render({ cardId: 'published card/1', labelState, labelOpen: true,
+      onToggleLabel() { legacyOpened++; }, marketAvailable: true, onToggleMarket() {} });
+    const labelLinks = all(tree, node => node.type === 'a' && node.props.href === '/labels?cardId=published%20card%2F1');
+    assert.equal(labelLinks.length, 1);
+    assert.equal(all(tree, node => node.type === 'a' && node.props.href === '/station').length, 1);
+    assert.deepEqual(all(tree, node => node.type === 'button').map(text), ['Review sold comps']);
+    assert.equal(legacyOpened, 0);
+    assert.match(text(tree), /front and back labels/); assert.match(text(tree), /color, black ink with transparent areas, or the original white-ink format/);
+    assert.match(text(tree), /Record physical printing separately/);
+    assert.doesNotMatch(text(tree), /legacy|V4|Label printed|NFC verified/);
+  }
+});
+
+test('no-card fallback explicitly identifies legacy station recovery and only opens it on request', () => {
+  let opened = 0;
+  const tree = render({ onToggleLabel() { opened++; } });
+  assert.match(text(tree), /Legacy station workflow/);
+  assert.equal(all(tree, node => node.type === 'a' && node.props.href.startsWith('/labels')).length, 0);
+  const button = all(tree, node => node.type === 'button' && text(node) === 'Open legacy label & station')[0];
+  assert.ok(button); assert.equal(opened, 0); button.props.onClick(); assert.equal(opened, 1);
 });

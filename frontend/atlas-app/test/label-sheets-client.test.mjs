@@ -2,11 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { LABEL_JIG_V1 } from '../../../packages/atlas-finishing/src/label-sheet-geometry.mjs';
-import { LABEL_EXPORT_PROFILE_V1 } from '../../../packages/atlas-finishing/src/label-sheet.mjs';
-import { createLabelSheetsClient, labelArtworkHref, LABEL_SHEETS_PATH, LABEL_EXPORT_PROFILE, LABEL_PRINT_FORMATS } from '../lib/label-sheets-client.mjs';
+import { LABEL_EXPORT_PROFILE_V1, LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES } from '../../../packages/atlas-finishing/src/label-sheet.mjs';
+import { createLabelSheetsClient, labelArtworkHref, labelSupportsPrintFormat, LABEL_SHEETS_PATH, LABEL_EXPORT_PROFILE, LABEL_PRINT_FORMATS } from '../lib/label-sheets-client.mjs';
 const sheetId = randomUUID(), itemId = randomUUID(), exportId = randomUUID(), staffId = randomUUID();
 const hash = 'a'.repeat(64), sheet = { sheetId, revision: 8, jigHash: LABEL_JIG_V1.jigHash, items: [{ itemId, slot: 1 }] }, output = { exportId, sheetId, state: 'READY', sha256: hash, manifestHash: 'b'.repeat(64) };
 const item = { itemId, state: 'READY', labelHash: hash };
+test('every client print format maps to the registered sheet and individual export profiles', () => {
+  assert.deepEqual(Object.values(LABEL_PRINT_FORMATS).map(format => format.sheet).sort(), LABEL_SHEET_EXPORT_PROFILES.map(profile => profile.id).sort());
+  assert.deepEqual(Object.values(LABEL_PRINT_FORMATS).map(format => format.individual).sort(), LABEL_SINGLE_EXPORT_PROFILES.map(profile => profile.id).sort());
+});
 function fixture(request, shared = new Map()) {
   const calls = [], storage = { getItem: key => shared.get(key) ?? null, setItem: (key, value) => shared.set(key, value), removeItem: key => shared.delete(key) };
   const options = { staffId, csrf: 'actual-csrf', storage, cryptoImpl: { randomUUID }, request: async (path, options) => { calls.push({ path, ...options }); const result = await request(path, options); return result && typeof result === 'object' ? { ...(path.endsWith('/exports') ? { exportProfileId: options.body.exportProfileId } : path.endsWith('/download') ? { exportProfileId: path.includes('/label-sheets/') ? LABEL_PRINT_FORMATS.original.sheet : LABEL_PRINT_FORMATS.original.individual } : {}), ...result } : result; } };
@@ -51,6 +55,13 @@ test('exact known CAS refusals release a stale intent; ambiguous failures retain
   }
   const f = fixture(async () => { throw { status: 503, code: 'LABEL_REVISION_CHANGED' }; });
   await assert.rejects(f.client.exportSheet(sheet)); assert.ok(f.client.pending());
+});
+test('definite approved-B eligibility refusals release export intents while ambiguous outcomes retain them', async () => {
+  for (const status of [400, 409, 503]) for (const kind of ['sheet', 'label']) {
+    const f = fixture(async () => { throw { status, code: 'LABEL_APPROVED_B_REQUIRED' }; });
+    await assert.rejects(kind === 'sheet' ? f.client.exportSheet(sheet) : f.client.exportLabel(item));
+    assert.equal(Boolean(f.client.pending()), status === 503);
+  }
 });
 test('verified access and deletion refusals release unavailable intents; ambiguous statuses do not', async () => {
   for (const [status, code] of [[404, 'LABEL_EXPORT_NOT_FOUND'], [404, 'LABEL_ITEM_NOT_FOUND'], [404, 'LABEL_SHEET_NOT_FOUND'], [404, 'MANUAL_CARD_NOT_FOUND'], [410, 'INTAKE_CARD_DELETED'], [403, 'LABEL_ACCESS_DENIED']]) {
@@ -164,6 +175,46 @@ test('foil preview and print URLs are exact authenticated modes', () => {
   assert.equal(labelArtworkHref(item, '/admin', 'print-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=print-foil`);
   assert.equal(labelArtworkHref(item, '/admin', 'preview-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview-foil`);
   assert.equal(labelArtworkHref(item, '/admin', 'unrecognized'), null);
+});
+
+test('approved-B color and back artwork use explicit modes while historical labels retain only saved front modes', () => {
+  const approved = { ...item, snapshot: { layoutVersion: 'atlas-approved-b-v1' } };
+  for (const format of ['color', 'foilBack', 'originalBack', 'colorBack']) {
+    assert.equal(labelSupportsPrintFormat(approved, format), true); assert.equal(labelSupportsPrintFormat(item, format), false);
+    const value = LABEL_PRINT_FORMATS[format];
+    for (const mode of [value.previewMode, value.printMode])
+      assert.equal(labelArtworkHref(approved, '/admin', mode), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=${mode}`);
+  }
+  for (const mode of ['print-color', 'preview-back', 'print-back', 'preview-back-foil', 'print-back-foil', 'print-back-color'])
+    assert.equal(labelArtworkHref(item, '/admin', mode), null);
+  for (const mode of ['preview', 'print', 'preview-foil', 'print-foil']) assert.ok(labelArtworkHref(item, '/admin', mode));
+  assert.equal(labelSupportsPrintFormat(approved, 'unknown'), false);
+});
+
+test('each approved-B print format binds the exact individual or sheet profile and rejects legacy/mixed sources before requests', async () => {
+  const approved = { ...item, snapshot: { layoutVersion: 'atlas-approved-b-v1' } }, approvedSheet = { ...sheet, items: [approved] };
+  for (const key of ['color', 'foilBack', 'originalBack', 'colorBack']) {
+    const format = LABEL_PRINT_FORMATS[key], f = fixture(async () => output);
+    assert.throws(() => f.client.exportLabel(item, format.individual), { code: 'LABEL_PROFILE_UNAVAILABLE' });
+    assert.throws(() => f.client.exportSheet(sheet, format.sheet), { code: 'LABEL_PROFILE_UNAVAILABLE' });
+    assert.throws(() => f.client.exportSheet({ ...approvedSheet, items: [approved, item] }, format.sheet), { code: 'LABEL_PROFILE_UNAVAILABLE' });
+    assert.equal(f.calls.length, 0); assert.equal(f.client.pending(), null);
+    await f.client.exportLabel(approved, format.individual); assert.equal(f.calls.at(-1).body.exportProfileId, format.individual);
+    await f.client.exportSheet(approvedSheet, format.sheet); assert.equal(f.calls.at(-1).body.exportProfileId, format.sheet);
+    assert.throws(() => f.client.exportLabel(approved, format.sheet), { code: 'LABEL_PROFILE_INVALID' });
+  }
+});
+
+test('approved-B saved downloads retain their exact recognized format and refuse a cross-kind response', async () => {
+  for (const key of ['color', 'foilBack', 'originalBack', 'colorBack']) {
+    const format = LABEL_PRINT_FORMATS[key], response = { url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString() };
+    const f = fixture(async () => ({ ...response, exportProfileId: format.sheet }));
+    const result = await f.client.downloadSheet(sheet, output); assert.equal(result.result.exportProfileId, format.sheet);
+    const g = fixture(async () => ({ ...response, exportProfileId: format.individual }));
+    const individual = await g.client.downloadLabel(item, output); assert.equal(individual.result.exportProfileId, format.individual);
+    const bad = fixture(async () => ({ ...response, exportProfileId: format.individual }));
+    await assert.rejects(bad.client.downloadSheet(sheet, output), { code: 'LABEL_DOWNLOAD_INVALID' }); assert.ok(bad.client.pending());
+  }
 });
 
 test('a saved legacy download identifies its original ink format and wrong-kind profiles are refused', async () => {

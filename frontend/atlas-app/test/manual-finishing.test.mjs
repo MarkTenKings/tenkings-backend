@@ -107,3 +107,12 @@ test('cancelled native approval marker has no effect and preserves ordinary brow
   assert.equal(f.nativeCalls.length, 0); assert.equal(f.windows, 0);
   const browser = fixture(); const popup = browser.open(); assert.equal(browser.windows, 1); assert.equal(Boolean(popup.closed), false);
 });
+
+
+test('legacy saved station plan links to the current card label page without replacing or dispatching its saved intent', () => {
+  const plan = samplePlan(), before = JSON.stringify(plan), f = fixture({ plan });
+  const links = f.find(node => node.type === 'a' && node.props.href === `/labels?cardId=${encodeURIComponent(plan.binding.cardId)}`);
+  assert.equal(links.length, 1); assert.equal(text(links[0]), 'Open current label sheets ↗');
+  assert.match(f.text(), /this legacy station workflow keep separate print records/);
+  assert.equal(JSON.stringify(plan), before); assert.equal(f.prints.length, 0); assert.equal(f.nativeCalls.length, 0); assert.equal(f.windows, 0);
+});

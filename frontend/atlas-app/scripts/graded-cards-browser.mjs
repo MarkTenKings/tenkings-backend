@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { renderLabelV4 } from '../../../packages/atlas-finishing/src/label-v4.mjs';
+import { renderApprovedBLabel } from '../../../packages/atlas-finishing/src/label-approved-b.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..'), app = resolve(root, 'frontend/atlas-app');
 const require = createRequire(resolve(root, 'packages/atlas-manual-workspace/package.json'));
 const { build } = require('esbuild');
@@ -64,13 +65,17 @@ const fixtureLabels = new Map();
 for (const [index, card] of cards.entries()) {
   if (card.report.state !== 'PUBLISHED' || index === 6) continue;
   const itemId = randomUUID();
-  const rendered = renderLabelV4({ identity: card.identity, finalGrade: card.finalGrade,
+  // Retain one historical front-only example alongside the current saved
+  // front/back contract. These labels remain synthetic qualification records.
+  const rendered = (index === 2 ? renderLabelV4 : renderApprovedBLabel)({ identity: card.identity, finalGrade: card.finalGrade,
     reportNumber: card.certificateNumber, approvalVersion: card.report.version,
     cardProfile: card.identity.category });
   if (rendered.state !== 'READY') throw Error('Synthetic label needs layout.');
-  fixtureLabels.set(itemId, rendered.previewSvg);
+  fixtureLabels.set(itemId, { preview: rendered.previewSvg, 'preview-back': rendered.backPreviewSvg });
   card.media.LABEL = { itemId, url: `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview`,
-    provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
+    provenance: 'REPORT_BOUND_LABEL_ARTWORK', layoutVersion: rendered.layoutVersion };
+  if (rendered.backPreviewSvg) card.media.LABEL_BACK = { ...card.media.LABEL,
+    url: `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview-back` };
 }
 // A clearly synthetic sold-reference case exercises UI without fetching eBay,
 // inventing a market estimate, or attaching fixture sales to a real card record.
@@ -161,8 +166,8 @@ const server = createServer(async (req, res) => {
   const labelArtwork = /^\/admin\/api\/staff\/manual-connected\/labels\/([a-f0-9-]+)\/artwork$/.exec(url.pathname);
   if (labelArtwork) {
     if (denySession) { json({ error: 'SIGN_IN_REQUIRED' }, 401); return; }
-    const artwork = fixtureLabels.get(labelArtwork[1]);
-    if (!artwork || url.searchParams.get('mode') !== 'preview') { json({ error: 'ARTWORK_UNAVAILABLE' }, 404); return; }
+    const artwork = fixtureLabels.get(labelArtwork[1])?.[url.searchParams.get('mode')];
+    if (!artwork) { json({ error: 'ARTWORK_UNAVAILABLE' }, 404); return; }
     res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' }); res.end(artwork); return;
   }
   if (url.pathname === '/admin/api/staff/manual-connected/graded-cards') {

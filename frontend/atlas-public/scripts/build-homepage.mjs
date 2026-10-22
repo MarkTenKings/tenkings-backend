@@ -6,9 +6,29 @@ import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import './build-showcase.mjs';
 import {SHOWCASE_SELECTIONS,validShowcaseBinding} from '../lib/showcase-selections.mjs';
+import {renderApprovedBLabel} from '@atlas/finishing/label-approved-b';
+import {buildApprovedBFront,colorApprovedBArtwork} from '@atlas/finishing/label-approved-b-artwork';
 if(!Object.values(SHOWCASE_SELECTIONS).every(validShowcaseBinding))throw Error('Invalid showcase assignments');
 const app=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=path.resolve(app,'../../docs/atlas/design/experience');
+// This retained, hidden illustration is a Base Set photograph and grade-9
+// design example. Generate its matching label with the current renderer; it
+// is not any of the four independently bound live showcase publications.
+const labelSample=renderApprovedBLabel({cardProfile:'POKEMON',identity:{cardName:'Alakazam',playerName:null,
+ year:'1999',manufacturer:'Pokémon',productSet:'Base Set',cardNumber:'1/102',parallel:'Holo',insert:null},
+ finalGrade:9,reportNumber:'DESIGN-SAMPLE',approvalVersion:1},{previewMaterial:'holo'});
+if(labelSample.state!=='READY'||!labelSample.backPreviewSvg)throw Error('Homepage label sample could not be rendered');
+const illustrative=(svg,title)=>svg.replace('<svg ','<svg data-fixture="ILLUSTRATIVE_NOT_CERTIFIED" ')
+ .replace(/<title>[^]*?<\/title>/,`<title>${title}</title>`);
+await writeFile(path.join(source,'site/assets/alakazam-label-sample.svg'),illustrative(labelSample.previewSvg,
+ 'ATLAS Alakazam Base Set design sample, illustrative grade 9, not a certification'));
+await writeFile(path.join(source,'site/assets/atlas-label-back-sample.svg'),illustrative(labelSample.backPreviewSvg,
+ 'ATLAS shared label back, website QR; illustrative label sample'));
+// Fictional story cards have no awarded grade or certification. Their existing
+// brand-only decoration uses the shared artwork without fabricated card data.
+await writeFile(path.join(source,'site/assets/atlas-label-brand-sample.svg'),illustrative(colorApprovedBArtwork(
+ buildApprovedBFront({title:'ATLAS brand illustration',cutouts:'',support:''}),'gold'),
+ 'ATLAS B brand-only illustration; no card certification or awarded grade'));
 const names=JSON.parse(await readFile(path.join(source,'files.json'),'utf8'));
 if(!Array.isArray(names)||!names.includes('index.html')||new Set(names).size!==names.length||names.some(n=>typeof n!=='string'||n.startsWith('/')||n.split('/').some(p=>['','..','.'].includes(p))))throw Error('Invalid homepage closure');
 const files=new Map();const digest=createHash('sha256').update('atlas-experience-v1\n').update(await readFile(fileURLToPath(import.meta.url)));

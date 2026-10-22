@@ -1,5 +1,5 @@
-import {loadHeroEvidence, fetchVerifiedAsset, findingsForSide, traceSvgPath} from '/homepage/56c03a479d0d827e/hero-evidence.mjs';
-import {renderInspectionInstruments} from '/homepage/56c03a479d0d827e/hero-metrology.mjs';
+import {loadHeroEvidence, fetchVerifiedAsset, findingsForSide, traceSvgPath} from '/homepage/cd8f6a6b44b7fade/hero-evidence.mjs';
+import {renderInspectionInstruments} from '/homepage/cd8f6a6b44b7fade/hero-metrology.mjs';
 import {createSectionSession, sectionFindingDetail, sideGeometry, fingerprintArea} from './continuation-state.mjs';
 
 // Read-only presentation of the retained, approved report. No grade is recomputed.

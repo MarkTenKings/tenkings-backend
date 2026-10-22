@@ -1,5 +1,11 @@
 # Manual approved-report finishing
 
+## October 22, 2026 source update — current label sheets
+
+Current approval-bound labels use the versioned `label-approved-b.mjs` adapter through `label-sheet-service.mjs`. It preserves the approved Atlas B front and original spaced shared back at68.342×20.082mm, pinned Montserrat Black/Roboto Condensed dynamic typography, gold/silver color previews, black/transparent output and separate white-capable front output. The shared back has no white ink. Individual PNGs are6458×1898 at2400ppi;50-position310×400mm sheet exports remain9764×12598 at800ppi. Color and reverse exports have separate immutable profiles.
+
+The primary post-approval UI opens `/labels?cardId=…`; it no longer launches the older station-label renderer for new cards. The following historical station plan, SVG/PDF and hardware contracts remain retained for saved recovery. Their v3 defaults are not the current label-sheet template and must not be changed to refresh a saved label. Use the existing immutable `refreshLayout` service for eligible unprinted current labels; ordinary reprints keep their original bytes. This source update awaits the separately logged native/web deployment and production acceptance.
+
 This source extension prepares a label and paired print/NFC intents for the current manual V2 report. It has no certificate allocator, Ten Kings ownership writer, migration, device installation or activated printing/NFC service. Historical `./nfc` and `./browser` exports retain their Windows/GoToTags contracts.
 
 ## Exact approved source

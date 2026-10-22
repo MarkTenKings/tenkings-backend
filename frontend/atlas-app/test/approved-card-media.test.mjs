@@ -52,6 +52,20 @@ test('exact published media routes refuse another side, version, publication, la
   assert.notEqual(approvedMediaIdentity(changed), approvedMediaIdentity(f.card));
 });
 
+test('approved back label is bound to the saved approved-B front item and exact back route', () => {
+  const { card } = fixture();
+  assert.equal(approvedMediaSource(card, 'LABEL_BACK'), null);
+  card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+  card.media.LABEL_BACK = { ...card.media.LABEL, url: card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
+  assert.deepEqual(approvedMediaSource(card, 'LABEL_BACK'), { kind: 'LABEL_BACK', url: card.media.LABEL_BACK.url, layoutVersion: 'atlas-approved-b-v1' });
+  for (const mutate of [c => { delete c.media.LABEL.layoutVersion; }, c => { delete c.media.LABEL; },
+    c => { c.media.LABEL_BACK.url = c.media.LABEL.url; }, c => { c.media.LABEL_BACK.url += '&extra=1'; },
+    c => { c.media.LABEL_BACK.provenance = 'APPROVED_GRADING_PHOTOGRAPH'; },
+    c => { c.media.LABEL_BACK.itemId = c.cardId; c.media.LABEL_BACK.url = `/admin/api/staff/manual-connected/labels/${c.cardId}/artwork?mode=preview-back`; }]) {
+    const changed = structuredClone(card); mutate(changed); assert.equal(approvedMediaSource(changed, 'LABEL_BACK'), null);
+  }
+});
+
 test('503 and rate limit recover within three attempts and exact bytes are verified without credentials to storage', async () => {
   const f = fixture(), calls = []; let grants = 0, photos = 0;
   const l = loader(async (url, init) => {
@@ -127,6 +141,17 @@ test('label preview uses the exact authenticated route, stays bounded and revoke
   result.dispose(); assert.deepEqual(l.revoked, [result.url]);
   const huge = loader(async () => new Response('x'.repeat(2 * 1024 * 1024 + 1), { headers: { 'content-type': 'image/svg+xml' } }));
   await assert.rejects(huge.load(source), /APPROVED_MEDIA_TOO_LARGE/); assert.equal(huge.created.length, 0);
+});
+
+test('back-label loading uses its authenticated saved route and independent disposal', async () => {
+  const { card } = fixture(); card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+  card.media.LABEL_BACK = { ...card.media.LABEL, url: card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
+  const source = approvedMediaSource(card, 'LABEL_BACK');
+  const l = loader(async (url, init) => {
+    assert.equal(url, source.url); assert.equal(init.credentials, 'same-origin');
+    return new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', { headers: { 'content-type': 'image/svg+xml' } });
+  });
+  const loaded = await l.load(source); assert.equal(l.created.length, 1); loaded.dispose(); assert.deepEqual(l.revoked, [loaded.url]);
 });
 
 test('private 401/403 ends access once and never retries or exposes an image', async () => {
@@ -283,6 +308,8 @@ test('preview cancellation and the original deadline cannot trigger a full fallb
 
 test('small photographs and saved labels share prompt FIFO admission ahead of optional full media', async () => {
   const f = fixture(), calls = [], gate = deferred();
+  f.card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+  f.card.media.LABEL_BACK = { ...f.card.media.LABEL, url: f.card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
   const l = loader(async url => {
     calls.push(url);
     if (url.includes('/labels/')) return new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } });
@@ -290,10 +317,11 @@ test('small photographs and saved labels share prompt FIFO admission ahead of op
   }, { verify: async descriptor => { await gate.promise; return { url: `blob:${descriptor.url}`, dispose() {} }; } });
   const full = l.load(f.front), label = l.load(approvedMediaSource(f.card, 'LABEL'));
   const preview = l.load(approvedMediaSource(f.card, 'BACK', { delivery: 'preview' }));
+  const backLabel = l.load(approvedMediaSource(f.card, 'LABEL_BACK'));
   await pause(0);
-  assert.equal(calls[0], approvedMediaSource(f.card, 'LABEL').url);
-  assert.equal(calls[1], `${f.back.url}&delivery=direct`);
-  gate.resolve(); (await Promise.all([full, label, preview])).forEach(asset => asset.dispose());
+  assert.deepEqual(calls, [approvedMediaSource(f.card, 'LABEL').url, `${f.back.url}&delivery=direct`,
+    approvedMediaSource(f.card, 'LABEL_BACK').url, `${f.front.url}&delivery=direct`]);
+  gate.resolve(); (await Promise.all([full, label, preview, backLabel])).forEach(asset => asset.dispose());
 });
 
 test('independent preview and full slots preserve stills on full failure, retry and decode failure', async () => {

@@ -400,3 +400,49 @@ test('foil export is the default and saved original-ink exports never masquerade
   assert.ok(f.button('Download sheet PNG ↓')); f.click('Download sheet PNG ↓'); await f.flush();
   assert.ok(f.calls.some(call => call.method === 'POST' && call.url.endsWith(`/${original.exportId}/download`))); f.dispose();
 });
+
+test('approved-B selections use their exact front/back preview and sheet profile with one explicit download', async () => {
+  for (const format of ['color', 'foilBack', 'originalBack', 'colorBack']) {
+    const sheet = data(); sheet.items.forEach(item => { item.snapshot.layoutVersion = 'atlas-approved-b-v1'; });
+    const f = await fixture({ sheets: [sheet] }), profile = api.LABEL_PRINT_FORMATS[format];
+    const option = f.find(node => node.type === 'option' && node.props.value === format)[0]; assert.equal(option.props.disabled, false);
+    f.find(node => node.type === 'select' && node.props.value === 'foil')[0].props.onChange({ target: { value: format } }); f.render();
+    assert.equal(f.detail().printFormat, format);
+    for (const preview of f.find(node => node.type?.name === 'ThumbnailArtwork')) {
+      const image = preview.type(preview.props); assert.equal(image.type, 'img'); assert.ok(image.props.src.endsWith(`mode=${profile.previewMode}`));
+    }
+    f.click('Export this sheet'); assert.equal(f.dialog().printFormat, format); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+    assert.equal(f.downloads.length, 0); assert.equal(f.calls.find(call => call.method === 'POST').body.exportProfileId, profile.sheet);
+    f.click('Download sheet PNG ↓'); await f.flush(); assert.equal(f.downloads.length, 1);
+    assert.ok(f.text().includes(`Download ${profile.label} PNG`)); assert.equal(sheet.printEvents.length, 0); f.dispose();
+  }
+});
+
+test('approved-B individual exports retain separate format profiles through preparation and explicit download', async () => {
+  for (const format of ['color', 'foilBack', 'originalBack', 'colorBack']) {
+    const sheet = data(); sheet.items.forEach(item => { item.snapshot.layoutVersion = 'atlas-approved-b-v1'; });
+    const f = await fixture({ sheets: [sheet] }), profile = api.LABEL_PRINT_FORMATS[format];
+    f.find(node => node.type === 'select' && node.props.value === 'foil')[0].props.onChange({ target: { value: format } }); f.render();
+    f.exportState = 'PREPARING'; f.detail().onIndividual(f.detail().item, null); await f.flush();
+    const output = sheet.items[0].exports[0]; assert.equal(output.exportProfileId, profile.individual); assert.equal(f.downloads.length, 0);
+    output.state = 'READY'; await f.tick(); assert.equal(f.downloads.length, 0);
+    f.detail().onIndividual(f.detail().item, f.detail().individualOutput); await f.flush(); assert.equal(f.downloads.length, 1);
+    assert.ok(f.text().includes(`Download ${profile.label} PNG`)); f.dispose();
+  }
+});
+
+test('historical or mixed sheets cannot select new formats and changing to an old sheet never silently changes the selected format', async () => {
+  const current = data(1), historical = data(2); current.items.forEach(item => { item.snapshot.layoutVersion = 'atlas-approved-b-v1'; });
+  const f = await fixture({ sheets: [current, historical] });
+  f.find(node => node.type === 'select' && node.props.value === 'foil')[0].props.onChange({ target: { value: 'colorBack' } }); f.render();
+  const old = f.find(node => node.type === 'button' && text(node).startsWith('Sheet 002'))[0]; old.props.onClick(); await f.flush();
+  assert.ok(f.find(node => node.type === 'select' && node.props.value === 'colorBack').length);
+  assert.equal(f.button('Export this sheet').props.disabled, true);
+  for (const format of ['color', 'foilBack', 'originalBack', 'colorBack']) assert.equal(f.find(node => node.type === 'option' && node.props.value === format)[0].props.disabled, true);
+  const preview = f.find(node => node.type?.name === 'ThumbnailArtwork')[0]; assert.equal(preview.type(preview.props).type, 'span');
+  assert.ok(f.text().includes('Choose an original front format')); assert.equal(f.calls.some(call => call.method), false);
+  f.find(node => node.type === 'select' && node.props.value === 'colorBack')[0].props.onChange({ target: { value: 'original' } }); f.render();
+  assert.equal(f.button('Export this sheet').props.disabled, false); f.dispose();
+  const mixed = data(); mixed.items[0].snapshot.layoutVersion = 'atlas-approved-b-v1'; const g = await fixture({ sheets: [mixed] });
+  assert.equal(g.find(node => node.type === 'option' && node.props.value === 'colorBack')[0].props.disabled, true); g.dispose();
+});

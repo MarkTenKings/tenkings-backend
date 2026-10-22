@@ -1,4 +1,4 @@
-import * as THREE from '/homepage/56c03a479d0d827e/assets/vendor/three.module.js';
+import * as THREE from '/homepage/cd8f6a6b44b7fade/assets/vendor/three.module.js';
 const host=document.getElementById('slab-stage');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 try {
@@ -28,16 +28,18 @@ try {
   const divider=new THREE.Mesh(new THREE.BoxGeometry(7.5,.075,.3),new THREE.MeshStandardMaterial({color:0xb9c5c5,metalness:.65,roughness:.23}));
   divider.position.set(0,3.19,.07);slab.add(divider);
   const loader=new THREE.TextureLoader();
-  async function plane(url,w,h,y){
+  async function plane(url,w,h,y,back=false){
     const map=await loader.loadAsync(url);map.colorSpace=THREE.SRGBColorSpace;map.anisotropy=renderer.capabilities.getMaxAnisotropy();
     const face=new THREE.Mesh(new THREE.PlaneGeometry(w,h),new THREE.MeshBasicMaterial({map,toneMapped:false}));
-    face.position.set(0,y,.1);slab.add(face);
+    face.position.set(0,y,back?-.28:.1);if(back)face.rotation.y=Math.PI;slab.add(face);
   }
   scene.add(new THREE.AmbientLight(0xffffff,1.3));
   const warm=new THREE.PointLight(0xffd994,85,70);warm.position.set(-8,8,10);scene.add(warm);
   const cool=new THREE.PointLight(0xd4ecff,110,70);cool.position.set(9,3,8);scene.add(cool);
   const top=new THREE.DirectionalLight(0xffffff,3);top.position.set(1,10,3);scene.add(top);
-  await Promise.all([plane('/homepage/56c03a479d0d827e/assets/alakazam-reference.jpg',6.35,8.89,-1.53),plane('/homepage/56c03a479d0d827e/assets/alakazam-label-sample.svg',6.93,2.107,4.66)]);
+  await Promise.all([plane('/homepage/cd8f6a6b44b7fade/assets/alakazam-reference.jpg',6.35,8.89,-1.53),
+    plane('/homepage/cd8f6a6b44b7fade/assets/alakazam-label-sample.svg',6.8342,2.0082,4.66),
+    plane('/homepage/cd8f6a6b44b7fade/assets/atlas-label-back-sample.svg',6.8342,2.0082,4.66,true)]);
   let x=-.17,y=.12,visible=true,frame=null,started=performance.now();
   const presentation=document.querySelector('.specimen-stage');
   slab.rotation.set(y,x,-.055);
@@ -98,9 +100,10 @@ async function createNfcScene(){
   const loader=new THREE.TextureLoader();
   const cardTexture=await loader.loadAsync(document.querySelector('.fingerprint-photo').getAttribute('src'));cardTexture.colorSpace=THREE.SRGBColorSpace;
   const card=new THREE.Mesh(new THREE.PlaneGeometry(6.35,8.89),new THREE.MeshBasicMaterial({map:cardTexture,transparent:true,opacity:.42,toneMapped:false}));card.position.set(0,-4.15,-.84);slabGroup.add(card);
-  function makeNfcLabel(name){const c=document.createElement('canvas');c.width=1000;c.height=300;const ctx=c.getContext('2d');ctx.fillStyle='#090d0b';ctx.fillRect(0,0,1000,300);ctx.strokeStyle='#c4a569';ctx.lineWidth=7;ctx.strokeRect(6,6,988,288);const logo=document.querySelector('.brand img');if(logo.complete)ctx.drawImage(logo,30,28,250,224);ctx.fillStyle='#e9cb8f';ctx.font='500 45px Oxanium';ctx.fillText('ATLAS GRADING',315,83);ctx.fillStyle='#edf0e6';ctx.font='500 49px Oxanium';ctx.fillText(name.toUpperCase(),315,158);ctx.fillStyle='#97aa9a';ctx.font='25px monospace';ctx.fillText('ILLUSTRATIVE DESIGN SAMPLE',315,221);const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;return texture;}
-  const labelTexture=makeNfcLabel(document.querySelector('.connected-name').textContent);
-  const label=new THREE.Mesh(new THREE.PlaneGeometry(6.85,2.08),new THREE.MeshBasicMaterial({map:labelTexture,transparent:true,opacity:.45,toneMapped:false}));label.position.set(0,1.78,-.85);slabGroup.add(label);
+  // This explanatory scene has no approved grade. Use the same brand artwork
+  // without drawing an invented name/grade in browser fallback fonts.
+  const labelTexture=await loader.loadAsync('/homepage/cd8f6a6b44b7fade/assets/atlas-label-brand-sample.svg');labelTexture.colorSpace=THREE.SRGBColorSpace;
+  const label=new THREE.Mesh(new THREE.PlaneGeometry(6.8342,2.0082),new THREE.MeshBasicMaterial({map:labelTexture,transparent:true,opacity:.45,toneMapped:false}));label.position.set(0,1.78,-.85);slabGroup.add(label);
   const tagAssembly=new THREE.Group();tagAssembly.position.set(-2.2,1.9,.2);tagAssembly.scale.setScalar(.23);model.add(tagAssembly);
   const antenna=new THREE.Group();tagAssembly.add(antenna);
   const backing=new THREE.Mesh(new THREE.ShapeGeometry(rounded(6.7,4.9,.44)),new THREE.MeshStandardMaterial({color:0x15372d,metalness:.5,roughness:.5,transparent:true,opacity:.45,side:THREE.DoubleSide}));backing.position.z=-.32;antenna.add(backing);
@@ -207,7 +210,7 @@ async function createNfcScene(){
   new ResizeObserver(resize).observe(nfcHost);resize();
   new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;if(!visible&&frame!==null){cancelAnimationFrame(frame);frame=null;}else request();},{threshold:.01}).observe(nfcHost);
   let textureRequest=0;
-  nfcSection.addEventListener('atlas-nfc-specimen',async event=>{const requestId=++textureRequest;try{const texture=await loader.loadAsync(event.detail.image);texture.colorSpace=THREE.SRGBColorSpace;if(requestId!==textureRequest){texture.dispose();return;}const previous=card.material.map;card.material.map=texture;previous.dispose();const previousLabel=label.material.map;label.material.map=makeNfcLabel(event.detail.name);previousLabel.dispose();request();}catch{}});
+  nfcSection.addEventListener('atlas-nfc-specimen',async event=>{const requestId=++textureRequest;try{const texture=await loader.loadAsync(event.detail.image);texture.colorSpace=THREE.SRGBColorSpace;if(requestId!==textureRequest){texture.dispose();return;}const previous=card.material.map;card.material.map=texture;previous.dispose();request();}catch{}});
   nfcSection.addEventListener('atlas-nfc-camera',event=>{desired=event.detail.position;still=event.detail.still;request();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&frame!==null){cancelAnimationFrame(frame);frame=null;}else request();});
   document.addEventListener('atlas-motion-change',request);reduced.addEventListener('change',request);

@@ -1,4 +1,5 @@
 import { requireThat } from '@atlas/manual-service/contract';
+import { LABEL_ARTWORK_MODES } from './label-sheet-service.mjs';
 
 const base = '/api/staff/manual-connected';
 const id = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
@@ -24,7 +25,7 @@ export function createLabelSheetsHandler({ connected, boundary, origin }) {
       cursor = Number(entries[0][1]);
     } else if (artwork) {
       const entries = [...url.searchParams];
-      requireThat(entries.length === 1 && entries[0][0] === 'mode' && ['preview', 'print', 'preview-foil', 'print-foil'].includes(entries[0][1]), 400, 'LABEL_ARTWORK_MODE_INVALID');
+      requireThat(entries.length === 1 && entries[0][0] === 'mode' && LABEL_ARTWORK_MODES.includes(entries[0][1]), 400, 'LABEL_ARTWORK_MODE_INVALID');
       mode = entries[0][1];
     } else requireThat(!url.search, 400, 'LABEL_QUERY_INVALID');
     if (write) {
@@ -42,7 +43,7 @@ export function createLabelSheetsHandler({ connected, boundary, origin }) {
       requireThat(Buffer.isBuffer(result?.bytes) && result.bytes.length > 0 && result.bytes.length <= 1024 * 1024
         && result.contentType === 'image/svg+xml', 503, 'LABEL_ARTWORK_UNAVAILABLE');
       res.setHeader('Content-Type', result.contentType);
-      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('Content-Security-Policy', result.embeddedImages === true ? "default-src 'none'; img-src data:; sandbox" : "default-src 'none'; sandbox");
       res.status(200).send(result.bytes);
       return true;
     }

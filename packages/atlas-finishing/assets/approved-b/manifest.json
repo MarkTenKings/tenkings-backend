@@ -1,0 +1,266 @@
+{
+  "version": "atlas-approved-b-static-assets-v1",
+  "sourcePackage": "Atlas_Final_Approved_Labels.zip",
+  "geometry": {
+    "widthMm": 68.342,
+    "heightMm": 20.082,
+    "pixelWidth": 6458,
+    "pixelHeight": 1898,
+    "ppi": 2400
+  },
+  "files": {
+    "front-black.png": {
+      "sha256": "5131223aad71c454586731fa4e64a10e2229f8d1e0e577023707d393109b1718",
+      "byteCount": 640619,
+      "pixelWidth": 6458,
+      "pixelHeight": 1898
+    },
+    "front-support-white.png": {
+      "sha256": "ae6abdb81dc89c8737c096107ff6b67a79f0dfcf15b712101fc2ed8c67bbf86f",
+      "byteCount": 15748,
+      "pixelWidth": 6458,
+      "pixelHeight": 1898
+    },
+    "front-support-black.png": {
+      "sha256": "c10cbacf525032d74421362ba45287d03afe9c0b1eabdbaf328563c32faddcea",
+      "byteCount": 15748,
+      "pixelWidth": 6458,
+      "pixelHeight": 1898
+    },
+    "back-black.png": {
+      "sha256": "f83d36e2605b44837a01e1332edffa3309757cd01ed711ac72068389bb620ed7",
+      "byteCount": 102942,
+      "pixelWidth": 6458,
+      "pixelHeight": 1898
+    },
+    "vectors.json": {
+      "sha256": "a2ced91f0f8c38075c2f1c0055c21bf9065f4f4c40c96da92867a1cd9d4c5185",
+      "byteCount": 635
+    }
+  },
+  "sources": {
+    "masters/Atlas_Michael_Jordan_Front.png": {
+      "sha256": "26616a73baf01542fc4abf8d58a5ce8c525110f3f39bf18c96b319b22822cb42",
+      "byteCount": 943283
+    },
+    "masters/Atlas_Michael_Jordan_Front.svg": {
+      "sha256": "28623988b1a20d2872343d9e5cb559bcd1095a4c53cbcd94290b2c5437d8fa44",
+      "byteCount": 4136300
+    },
+    "white_ink_plates/Atlas_Michael_Jordan_Front_WHITE.png": {
+      "sha256": "511ed26fdf1174e312cc48296aa0cf32dc615c918838a1e97cde007d0b316a34",
+      "byteCount": 68501
+    },
+    "masters/Atlas_Alakazam_10_Front.png": {
+      "sha256": "fa2ff887542d89cf5ab25881d9b8395aa57d00d8d6b0f6912fad380b70fa1413",
+      "byteCount": 933725
+    },
+    "masters/Atlas_Alakazam_10_Front.svg": {
+      "sha256": "cb068efe6f5775ffac2e97c9f083256d8a43d6a1df08c9fd2c9cf6bdbde32312",
+      "byteCount": 3902493
+    },
+    "white_ink_plates/Atlas_Alakazam_10_Front_WHITE.png": {
+      "sha256": "f16c03f7f659cf44362a58fbb289981424ee52dbb348beeb9d6153e740c9e09b",
+      "byteCount": 65765
+    },
+    "masters/Atlas_Shared_Back.png": {
+      "sha256": "f83d36e2605b44837a01e1332edffa3309757cd01ed711ac72068389bb620ed7",
+      "byteCount": 102942
+    },
+    "masters/Atlas_Shared_Back.svg": {
+      "sha256": "b9c215ced7324b83d7e6a57c7188ff260d202046887a85413bed1c2550cdbe0a",
+      "byteCount": 3286720
+    },
+    "Back_Layout_Spec.json": {
+      "sha256": "249d04aba5a9501459fd013fe8156ed73c6c47d7a577083028be968d41e5756c",
+      "byteCount": 947
+    }
+  },
+  "front": {
+    "blackAsset": "front-black.png",
+    "supportWhiteAsset": "front-support-white.png",
+    "supportBlackAsset": "front-support-black.png",
+    "dynamicRegions": {
+      "name": {
+        "mmBounds": [
+          17.4,
+          2.95,
+          46.4,
+          11.2
+        ],
+        "pixelBounds": [
+          1644,
+          278,
+          4385,
+          1059
+        ]
+      },
+      "details": {
+        "mmBounds": [
+          17.4,
+          12.6,
+          46.6,
+          14.5
+        ],
+        "pixelBounds": [
+          1644,
+          1190,
+          4404,
+          1371
+        ]
+      },
+      "grade": {
+        "mmBounds": [
+          58.0,
+          4.3,
+          67.9,
+          15.2
+        ],
+        "pixelBounds": [
+          5480,
+          406,
+          6417,
+          1437
+        ]
+      },
+      "descriptor": {
+        "mmBounds": [
+          58.0,
+          16.0,
+          67.2,
+          17.9
+        ],
+        "pixelBounds": [
+          5480,
+          1512,
+          6351,
+          1692
+        ]
+      },
+      "certificateAndFrame": {
+        "mmBounds": [
+          17.1,
+          16.75,
+          47.3,
+          20.082
+        ],
+        "pixelBounds": [
+          1615,
+          1583,
+          4470,
+          1899
+        ]
+      }
+    },
+    "supportRegion": {
+      "mmBounds": [
+        48.7,
+        15.2,
+        54.9,
+        18.7
+      ],
+      "pixelBounds": [
+        4601,
+        1436,
+        5188,
+        1768
+      ],
+      "text": [
+        "GRADE",
+        "REPORT"
+      ]
+    },
+    "regionConvention": "left-top-inclusive-right-bottom-exclusive",
+    "nfcApertureMm": {
+      "cx": 51.8,
+      "cy": 9.75,
+      "radius": 5.1
+    },
+    "logoTransform": "translate(1.9,4.9) scale(0.012277580) translate(-60,-118)",
+    "certificateFrame": {
+      "xMm": 17.5,
+      "yMm": 17.0,
+      "heightMm": 2.1,
+      "radiusMm": 0.85,
+      "strokeWidthMm": 0.3,
+      "widthPolicy": "fit dynamic certificate; preserve closed frame",
+      "leadingPathRetainedLeftOfMm": 17.1,
+      "leadingPath": "M16.9 18.08 C17.1 18.08 17.25 18.05 17.50 18.05"
+    },
+    "originalGrade10VectorAsset": "vectors.json",
+    "staticDataUriByteCount": 875204,
+    "remainingSvgByteBudget": 173372
+  },
+  "back": {
+    "blackAsset": "back-black.png",
+    "sourceBytesPreserved": true,
+    "containsWhiteInk": false,
+    "websiteQrUrl": "https://atlasgrading.com/",
+    "layout": {
+      "size_mm": [
+        68.342,
+        20.082
+      ],
+      "pixels": [
+        6458,
+        1898
+      ],
+      "ppi": 2400,
+      "approved_layout_source": "upload/Atlas_Label_Back.png",
+      "source_asset_resolution": [
+        2048,
+        601
+      ],
+      "logo_source": "same authentic-logo definition as approved Atlas B front; source contours and gold fingerprint/GRADING separation",
+      "logo_box_mm": [
+        2.669609375,
+        3.3127649664284915,
+        15.283513671875,
+        13.189509129643016
+      ],
+      "logo_scale_uniform": true,
+      "qr": {
+        "url": "https://atlasgrading.com/",
+        "dark_square_box_mm": [
+          55.1,
+          4.45,
+          9.2,
+          9.2
+        ],
+        "modules": 25,
+        "module_mm": 0.368,
+        "quiet_zone_modules": 4,
+        "digitally_decoded": true
+      },
+      "print_colors": "black and transparent only; zero white ink on back",
+      "note": "Instruction and caption shapes are embedded source raster assets; QR is native vector. Source artwork is retained without font substitution."
+    }
+  },
+  "verification": {
+    "method": "exact-source-png-dynamic-region-extraction-v1",
+    "svgRasterizationUsed": false,
+    "reason": "Sharp/librsvg and WebKit reproduce the SVG shapes but differ from supplied PNG raster/alpha values; direct approved PNG extraction avoids that rasterization variance.",
+    "resampling": false,
+    "tracing": false,
+    "fontSubstitution": false,
+    "alphaThresholding": false,
+    "sharedStaticDifferingPixels": 0,
+    "transparentRgbPolicy": "Only RGB of fully transparent pixels normalized to zero for comparison; every alpha byte and every visible RGB byte preserved outside explicit dynamic/support rectangles.",
+    "samples": [
+      {
+        "source": "masters/Atlas_Michael_Jordan_Front.png",
+        "canonicalRgbaSha256": "61634ede595be4e88a8ee662abb81cac48ce7f2e358a2adffa6daaa390669ec0",
+        "reconstructionDifferingPixels": 0
+      },
+      {
+        "source": "masters/Atlas_Alakazam_10_Front.png",
+        "canonicalRgbaSha256": "7443cc502ce9a226035565b0588b1806bbddfb409356782aa7c6f311c3ee215a",
+        "reconstructionDifferingPixels": 0
+      }
+    ],
+    "tool": {
+      "python": "3",
+      "pillow": "12.3.0"
+    }
+  }
+}

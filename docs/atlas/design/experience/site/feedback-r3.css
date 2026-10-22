@@ -61,3 +61,6 @@
 @media(prefers-reduced-motion:reduce){.weekly-release *,.route-bridge-r3 *{animation:none!important;transition:none!important}.route-bridge-r3 .flow-card{display:none}}
 .motion-off .weekly-release *{animation-play-state:paused!important}
 .motion-off .weekly-release .capacity-meter i,.weekly-release[data-motion=paused] .capacity-meter i,.weekly-release[data-visible=false] .capacity-meter i{transition:none}
+
+/* Brand-only fictional slabs share the approved label aspect ratio. */
+.release-slab .release-label{aspect-ratio:68.342/20.082;object-fit:contain;margin-bottom:7px}

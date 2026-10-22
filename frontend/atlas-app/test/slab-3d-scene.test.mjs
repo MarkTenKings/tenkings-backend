@@ -40,6 +40,23 @@ test('Front and Back use uncropped unlit source textures, with the Back facing o
   disposeSlabModel(model);
 });
 
+test('saved back label faces outward at the original physical ratio and NFC position changes only for approved-B', () => {
+  for (const layout of [undefined, 'atlas-approved-b-v1']) {
+    const front = texture(), back = texture(), backLabel = texture(2048, 602);
+    const model = createSlabModel({ front, back, label: texture(2048, 602), backLabel, nfc: texture(512, 512), labelLayoutVersion: layout });
+    model.updateMatrixWorld(true);
+    const reverse = model.getObjectByName('back-saved-label-artwork');
+    assert.equal(reverse.material.map, backLabel); assert.equal(reverse.material.toneMapped, false);
+    assert.deepEqual([reverse.geometry.parameters.width, reverse.geometry.parameters.height], [68.342, 20.082]);
+    assert.ok(new Vector3(0, 0, 1).transformDirection(reverse.matrixWorld).z < -.99);
+    assert.deepEqual(Array.from(reverse.geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
+    const nfc = model.getObjectByName('illustrative-front-nfc-reference');
+    assert.ok(Math.abs(nfc.position.x - (layout ? 51.8 - 68.342 / 2 : 17.08)) < 1e-10);
+    assert.ok(Math.abs(nfc.position.y - (SLAB_MODEL.labelY + (layout ? 20.082 / 2 - 9.75 : 0))) < 1e-10);
+    disposeSlabModel(model);
+  }
+});
+
 test('shared model resources are disposed exactly once and textures remain caller owned', () => {
   const front = texture(), back = texture(), model = createSlabModel({ front, back });
   const counts = new Map();
@@ -180,6 +197,40 @@ test('saved SVG and decorative NFC have separate bounded rasters while card imag
 
 test('unverified remote photograph URLs never construct a renderer or load an image', () => {
   assert.throws(() => createSlabScene(null, { frontUrl: 'https://example.com/front.jpg', backUrl: 'blob:back' }), { code: 'SLAB_APPROVED_SOURCE_REQUIRED' });
+  assert.throws(() => createSlabScene(null, { frontUrl: 'blob:front', backUrl: 'blob:back', backLabelUrl: 'https://example.com/label.svg' }), { code: 'SLAB_APPROVED_SOURCE_REQUIRED' });
+});
+
+test('both saved label textures preserve image proportions and release their own rasters', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:label', backLabelUrl: 'blob:back-label', labelLayoutVersion: 'atlas-approved-b-v1' } });
+  f.pending[0].resolve(); f.pending[1].resolve(); await f.scene.started; f.flush();
+  f.pending[2].resolve(68342, 20082); f.pending[3].resolve(68342, 20082); await settle(); f.flush();
+  assert.equal(f.errors.length, 0); assert.equal(f.canvases.length, 2);
+  for (const canvas of f.canvases) {
+    const [, x, y, width, height] = canvas.draws[0];
+    assert.ok(x >= 0 && y >= 0); assert.ok(width <= canvas.width && height <= canvas.height);
+    assert.ok(Math.abs(width / height - 68342 / 20082) < 1e-12);
+  }
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version);
+  assert.ok(model.getObjectByName('back-saved-label-artwork')); assert.ok(model.getObjectByName('front-saved-label-artwork'));
+  f.scene.dispose(); assert.ok(f.canvases.every(canvas => canvas.width === 0 && canvas.height === 0));
+  assert.ok(f.pending.every(image => image.cleared));
+});
+
+test('late NFC uses the displayed saved-label layout and layout updates preserve the scene and photograph', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:label', labelLayoutVersion: 'atlas-approved-b-v1', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
+  await f.load(); const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), photo = model.getObjectByName('front-approved-photograph').material.map;
+  f.pending[2].resolve(68342, 20082); await settle();
+  f.pending[3].resolve(384, 512); await settle(); f.flush();
+  const nfc = model.getObjectByName('illustrative-front-nfc-reference');
+  assert.ok(Math.abs(nfc.position.x - (51.8 - SLAB_MODEL.labelWidth / 2)) < 1e-10);
+  assert.ok(Math.abs(nfc.position.y - (SLAB_MODEL.labelY + SLAB_MODEL.labelHeight / 2 - 9.75)) < 1e-10);
+  f.scene.rotateBy(.6); f.flush(); const angle = f.renderer.domElement.dataset.slabAngle;
+  f.scene.updateAssets({ labelUrl: 'blob:failed-legacy-label', labelLayoutVersion: undefined }); f.pending[4].reject(); await settle(); f.flush();
+  assert.ok(Math.abs(nfc.position.x - (51.8 - SLAB_MODEL.labelWidth / 2)) < 1e-10, 'failed replacement retains the displayed label alignment');
+  f.scene.updateAssets({ labelUrl: 'blob:label', labelLayoutVersion: undefined }); f.flush();
+  assert.equal(nfc.position.x, 17.08); assert.equal(nfc.position.y, SLAB_MODEL.labelY);
+  assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(model.getObjectByName('front-approved-photograph').material.map, photo);
+  assert.equal(f.renderer.domElement.dataset.slabAngle, angle); assert.equal(f.renderer.disposed, 0); f.scene.dispose();
 });
 
 test('slow label and decorative NFC cannot delay the photographs; late completion is disposable', async () => {
@@ -235,8 +286,10 @@ test('saved reverse artwork is optional, unlit, outward-facing and replaceable w
   f.scene.updateAssets({ backLabelUrl: 'blob:saved-reverse' }); f.pending[2].resolve(258, 76); await settle(); f.flush();
   const reverse = f.renderer.scene.getObjectByName('back-saved-label-artwork'); reverse.updateMatrixWorld(true);
   assert.equal(reverse.material.type, 'MeshBasicMaterial'); assert.equal(reverse.material.toneMapped, false);
+  assert.ok(f.renderer.scene.getObjectByName('saved-label-carrier'));
   assert.ok(new Vector3(0, 0, 1).transformDirection(reverse.matrixWorld).z < -.9);
-  f.scene.updateAssets({ backLabelUrl: null }); assert.equal(f.renderer.scene.getObjectByName('back-saved-label-artwork'), undefined); f.scene.dispose();
+  f.scene.updateAssets({ backLabelUrl: null }); assert.equal(f.renderer.scene.getObjectByName('back-saved-label-artwork'), undefined);
+  assert.ok(f.renderer.scene.getObjectByName('plain-label-carrier-no-reverse-artwork')); f.scene.dispose();
 });
 
 test('studio is neutral, bounded and caller-owned; optical plastic is nonmetallic and reflection mode has no transmission pass', () => {

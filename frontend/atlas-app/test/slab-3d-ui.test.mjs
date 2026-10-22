@@ -110,3 +110,12 @@ test('a late saved-label failure is visible and retry does not reset the usable 
   assert.equal(scene.disposals, 0); assert.equal(scene.resets, 0);
   scene.options.onAssetReady({ slot: 'labelUrl' }); f.render(); assert.doesNotMatch(f.text(), /Saved label display unavailable/); f.close();
 });
+
+test('a saved back label and its approved layout update the existing ready scene when they arrive', () => {
+  const f = fixture(), old = f.scenes[0]; old.options.onReady(); f.render();
+  f.update({ backLabelUrl: 'blob:back-label', labelLayoutVersion: 'atlas-approved-b-v1' });
+  assert.equal(old.disposals, 0); assert.equal(f.scenes.length, 1);
+  assert.equal(old.updates.at(-1).backLabelUrl, 'blob:back-label');
+  assert.equal(old.updates.at(-1).labelLayoutVersion, 'atlas-approved-b-v1');
+  assert.equal(f.status(), 'ready'); f.close();
+});

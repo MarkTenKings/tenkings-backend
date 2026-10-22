@@ -4,6 +4,7 @@ import {
   NoToneMapping, PerspectiveCamera, Path, PlaneGeometry, Scene, Shape, SRGBColorSpace, Texture,
   WebGLRenderer,
 } from 'three';
+import { APPROVED_LABEL_LAYOUT } from './approved-card-media.mjs';
 
 /** One reusable, illustrative holder. Exterior dimensions are owner supplied.
  * Internal profiles, card thickness and NFC placement are presentation geometry,
@@ -108,9 +109,15 @@ function plastic(parameters, materialMode) {
   }
   return material;
 }
-function addNfcReference(labels, texture) {
+function placeNfcReference(tag, layoutVersion) {
+  const approved = layoutVersion === APPROVED_LABEL_LAYOUT.version;
+  tag.position.set(approved ? APPROVED_LABEL_LAYOUT.nfc.x - SLAB_MODEL.labelWidth / 2 : 17.08,
+    SLAB_MODEL.labelY + (approved ? SLAB_MODEL.labelHeight / 2 - APPROVED_LABEL_LAYOUT.nfc.y : 0), .205);
+}
+function addNfcReference(labels, texture, layoutVersion) {
   const tag = mesh(labels, 'illustrative-front-nfc-reference', new CircleGeometry(5.1, 48),
-    new MeshBasicMaterial({ map: texture, toneMapped: false }), 17.08, SLAB_MODEL.labelY, .205);
+    new MeshBasicMaterial({ map: texture, toneMapped: false }));
+  placeNfcReference(tag, layoutVersion);
   tag.userData.geometryAuthority = 'decorative-reference-only';
 }
 export function fitSlabPhoto(width, height) {
@@ -120,7 +127,8 @@ export function fitSlabPhoto(width, height) {
 }
 
 /** Textures are the caller's verified photographs/saved label. No relighting,
- * tone mapping, cropping, inferred findings or new reverse artwork is applied. */
+ * tone mapping, cropping or inferred findings are applied. Reverse label
+ * artwork is present only when the saved record supplied that texture. */
 export function createSlabModel({ front, back, label, backLabel, labelLayoutVersion, nfc, materialMode = SLAB_STUDIO.material }) {
   const model = new Group(); model.name = SLAB_MODEL.version; model.userData.geometryAuthority = 'illustrative';
   model.userData.materialMode = materialMode; model.userData.studioVersion = SLAB_STUDIO.version;
@@ -162,9 +170,9 @@ export function createSlabModel({ front, back, label, backLabel, labelLayoutVers
       new MeshBasicMaterial({ map: texture, toneMapped: false, transparent: true }), 0, SLAB_MODEL.cardY, sign * .181);
     if (sign < 0) face.rotation.y = Math.PI; // Viewed from behind, the saved Back remains readable, not mirrored.
   }
-  mesh(labels, 'plain-label-carrier-no-reverse-artwork', new BoxGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight, .38),
+  mesh(labels, backLabel ? 'saved-label-carrier' : 'plain-label-carrier-no-reverse-artwork', new BoxGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight, .38),
     new MeshBasicMaterial({ color: 0xf6f6f4, toneMapped: false }), 0, SLAB_MODEL.labelY);
-  if (nfc && label) addNfcReference(labels, nfc);
+  if (nfc && label) addNfcReference(labels, nfc, labelLayoutVersion);
   if (label) mesh(labels, 'front-saved-label-artwork', new PlaneGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight),
     new MeshBasicMaterial({ map: label, transparent: true, toneMapped: false }), 0, SLAB_MODEL.labelY, .22);
   if (backLabel) {
@@ -215,6 +223,7 @@ function rasterTexture(image, renderer, document, kind) {
   if (kind === 'label') {
     const width = image.naturalWidth || image.width, height = image.naturalHeight || image.height;
     const scale = Math.min(canvas.width / width, canvas.height / height);
+    // Preserve the recorded artwork's own ratio, including raster rounding.
     context.drawImage(image, (canvas.width - width * scale) / 2, (canvas.height - height * scale) / 2, width * scale, height * scale);
   }
   else {
@@ -343,7 +352,14 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
     const isPhoto = key === 'frontUrl' || key === 'backUrl', isNfc = key === 'nfcUrl';
     const side = key === 'backUrl' || key === 'backLabelUrl' ? 'back' : 'front';
     const name = isPhoto ? `${side}-approved-photograph` : isNfc ? 'illustrative-front-nfc-reference' : `${side}-saved-label-artwork`;
-    if (!image) { removePart(name); currentAssets[key] = null; onAssetReady({ slot: key }); return; }
+    if (!image) {
+      removePart(name); currentAssets[key] = null;
+      if (key === 'backLabelUrl') {
+        const carrier = model.getObjectByName('saved-label-carrier');
+        if (carrier) carrier.name = 'plain-label-carrier-no-reverse-artwork';
+      }
+      onAssetReady({ slot: key }); return;
+    }
     const texture = isPhoto ? photoTexture(image, renderer) : rasterTexture(image, renderer, doc, isNfc ? 'nfc' : 'label');
     textures.add(texture);
     if (!isPhoto) { image.removeAttribute('src'); images.delete(image); }
@@ -351,11 +367,20 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
     if (part) {
       const old = part.material.map; part.material.map = texture; part.material.needsUpdate = true; releaseTexture(old);
       if (isPhoto) { const fitted = fitSlabPhoto(image.naturalWidth, image.naturalHeight); part.geometry.dispose(); part.geometry = new PlaneGeometry(fitted.width, fitted.height); }
-    } else if (isNfc) addNfcReference(model.getObjectByName('saved-label'), texture);
+    } else if (isNfc) addNfcReference(model.getObjectByName('saved-label'), texture, currentAssets.labelLayoutVersion);
     else {
       part = mesh(model.getObjectByName('saved-label'), name, new PlaneGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight),
         new MeshBasicMaterial({ map: texture, transparent: true, toneMapped: false }), 0, SLAB_MODEL.labelY, side === 'back' ? -.22 : .22);
       if (side === 'back') part.rotation.y = Math.PI;
+    }
+    if (key === 'backLabelUrl') {
+      const carrier = model.getObjectByName('plain-label-carrier-no-reverse-artwork');
+      if (carrier) carrier.name = 'saved-label-carrier';
+    }
+    if (key === 'labelUrl') {
+      currentAssets.labelLayoutVersion = wantedAssets.labelLayoutVersion;
+      const nfc = model.getObjectByName('illustrative-front-nfc-reference');
+      if (nfc) placeNfcReference(nfc, currentAssets.labelLayoutVersion);
     }
     if (isPhoto) photoImages[side] = image;
     currentAssets[key] = url; onAssetReady({ slot: key }); requestRender();
@@ -386,6 +411,12 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
     if (!model) return;
     model.userData.labelLayoutVersion = wanted.labelLayoutVersion ?? null;
     for (const key of ['frontUrl', 'backUrl', 'labelUrl', 'backLabelUrl']) replaceAsset(key, wanted[key] || null);
+    const nfc = model.getObjectByName('illustrative-front-nfc-reference');
+    if (currentAssets.labelUrl === wanted.labelUrl) {
+      const changed = currentAssets.labelLayoutVersion !== wanted.labelLayoutVersion;
+      currentAssets.labelLayoutVersion = wanted.labelLayoutVersion;
+      if (nfc && changed) { placeNfcReference(nfc, currentAssets.labelLayoutVersion); requestRender(); }
+    }
     replaceAsset('nfcUrl', wanted.labelUrl && currentAssets.labelUrl && nfcUrl ? nfcUrl : null);
   }
   const started = (async () => {
