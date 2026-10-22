@@ -4,6 +4,8 @@ Latest verified ATLAS checkpoint: the slab technical release `20b747ba` is compl
 
 Resume under /Users/markthomas/.codex/atlas-handoffs/atlas-r1-activation-20261022/resume-02. Final candidatea537f922/treea78e9ab7 is on codex/atlas-r1-after-slab-20261022; foundationf4ffeedf contains the reviewed six-file role fix and documentation. The one-use native build in /opt/atlas/r1-activation-a537f922-01 completed successfully; collected receipts are local. Never replay execute. Final qualification envelope resume-02/qualification.json SHA f4beb273 binds all completed checks. Next inert role packet19827f41/root-review95069465 needs actual role-phase preservation/holder integration and narrow boundary qualification before live use. No R1 release holder exists. Do not deploy foundation wholesale or use the dirty original checkout.
 
+LATEST OWNER FEEDBACK: Review Queue grading worked normally. Workspace Shaquille O'Neal Back geometry confirmation after inner-border edit failed; owner explicitly defers repair. Use Review Queue; no incidental real-card retries/reset/approval. See docs/atlas/audits/2026-10-22/owner-grading-feedback-r1-status.md. R1 activation remains pending; claims/history stay off.
+
 HISTORICAL CHECKPOINTS FOLLOW
 
 CURRENT LEAD CHECKPOINT — October22 18:53UTC
