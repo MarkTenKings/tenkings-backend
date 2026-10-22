@@ -62,12 +62,15 @@ test('isolated approved B package verifies exact assets and rejects a changed PN
  const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-label-')),manifestPath=temporary+'.manifest.json';
  try{
   const {files}=await collectManualSource(),included=files.filter(file=>LABEL_APPROVED_B_SOURCES.includes(file.path)
-   ||file.path==='packages/atlas-finishing/src/label-approved-b-artwork.mjs'||file.path==='frontend/atlas-app/scripts/verify-manual-container.mjs');
+   ||file.path.startsWith('frontend/atlas-app/assets/label-templates/')
+   ||['label-approved-b-artwork.mjs','label-sheet.mjs','label-sheet-geometry.mjs','label-sheet-25.mjs'].some(name=>file.path===`packages/atlas-finishing/src/${name}`)
+   ||file.path==='frontend/atlas-app/scripts/verify-manual-container.mjs');
   for(const file of included){const path=join(temporary,file.path);await mkdir(dirname(path),{recursive:true});await writeFile(path,file.bytes);}
   await writeFile(manifestPath,JSON.stringify({version:'atlas-clean-manual-source-v1',packages:['packages/atlas-finishing'],files:included.map(({bytes,...file})=>file)}));
   const script=join(temporary,'frontend/atlas-app/scripts/verify-manual-container.mjs'),run=()=>spawnSync(process.execPath,[script,manifestPath],{encoding:'utf8',timeout:15000});
   const complete=run();assert.equal(complete.status,0,complete.stderr);const result=JSON.parse(complete.stdout);
   assert.equal(result.approvedLabelAssets.version,'atlas-approved-b-static-assets-v1');assert.equal(result.approvedLabelAssets.files,5);
+  assert.equal(result.labelJig25.positions,25);assert.equal(result.labelJig25.backFiles,3);
   const asset=join(temporary,'packages/atlas-finishing/assets/approved-b/back-black.png'),bytes=await readFile(asset);bytes[bytes.length-1]^=1;await writeFile(asset,bytes);
   const changed=run();assert.notEqual(changed.status,0);assert.match(changed.stderr,/back-black.png/);
  }finally{await rm(temporary,{recursive:true,force:true});await rm(manifestPath,{force:true});}
