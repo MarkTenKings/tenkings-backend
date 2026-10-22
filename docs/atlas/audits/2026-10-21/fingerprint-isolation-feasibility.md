@@ -57,7 +57,7 @@ Before any integration, prove dependency closure and environment isolation, and 
 4. **Only then build a bounded comparison experiment.** Start with manual card/region alignment and explicitly visible regions. Record alignment quality, visibility, glare/blur/occlusion, and per-region agreement/disagreement. Independently implement any geometric transforms in the isolated tool. Keep transformed diagnostic images separate from immutable original inputs. Do not run grading, generate replacement details, or infer ownership.
 5. **Evaluate held-out data before exposing a decision.** Freeze preprocessing/recipe and thresholds before the held-out run. Record all abstentions and failures. Do not derive an authenticity percentage from an uncalibrated similarity score.
 
-No matcher is justified merely because the existing Fingerprint graphic is deterministic. The immediate next useful artifact is the manifest/import qualification; the decision to implement comparison depends on observable reference evidence and dataset feasibility.
+No matcher is justified merely because the existing Fingerprint graphic is deterministic. The standalone manifest/import increment is now qualified below; the decision to implement comparison still depends on observable reference evidence and dataset feasibility.
 
 ## Result semantics
 
@@ -83,3 +83,14 @@ Separate development and held-out evaluation by physical card, then hold out cap
 Measure false-consistent results on different copies and replays, false-discrepancy results on the same card, retake/unavailable rate, observable-region coverage, and processing/resource limits, with denominators and uncertainty. Choose acceptable limits before the held-out evaluation; this audit supplies no validated thresholds, sample-size guarantee, or success claim.
 
 Progress requires evidence that the copied references expose repeatable and discriminative features, that results generalize beyond the development cards/phones, and that isolation/failure/load tests pass. If those gates fail, retain the experiment as an offline study or stop it; the working grading/report system remains unchanged.
+
+
+## Offline reference contract completed locally
+
+Six new files in `tools/atlas-fingerprint-offline/` implement a standalone copied-reference contract and bounded read-only importer. It has no application route, package dependency, credential/environment loader, grading import, database, network, worker, camera, decoder or matcher. Importing its modules performs no I/O. Explicit invocation reads exactly one operator-supplied four-file package with a separately pinned manifest hash and human-copy declaration.
+
+Validation checks fixed regular non-executable files, no symlinks/hardlinks, byte and complexity limits, duplicate-safe JSON, exact copied approval/version/hash/inspection-side bindings, geometry and saved trace integrity. Source preservation and refusal tests use synthetic fixtures only. Root reran13 Node22 tests with zero failures/skips; independent source review passed. The VM import test denies environment/network/filesystem/hash/timer work at import and external dependencies, but is not a production OS sandbox or load-isolation qualification.
+
+Contract SHA256 `d159123a20db500aee5156e9dd60b2fa43461af1576b46b6549acea16ec952db`; importer `ef2314f7d4bdee2ea5d5e61baa5d00ef71de51c55170f5674919341bc2bd8c99`. See the standalone README for exact limits and result schema. No existing grading source, dependency, deployment or configuration changed.
+
+Success establishes consistency of supplied bytes only. Source authority remains human-declared, the private report hash is a copied identifier, and static WebP framing checks do not decode images. The accepted synthetic headers are deliberately not photographs. Real/current-copy compatibility, image decoding, raw masters, physical calibration and comparison remain unqualified. The only returned decision is **UNAVAILABLE / NO_MATCHER_IMPLEMENTED**. No real reference was acquired, no camera requested, and no Grading/report integration was introduced. A reviewed offline copy procedure and representative supplied dataset are the next prerequisites.
