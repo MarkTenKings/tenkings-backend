@@ -2,7 +2,7 @@
 
 ## Current outcome
 
-Isolated correctionf9742346 is deployed on native/staff/public. Fresh staff sign-in and existing Nick review read acceptance pass; the original card/job/action/approval rows for Nick and Henderson are unchanged. The deployed scope is four entry/context/error-recovery files, three suggestion presentation files and six qualification files. The existing grading engine, AI prompts/provider configuration, measurement/scoring math, review-step ordering, suggestion handlers and approval authority are unchanged. New unmodified-card adoption was qualified in owned PostgreSQL; it was not exercised on another production card. Earlier qualification paragraphs below are historical checkpoints.
+Isolated correctionf9742346 is deployed on native/staff/public. Fresh staff sign-in and existing Nick review read acceptance pass; the original card/job/action/approval rows for Nick and Henderson are unchanged. The deployed scope is four entry/context/error-recovery files, three suggestion presentation files and six qualification files. The existing grading engine, AI prompts/provider configuration, measurement/scoring math, review-step ordering, suggestion handlers and approval authority are unchanged. New unmodified-card adoption was subsequently exercised by the owner on David Njoku: BEGIN_FINAL_REVIEW succeeded and original/current artifacts contain zero findings/proposals. A separate photograph failure was reproduced and recovered through the existing Reload images read with exact saved-row preservation; its network cause remains unconfirmed. See [Njoku investigation](workspace-njoku-photo-investigation.md). Earlier qualification paragraphs below are historical checkpoints.
 
 ## Owner report and confirmed cause
 

@@ -9,8 +9,15 @@ export function createHandler(resolveRuntime) {
         privateHeaders(res);
         try {
             const state = typeof resolveRuntime === 'function' ? await resolveRuntime() : resolveRuntime;
-            state.assertRequest(req);
             const path = (req.url ?? '').split('?')[0], method = req.method;
+            if (['/api/customer/ownership/claims', '/api/customer/ownership/claim', '/api/customer/ownership/history'].includes(path)) {
+                if (method !== 'GET') deny(405, 'METHOD_NOT_ALLOWED');
+                if (typeof state.ownershipHistory?.handler !== 'function') deny(503, 'OWNERSHIP_CLAIMS_UNAVAILABLE');
+                // The pinned composition owns synchronous ingress admission,
+                // live session/account checks and the separate restricted role.
+                return await state.ownershipHistory.handler(req, res);
+            }
+            state.assertRequest(req);
             const known = [
                 ['GET', /^\/api\/customer\/collection$/],
                 ['POST', /^\/api\/customer\/dealer\/handoffs\/(read|confirm)$/],

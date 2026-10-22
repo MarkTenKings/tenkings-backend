@@ -2,6 +2,7 @@ import { acceptsSiteRequest } from '@atlas/site-router/server';
 import { CustomerAuth } from './auth.mjs';
 import {createDealerAccess} from './dealer.mjs';
 import { CustomerDatabase } from './database.mjs';
+import { createOwnershipHistoryRuntime } from './ownership-history-runtime.mjs';
 import { productionConfig, cookie } from './config.mjs';
 import { deny } from './policy.mjs';
 import { twilioVerifyTransport } from './twilio.mjs';
@@ -68,5 +69,10 @@ export async function runtime() {
             return typeof value === 'string' && /^[a-fA-F0-9:.]{3,64}$/.test(value) ? value : 'customer-ingress';
         },
     };
+    // Disabled unless both explicit settings validate. This creates no reader
+    // client/connection until an admitted history GET; the auth client is never reused.
+    current.ownershipHistory = createOwnershipHistoryRuntime({ customerState: current,
+        settings: { enabled: env.ATLAS_CUSTOMER_OWNERSHIP_HISTORY, databaseUrl: env.ATLAS_CUSTOMER_OWNERSHIP_HISTORY_DATABASE_URL },
+        createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
     return current;
 }
