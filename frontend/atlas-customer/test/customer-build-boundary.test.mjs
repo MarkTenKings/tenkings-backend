@@ -26,9 +26,9 @@ test('actual boundary script accepts only its expected customer routes and packa
   await fixture(async({chunk,run})=>{await writeFile(chunk,'console.log("customer UI");');const result=run();assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/PASS customer build/);});
 });
 
-test('actual boundary script rejects new history credential marker and existing server authority in browser chunks',async()=>{
+test('actual boundary script rejects history/collection credential markers and existing server authority in browser chunks',async()=>{
   await fixture(async({chunk,run})=>{
-    for(const marker of ['ATLAS_CUSTOMER_OWNERSHIP_HISTORY_DATABASE_URL','ATLAS_CUSTOMER_DATABASE_URL','ATLAS_CUSTOMER_SESSION_KEY','customer_read(','customer_call(']){
+    for(const marker of ['ATLAS_CUSTOMER_COLLECTION_DATABASE_URL','ATLAS_CUSTOMER_OWNERSHIP_HISTORY_DATABASE_URL','ATLAS_CUSTOMER_DATABASE_URL','ATLAS_CUSTOMER_SESSION_KEY','customer_read(','customer_call(']){
       await writeFile(chunk,JSON.stringify(marker));const result=run();assert.notEqual(result.status,0);assert.match(result.stderr,/Server-only customer authority leaked into a browser chunk/);
     }
   });

@@ -10,6 +10,9 @@ export function createHandler(resolveRuntime) {
         try {
             const state = typeof resolveRuntime === 'function' ? await resolveRuntime() : resolveRuntime;
             const path = (req.url ?? '').split('?')[0], method = req.method;
+            // This exact handler owns its one original ingress admission and
+            // final request/runtime checks; do not consume admission twice.
+            if (path === '/api/customer/collection') return createOwnershipReadHandler(state)(req, res);
             if (['/api/customer/ownership/claims', '/api/customer/ownership/claim', '/api/customer/ownership/history'].includes(path)) {
                 if (method !== 'GET') deny(405, 'METHOD_NOT_ALLOWED');
                 if (typeof state.ownershipHistory?.handler !== 'function') deny(503, 'OWNERSHIP_CLAIMS_UNAVAILABLE');
@@ -45,7 +48,6 @@ export function createHandler(resolveRuntime) {
             } else if (req.headers['sec-fetch-site'] && !['same-origin', 'none'].includes(req.headers['sec-fetch-site'])) deny(403, 'ORIGIN_NOT_ALLOWED');
             const auth = state.auth, cookieHeader = req.headers.cookie, csrf = req.headers['x-atlas-customer-csrf'];
             const client = state.clientAddress(req); let body;
-            if (path === '/api/customer/collection') return createOwnershipReadHandler(state)(req, res);
             if (dealerRoute(path)) {
                 if (!state.dealer) deny(503, 'DEALER_ACCESS_NOT_ENABLED');
                 body = await state.dealer.handle(req,res);

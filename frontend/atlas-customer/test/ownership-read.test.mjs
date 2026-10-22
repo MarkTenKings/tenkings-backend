@@ -1,15 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CustomerAuth } from '../lib/server/auth.mjs';
+import { makeConfig } from '../lib/server/config.mjs';
 import { createOwnershipReadHandler, parseOwnershipCollectionQuery } from '../lib/server/ownership-read.mjs';
 import { createCollectionPreviewFixture } from './collection-preview-fixture.mjs';
 
 function setup(reader) {
   const fixture = createCollectionPreviewFixture(), calls = [];
-  const config = { cookies: { browser: 'customer_browser', session: 'customer_session' }, sessionKey: Buffer.alloc(32, 7) };
+  const config = makeConfig({ mode: 'LOCAL_FIXTURE', origin: 'http://127.0.0.1:4318', deploymentId: 'collection-fixture', releaseSha: '0'.repeat(40),
+    accountSid: 'AC'+'0'.repeat(32), serviceSid: 'VA'+'0'.repeat(32), phoneKey: Buffer.alloc(32, 8),
+    cookies: { browser: 'customer_browser', session: 'customer_session' }, sessionKey: Buffer.alloc(32, 7) });
   const auth = new CustomerAuth({ config, database: { call() { assert.fail('Existing customer gateway must not be used'); } } });
   const cookie = `customer_browser=${Buffer.alloc(32, 1).toString('base64url')}; customer_session=${Buffer.alloc(32, 2).toString('base64url')}`;
-  const state = { auth, assertRequest() {}, ownershipRead: reader ?? { read: async (...args) => { calls.push(args); return fixture.snapshot; }, call() { assert.fail('Writer called'); } } };
+  const state = { auth, config, assertRequest() {}, ownershipRead: reader ?? { read: async (...args) => { calls.push(args); return fixture.snapshot; }, call() { assert.fail('Writer called'); } } };
   const handler = createOwnershipReadHandler(state);
   return { fixture, calls, state, async run(change = {}) {
     const res = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
@@ -72,4 +75,20 @@ test('invalid ownership or cursor responses and internal errors fail closed with
   }
   const f = setup({ read() { throw Error('PRIVATE SQL/COOKIE'); } });
   assert.deepEqual((await f.run()).body, { error: 'COLLECTION_UNAVAILABLE' });
+});
+
+test('captured reader method cannot change during an observed awaited read', async () => {
+  let entered, release;
+  const observed = new Promise(resolve => { entered = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  const f = setup(); let admissions = 0;
+  f.state.assertRequest = () => { admissions++; };
+  const reader = f.state.ownershipRead;
+  reader.read = async () => { entered(); await held; return f.fixture.snapshot; };
+  const pending = f.run(); await observed;
+  reader.read = () => assert.fail('Replaced reader was called');
+  release(); const response = await pending;
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.body, { error: 'COLLECTION_UNAVAILABLE' });
+  assert.equal(admissions, 1);
 });

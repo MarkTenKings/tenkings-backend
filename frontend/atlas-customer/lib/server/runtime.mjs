@@ -3,6 +3,7 @@ import { CustomerAuth } from './auth.mjs';
 import {createDealerAccess} from './dealer.mjs';
 import { CustomerDatabase } from './database.mjs';
 import { createOwnershipHistoryRuntime } from './ownership-history-runtime.mjs';
+import { createCollectionRuntime } from './collection-runtime.mjs';
 import { productionConfig, cookie } from './config.mjs';
 import { deny } from './policy.mjs';
 import { twilioVerifyTransport } from './twilio.mjs';
@@ -74,5 +75,9 @@ export async function runtime() {
     current.ownershipHistory = createOwnershipHistoryRuntime({ customerState: current,
         settings: { enabled: env.ATLAS_CUSTOMER_OWNERSHIP_HISTORY, databaseUrl: env.ATLAS_CUSTOMER_OWNERSHIP_HISTORY_DATABASE_URL },
         createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
+    current.collection = createCollectionRuntime({ customerState: current,
+        settings: { enabled: env.ATLAS_CUSTOMER_COLLECTION, databaseUrl: env.ATLAS_CUSTOMER_COLLECTION_DATABASE_URL },
+        createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
+    current.ownershipRead = current.collection.reader;
     return current;
 }

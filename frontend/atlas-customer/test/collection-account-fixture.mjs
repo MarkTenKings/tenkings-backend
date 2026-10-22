@@ -13,6 +13,7 @@ import * as collectionClient from '../lib/collection-client.mjs';
 import * as claimsClient from '../lib/ownership-claims-client.mjs';
 import * as claimsTransport from '../lib/ownership-claims-transport.mjs';
 import { CustomerAuth } from '../lib/server/auth.mjs';
+import { makeConfig } from '../lib/server/config.mjs';
 import { createHandler } from '../lib/server/http.mjs';
 import { createOwnershipClaimsHandler } from '../lib/server/ownership-claims-http.mjs';
 import { createCollectionPreviewFixture } from './collection-preview-fixture.mjs';
@@ -30,7 +31,8 @@ export const flush = () => new Promise(resolve=>setImmediate(resolve));
 export function createMountedCollectionFixture({history=true}={}) {
   const f={accountId:CLAIM_ACCOUNT,calls:[],reads:[],collectionUnavailable:false,collectionEmpty:false,historyUnavailable:false,refusal:null,hold:null,historyPage:null,historyResult:null,foreignCollection:false};
   f.customer={id:f.accountId,profile:{}};
-  const config={origin:'https://atlas.example.invalid',cookies:{browser:'fixture_browser',session:'fixture_session'},sessionKey:Buffer.alloc(32,7),mode:'LOCAL_FIXTURE'};
+  const config=makeConfig({origin:'https://atlas.example.invalid',cookies:{browser:'fixture_browser',session:'fixture_session'},sessionKey:Buffer.alloc(32,7),mode:'LOCAL_FIXTURE',
+    deploymentId:'collection-account-fixture',releaseSha:'0'.repeat(40),accountSid:'AC'+'0'.repeat(32),serviceSid:'VA'+'0'.repeat(32),phoneKey:Buffer.alloc(32,8)});
   const token=Buffer.alloc(32,1).toString('base64url'),cookie=`fixture_browser=${token}; fixture_session=${token}`;
   const auth=new CustomerAuth({config,database:{call(){assert.fail('No general database');}}});
   auth.bootstrap=async()=>({customer:f.customer,csrf:'synthetic-csrf',browserToken:token});
