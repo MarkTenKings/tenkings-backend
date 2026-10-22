@@ -5,7 +5,7 @@
 .ad-workspace button[aria-pressed=true]{border-color:#a47425;background:#fff7e8;color:#765015}
 .ad-side-navigation{display:flex;gap:6px;flex:none;padding:6px 0 10px;border-bottom:1px solid var(--am-line)}.ad-side-navigation button{min-width:74px}
 .ad-side-review{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
-.ad-review-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 0;flex:none}.ad-review-toolbar>div:first-child{display:flex;align-items:baseline;gap:10px}.ad-review-toolbar h2{margin:0;font-size:16px;font-weight:650}.ad-review-toolbar>div>span{font-size:11px;color:var(--am-sub)}
+.ad-review-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 0;flex:none}.ad-review-toolbar>div:first-child{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px}.ad-review-toolbar h2{margin:0;font-size:16px;font-weight:650}.ad-review-toolbar>div>span{font-size:11px;color:var(--am-sub)}
 .ad-photo-controls{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.ad-photo-controls output{min-width:34px;text-align:center;font:11px ui-monospace,monospace;color:var(--am-sub)}
 .ad-review-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,280px);gap:18px;flex:1;min-height:0;min-width:0;overflow:hidden;padding-bottom:8px}
 .ad-inspection-panel{display:flex;flex-direction:column;min-height:0;min-width:0}
@@ -32,6 +32,7 @@
 .ad-finding-name>b{display:grid;place-content:center;width:24px;height:24px;border:1px solid #e5c0c8;color:#b51c3a;border-radius:50%;flex:none;font-size:11px}.ad-finding-name>span{min-width:0}.ad-finding-name strong{display:block;font-size:12px;font-weight:600;overflow-wrap:anywhere}.ad-finding-name small{display:block;font-size:10px;line-height:1.5;color:var(--am-sub);margin-top:3px;overflow-wrap:anywhere}
 .ad-workspace .ad-finding-name[aria-pressed=true]{background:#fff7f8;border-color:#e2c4cb;color:var(--am-ink)}
 .ad-status,.ad-pending p,.ad-review-panel p{font-size:12px;line-height:1.5;color:var(--am-sub);margin:8px 0}.ad-status button{margin-left:6px}
+.ad-suggestion-help{margin:10px 0;padding:10px;border:1px solid #cbdbe6;border-radius:5px;background:#f3f7fa;font-size:12px;line-height:1.5}.ad-suggestion-help strong{font-weight:650}.ad-suggestion-help p:last-child{margin-bottom:0}
 .ad-finding-details,.ad-trace-tools{padding:12px 0;border-top:1px solid var(--am-line)}.ad-finding-details h3,.ad-trace-tools h3{font-size:14px;line-height:1.4;margin:0 0 8px;font-weight:650}.ad-finding-details dl{display:flex;flex-wrap:wrap;gap:8px 14px;margin:0 0 12px}.ad-finding-details dt{font-size:10px;color:var(--am-sub)}.ad-finding-details dd{font:11px/1.5 ui-monospace,monospace;margin:2px 0 0}
 .ad-review-panel label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--am-sub);margin:8px 0}.ad-review-panel select{max-width:100%;min-width:0;width:100%}.ad-edit-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:8px 0}.ad-edit-actions button{font-size:11px}
 .ad-workspace .ad-save-trace{background:#1f754d;border-color:#1f754d;color:#fff}.ad-review-panel [role=alert]{color:#a5273d;font-size:12px;line-height:1.5}

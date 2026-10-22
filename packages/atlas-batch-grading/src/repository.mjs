@@ -119,6 +119,36 @@ export function createBatchRepository({ boundary, intakeRepository }) {
     return true;
   }
   return Object.freeze({
+    /** A current workspace may discover its exact saved report without reading
+     * the capped queue or creating/resuming any processing work. This hint is
+     * not adoption authority: detail and BEGIN_FINAL_REVIEW recheck the report. */
+    async reviewEntry(staff, card) {
+      return boundary.transaction(staff, async ({ tx, principal }) => {
+        if (principal.role !== 'REVIEWER' || principal.actorKind === 'MACHINE' || card.draft.finalReview) return null;
+        const sourceHash = card.draft.source?.sourceHash;
+        if (!/^[a-f0-9]{64}$/.test(sourceHash)) return null;
+        const key = digest(canonical([BATCH_POLICY, card.cardId, sourceHash]));
+        const [row] = await tx.$queryRawUnsafe(`SELECT j.*,m.revision AS current_manual_revision,
+          m.content_hash AS current_manual_hash,m.content::jsonb ? 'finalReview' AS final_review_started,
+          EXISTS(SELECT 1 FROM atlas_manual.approval a WHERE a.card_id=m.id AND a.source_hash=m.content_hash) AS current_approval
+          FROM atlas_manual_connected.batch_grading j JOIN atlas_manual.card m ON m.id=j.card_id
+          WHERE j.key=$1 AND j.card_id=$2::uuid AND j.actor_id=$3::uuid
+            AND (m.owner_id=$3::uuid OR $3::uuid=ANY(m.editors))`, key, card.cardId, principal.id);
+        if (!row) return null;
+        if (row.current_approval || row.final_review_started || row.state !== 'REVIEW'
+          || row.current_manual_revision !== card.revision || row.current_manual_hash !== card.contentHash) return null;
+        const job = project(row);
+        requireThat(job.cardId === card.cardId && job.sourceHash === sourceHash, 409, 'BATCH_REVIEW_BINDING_CHANGED');
+        if (job.evidence.manualRevision !== card.revision || job.evidence.manualContentHash !== card.contentHash) return null;
+        const current = await source(tx, principal, row);
+        requireThat(['FRONT', 'BACK'].every(side => job.uploads[side] === current.sides[side].upload?.uploadId),
+          409, 'BATCH_PHOTOS_CHANGED');
+        requireThat(job.evidence.authority === 'MACHINE_PROPOSAL' && /^[a-f0-9]{64}$/.test(job.evidence.reportHash),
+          409, 'BATCH_REVIEW_BINDING_CHANGED');
+        return { key: job.key, cardId: card.cardId, state: 'REVIEW', sourceHash,
+          manualRevision: card.revision, manualContentHash: card.contentHash };
+      });
+    },
     ...(boundary.machineTransaction && boundary.machineOwner ? {
       async discoverOwners() {
         const owners = await boundary.machineTransaction(null, async ({ tx }) => tx.$queryRawUnsafe(`

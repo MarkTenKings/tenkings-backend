@@ -202,7 +202,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     }
     return {...packet,changedSides};
   }
-  let assistance, batchReview;
+  let assistance, batchReview, batchReviewEntry;
   const workflow=createManualWorkflow({repository,artifacts,pythonExecutable,measurementLimits:limits.measurement,
     resolveProposal: input => assistance.resolveProposal(input),
     resolveVariantConfirmation: input=>{requireThat(variantReview,503,'VARIANT_DISABLED');return variantReview.resolve(input);},
@@ -244,9 +244,9 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   variantReview=variantJobs?createVariantReviewService({store:variantJobs,workflow,readReferenceImage:variantReadReferenceImage}):null;
   const connected={labels,labelWorker,variantReview,variantJobs,dealerOperations,orderDesk,orderDeskInbox,gradedCards,cardProvenance,marketWorker,marketJobs,reportImages,retryGradingImage,readGradingPhoto,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
-      const [extras,status,savedDetails]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
-        details.read(input.staff,input.card.cardId)]);
-      return {...extras,savedIdentification:{fields:savedDetails.details.fields,sourceHash:savedDetails.details.sourceHash},...(variantReview?{variantVerification:await variantReview.status(input.staff,input.card.cardId)}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),marketAutomaticEnabled:Boolean(marketJobs),researchEnabled:Boolean(research)};
+      const [extras,status,savedDetails,reviewEntry]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
+        details.read(input.staff,input.card.cardId),batchReviewEntry?batchReviewEntry(input.staff,input.card):null]);
+      return {...extras,batchReview:reviewEntry,savedIdentification:{fields:savedDetails.details.fields,sourceHash:savedDetails.details.sourceHash},...(variantReview?{variantVerification:await variantReview.status(input.staff,input.card.cardId)}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),marketAutomaticEnabled:Boolean(marketJobs),researchEnabled:Boolean(research)};
     },
     thumbnails:createThumbnailReader({intake,workflow,readManifest:manifest,imageReadUrl,readCleanDescriptor,readGradingPhoto,gradingPhotoStatus:gradingPhotos?.photoStatus}),
     gallery:createStaffCardGallery({snapshot:createGallerySnapshot({boundary,intakeRepository}),intake,storage,
@@ -290,6 +290,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   };
   if(batchEnabled){
     const batchRepository=createBatchRepository({boundary,intakeRepository});
+    batchReviewEntry=batchRepository.reviewEntry;
     const prepare=createBatchPreparation({connected,artifacts,pythonExecutable,measurementLimits:limits.measurement,
       reportBuilder:createBatchReportProcess({limited})});
     batchReview=createBatchReview({connected,repository:batchRepository,artifacts});

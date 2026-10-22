@@ -454,7 +454,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,reviewSession,onBusy
       }catch(error){if(!stopped){
         // Recovery can publish an intermediate view before batch adoption.
         // Keep a failed entry in its retry screen, retaining the owned journal.
-        if(initialBatchReview&&!recovered){viewRef.current=null;setView(null);}
+        if(!recovered){viewRef.current=null;setView(null);}
         setError(manualMessage(error));setErrorRecovery(error?.status===401||error?.code==='SIGN_IN_REQUIRED'?'signin':error?.code==='CSRF_REQUIRED'?'reload':preparing?'preparation':null);
       }}
       finally{if(!stopped)setLoadingReview(false);}
