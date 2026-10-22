@@ -1,5 +1,7 @@
 # R2 Stripe, ATLAS Balance and cash-out proposal
 
+**Later local implementation:** The proposed isolated ledger/intent increment is now implemented in `packages/atlas-marketplace` with45 focused checks and synthetic desktop acceptance. See [R2 implementation](r2-marketplace-pilot.md) and [finance contract](r2-finance-implementation.md). Actual Stripe sandbox/provider acceptance and every real activation gate below remain pending. The design review that follows is historical; its statement about no implementation describes the time of that review.
+
 Read-only design review, October 22, 2026. This is a proposed ATLAS-held, fixed-price pilot flow, not an activated payment contract or provider qualification. R1 foundation work continues independently. The proposed **8% including ordinary domestic processing remains unfinalized**; no fee, release period or reserve percentage is chosen here.
 
 ## Existing source and decisions

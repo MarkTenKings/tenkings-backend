@@ -47951,3 +47951,51 @@ No R1 live migration, roles, grants, credential binding, release holder or activ
 ### 2026-10-22T20:45:27.801942+00:00 — Owner grading feedback; workspace repair deferred
 
 Recorded owner-reported normal Review Queue success and Shaquille O'Neal workspace Back geometry save/confirmation failure after inner-border edit. Screenshot preserved unchanged at /Users/markthomas/.codex/atlas-handoffs/atlas-workspace-geometry-deferred-20261022/shaquille-workspace-back-geometry.png (SHA256 461f229f5f9071d52e7de14c95c211c8344540389eaba3fe77c89d79e3d0ea33). Root has not inferred backend cause or persisted geometry from UI copy. Owner explicitly prioritizes R1 over this workspace repair; no investigation, reset, retry, re-import, grading, database, provider or deployment action performed. Added owner-grading-feedback-r1-status.md, corrected master/handoff priority and recorded all30-ID delivery-state grouping8live-core/8partial-local/14mostly-remaining. This does not mark those8live items complete or close new R1/slab visual acceptance. Existing candidate/build/schema/storage proofs reused; no tests rerun for documentation-only changes.
+
+
+### 2026-10-22 — R2 isolated parallel implementation begins
+
+Owner takeover handoff read; isolated managed worktree `atlas-r2-marketplace-pilot`, branch `codex/atlas-r2-marketplace-pilot`, fixed foundation base `5132a2c2e40b6d1d1aa8e378aa21c4d05f9e9ee5`. Exactly two requested Astra/xHigh specialists own listing/eligibility/reservation/UI and finance/reconciliation; lead owns shared interfaces, local storage, lifecycle integration, verification and handoff. Lead model cannot be changed/verified through available chat tools; no claim of a model switch. Original dirty checkout and R1 integration checkout unchanged. All shared production operations remain with R1 lead.
+
+Added isolated private `packages/atlas-marketplace` with explicit local-only SQLite persistence, atomic cross-process transactions and append-only financial/event snapshot guards; no manifest/runtime imports or production registration. Node22.16.0 actual SQLite rollback/reopen and three-process contention checks pass (2 groups). Initial temp-path symlink refusal was fixed in test setup by resolving the owned system temp directory; application guard retained. No PostgreSQL connection/migration, production operation, provider call, credential use or grading activity. Claims/customer ownership history stay disabled pending Fingerprint and later policy authority.
+
+Owner-reported new-card Front/Back/3D/Grade Report/return-to-detail desktop/phone success from takeover brief is recorded as owner-reported acceptance, not an agent trace. Review Queue works; the Shaquille Workspace geometry failure is deferred and untouched. Retain all30 canonical scope IDs.
+
+
+### 2026-10-22 — R2 cross-domain local journey and fulfillment gates
+
+Added default-off trusted composition, explicit consent/fulfillment/protection reducers and loopback-only synthetic demo transport. No production routes, database manifest, deployments, provider settings or account authority changed. Full service qualification passes two groups: listing refusal without hold consent; competing buyer refusal; one provider create with lost response; actual owned SQLite close/reopen after lease expiry; exact payment retrieval and single sale; unchanged report/media binding; packing/dispatch/delivery/release; separate pending transfer and verified availability; open appeal reserving funds; exact closure; withdrawal reservation preventing excess payout; separate bank confirmation and balanced immutable journals. Every generated operational event is marked synthetic and excluded from production customer metrics.
+
+Two fulfillment groups separately verify missing-scan timing, required packaging evidence including reusable insert/two seals/clean label area/resale instructions/replacement-kit reference, return inspection, exact refund reconciliation and late dispute admission. These are code/fixture evidence only, not physical package, insurance or shipping acceptance. Synthetic fee, tax, shipping, zero return-window and provider capability values are expressly fixtures; no actual business terms were approved. Default-off/actor access gates pass. Initial end-to-end expectation was corrected to accept the earlier provider-balance denial; the financial guard was unchanged.
+
+
+### 2026-10-22 — Planned owned R2 demo listener restart for browser correction
+
+Actual Chrome initial top-level navigation was refused by the local cross-site guard. Corrected only static top-level document navigation; API/POST Origin, exact Host, CSRF and cross-site checks remain. Will stop only owned Node PID57496 / loopback63723 and restart the same synthetic database on a fresh owned listener. No production process or shared operation. HTTP boundary proof passes except new added cases not yet run; first test used Node fetch Host override, which undici ignored, so the harness now uses actual node:http custom Host and the refusal passes.
+
+
+### 2026-10-22 — R2 local UI correction observed and protection review closed
+
+Owned PID57496 stopped; replacement PID57581 served loopback63783 successfully. Chrome rendered the white/emerald synthetic UI after static CSS/module paths were corrected. Browser reached explicit Hold and list, $125 listing/$5 fixture fee/$120 net, complete $147 buyer total, one reservation/payment, packing/dispatch/delivery and separately reconciled transfer availability. No real provider, bank, inventory or physical operation. UI media/report hashes bind actual served fixture bytes. HTTP Host/Origin/CSRF/cross-site and default-off tests pass; decimal grade filtering corrected.
+
+Exactly two Astra/xHigh specialists completed listing/guidance and finance slices: 18 listing/reservation/UI/guidance groups and 19 finance/journal/provider-fixture/webhook groups qualified. Real R1 guidance rights remain unresolved/default-off. Raw webhooks retrieve exact objects; unknown provider dispatch never becomes a new create. Real Stripe sandbox acceptance remains pending.
+
+Independent integration review found policy substitution at fulfillment, a tiny unrelated refund satisfying a return, and inability to open a case before packing. Corrected full fulfillment-policy binding in immutable listings/orders, exact paid intent checks, early policy-bound case initialization, immutable reviewed refund obligations and case-specific confirmed amount/allocation reconciliation. Added staff refund dispatch/reconcile composition. Six affected fulfillment/service/HTTP groups pass, including a lost refund response and single exact completion. Claims/history remain off; grading and Ten Kings source remain untouched.
+
+### 2026-10-22 — Planned final owned local preview restart
+
+Stop only owned PID57581 / loopback63783, retain its synthetic database as earlier evidence, and start the final code in a new owner-only local-demo-02 directory. Requalify the visible flow over the final policy-bound listing and preserve desktop/mobile evidence. No shared production restart or migration.
+
+
+### 2026-10-22 — Final R2 local qualification and planned preview shutdown
+
+Final Node22.16.0 aggregate passes45/45 focused groups with zero failures/skips; log retained as r2-final-tests.tap in the owner takeover directory. Both original specialists independently reviewed the protection/refund corrections and reported no residual material defect in those paths. Final owned PID58504 / loopback64264 used new local-demo-02; Chrome completed consent→listing→full quote→reserved payment→packing/dispatch/delivery/release→transfer availability→withdrawal→bank result. Screenshot r2-desktop-payout.png shows $120 Paid out and zero other buckets. Front/Back/Front and decimal grade filtering also passed. Mobile inspection was interrupted, so no mobile acceptance is claimed. No provider or physical action occurred.
+
+Added package run instructions, explicit R1 compatibility interfaces and lead/specialist handoffs. Updated only isolated-branch master-plan local status while preserving all30 IDs; real pilot criterion27 remains pending. Existing R1 evidence is retained within its original source bounds. Source search shows no grading/Ten Kings imports or environment credential discovery; only explicitly configured test-key Stripe adapter can contact its fixed API.
+
+Plan: capture immutable local evidence/source hashes, stop only owned PID58504, verify its exit, retain both demo databases and browser/test artifacts, then commit additive package and documentation on the isolated branch. No shared runtime/deploy/migration or message to another chat.
+
+
+### 2026-10-22 — Owned R2 preview shutdown observed
+
+Owned listener PID58504 exited0; explicit PID absence verified. Read-only final SQLite receipt verifies one paid order, one payment/transfer/payout with one dispatch each, $120 Paid out, balanced journals and synthetic-only events. r2-local-journey-receipt.json and source/evidence manifest are retained outside Git with the test log and desktop screenshot. Both earlier and final synthetic databases remain available for inspection. No shared process changed.
