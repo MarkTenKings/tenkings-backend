@@ -28,6 +28,11 @@ if (tiled && (p.pixelWidth !== 9764 || p.pixelHeight !== 12598 || p.widthMm !== 
     || p.ppi !== 800 || p.tileHaloPixels !== 1 || p.maxTileWidth !== 640)) throw new Error('LABEL_RASTER_PROFILE_INVALID');
 const started = performance.now(), output = await open(outputPath, 'wx', 0o600), sha = createHash('sha256');
 let byteCount = 0, peakRssBytes = process.memoryUsage().rss, rasterizedTiles = 0, maxRasterTileBytes = 0;
+// Approved B embeds pinned raster artwork. Decode it once per occupied frame,
+// rather than once for every output strip; historical vector tiles are unchanged.
+const frameLimit = { width: 640, height: 2160, count: 10 };
+const frames = new Map();
+let rasterizedFrames = 0, maxRasterFrameBytes = 0, maxCachedFrames = 0, maxCachedFrameBytes = 0, cachedFrameBytes = 0;
 async function write(bytes) {
   byteCount += bytes.length; if (byteCount > p.maxPngBytes) throw new Error('LABEL_RASTER_OUTPUT_TOO_LARGE');
   sha.update(bytes);
@@ -61,7 +66,7 @@ try {
     const left = Math.floor(frame.xMm * p.pixelWidth / p.widthMm) - p.tileHaloPixels;
     const right = Math.ceil((frame.xMm + frame.widthMm) * p.pixelWidth / p.widthMm) + p.tileHaloPixels;
     if (left < 0 || right > p.pixelWidth || right - left > p.maxTileWidth) throw new Error('LABEL_RASTER_TILE_BOUNDS_INVALID');
-    return { topMm: frame.yMm, heightMm: frame.heightMm, left, width: right - left,
+    return { slot, topMm: frame.yMm, heightMm: frame.heightMm, left, width: right - left,
       top: Math.floor(frame.yMm * p.pixelHeight / p.heightMm) - p.tileHaloPixels,
       bottom: Math.ceil((frame.yMm + frame.heightMm) * p.pixelHeight / p.heightMm) + p.tileHaloPixels,
       svg: content.slice(match.index, matches[i + 1]?.index ?? content.length) };
@@ -73,19 +78,43 @@ try {
     if (tiled) {
       data = Buffer.alloc(p.pixelWidth * height * 4); info = { width: p.pixelWidth, height, channels: 4 };
       for (const group of groups.filter(value => value.topMm < topMm + heightMm && value.topMm + value.heightMm > topMm)) {
-        // Preserve the original strip's viewport/scale. An integer-pixel offset
-        // clips only empty horizontal margins; it never rescales a label. Keep
-        // a one-pixel halo for edge antialiasing. Only this small tile is live,
-        // so a strip crossing two jig rows cannot retain twenty full labels.
-        const tileSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${group.width}" height="${height}"><svg x="${-group.left}" width="${p.pixelWidth}" height="${height}" viewBox="0 ${topMm} ${p.widthMm} ${heightMm}" preserveAspectRatio="none">${group.svg}</svg></svg>`;
-        const tile = await sharp(Buffer.from(tileSvg), { limitInputPixels: p.maxTileWidth * p.stripRows, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-        if (tile.info.width !== group.width || tile.info.height !== height || tile.info.channels !== 4) throw new Error('LABEL_TILE_DIMENSION_MISMATCH');
-        rasterizedTiles += 1; maxRasterTileBytes = Math.max(maxRasterTileBytes, tile.data.length);
-        // A strip can cross two jig rows. Copy only this label's vertical
-        // frame so a later tile's transparent margin cannot erase earlier ink.
+        let tile, firstSourceRow;
         const firstRow = Math.max(0, group.top - y), lastRow = Math.min(height, group.bottom - y);
+        if (group.svg.includes('<image ')) {
+          // Keep the same final sheet scale and integer-pixel grid, including
+          // the existing one-pixel halo. Only the viewport changes: artwork is
+          // neither resized nor redrawn. Retain at most one ten-label jig row.
+          tile = frames.get(group.slot);
+          if (!tile) {
+            const frameHeight = group.bottom - group.top;
+            if (group.width > frameLimit.width || frameHeight > frameLimit.height || frameHeight < 1
+                || group.top < 0 || group.bottom > p.pixelHeight || frames.size >= frameLimit.count) throw new Error('LABEL_RASTER_FRAME_BOUNDS_INVALID');
+            const frameTopMm = group.top * p.heightMm / p.pixelHeight, frameHeightMm = frameHeight * p.heightMm / p.pixelHeight;
+            const frameSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${group.width}" height="${frameHeight}"><svg x="${-group.left}" width="${p.pixelWidth}" height="${frameHeight}" viewBox="0 ${frameTopMm} ${p.widthMm} ${frameHeightMm}" preserveAspectRatio="none">${group.svg}</svg></svg>`;
+            tile = await sharp(Buffer.from(frameSvg), { limitInputPixels: frameLimit.width * frameLimit.height, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+            if (tile.info.width !== group.width || tile.info.height !== frameHeight || tile.info.channels !== 4) throw new Error('LABEL_FRAME_DIMENSION_MISMATCH');
+            frames.set(group.slot, tile); cachedFrameBytes += tile.data.length;
+            rasterizedFrames += 1; maxRasterFrameBytes = Math.max(maxRasterFrameBytes, tile.data.length);
+            maxCachedFrames = Math.max(maxCachedFrames, frames.size); maxCachedFrameBytes = Math.max(maxCachedFrameBytes, cachedFrameBytes);
+          }
+          firstSourceRow = y - group.top;
+        } else {
+          // Historical V4 uses its exact original strip viewport, preserving
+          // the inspected vector-label PNG goldens and allocation bounds.
+          const tileSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${group.width}" height="${height}"><svg x="${-group.left}" width="${p.pixelWidth}" height="${height}" viewBox="0 ${topMm} ${p.widthMm} ${heightMm}" preserveAspectRatio="none">${group.svg}</svg></svg>`;
+          tile = await sharp(Buffer.from(tileSvg), { limitInputPixels: p.maxTileWidth * p.stripRows, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+          if (tile.info.width !== group.width || tile.info.height !== height || tile.info.channels !== 4) throw new Error('LABEL_TILE_DIMENSION_MISMATCH');
+          rasterizedTiles += 1; maxRasterTileBytes = Math.max(maxRasterTileBytes, tile.data.length);
+          firstSourceRow = 0;
+        }
+        // Copy only the occupied frame; adjacent transparent margins cannot
+        // erase the other jig row when a strip crosses their boundary.
         for (let row = firstRow; row < lastRow; row += 1) {
-          tile.data.copy(data, (row * p.pixelWidth + group.left) * 4, row * group.width * 4, (row + 1) * group.width * 4);
+          const source = (row + firstSourceRow) * group.width * 4;
+          tile.data.copy(data, (row * p.pixelWidth + group.left) * 4, source, source + group.width * 4);
+        }
+        if (frames.has(group.slot) && group.topMm + group.heightMm <= topMm + heightMm) {
+          cachedFrameBytes -= tile.data.length; frames.delete(group.slot);
         }
       }
     } else {
@@ -111,5 +140,7 @@ try {
   process.stdout.write(JSON.stringify({ sha256: sha.digest('hex'), byteCount, pixelWidth: p.pixelWidth, pixelHeight: p.pixelHeight,
     peakRssBytes, elapsedMs: Math.round(performance.now() - started), sharpVersions: sharp.versions, alphaBinary: true, stripRows: p.stripRows,
     rasterizer: p.rasterizer, rasterizedTiles, maxRasterTileBytes,
+    ...(rasterizedFrames ? { frameStrategy: 'approved-b-final-grid-frame-cache-v1', rasterizedFrames, maxRasterFrameBytes,
+      maxCachedFrames, maxCachedFrameBytes, frameLimits: frameLimit } : {}),
     ...(blackInk ? { printMode: p.printMode, blackInkOnly: true } : {}) }));
 } finally { await output.close(); }
