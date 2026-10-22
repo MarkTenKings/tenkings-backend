@@ -1,5 +1,7 @@
 # Ten Kings Master Product Context
 
+> Latest ATLAS production checkpoint (2026-10-22 06:58 UTC): separately authorized corner-policy713573fc is live; controls140/102/108, native image79ae19e3, customerc68e9ea7 retained. Exact release/hold-absence evidence and successor state are in `docs/handoffs/ATLAS_MARKETPLACE_LEAD_HANDOFF_20261021.md`. Prior f974/c181 references are historical. Photo-only childf0fd is building in isolation and is not live. No ownership/collection/curation activation.
+
 ## Current ATLAS Workspace review-entry release — October 21, 2026 Pacific
 
 Native, staff and public now serve isolated source `f9742346410324293a679e115ef04fe5deaf0016`. Workspace entry now supplies the same exact saved batch context to the existing human-review startup used by Review Queue. This corrects missing findings adoption before review begins. Four serving files change entry/context/error recovery; three change suggestion counts, wording and layout. Six other files provide qualification. Defect detection, AI prompts/provider configuration, measurement and grading math, review-step ordering, suggestion action handlers and human approval authority are unchanged. The owner explicitly reinforced this boundary.
