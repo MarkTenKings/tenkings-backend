@@ -1,5 +1,31 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## Current Atlas slab quality and retained jig25 release — October 22, 2026 Pacific
+
+Production native, staff and public now serve application source **`20b747badb8ad34c510673c446cf326396bdeeac`**. The shared staff Graded Cards/detail viewer gives existing and future eligible approvals the improved slab, centered Front/Back placement, front NFC reference and optional higher-resolution 3D. It composes exact approved inspection photographs and matching saved label artwork at display time. Recorded physical slab photographs retain their existing precedence. The previously deployed 25-position label template and shared backs remain included.
+
+| Surface | Current identity |
+| --- | --- |
+| Native image | `sha256:2ed7f7095fec3cf86d85d2620e278df2cae035db768713dc426070fbd0ee9181` |
+| Main | `6cbc7a142765911e6cdb42a5f0542bfaf68927214113113a33cd4725821047e2` / `atlas-slab-quality-main-20b747ba-02` |
+| Worker | `c5fb531abfbc8559be3205c0b6240e84204e04e9d7d1b45f56d587b7189487dc` / `atlas-slab-quality-worker-20b747ba-02` |
+| Staff | `dpl_J27ngyVUjRd2f7UYokXhzZ8zLhi3` / `atlas-grading-staff-rfmzyowz2-ten-kings.vercel.app` |
+| Public | `dpl_5kCY6dsGPAny5ENDRGyGwEWT1zA9` / `atlas-grading-public-qvagsbu05-ten-kings.vercel.app` |
+| Customer retained | Source `c68e9ea7c77b35fc53cab6ee162e063dfb02b0fe` / `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5` |
+| Controls | Staff144 / Public106 / STAFF SMS112; customer83 / CUSTOMER SMS35 retained |
+
+Both canonical website targets and aliases were independently verified after same-build promotion. Native sealed healthy with zero application restarts and the existing restart policy; the previous pair is retained stopped. Gateways, customer configuration, installed schema (including predecessor additive009), all 37 protected business-table commitments and saved report/photo/label evidence were preserved. No migration, reapproval, regrade, label refresh, print or NFC write occurred in this release.
+
+Transparent source-bound 558×768 WebP previews are generated once into an immutable private display cache and delivered using fresh short-lived access grants. Full-detail 3D loads when selected. Unavailable preview transport may fall back to the independently verified full photo; a cold alpha cache temporarily retains the verified JPEG while bounded background checks request its transparent replacement. Public report evidence and the existing homepage scene keep their own presentation; this release does not add a staff-style 3D viewer to customer/public pages.
+
+Qualification passed948/948 staff tests,958/958 actual Linux native tests,102 successor guards and exact staff/public source/build/served-asset qualification. Live acceptance passed **103 canonical checks, four reports, eight unchanged original image hashes and eight decoded transparent previews**. All eight previews progressed from pending to ready and retained the same representation on warm access (589,974 bytes total). These checks establish real delivery, not a sustained-load or physical-device benchmark. Authenticated positive staff UI acceptance remains separate: the owner approved the local visuals; the production browser reached ordinary staff sign-in.
+
+The first cutover stopped before quiesce because legitimate live staff edits changed the baseline. Its holder was explicitly aborted and absence proved. After the owner paused grading, the fresh release-02 baseline included the completed approval and READY label:155 cards,346 actions,31 approvals,31 publications,30 report identities and40 label items. No preservation exception was introduced. The first technical acceptance stopped only on the valid `charset=utf-8` JavaScript header parameter while exact status/bytes/hash matched. A separately reviewed MIME-only successor passed39 offline checks and the full103 canonical checks; all original failed evidence and sealed helpers remain intact.
+
+The same holder `0b02054d-30e1-495b-b259-64b1645565a9` was explicitly released at **2026-10-22T19:57:15.507Z**. Strict absence proof confirms the transaction and original/replacement admission locks are absent; grading may resume. Release proof SHA256 `1dd52fbf2b6929a454981b64cc75c071798aad150959d6f97348efee382ad42c`; absence `8a2775f40ee6b6976f1bb9bdff0b7733dce36b53d5b6e2a487ee7e9773796cf9`; final runtime postflight `afa993c7de4e4d97b10d8a45cec320e370aa6da84db181342f6396d3c84fb82e`; final preservation `dd724b02bc329b91a26f8c538d5a3ab146705eff47b75f78d7e13af74734c649`.
+
+Evidence: `~/.codex/atlas-handoffs/atlas-slab-quality-20261022/release-02/`, with immutable native/web qualifications reused from release-01. Technical PASS `bca3c6bff7e3d2d240c73c56733d2c21d9335ba24eec109f1a7ee0bebe1d3622`; reports PASS `0cf8708f305f7f986f7b8d0c57377a1319308a71e583a83760c35b354c59e009`. See [slab quality audit](../atlas/audits/2026-10-22/slab-quality-and-progressive-media.md). Consumed intents are evidence, never replay scripts. The dated deployment identities below are historical checkpoints, even where their original headings said “current.”
+
 ## Current approved Atlas B label release — October 22, 2026 Pacific
 
 Production native, staff and public serve **cf5fcefa1273e5a661691b0d4f877e224d48104a**. This incorporates the verified f0fd4f15 photo recovery. Approved B front and original smaller back use pinned artwork with preserved proportions; dynamic text uses owner-approved Montserrat Black900 and RobotoCondensed700. Color front/back, black/transparent and original print outputs use the existing versioned generator and immutable refresh path. Public examples and approved-card media consume the new artwork. Physical dimensions and the 50-position jig remain unchanged.

@@ -1,6 +1,14 @@
 # Ten Kings Master Product Context
 
-## Local dedicated card-detail increment — October21,2026
+## Current Atlas slab and card presentation — October 22, 2026
+
+Application source `20b747badb8ad34c510673c446cf326396bdeeac` is deployed on native, staff and public. Existing and future eligible approved cards use the shared staff archive/detail renderer with the improved slab, equal card spacing, Front/Back views, front NFC reference and optional higher-resolution 3D. Exact approved inspection photographs and matching saved labels remain the source; recorded physical slab photos keep precedence. Small source-bound transparent previews are cached privately and verified on delivery; full-detail 3D is loaded on selection, with verified media fallbacks.
+
+Live acceptance passed103 canonical checks, four retained reports/eight original hashes and eight decoded transparent previews. Native health and all37 protected business-table commitments passed; admission was explicitly released and absence proved, so grading may resume. No migration, reapproval, regrade or saved-photo/label rewrite occurred. Predecessor additive009 is already installed; the older local-only SQL009/detail paragraph below is historical. Production identities and evidence are in [Deploy Runbook](../runbooks/DEPLOY_RUNBOOK.md). Owner-approved local visuals are recorded separately from production signed-in UI acceptance, which remains unobserved in this release.
+
+Durable paired original-upload masters, calibrated physical-holder geometry, ownership/My Collection and marketplace transactions remain future work. This renderer uses the approved1350×1858 inspection photographs; it does not claim those are untouched intake masters. Earlier dated “current” deployment identities below are historical.
+
+## Prior local dedicated card-detail checkpoint — October21,2026
 
 Three Astra Ultra specialists implemented dedicated staff card details, verified Front/Back media/zoom/retry, and approval-bound category/identity/history/saved-sale projections. Root integrated the approved white/emerald design and gallery navigation. This is local source on `codex/atlas-marketplace-foundation`, not a deployed release. SQL009 remains source-only; current production identities below are unchanged.811 staff tests passed;48 final focused tests passed after the final hook dependency correction;902 connected tests passed with2 existing native-measurement skips;8 owned PostgreSQL17 groups passed with cleanup verified. Production build/boundary passed. Browser evidence and remaining gates are in `docs/atlas/audits/2026-10-21/card-detail-integration.md`. Ownership/My Collection, bounded comp curation/pricing and marketplace transactions remain future work. Raw intake masters and calibrated paired slab composition are not claimed by the approved1350×1858-photo viewer.
 
