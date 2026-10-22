@@ -36,6 +36,9 @@ Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-marketplace-foundation-
 
 ### Latest local increments
 
+- Photo read recovery is committed separately in `cc6e6e95`: two serving files renew descriptors on explicit Retry and show truthful photo status, with137 local tests and1440/320px actual-component checks. The isolated `e38c1bee` staging attempt is held for the concurrent authorized corner-scoring release; no photo runtime/control/promotion occurred. Corrected one test's fixed-turn WebCrypto assumption with observed-state waits (137 local tests pass; successor Linux qualification remains). Coordinate through authorized chat `01a16227-6d93-7203-a52b-e473866de7b6`, then preserve its completed source in a fresh photo release. Never promote held `e38c1bee` over it. [Photo audit](../atlas/audits/2026-10-21/workspace-photo-read-recovery.md).
+- Mounted customer collection/history and optional private comp-selection UI are being implemented locally with explicit file ownership and independent review. They remain default-off and are excluded from the photo release; actual integration/build/browser qualification is pending.
+
 - Default-off history runtime and catch-all GET hooks:27 tests, network-denied customer production build/secret-boundary checks and independent review pass. Separate lazy restricted client; no env/role/schema/UI activation. [Runtime audit](../atlas/audits/2026-10-21/ownership-history-runtime.md).
 - Optional staff curation HTTP/client/controller:35 tests against the unchanged service, lint and independent cross-review. Latest-state GET confirms only the exact pending receipt; deliberately retrying the same request is distinct from a read. Current missing graded designation remains unavailable. No route/runtime/component/production activation. [Adapter audit](../atlas/audits/2026-10-21/staff-comp-curation-adapters.md).
 

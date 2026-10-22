@@ -52,7 +52,8 @@ function harness(initial = {}, browser, imageTransport) {
   };
   const verifiedImages = {};
   if (imageTransport) vm.runInNewContext(verifiedImageCompiled, {
-    exports: verifiedImages, crypto: webcrypto, Uint8Array, Blob, AbortController, setTimeout, clearTimeout,
+    exports: verifiedImages, crypto: imageTransport.digest ? { subtle: { digest: (...args) => imageTransport.digest(...args) } } : webcrypto,
+    Uint8Array, Blob, AbortController, setTimeout, clearTimeout,
     location: { origin: 'https://staff.example.invalid' }, fetch: (...args) => imageTransport.fetch(...args),
     URL: class extends URL {
       static createObjectURL(blob) { imageTransport.blobs.push(blob); return `blob:verified-${imageTransport.blobs.length}`; }
@@ -125,6 +126,15 @@ function harness(initial = {}, browser, imageTransport) {
   f.resize = (side, width, height) => { const element = f.control(`${side} image inspection`).props.ref.current;
     element.clientWidth = width; element.clientHeight = height; element.notifyResize(); f.render(); };
   f.has = label => text(tree).includes(label);
+  f.waitFor = async (condition, description) => {
+    const deadline = performance.now() + 5000;
+    for (;;) {
+      f.render();
+      if (condition()) return;
+      assert.ok(performance.now() < deadline, `observed ${description}`);
+      await new Promise(setImmediate);
+    }
+  };
   f.ready = () => { f.nodes(node => node.type === 'img' && node.props.onLoad).forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } })); f.render(); };
   f.pointer = (pane, event, values) => { const node = f.control(pane); node.props[event]({ button: 0, pointerId: 1, preventDefault() {}, stopPropagation() {}, currentTarget: node.props.ref.current, ...values }); f.render(); };
   f.draw = (side = 'Front') => { f.pointer(`${side} image inspection`, 'onPointerDown', { clientX: 650, clientY: 650 }); f.pointer(`${side} image inspection`, 'onPointerMove', { clientX: 680, clientY: 680 }); f.pointer(`${side} image inspection`, 'onPointerUp', {}); };
@@ -208,12 +218,12 @@ test('both panes report a failed verified read and explicit retry enables approv
   assert.deepEqual(transport.revoked, ['blob:verified-1']);
 });
 
-function expiredPhotoFixture(onRefreshImages) {
+function expiredPhotoFixture(onRefreshImages, { digest } = {}) {
   const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 4, 3, 2, 1]);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const state = structuredClone(workspace(false)); state.sides.FRONT.frame.inspectionImageSha256 = sha256;
   const descriptor = { url: '/expired', sha256, byteCount: bytes.length }, requests = [], review = [];
-  const transport = { blobs: [], revoked: [], fetch: async url => {
+  const transport = { blobs: [], revoked: [], digest, fetch: async url => {
     requests.push(url); return url.endsWith('/fresh') ? new Response(bytes) : new Response(null, { status: 403 });
   } };
   const f = harness({ workspace: state, images: { FRONT: { inspection: descriptor } }, onRefreshImages,
@@ -260,18 +270,33 @@ test('photo refresh failure or changed source cannot fall back to retrying an ol
 });
 
 test('a successful same-URL refresh still retries the failed exact photo once', async () => {
-  let x, reads = 0;
+  let x, reads = 0, digests = 0, finishDigest;
+  const digestAllowed = new Promise(resolve => { finishDigest = resolve; });
   x = expiredPhotoFixture(async () => {
     reads++;
     x.transport.fetch = async url => { x.requests.push(url); return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 4, 3, 2, 1])); };
     return { FRONT: { inspection: { ...x.descriptor } } };
-  });
+  }, { digest: async (...args) => {
+    digests++;
+    await digestAllowed;
+    return webcrypto.subtle.digest(...args);
+  } });
   try {
-    await x.settle(); await x.f.click('Retry photograph'); await x.settle();
+    await x.f.waitFor(() => x.requests.length === 1 && x.f.has('Retry photograph'), 'failed initial photo and explicit retry');
+    await x.f.click('Retry photograph');
+    await x.f.waitFor(() => digests === 1, 'same-URL retry entering real SHA-256 verification');
     assert.equal(reads, 1); assert.deepEqual(x.requests, ['https://staff.example.invalid/expired', 'https://staff.example.invalid/expired']);
+    assert.equal(x.transport.blobs.length, 0, 'pending digest cannot expose unverified image bytes');
+    assert.equal(x.review.at(-1).disabled, true);
+    // WebCrypto completion is not tied to a fixed number of setImmediate turns.
+    // Release the observed digest, then await its actual Blob and JSX publication.
+    finishDigest();
+    await x.f.waitFor(() => x.transport.blobs.length === 1 && x.f.nodes(n => n.type === 'img').length === 2,
+      'verified Blob and both photograph elements');
     assert.equal(x.transport.blobs.length, 1); assert.equal(x.review.at(-1).disabled, true);
     x.f.ready(); assert.equal(x.review.at(-1).disabled, false); assert.deepEqual(x.f.calls, []);
-  } finally { x.f.dispose(); }
+    assert.equal(reads, 1); assert.equal(x.requests.length, 2); assert.equal(digests, 1);
+  } finally { finishDigest(); x.f.dispose(); }
 });
 
 test('pending-command gates, changed frame and unmount suppress a delayed photo retry', async () => {

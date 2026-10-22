@@ -31,7 +31,8 @@ Existing `atlas_manual.public_report_identity` already provides a permanent cert
 - [x] Owner reports the new surfaces otherwise look good and Graded Cards/optional3D work on the physical phone. The observed raw-photo→slab delay of about one second is owner feedback, not a benchmark.
 - [x] Workspace entry correctionf9742346 deployed and existing-Nick read acceptance verified; exact card/job/action/approval preservation passes. Existing Review Queue startup reused; no change to grading rules or human decisions.
 - [x] Fresh David Njoku Workspace entry invokes the existing BEGIN_FINAL_REVIEW and preserves the actual empty batch finding set through geometry. Full card/job/action/approval rows are unchanged across agent inspection/recovery. See [Njoku evidence](../audits/2026-10-21/workspace-njoku-photo-investigation.md).
-- [ ] Resolve and qualify the separate Findings photograph-load/retry failure. Existing Reload images restores the photo; exact request failure cause and a production correction are not yet established. Live320px is not claimed.
+- [x] Implemented explicit photograph-link renewal and accurate failed/missing/loading states in two serving files;137 local tests and actual-component1440/320px browser checks pass without grading commands. Exact production failure cause remains unconfirmed.
+- [ ] Complete fresh Linux qualification and production release of the photograph correction. First staging attempt is held for the separately authorized scoring release; a Linux test scheduling assumption was corrected with observed-state waits, and137 local tests pass. Rebase the photo-only successor onto the completed scoring source before a fresh release. No photo cutover or live320px acceptance is claimed. See [photo recovery audit](../audits/2026-10-21/workspace-photo-read-recovery.md).
 
 ### Additional owner request — ATLAS Fingerprint check, October 21
 
