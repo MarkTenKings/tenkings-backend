@@ -6,7 +6,7 @@ import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,LABEL_V4_SOURCES} from '../scripts/package-manual-container.mjs';
+import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,LABEL_V4_SOURCES,LABEL_APPROVED_B_SOURCES} from '../scripts/package-manual-container.mjs';
 import {manufacturerRuntimeFiles} from '../../../packages/card-catalog-evidence/src/manufacturer-runtime-files.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -15,7 +15,8 @@ test('actual clean serving closure contains current workers and camera but no hi
  assert(packages.includes('packages/atlas-connected-manual'));assert(!packages.includes('packages/database'));
  assert(!packages.includes('packages/atlas-standalone-database'));
  for(const name of CPU_SOURCES)assert(paths.has('backend/ai-grader-speedster-service/'+name),name);
- for(const path of LABEL_V4_SOURCES)assert(paths.has(path),path);
+ for(const path of [...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES])assert(paths.has(path),path);
+ for(const module of ['label-approved-b.mjs','label-approved-b-artwork.mjs'])assert(paths.has('packages/atlas-finishing/src/'+module),module);
  assert.equal(CPU_SOURCES.length,8);assert(paths.has('frontend/atlas-shared/RapidCardCamera.jsx'));
  assert.deepEqual([...paths].filter(path=>path.startsWith('packages/card-catalog-evidence/data/')).sort(),await manufacturerRuntimeFiles(root));
  for(const path of paths)assert(!/(?:^|\/)(?:tests?|fixtures|test-fixtures|sql|migrations|node_modules|dist|\.generated|\.next)(?:\/|$)|\.env|atlas_photo_geometry\.py|preparation_core\.py/.test(path),path);
@@ -56,6 +57,20 @@ test('isolated packaged catalog resolves Jordan, Nick Kurtz and LaMelo offline a
    assert.ok(missing.stderr.includes(path.split('/').at(-1)),missing.stderr);await writeFile(join(temporary,path),file.bytes);
   }
  }finally{await rm(temporary,{recursive:true,force:true});await rm(temporary+'.manifest.json',{force:true});}
+});
+test('isolated approved B package verifies exact assets and rejects a changed PNG',async()=>{
+ const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-label-')),manifestPath=temporary+'.manifest.json';
+ try{
+  const {files}=await collectManualSource(),included=files.filter(file=>LABEL_APPROVED_B_SOURCES.includes(file.path)
+   ||file.path==='packages/atlas-finishing/src/label-approved-b-artwork.mjs'||file.path==='frontend/atlas-app/scripts/verify-manual-container.mjs');
+  for(const file of included){const path=join(temporary,file.path);await mkdir(dirname(path),{recursive:true});await writeFile(path,file.bytes);}
+  await writeFile(manifestPath,JSON.stringify({version:'atlas-clean-manual-source-v1',packages:['packages/atlas-finishing'],files:included.map(({bytes,...file})=>file)}));
+  const script=join(temporary,'frontend/atlas-app/scripts/verify-manual-container.mjs'),run=()=>spawnSync(process.execPath,[script,manifestPath],{encoding:'utf8',timeout:15000});
+  const complete=run();assert.equal(complete.status,0,complete.stderr);const result=JSON.parse(complete.stdout);
+  assert.equal(result.approvedLabelAssets.version,'atlas-approved-b-static-assets-v1');assert.equal(result.approvedLabelAssets.files,5);
+  const asset=join(temporary,'packages/atlas-finishing/assets/approved-b/back-black.png'),bytes=await readFile(asset);bytes[bytes.length-1]^=1;await writeFile(asset,bytes);
+  const changed=run();assert.notEqual(changed.status,0);assert.match(changed.stderr,/back-black.png/);
+ }finally{await rm(temporary,{recursive:true,force:true});await rm(manifestPath,{force:true});}
 });
 test('isolated serving router closure resolves every exported entry including detail report return',async()=>{
  const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-router-'));

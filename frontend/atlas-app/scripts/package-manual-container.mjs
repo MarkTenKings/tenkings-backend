@@ -19,8 +19,10 @@ export const LABEL_V4_SOURCES=Object.freeze([
     'fonts/Montserrat-variable.ttf','fonts/RobotoCondensed-variable.ttf','fonts/Montserrat-OFL.txt','fonts/RobotoCondensed-OFL.txt'].map(name=>'packages/atlas-finishing/assets/v4/'+name),
   ...['atlas-label-jig-v1.json','ATLAS_50_LABEL_JIG_NOMINAL_MM.dxf','Atlas_Noir_II_SINGLE_CUT_UNCHANGED.dxf'].map(name=>'packages/atlas-finishing/assets/jigs/'+name),
 ]);
+export const LABEL_APPROVED_B_SOURCES=Object.freeze(['manifest.json','vectors.json','front-black.png','front-support-white.png',
+  'front-support-black.png','back-black.png'].map(name=>'packages/atlas-finishing/assets/approved-b/'+name));
 const staticRequired=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json',
-  ...LABEL_V4_SOURCES,
+  ...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES,
   'frontend/atlas-shared/RapidCardCamera.jsx','frontend/atlas-shared/RapidCardCamera.module.css','frontend/atlas-shared/rapid-camera.mjs',
   'frontend/atlas-app/next.config.mjs','frontend/atlas-app/.eslintrc.json','frontend/atlas-app/prisma/schema.prisma',
   'packages/atlas-site-router/routes.mjs','packages/atlas-site-router/report-entry.mjs','packages/atlas-site-router/proof.mjs','packages/atlas-site-router/server.mjs',

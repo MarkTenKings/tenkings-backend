@@ -13,8 +13,8 @@ export default function CompletionNextSteps({ published = false, reportHref, car
     <div className={styles.heading}><h2>Next steps</h2><p>Your report is approved. Physical finishing is separate.</p></div>
     <div className={styles.grid}>
       <article className={styles.action}><span className={styles.number} aria-hidden="true">01</span><h3>Print the label</h3>
-        {cardId ? <><p className={styles.status}>Check saved sheet status</p><p>Open the V4 label sheet, download its print file, and record physical printing separately.</p><Link href={`/labels?cardId=${encodeURIComponent(cardId)}`}>Open label sheets <span aria-hidden="true">↗</span></Link></> : <><p className={styles.status}>{labelStatus}</p><p>Open the approved label, then print or use your selected station.</p></>}
-        <button type="button" disabled={disabled || !onToggleLabel} aria-expanded={labelOpen} onClick={onToggleLabel}>{labelOpen ? 'Hide label' : cardId ? 'Open legacy label & station' : labelState === 'FAILED' ? 'Review label issue' : 'Open label & print'}</button>
+        {cardId ? <><p className={styles.status}>Check saved label status</p><p>Open this card’s saved front and back labels. Choose color, black ink with transparent areas, or the original white-ink format, then download the print file. Record physical printing separately.</p><Link href={`/labels?cardId=${encodeURIComponent(cardId)}`}>Open label sheets <span aria-hidden="true">↗</span></Link></> : <><p className={styles.status}>{labelStatus}</p><p>Legacy station workflow. Review the saved label and station operation.</p>
+          <button type="button" disabled={disabled || !onToggleLabel} aria-expanded={labelOpen} onClick={onToggleLabel}>{labelOpen ? 'Hide legacy label' : labelState === 'FAILED' ? 'Review legacy label issue' : 'Open legacy label & station'}</button></>}
       </article>
       <article className={styles.action}><span className={styles.number} aria-hidden="true">02</span><h3>Encode the NFC tag</h3>
         <p className={styles.status}>Check station setup</p><p>Encoding needs an enrolled Mac station and a qualified tag profile. Check setup or a saved operation.</p>

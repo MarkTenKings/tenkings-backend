@@ -14,7 +14,7 @@ import { createLabelRepository, labelFailureHash } from '../src/label-sheet-repo
 import { createLabelService } from '../src/label-sheet-service.mjs';
 import { labelRefreshRequestId, labelReplacementIntent } from '../src/label-replacement-intent.mjs';
 import { LABEL_JIG_V1 } from '../../atlas-finishing/src/label-sheet-geometry.mjs';
-import { renderLabelV4, LABEL_V4_RENDERER_PROFILE_HASH } from '../../atlas-finishing/src/label-v4.mjs';
+import { renderApprovedBLabel, LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '../../atlas-finishing/src/label-approved-b.mjs';
 import { LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 } from '../../atlas-finishing/src/label-sheet.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -84,7 +84,7 @@ try {
     return { id, cardId, actionId, source, packet, row };
   }
   const discard = f => intake.discard(staff, { requestId: randomUUID(), scope: 'SELECTED', cardIds: [f.cardId] });
-  const makeService = ({ repository = makeRepository(), beforeLoad = null, reauthorizeAfterLoad = false, render = renderLabelV4 } = {}) => createLabelService({ boundary, repository,
+  const makeService = ({ repository = makeRepository(), beforeLoad = null, reauthorizeAfterLoad = false, render = renderApprovedBLabel } = {}) => createLabelService({ boundary, repository,
     finishing: { async loadPacket(_staff, cardId, actionId) { packetCalls++; if (beforeLoad) await beforeLoad(cardId, actionId);
       if (reauthorizeAfterLoad) await boundary.transaction(_staff, ({ tx }) => intake.assertActiveInTransaction(tx, cardId));
       if (loadFailures.has(cardId)) throw new Error('OWNED_FIXTURE_STORAGE_FAILURE'); return packets.get(actionId); } },
@@ -99,17 +99,17 @@ try {
   const readyBefore = await readItem(existing.id); assert.equal(readyBefore.state, 'READY');
   const legacy = await seed(), legacyBefore = await readItem(legacy.id), approvalBefore = await approveRows();
   assert.equal((await visibleItem(legacy.id)).automaticLayoutRecoveryEligible, true);
-  assert.equal((await repo.pendingCandidates(16, { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH })).filter(x => x.kind === 'LAYOUT_RECOVERY').length, 1);
+  assert.equal((await repo.pendingCandidates(16, { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH })).filter(x => x.kind === 'LAYOUT_RECOVERY').length, 1);
   await drain(3); const [recovered] = await children(legacy.id); assert(recovered); assert.equal((await children(legacy.id)).length, 1); assert.equal(recovered.state, 'READY');
-  assert.equal(recovered.renderer_profile_hash, LABEL_V4_RENDERER_PROFILE_HASH); assert.equal(recovered.material_profile_id, 'atlas-v4-holo-v1');
+  assert.equal(recovered.renderer_profile_hash, LABEL_APPROVED_B_RENDERER_PROFILE_HASH); assert.equal(recovered.material_profile_id, 'atlas-v4-holo-v1');
   assert.deepEqual(JSON.parse(recovered.snapshot).source, legacy.source); assert.equal(JSON.parse(recovered.snapshot).finalGrade, 8.5);
-  const expected = renderLabelV4(legacy.source, { previewMaterial: 'holo' }); assert.equal(recovered.print_svg, expected.printSvg); assert.equal(recovered.preview_svg, expected.previewSvg);
+  const expected = renderApprovedBLabel(legacy.source, { previewMaterial: 'holo' }); assert.equal(recovered.print_svg, expected.printSvg); assert.equal(recovered.preview_svg, expected.previewSvg);
   const legacyAfter = await readItem(legacy.id); assert.equal(legacyAfter.state, 'SUPERSEDED'); assert.deepEqual({ ...legacyAfter, state: legacyBefore.state, updated_at: legacyBefore.updated_at }, legacyBefore);
   assert.deepEqual(await readItem(existing.id), readyBefore); assert.deepEqual(await approveRows(), approvalBefore);
   assert.equal((await visibleItem(legacy.id)).automaticLayoutRecoveryEligible, false); assert.equal((await visibleItem(recovered.id)).automaticLayoutRecoveryEligible, false);
   checks.push('legacy NULL-profile failure automatically creates one READY successor with exact full identity, grade, SVG and preserved predecessor/READY/approval bytes');
 
-  const same = await seed({ profile: LABEL_V4_RENDERER_PROFILE_HASH }), sameBefore = await readItem(same.id); await drain(6);
+  const same = await seed({ profile: LABEL_APPROVED_B_RENDERER_PROFILE_HASH }), sameBefore = await readItem(same.id); await drain(6);
   assert.deepEqual(await readItem(same.id), sameBefore); assert.equal((await children(same.id)).length, 0); assert.equal((await visibleItem(same.id)).automaticLayoutRecoveryEligible, false);
   checks.push('same-profile NEEDS_LAYOUT remains unchanged across repeated worker passes');
 
@@ -120,7 +120,7 @@ try {
 
   const fails = await seed(); loadFailures.add(fails.cardId); await drain(9);
   const failed = (await children(fails.id))[0]; assert.equal((await children(fails.id)).length, 1); assert.equal(failed.state, 'NEEDS_LAYOUT'); assert.equal(failed.attempts, 5);
-  assert.equal(failed.code, 'LABEL_RENDER_FAILED'); assert.equal(failed.renderer_profile_hash, LABEL_V4_RENDERER_PROFILE_HASH); const failedBefore = await readItem(failed.id); assert.equal((await visibleItem(failed.id)).automaticLayoutRecoveryEligible, false);
+  assert.equal(failed.code, 'LABEL_RENDER_FAILED'); assert.equal(failed.renderer_profile_hash, LABEL_APPROVED_B_RENDERER_PROFILE_HASH); const failedBefore = await readItem(failed.id); assert.equal((await visibleItem(failed.id)).automaticLayoutRecoveryEligible, false);
   await drain(5); assert.deepEqual(await readItem(failed.id), failedBefore); assert.equal((await children(failed.id)).length, 0);
   checks.push('five public-packet storage failures stop in the bound generation without automatic regeneration');
 
@@ -129,7 +129,7 @@ try {
   assert.equal((await children(thrown.id)).length, 0); checks.push('five renderer exceptions stop without another automatic generation');
 
   const crashed = await seed({ pending: true });
-  const attemptedProfile = { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, jigHash: LABEL_JIG_V1.jigHash };
+  const attemptedProfile = { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH, jigHash: LABEL_JIG_V1.jigHash };
   for (let attempt = 1; attempt <= 5; attempt++) {
     const claim = await repo.claimItem(staff, crashed.id, attemptedProfile);
     assert(claim); assert.equal(claim.attempts, attempt);
@@ -201,7 +201,7 @@ try {
   assert.deepEqual(await readItem(tail.id), tailBefore); assert.equal((await children(tail.id)).length, 0);
   checks.push('16 historical retry generations reach the ancestry limit; UI eligibility and discovery both refuse another generation');
 
-  const boundA = await seed(), boundB = await seed(); const discovered = await repo.pendingCandidates(16, { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH });
+  const boundA = await seed(), boundB = await seed(); const discovered = await repo.pendingCandidates(16, { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH });
   assert.equal(discovered.filter(row => row.kind === 'LAYOUT_RECOVERY').length, 1); await drain(1);
   assert.equal((await children(boundA.id)).length + (await children(boundB.id)).length, 1); await drain(4);
   assert.equal((await children(boundA.id)).length, 1); assert.equal((await children(boundB.id)).length, 1);
@@ -212,7 +212,7 @@ try {
   const lockedRepository = createLabelRepository({ boundary, validateAccess: async ({ tx, cardId }) => {
     await intake.assertActiveInTransaction(tx, cardId); if (cardId === overlap.cardId) { enter(); await gate; }
   } });
-  const original = await readItem(overlap.id), target = { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, materialProfileId: 'atlas-v4-holo-v1', jigHash: LABEL_JIG_V1.jigHash };
+  const original = await readItem(overlap.id), target = { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH, materialProfileId: 'atlas-v4-holo-v1', jigHash: LABEL_JIG_V1.jigHash };
   const reservation = lockedRepository.retryLayout(staff, overlap.id, { requestId: randomUUID(), expectedFailureHash: labelFailureHash(original), expectedRendererProfileHash: target.rendererProfileHash }, target, { automatic: true });
   await entered;
   try { await assert.rejects(discard(overlap), { code: 'INTAKE_DISCARD_BUSY' }); } finally { release(); }
@@ -252,7 +252,7 @@ try {
 
   const refreshSource = await seed({ pending: true }), oldProfile = digest('owned-previous-compact-recipe');
   const onlyItem = id => ({ ...makeRepository(), pendingCandidates: async () => [{ id, actor_id: actor, access_version: 1, kind: 'ITEM' }] });
-  await makeService({ repository: onlyItem(refreshSource.id), render: (...args) => ({ ...renderLabelV4(...args), rendererProfileHash: oldProfile }) }).runPending();
+  await makeService({ repository: onlyItem(refreshSource.id), render: (...args) => ({ ...renderApprovedBLabel(...args), rendererProfileHash: oldProfile }) }).runPending();
   const refreshParent = await readItem(refreshSource.id); assert.equal(refreshParent.state, 'READY');
   const parentSheet = await repo.sheet(staff, refreshParent.sheet_id);
   const oldExport = await service.prepareSheetExport(staff, refreshParent.sheet_id,
@@ -262,7 +262,7 @@ try {
     { requestId: randomUUID(), expectedLabelHash: refreshParent.artwork_hash, exportProfileId: LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1.id });
   const oldSingleBefore = await completeFixtureExport(oldSingle);
   const frozenBefore = (await admin.query('SELECT * FROM atlas_manual_connected.label_sheet WHERE id=$1', [refreshParent.sheet_id])).rows[0];
-  const refreshApprovals = await approveRows(), targetRecipe = { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH,
+  const refreshApprovals = await approveRows(), targetRecipe = { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
     materialProfileId: refreshParent.material_profile_id, jigHash: refreshParent.jig_hash };
   const refreshInput = { requestId: labelRefreshRequestId(refreshParent.id, refreshParent.artwork_hash, targetRecipe),
     expectedLabelHash: refreshParent.artwork_hash, expectedRendererProfileHash: targetRecipe.rendererProfileHash };
@@ -305,7 +305,7 @@ try {
   checks.push('recorded successful individual-export slot 1 also blocks a fresh refresh, independently of sheet-print events');
 
   const finishRace = await seed({ pending: true });
-  await makeService({ repository: onlyItem(finishRace.id), render: (...args) => ({ ...renderLabelV4(...args), rendererProfileHash: digest('owned-print-race-recipe') }) }).runPending();
+  await makeService({ repository: onlyItem(finishRace.id), render: (...args) => ({ ...renderApprovedBLabel(...args), rendererProfileHash: digest('owned-print-race-recipe') }) }).runPending();
   const raceParent = await readItem(finishRace.id), raceTarget = { ...targetRecipe }, raceInput = {
     requestId: labelRefreshRequestId(raceParent.id, raceParent.artwork_hash, raceTarget), expectedLabelHash: raceParent.artwork_hash, expectedRendererProfileHash: raceTarget.rendererProfileHash };
   const raceRefresh = await service.refreshLayout(staff, raceParent.id, raceInput);

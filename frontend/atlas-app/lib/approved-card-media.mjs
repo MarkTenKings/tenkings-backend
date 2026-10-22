@@ -2,6 +2,8 @@ import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 import { loadVerifiedImage } from '../../../packages/atlas-manual-workspace/src/verified-image.mjs';
 
 export const APPROVED_MEDIA_ACCESS_ENDED = 'atlas:verified-image-access-ended';
+export const APPROVED_LABEL_LAYOUT = Object.freeze({ version: 'atlas-approved-b-v1', width: 68.342, height: 20.082,
+  nfc: Object.freeze({ x: 51.8, y: 9.75, radius: 5.1 }) });
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const positive = value => Number.isSafeInteger(value) && value > 0 && value <= 2147483647;
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
@@ -19,10 +21,15 @@ export function approvedMediaSource(card, kind) {
     return media.url === url && media.provenance === 'APPROVED_GRADING_PHOTOGRAPH'
       ? { kind, url, binding: { ...binding, side: kind } } : null;
   }
-  if (kind === 'LABEL') {
-    const url = `/admin/api/staff/manual-connected/labels/${media.itemId}/artwork?mode=preview`;
-    return uuid(media.itemId) && media.url === url && media.provenance === 'REPORT_BOUND_LABEL_ARTWORK'
-      ? { kind, url } : null;
+  if (kind === 'LABEL' || kind === 'LABEL_BACK') {
+    const url = `/admin/api/staff/manual-connected/labels/${media.itemId}/artwork?mode=${kind === 'LABEL_BACK' ? 'preview-back' : 'preview'}`;
+    if (!uuid(media.itemId) || media.url !== url || media.provenance !== 'REPORT_BOUND_LABEL_ARTWORK') return null;
+    if (kind === 'LABEL_BACK') {
+      const front = approvedMediaSource(card, 'LABEL');
+      if (!front || front.layoutVersion !== APPROVED_LABEL_LAYOUT.version || media.itemId !== card.media.LABEL.itemId) return null;
+      return { kind, url, layoutVersion: front.layoutVersion };
+    }
+    return { kind, url, ...(media.layoutVersion === APPROVED_LABEL_LAYOUT.version ? { layoutVersion: media.layoutVersion } : {}) };
   }
   if (kind === 'SLAB') {
     const url = `/api/reports/${report.publicToken}/presentation/image?v=${report.version}&revision=${media.presentationRevision}`;
@@ -107,7 +114,7 @@ export function createApprovedMediaLoader({ fetchImpl = (...args) => fetch(...ar
   }
 
   return async function load(source, { signal = new AbortController().signal } = {}) {
-    check(source && ['FRONT', 'BACK', 'LABEL', 'SLAB'].includes(source.kind));
+    check(source && ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK', 'SLAB'].includes(source.kind));
     const controller = new AbortController(), deadlineAt = Date.now() + timeoutMs;
     const timer = setTimeout(() => controller.abort(failure('APPROVED_MEDIA_TIMEOUT')), timeoutMs);
     const bounded = AbortSignal.any([signal, controller.signal]);

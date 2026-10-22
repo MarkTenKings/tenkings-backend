@@ -1,5 +1,11 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## Fresh read-only ATLAS observation — October22,2026 Pacific
+
+At09:41–09:44UTC the serving native/staff/public source is `f0fd4f15cefa59d0b57ebdd5deee7fedc170f61e` (verified photograph recovery), superseding the713573fc identities below. Native image `sha256:045ed35c9225f2a13c167fc485050e73049b806656779b3940fafb8a7a18422b`; main `cefc6d815eaf04e2d734b1dd7a6ef2081c056b0b6935514a01bcbadd6d90e0fb`, worker `16a855f2c37c786e1cfc92751a36f328e7453655e54ae3a145c0a792cd76ddf4`, both running/zero restarts/unless-stopped. Staff `dpl_BuJUQjbxL54NZeL3QhDpDz7ijv7k`; public `dpl_EQtu3jE4kmtnmVwXJkRaRwZPg6rM` with all four canonical aliases. Controls Staff141/Public103/STAFF SMS109; customer retains c68e9ea7, deployment `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5`, controls83/35. No admission locks or sessions were observed. This is observation, not a held release baseline.
+
+The approved-label task merged the photo fix into its isolated source. Its assets/integration are preparation only; typography remains an explicit owner decision. No label deployment has occurred. Fresh future release must use the current observed source and a newly prepared release packet. See `docs/atlas/audits/2026-10-22/approved-labels-integration.md` and private read-only evidence `~/.codex/atlas-handoffs/atlas-approved-labels-20261022/release-readiness/`.
+
 ## Current ATLAS corner multiplier release — October 21, 2026 Pacific
 
 The only scoring change is **Corners 0.5× → 0.25×**, active under `ATLAS_2026_10_21_CATEGORY_DAMAGE_V1`. Edges1, Surface2, defect weights, geometry, bands, centering, side/category weights and final rounding are unchanged. Historical October13 reports retain their original0.5 factor and exact saved values. Approved cards require a deliberate new calculation/regrade and human approval to adopt the new rule. Unapproved reviews calculate the new policy when opened/resumed/refreshed; untouched machine queue proposals remain historical evidence. No AI rerun or data backfill was performed.

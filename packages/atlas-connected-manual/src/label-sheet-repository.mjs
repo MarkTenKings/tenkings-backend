@@ -290,21 +290,23 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
         WHERE id=$1::uuid AND actor_id=$2::uuid AND claim_id=$3::uuid AND state='PENDING_RENDER'`, claimed.id, principal.id, claimed.claim_id,
       attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.materialProfileId ?? null, attemptedProfile?.jigHash ?? null);
     }); },
-    prepareExport(staff, { kind, id, input }) { return boundary.transaction(staff, async ({ tx, principal }) => {
+    prepareExport(staff, { kind, id, input, validateItems }) { return boundary.transaction(staff, async ({ tx, principal }) => {
       reviewer(principal); await lock(tx, principal.id); const requestHash = digest(canonical({ kind, id, ...input }));
       const [prior] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_export WHERE actor_id=$1::uuid AND (request_id=$2::uuid OR retry_requests @> $3::jsonb)`, principal.id, input.requestId, JSON.stringify([{ requestId: input.requestId }]));
       if (prior) { const priorHash = prior.request_id === input.requestId ? prior.request_hash : prior.retry_requests.find(r => r.requestId === input.requestId)?.requestHash; requireThat(priorHash === requestHash, 409, 'LABEL_REQUEST_CONFLICT'); await scopedExport(tx, principal, prior.id, false); return exportView(prior); }
       let sheet = null, items;
       if (kind === 'SHEET') {
-        ({ sheet, items } = await scopedSheet(tx, principal, id, true));
+        ({ sheet, items } = await scopedSheet(tx, principal, id, true, Boolean(validateItems)));
         requireThat(sheet.revision === input.expectedSheetRevision, 409, 'LABEL_REVISION_CHANGED');
         requireThat(items.length > 0 && items.every(i => i.state === 'READY'), 409, 'LABEL_SHEET_NOT_READY');
+        validateItems?.(items);
         if (sheet.state === 'OPEN') {
           const manifest = canonical(manifestFor(items, { sheetId: id, sheetRevision: sheet.revision + 1, jigHash: sheet.jig_hash, materialProfileId: sheet.material_profile_id }));
           [sheet] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_sheet SET state='SEALED',revision=revision+1,manifest=$2,manifest_hash=$3,sealed_at=clock_timestamp() WHERE id=$1::uuid RETURNING *`, id, manifest, digest(manifest));
         }
       } else {
         items = [await scopedItem(tx, principal, id)]; requireThat(items[0].state === 'READY' && items[0].artwork_hash === input.expectedLabelHash, 409, 'LABEL_SOURCE_CHANGED');
+        validateItems?.(items);
       }
       const [existing] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_export WHERE ${kind === 'SHEET' ? 'sheet_id' : 'item_id'}=$1::uuid AND profile_id=$2`, id, input.exportProfileId);
       if (existing) {

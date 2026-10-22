@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
-import { renderLabelV4, LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
+import { renderApprovedBLabel, LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-approved-b';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 import { createLabelService } from '../src/label-sheet-service.mjs';
 import { createLabelRepository } from '../src/label-sheet-repository.mjs';
@@ -10,7 +10,7 @@ import { createManualFinishing } from '../src/finishing.mjs';
 import { LABEL_REFRESH_REASON, labelRefreshRequestId, labelRefreshRequestHash, labelReplacementIntent } from '../src/label-replacement-intent.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
-const target = cardProfile => ({ rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH,
+const target = cardProfile => ({ rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
   materialProfileId: cardProfile === 'POKEMON' ? 'atlas-v4-holo-v1' : 'atlas-v4-gold-v1', jigHash: LABEL_JIG_V1.jigHash });
 const inputFor = (original, value = target('SPORTS')) => ({ requestId: labelRefreshRequestId(original.id, original.artwork_hash, value),
   expectedLabelHash: original.artwork_hash, expectedRendererProfileHash: value.rendererProfileHash });
@@ -45,7 +45,7 @@ async function fixture(cardProfile = 'SPORTS') {
     failItem: async () => { failures++; pending = false; }, refreshLayout: async (...args) => { reservations.push(args); return { state: 'PENDING_RENDER' }; } };
   const service = createLabelService({ repository, finishing, boundary: { machineOwner: value => value },
     storage: { write() { assert.fail('No export storage'); }, download() { assert.fail('No download'); } },
-    renderer: { label(...args) { rendered++; return renderLabelV4(...args); }, sheet() { assert.fail('No sheet export'); }, individual() { assert.fail('No individual export'); } } });
+    renderer: { label(...args) { rendered++; return renderApprovedBLabel(...args); }, sheet() { assert.fail('No sheet export'); }, individual() { assert.fail('No individual export'); } } });
   return { f, original, recipe, service, repository, reservations, results, get child() { return child; }, set child(value) { child = value; },
     get rendered() { return rendered; }, get failures() { return failures; } };
 }

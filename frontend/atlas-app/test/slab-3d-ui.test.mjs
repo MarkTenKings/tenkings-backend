@@ -87,3 +87,12 @@ test('changed source owns a fresh scene and stale readiness cannot publish into 
   old.options.onReady(); f.render(); assert.equal(f.status(), 'loading');
   f.scenes[1].options.onReady(); f.render(); assert.equal(f.status(), 'ready'); f.close();
 });
+
+test('a saved back label and its approved layout own a fresh 3D scene when they arrive', () => {
+  const f = fixture(), old = f.scenes[0];
+  f.update({ backLabelUrl: 'blob:back-label', labelLayoutVersion: 'atlas-approved-b-v1' });
+  assert.equal(old.disposals, 1); assert.equal(f.scenes.length, 2);
+  assert.equal(f.scenes[1].options.backLabelUrl, 'blob:back-label');
+  assert.equal(f.scenes[1].options.labelLayoutVersion, 'atlas-approved-b-v1');
+  old.options.onReady(); f.render(); assert.equal(f.status(), 'loading'); f.close();
+});

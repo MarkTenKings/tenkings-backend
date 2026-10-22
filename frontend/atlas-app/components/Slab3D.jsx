@@ -5,7 +5,7 @@ import { createSlabScene } from '../lib/slab-3d-scene.mjs';
 import styles from './Slab3D.module.css';
 
 /** Optional detail presentation; the approved Front/Back views stay independent. */
-export default function Slab3D({ name, frontUrl, backUrl, labelUrl, fallback }) {
+export default function Slab3D({ name, frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion, fallback }) {
   const host = useRef(null), owned = useRef(null);
   const [status, setStatus] = useState('loading'), [facing, setFacing] = useState('Front visible'), [retry, setRetry] = useState(0);
   const [reason, setReason] = useState(null);
@@ -15,7 +15,7 @@ export default function Slab3D({ name, frontUrl, backUrl, labelUrl, fallback }) 
     const endAccess = () => { active = false; scene?.dispose(); owned.current = null; setStatus('blocked'); };
     window.addEventListener(APPROVED_MEDIA_ACCESS_ENDED, endAccess); window.addEventListener('pagehide', endAccess);
     try {
-      scene = createSlabScene(host.current, { frontUrl, backUrl, labelUrl, nfcUrl: `${STAFF_BASE_PATH}/brand/archive/nfc-tag-reference.jpg`,
+      scene = createSlabScene(host.current, { frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion, nfcUrl: `${STAFF_BASE_PATH}/brand/archive/nfc-tag-reference.jpg`,
         onReady: () => { if (active) setStatus('ready'); },
         onFacing: value => { if (active) setFacing(value); },
         onError: failure => { if (active) { setReason(failure.code); setStatus('unavailable'); } },
@@ -24,7 +24,7 @@ export default function Slab3D({ name, frontUrl, backUrl, labelUrl, fallback }) 
     } catch (failure) { setReason(failure.code); setStatus('unavailable'); }
     return () => { active = false; scene?.dispose(); if (owned.current === scene) owned.current = null;
       window.removeEventListener(APPROVED_MEDIA_ACCESS_ENDED, endAccess); window.removeEventListener('pagehide', endAccess); };
-  }, [frontUrl, backUrl, labelUrl, retry]);
+  }, [frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion, retry]);
   const ready = status === 'ready', blocked = status === 'blocked';
   return <div className={styles.root} data-slab-state={status}>
     <div ref={host} className={styles.viewport} tabIndex={ready ? 0 : -1} role={ready ? 'img' : undefined} aria-busy={status === 'loading'}

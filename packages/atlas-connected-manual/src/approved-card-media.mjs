@@ -1,5 +1,6 @@
 import { digest, requireThat } from '@atlas/manual-service/contract';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
+import { LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-approved-b';
 
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -58,6 +59,13 @@ export function archiveApprovedMedia({ cardId, approvalActionId, publicToken, ap
     media.LABEL = { url: `/admin/api/staff/manual-connected/labels/${label.id}/artwork?mode=preview`,
       provenance: 'REPORT_BOUND_LABEL_ARTWORK', itemId: label.id, artworkHash: label.artwork_hash,
       rendererProfileHash: label.renderer_profile_hash, materialProfileId: label.material_profile_id };
+    // Only this exact saved renderer profile owns approved reverse artwork.
+    // Historical print records retain their original front-only projection.
+    if (label.renderer_profile_hash === LABEL_APPROVED_B_RENDERER_PROFILE_HASH) {
+      media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+      media.LABEL_BACK = { ...media.LABEL,
+        url: `/admin/api/staff/manual-connected/labels/${label.id}/artwork?mode=preview-back` };
+    }
     // artworkHash binds retained print_svg, not the different preview bytes.
     // READY records rendering, not a separate human artwork approval or print.
   }

@@ -1,0 +1,11 @@
+{
+  "version": "atlas-approved-b-vector-parts-v1",
+  "grade10": "<g transform=\"translate(0,0.5) translate(58.35,4.15)\"><path d=\"M0 1.86 L2.13 0 H3.58 V10.2 H1.53 V3.15 L0 4.35 Z\" /><path d=\"M6.81 0 C4.77 0 4.15 1.97 4.15 5.1 C4.15 8.23 4.77 10.2 6.81 10.2 C8.85 10.2 9.47 8.23 9.47 5.1 C9.47 1.97 8.85 0 6.81 0 Z M6.81 1.87 C7.51 1.87 7.60 3.12 7.60 5.1 C7.60 7.08 7.51 8.33 6.81 8.33 C6.11 8.33 6.02 7.08 6.02 5.1 C6.02 3.12 6.11 1.87 6.81 1.87 Z\" fill-rule=\"evenodd\" /></g>",
+  "grade10BoundsMm": {
+    "x": 58.35,
+    "y": 4.65,
+    "width": 9.47,
+    "height": 10.2
+  },
+  "source": "masters/Atlas_Alakazam_10_Front.svg"
+}

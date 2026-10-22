@@ -4,6 +4,7 @@ import {
   NoToneMapping, OrthographicCamera, Path, PlaneGeometry, Scene, Shape, SRGBColorSpace, Texture, Vector3,
   WebGLRenderer,
 } from 'three';
+import { APPROVED_LABEL_LAYOUT } from './approved-card-media.mjs';
 
 /** One reusable, illustrative holder. Exterior dimensions are owner supplied.
  * Internal profiles, card thickness and NFC placement are presentation geometry,
@@ -40,9 +41,12 @@ function outline(parent, name, width, height, radius, material, z, y = 0) {
   const item = new LineLoop(new BufferGeometry().setFromPoints(points), material); item.name = name;
   item.position.set(0, y, z); parent.add(item);
 }
-function addNfcReference(labels, texture) {
+function addNfcReference(labels, texture, layoutVersion) {
+  const approved = layoutVersion === APPROVED_LABEL_LAYOUT.version;
   const tag = mesh(labels, 'illustrative-front-nfc-reference', new CircleGeometry(5.1, 48),
-    new MeshBasicMaterial({ map: texture, toneMapped: false }), 17.08, SLAB_MODEL.labelY, .205);
+    new MeshBasicMaterial({ map: texture, toneMapped: false }),
+    approved ? APPROVED_LABEL_LAYOUT.nfc.x - SLAB_MODEL.labelWidth / 2 : 17.08,
+    SLAB_MODEL.labelY + (approved ? SLAB_MODEL.labelHeight / 2 - APPROVED_LABEL_LAYOUT.nfc.y : 0), .205);
   tag.userData.geometryAuthority = 'decorative-reference-only';
 }
 export function fitSlabPhoto(width, height) {
@@ -52,8 +56,9 @@ export function fitSlabPhoto(width, height) {
 }
 
 /** Textures are the caller's verified photographs/saved label. No relighting,
- * tone mapping, cropping, inferred findings or new reverse artwork is applied. */
-export function createSlabModel({ front, back, label, nfc }) {
+ * tone mapping, cropping or inferred findings are applied. Reverse label
+ * artwork is present only when the saved record supplied that texture. */
+export function createSlabModel({ front, back, label, backLabel, labelLayoutVersion, nfc }) {
   const model = new Group(); model.name = SLAB_MODEL.version; model.userData.geometryAuthority = 'illustrative';
   const shell = new Group(), card = new Group(), labels = new Group();
   shell.name = 'clear-two-piece-shell'; card.name = 'approved-card-photographs'; labels.name = 'saved-label'; model.add(shell, card, labels);
@@ -85,11 +90,16 @@ export function createSlabModel({ front, back, label, nfc }) {
       new MeshBasicMaterial({ map: texture, toneMapped: false, transparent: true }), 0, SLAB_MODEL.cardY, sign * .181);
     if (sign < 0) face.rotation.y = Math.PI; // Viewed from behind, the saved Back remains readable, not mirrored.
   }
-  mesh(labels, 'plain-label-carrier-no-reverse-artwork', new BoxGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight, .38),
+  mesh(labels, backLabel ? 'saved-label-carrier' : 'plain-label-carrier-no-reverse-artwork', new BoxGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight, .38),
     new MeshBasicMaterial({ color: 0xf6f6f4, toneMapped: false }), 0, SLAB_MODEL.labelY);
-  if (nfc && label) addNfcReference(labels, nfc);
+  if (nfc && label) addNfcReference(labels, nfc, labelLayoutVersion);
   if (label) mesh(labels, 'front-saved-label-artwork', new PlaneGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight),
     new MeshBasicMaterial({ map: label, transparent: true, toneMapped: false }), 0, SLAB_MODEL.labelY, .22);
+  if (backLabel) {
+    const reverse = mesh(labels, 'back-saved-label-artwork', new PlaneGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight),
+      new MeshBasicMaterial({ map: backLabel, transparent: true, toneMapped: false }), 0, SLAB_MODEL.labelY, -.22);
+    reverse.rotation.y = Math.PI;
+  }
   return model;
 }
 
@@ -130,7 +140,13 @@ function rasterTexture(image, renderer, document, kind) {
   canvas.width = Math.min(kind === 'label' ? 2048 : 512, renderer.capabilities.maxTextureSize);
   canvas.height = kind === 'label' ? Math.round(canvas.width * SLAB_MODEL.labelHeight / SLAB_MODEL.labelWidth) : canvas.width;
   const context = canvas.getContext('2d'); if (!context) throw error('SLAB_TEXTURE_UNAVAILABLE');
-  if (kind === 'label') context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  if (kind === 'label') {
+    const width = image.naturalWidth || image.width, height = image.naturalHeight || image.height;
+    const scale = Math.min(canvas.width / width, canvas.height / height);
+    // Preserve the recorded artwork's own ratio, including when its SVG
+    // dimensions differ slightly from the integer raster's pixel rounding.
+    context.drawImage(image, (canvas.width - width * scale) / 2, (canvas.height - height * scale) / 2, width * scale, height * scale);
+  }
   else {
     // Same circular crop as the shared 2D NFC reference; never card evidence.
     context.drawImage(image, -.5086 * canvas.width, -.5471 * canvas.height, 1.9543 * canvas.width, 2.6057 * canvas.height);
@@ -140,9 +156,9 @@ function rasterTexture(image, renderer, document, kind) {
 
 /** The renderer is created only after the 3D tab mounts. Work is event-driven:
  * a requested frame never schedules another frame, and hidden scenes pause. */
-export function createSlabScene(host, { frontUrl, backUrl, labelUrl, nfcUrl, onReady = () => {}, onError = () => {}, onFacing = () => {} }, overrides = {}) {
+export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion, nfcUrl, onReady = () => {}, onError = () => {}, onFacing = () => {} }, overrides = {}) {
   if (![frontUrl, backUrl].every(url => typeof url === 'string' && url.startsWith('blob:'))
-    || labelUrl && !labelUrl.startsWith('blob:')) throw error('SLAB_APPROVED_SOURCE_REQUIRED');
+    || [labelUrl, backLabelUrl].some(url => url && (typeof url !== 'string' || !url.startsWith('blob:')))) throw error('SLAB_APPROVED_SOURCE_REQUIRED');
   const win = overrides.window ?? window, doc = overrides.document ?? document;
   const renderer = overrides.renderer ?? new WebGLRenderer({ alpha: false, antialias: true, powerPreference: 'low-power' });
   const scene = new Scene(), camera = new OrthographicCamera(-45, 45, 72, -72, .1, 1000);
@@ -224,22 +240,23 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, nfcUrl, onR
   };
   const started = (async () => {
     try {
-      const required = [load(frontUrl), load(backUrl), labelUrl ? load(labelUrl) : null];
+      const required = [load(frontUrl), load(backUrl), labelUrl ? load(labelUrl) : null, backLabelUrl ? load(backLabelUrl) : null];
       // Decorative NFC arrival must not hold up usable approved photographs.
       const nfcLoad = nfcUrl && labelUrl ? load(nfcUrl).catch(() => null) : Promise.resolve(null);
-      const [frontImage, backImage, labelImage] = await Promise.all(required);
+      const [frontImage, backImage, labelImage, backLabelImage] = await Promise.all(required);
       if (disposed) return;
       const keep = texture => { textures.add(texture); return texture; };
       const front = keep(photoTexture(frontImage, renderer)), back = keep(photoTexture(backImage, renderer));
       const label = labelImage ? keep(rasterTexture(labelImage, renderer, doc, 'label')) : null;
+      const backLabel = backLabelImage ? keep(rasterTexture(backLabelImage, renderer, doc, 'label')) : null;
       // The derived decorative/vector rasters now own their pixels; retain only
       // the full-size card image objects needed by their authoritative textures.
-      if (labelImage) { labelImage.removeAttribute('src'); images.delete(labelImage); }
-      model = createSlabModel({ front, back, label }); model.rotation.y = angle; scene.add(model); clearTimeout(timeout);
+      for (const image of [labelImage, backLabelImage]) if (image) { image.removeAttribute('src'); images.delete(image); }
+      model = createSlabModel({ front, back, label, backLabel, labelLayoutVersion }); model.rotation.y = angle; scene.add(model); clearTimeout(timeout);
       onFacing(slabFacing(angle)); resize();
       void nfcLoad.then(image => {
         if (!image || disposed) return;
-        try { const nfc = keep(rasterTexture(image, renderer, doc, 'nfc')); addNfcReference(model.getObjectByName('saved-label'), nfc); requestRender(); }
+        try { const nfc = keep(rasterTexture(image, renderer, doc, 'nfc')); addNfcReference(model.getObjectByName('saved-label'), nfc, labelLayoutVersion); requestRender(); }
         catch { /* A failed decorative reference never replaces card evidence. */ }
         finally { image.removeAttribute('src'); images.delete(image); }
       });

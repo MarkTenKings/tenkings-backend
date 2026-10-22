@@ -27,12 +27,16 @@ function nodes(value, match, found = []) {
   }
   return found;
 }
-function fixture(mode = 'detail', { label = false, slab = false } = {}) {
+function fixture(mode = 'detail', { label = false, backLabel = false, slab = false } = {}) {
   const token = `ar_${'Q'.repeat(24)}`, card = { cardId: '11111111-1111-4111-8111-111111111111', approvalActionId: '22222222-2222-4222-8222-222222222222',
     identity: { playerName: 'Synthetic fixture' }, report: { state: 'PUBLISHED', publicToken: token, version: 2, publicHash: 'c'.repeat(64) },
     media: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { url: `/api/reports/${token}/images/${side}?v=2`, provenance: 'APPROVED_GRADING_PHOTOGRAPH' }])) };
   if (label) card.media.LABEL = { itemId: '33333333-3333-4333-8333-333333333333',
     url: '/admin/api/staff/manual-connected/labels/33333333-3333-4333-8333-333333333333/artwork?mode=preview', provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
+  if (backLabel) {
+    card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+    card.media.LABEL_BACK = { ...card.media.LABEL, url: card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
+  }
   if (slab) card.media.SLAB = { url: `/api/reports/${token}/presentation/image?v=2&revision=1`, presentationRevision: 1,
     provenance: 'ACTUAL_SLAB_PHOTOGRAPH', sha256: 'd'.repeat(64), byteCount: 1024, contentType: 'image/jpeg' };
   const slots = [], effects = [], window = new EventTarget(), loads = [], disposed = []; let cursor = 0, dirty = false, tree, lazyFailure = null;
@@ -195,6 +199,42 @@ test('3D mounts only when selected with the verified Front/Back pair, never a sl
   f.button('3D').props.onClick(); f.render(); f.revoke(); await f.flush();
   assert.equal(f.find(node => node.type === 'Slab3D').length, 0); assert.equal(f.find(node => node.type === 'img').length, 0);
   assert.ok(f.find(node => node.type === 'strong' && /Staff access ended/.test(text(node))).length); f.close();
+});
+
+test('saved approved-B back label appears on Back and in 3D without front NFC or stretched placement', async () => {
+  const f = fixture('detail', { label: true, backLabel: true }); await f.flush();
+  assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK']);
+  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  const nfc = f.find(node => node.props.className === 'archive.slabNfc')[0];
+  assert.ok(nfc.props.style); assert.ok(parseFloat(nfc.props.style.left) > 65);
+  f.button('Back').props.onClick(); f.render();
+  const artwork = f.find(node => node.type === 'img' && node.props.className === 'archive.slabLabel')[0];
+  assert.equal(artwork.props.src, 'blob:LABEL_BACK');
+  assert.equal(f.find(node => node.props.className === 'archive.slabNfc').length, 0);
+  assert.match(f.find(node => node.type === 'span' && node.props.role === 'img')[0].props['aria-label'], /saved ATLAS back label/);
+  assert.equal(f.find(node => /Reverse label artwork not recorded/.test(text(node))).length, 0);
+  f.button('3D').props.onClick(); f.render();
+  const scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.labelUrl, 'blob:LABEL'); assert.equal(scene.props.backLabelUrl, 'blob:LABEL_BACK');
+  assert.equal(scene.props.labelLayoutVersion, 'atlas-approved-b-v1');
+  f.revoke(); await f.flush(); assert.ok(f.disposed.includes('blob:LABEL_BACK')); assert.equal(f.find(node => node.type === 'img').length, 0); f.close();
+});
+
+test('back-label decode retry preserves both photographs and front artwork', async () => {
+  const f = fixture('detail', { label: true, backLabel: true }); await f.flush();
+  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  f.button('Back').props.onClick(); f.render();
+  f.find(node => node.type === 'img' && node.props.src === 'blob:LABEL_BACK')[0].props.onError(); f.render();
+  assert.deepEqual(f.disposed, ['blob:LABEL_BACK']);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:BACK').length);
+  assert.ok(f.find(node => node.type === 'p' && /Saved back label artwork unavailable/.test(text(node))).length);
+  f.button('Retry preview').props.onClick(); await f.flush();
+  assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK', 'LABEL_BACK']);
+  f.loads.at(-1).resolve('blob:back-label-retry'); await f.flush();
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:back-label-retry').length);
+  f.button('Front').props.onClick(); f.render();
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:FRONT').length);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:LABEL').length); f.close();
 });
 
 test('3D retains a usable photograph and independent retry when Back is absent; missing label never becomes reverse artwork', async () => {
