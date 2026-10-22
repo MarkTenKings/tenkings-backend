@@ -1,5 +1,7 @@
 # ATLAS R1 lead takeover — October 22, 2026
 
+> Successor checkpoint: disk capacity is resolved; exact a0f local three-web and native Linux builds plus150 focused tests pass. No activation. Preserve the separately approved slab-release successor before R1 cutover. See [resumed qualification](r1-resumed-qualification.md). The takeover narrative below records the earlier pre-build checkpoint.
+
 The replacement lead read the complete transfer and master plan, retained all 30 requirements, and continued R1 release preparation in the designated foundation worktree. This is a source/preparation milestone, not an activation. Claims remain disabled until Fingerprint is ready; readiness will still require an explicit title-authority policy. Grading, finishing, Ten Kings and Set Ops were not changed.
 
 ## Reconciled production checkpoint
