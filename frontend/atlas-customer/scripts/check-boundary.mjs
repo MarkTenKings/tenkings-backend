@@ -16,6 +16,6 @@ for (const file of ['schema.prisma', ...engines])
     assert.ok(traced.has(resolve(database, file)), `Customer API deployment is missing database runtime file: ${file}`);
 const walk = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(directory, entry.name)) : [join(directory, entry.name)]);
 for (const path of walk(join(app, '.next/static')).filter(path => path.endsWith('.js'))) {
-    assert.doesNotMatch(readFileSync(path, 'utf8'), /ATLAS_CUSTOMER_(?:DATABASE_URL|COLLECTION_DATABASE_URL|OWNERSHIP_HISTORY_DATABASE_URL|SESSION_KEY|PHONE_KEY|ROUTER_KEY|TWILIO_API_KEY_SECRET)|atlas_staff\.\"|customer_call\(|atlas_ownership\.|customer_read\(/, 'Server-only customer authority leaked into a browser chunk');
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /ATLAS_CUSTOMER_(?:DATABASE_URL|COLLECTION_DATABASE_URL|COLLECTION_PREFERENCES_DATABASE_URL|COLLECTION_PREFERENCES_SCHEMA_OWNER|OWNERSHIP_HISTORY_DATABASE_URL|SESSION_KEY|PHONE_KEY|ROUTER_KEY|TWILIO_API_KEY_SECRET)|atlas_staff\.\"|customer_call\(|atlas_ownership\.|atlas_ownership_preferences\.|customer_read\(/, 'Server-only customer authority leaked into a browser chunk');
 }
 console.log('PASS customer build: isolated /account routes, packaged database engine, dedicated assets and no server credentials in browser chunks');

@@ -9,6 +9,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import * as collectionContract from '../lib/collection-contract.mjs';
+import * as displayClient from '../lib/collection-display-client.mjs';
 import * as collectionClient from '../lib/collection-client.mjs';
 import * as claimsClient from '../lib/ownership-claims-client.mjs';
 import * as claimsTransport from '../lib/ownership-claims-transport.mjs';
@@ -83,6 +84,7 @@ export function createMountedCollectionFixture({history=true}={}) {
         if(name==='next/head')return {__esModule:true,default:()=>null};
         if(name==='next/link')return {__esModule:true,default:props=>react.createElement('a',props,...props.children)};
         if(name.endsWith('.css'))return {};
+        if(name.endsWith('/collection-display-client.mjs'))return displayClient;
         if(name.endsWith('/collection-contract.mjs'))return collectionContract;
         if(name.endsWith('/collection-client.mjs'))return {...collectionClient,readCollectionPage:input=>collectionClient.readCollectionPage(input,f.fetch)};
         if(name.endsWith('/ownership-claims-client.mjs'))return claimsClient;

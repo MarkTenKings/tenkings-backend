@@ -105,7 +105,7 @@ test('legacy history, exact history pages and missing card links remain truthful
 test('only ingress-admitted collection pages receive a boolean display hint, never runtime credentials or readiness claims',async()=>{
   const res=()=>({setHeader(){}});let observed=0;
   const state={assertRequest(){observed++;},ownershipHistory:{configuredForDisplay:true,databaseUrl:'secret-do-not-serialize'}};
-  assert.deepEqual(await customerPage({req:{},res:res()},{initialView:'collection'},async()=>state),{props:{initialView:'collection',historyConfiguredForDisplay:true}});
+  assert.deepEqual(await customerPage({req:{},res:res()},{initialView:'collection'},async()=>state),{props:{initialView:'collection',historyConfiguredForDisplay:true,displayConfiguredForDisplay:false,preferencesConfiguredForDisplay:false}});
   for(const initialView of ['dashboard','submit','profile'])assert.deepEqual(await customerPage({req:{},res:res()},{initialView},async()=>state),{props:{initialView}});
   for(const selected of [undefined,false,'true',null])assert.equal((await customerPage({req:{},res:res()},{initialView:'collection',historyConfiguredForDisplay:true},async()=>({...state,ownershipHistory:{configuredForDisplay:selected}}))).props.historyConfiguredForDisplay,false);
   let touched=false;const refused={assertRequest(){throw new BoundaryError(403,'DENIED');},get ownershipHistory(){touched=true;throw Error('must not read');}};

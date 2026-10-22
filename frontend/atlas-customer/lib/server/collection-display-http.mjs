@@ -29,11 +29,13 @@ export function createCollectionDisplayHandler({customerState:state,displayServi
   displayCheck(state.auth instanceof CustomerAuth && state.config === state.auth.config && typeof state.assertRequest === 'function'
     && typeof service.readDisplay === 'function' && typeof service.readFront === 'function' && service.mode === state.config.mode);
   const auth=state.auth,config=state.config,assertRequest=state.assertRequest,authority=CustomerAuth.prototype.authority,digest=CustomerAuth.prototype.digest;
+  const ownershipRead=state.ownershipRead,ownerRead=ownershipRead?.read;
   const readDisplay=service.readDisplay,readFront=service.readFront;
-  const pins=()=>JSON.stringify([config.mode,config.origin,config.deploymentId,config.releaseSha,config.configHash,config.binding,config.cookies,config.sessionKey]);
+  const pins=()=>JSON.stringify([config.mode,config.origin,config.deploymentId,config.releaseSha,config.configHash,config.binding,config.cookies,config.sessionKey,config.routerKey,config.deploymentHost]);
   const pinned=pins();
   const current=()=>displayCheck(state.auth===auth && state.config===config && auth.config===config && auth.authority===authority
-    && auth.digest===digest && state.assertRequest===assertRequest && service.readDisplay===readDisplay && service.readFront===readFront && service.mode===config.mode && pins()===pinned);
+    && auth.digest===digest && state.assertRequest===assertRequest && state.ownershipRead===ownershipRead && ownershipRead?.read===ownerRead
+    && service.readDisplay===readDisplay && service.readFront===readFront && service.mode===config.mode && pins()===pinned);
   current();
   function admit(req) {
     const admitted=assertRequest.call(state,req);
@@ -44,12 +46,16 @@ export function createCollectionDisplayHandler({customerState:state,displayServi
   const requestPins=req=>JSON.stringify([req.method,req.url,Object.entries(req.headers??{}).sort(([a],[b])=>a.localeCompare(b)),req.socket?.remoteAddress]);
   return async (req,res) => {
     privateHeaders(res);
+    const controller=new AbortController(),abort=()=>controller.abort(),close=()=>{if(!res.writableEnded)abort();};
+    req.once?.('aborted',abort);res.once?.('close',close);
     try {
+      if(req.aborted||res.destroyed){abort();return;}
       current(); const input=parseCollectionDisplayRequest(req),cookie=req.headers?.cookie,url=req.url;
       admit(req);
       const admittedRequest=requestPins(req);
       authority.call(auth,cookie);
-      const value=input.front?await readFront.call(service,cookie,input.cardId,input.expected):await readDisplay.call(service,cookie,input.cardId);
+      const value=input.front?await readFront.call(service,cookie,input.cardId,input.expected,{signal:controller.signal}):await readDisplay.call(service,cookie,input.cardId,{signal:controller.signal});
+      if(controller.signal.aborted||req.aborted||res.destroyed)return;
       current(); displayCheck(req.headers?.cookie===cookie && req.url===url && req.method==='GET');
       // Preserve the admitted original request without consuming ingress twice
       // or extending/restarting its route-proof time window after artifact I/O.
@@ -58,10 +64,11 @@ export function createCollectionDisplayHandler({customerState:state,displayServi
       if(input.front){res.setHeader('Content-Type',value.contentType);res.setHeader('Content-Length',value.bytes.length);res.setHeader('X-Atlas-Image-Sha256',value.sha256);res.status(200).end(value.bytes);}
       else res.status(200).json(value);
     } catch(error) {
+      if(controller.signal.aborted||req.aborted||res.destroyed)return;
       const status=['SIGN_IN_REQUIRED'].includes(error?.code)||error?.status===401?401
         : ['COLLECTION_DISPLAY_ACCESS_ENDED','CUSTOMER_ACCESS_NOT_ENABLED','OWNERSHIP_REQUIRED'].includes(error?.code)||error?.status===403?403
           : ['INVALID_DISPLAY_REQUEST','NOT_FOUND','METHOD_NOT_ALLOWED'].includes(error?.code)?error.status:503;
       res.status(status).json({error:status===401||status===403?'COLLECTION_DISPLAY_ACCESS_ENDED':status===503?'COLLECTION_DISPLAY_UNAVAILABLE':error.code});
-    }
+    } finally {req.removeListener?.('aborted',abort);res.removeListener?.('close',close);}
   };
 }

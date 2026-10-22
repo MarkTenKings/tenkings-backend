@@ -126,6 +126,8 @@ Owner-approved next order: dedicated card detail → dependable Front/Back media
 
 ## Pilot readiness and verification
 
+October22 owner check-in confirms the intended customer experience: sale proceeds shown as **ATLAS Balance**, followed by cash-out to the seller’s verified bank account, with an ATLAS marketplace fee. This is still R2 work. Existing `packages/atlas-commerce` Stripe payment/tax/receipt code serves grading submissions and shipping; it does not implement marketplace seller onboarding, Connect fee splits/transfers, seller balances or payouts. Source search found no Connect payout/transfer integration in the ATLAS packages. The recorded8% including ordinary domestic processing remains a proposal, not a finalized fee. Spending earnings on purchases remains R3/provider-approved. Stripe Connect product documentation confirms general marketplace fee/payout capabilities, not ATLAS account readiness: https://stripe.com/connect . No live Stripe account inspection or money movement was performed.
+
 Use integer minor units for money, server-derived totals, unique idempotency references, transactional reservation and compensating/reconciliation paths. A displayed balance needs provider and internal ledger evidence. Stripe Connect is a candidate integration, not proof that every desired stored-value or spend-from-balance feature is supported for this business.
 
 Before pilot launch, validate the actual provider agreement/configuration, fee economics, consignment/transfer point, custody and insurance, delivery/returns/disputes, payout holds and privacy/comp-data rights. These choices do not prevent building the archive and collection foundations.

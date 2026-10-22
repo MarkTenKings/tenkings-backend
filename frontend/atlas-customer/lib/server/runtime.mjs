@@ -4,6 +4,8 @@ import {createDealerAccess} from './dealer.mjs';
 import { CustomerDatabase } from './database.mjs';
 import { createOwnershipHistoryRuntime } from './ownership-history-runtime.mjs';
 import { createCollectionRuntime } from './collection-runtime.mjs';
+import { createCollectionPreferencesRuntime } from './collection-preferences-runtime.mjs';
+import { createCollectionDisplayComposition } from './collection-display-composition.mjs';
 import { productionConfig, cookie } from './config.mjs';
 import { deny } from './policy.mjs';
 import { twilioVerifyTransport } from './twilio.mjs';
@@ -79,5 +81,11 @@ export async function runtime() {
         settings: { enabled: env.ATLAS_CUSTOMER_COLLECTION, databaseUrl: env.ATLAS_CUSTOMER_COLLECTION_DATABASE_URL },
         createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
     current.ownershipRead = current.collection.reader;
+    current.collectionPreferences = createCollectionPreferencesRuntime({ customerState: current,
+        settings: { enabled: env.ATLAS_CUSTOMER_COLLECTION_PREFERENCES,
+            databaseUrl: env.ATLAS_CUSTOMER_COLLECTION_PREFERENCES_DATABASE_URL,
+            schemaOwner: env.ATLAS_CUSTOMER_COLLECTION_PREFERENCES_SCHEMA_OWNER },
+        createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
+    current.collectionDisplay = createCollectionDisplayComposition({ customerState: current, enabled: env.ATLAS_CUSTOMER_COLLECTION_DISPLAY });
     return current;
 }

@@ -3,6 +3,11 @@ import { cardInput, createInput, identityInput, revision, CustomerIntakeError } 
 import { CustomerServiceError } from '@atlas/service-bridge/customer-service';
 import {dealerRoute} from './dealer.mjs';
 import { createOwnershipReadHandler } from './ownership-read.mjs';
+import { isCollectionDisplayPath } from './collection-display-composition.mjs';
+
+// Each delegated handler validates the full original URL, method, body and
+// customer proof. Dispatch here must not consume signed ingress a second time.
+const collectionPreferencePath = /^\/api\/customer\/collection\/(?:preferences|cards\/[a-f0-9-]{36}\/preferences|preference-requests\/[a-f0-9-]{36})$/;
 
 export function createHandler(resolveRuntime) {
     return async (req, res) => {
@@ -13,6 +18,15 @@ export function createHandler(resolveRuntime) {
             // This exact handler owns its one original ingress admission and
             // final request/runtime checks; do not consume admission twice.
             if (path === '/api/customer/collection') return createOwnershipReadHandler(state)(req, res);
+            if (collectionPreferencePath.test(path)) {
+                if (typeof state.collectionPreferences?.handler !== 'function') deny(503, 'PREFERENCES_UNAVAILABLE');
+                return await state.collectionPreferences.handler(req, res);
+            }
+            if (isCollectionDisplayPath(path)) {
+                if (method !== 'GET') deny(405, 'METHOD_NOT_ALLOWED');
+                if (typeof state.collectionDisplay?.handler !== 'function') deny(503, 'COLLECTION_DISPLAY_UNAVAILABLE');
+                return state.collectionDisplay.handler(req, res);
+            }
             if (['/api/customer/ownership/claims', '/api/customer/ownership/claim', '/api/customer/ownership/history'].includes(path)) {
                 if (method !== 'GET') deny(405, 'METHOD_NOT_ALLOWED');
                 if (typeof state.ownershipHistory?.handler !== 'function') deny(503, 'OWNERSHIP_CLAIMS_UNAVAILABLE');
