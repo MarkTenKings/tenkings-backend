@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { canonical, digest, requireThat, uuid } from '@atlas/manual-service/contract';
+import { getLabel25Profile, selectLabel25Items } from '@atlas/finishing/label-sheet-25';
 import { LABEL_REFRESH_REASON, labelRefreshRequestId, labelRefreshRequestHash, labelReplacementIntent } from './label-replacement-intent.mjs';
 
 const S = 'atlas_manual_connected';
 const stored = (text, hash) => { requireThat(typeof text === 'string' && digest(text) === hash, 503, 'LABEL_STORED_CONTENT_INVALID'); return JSON.parse(text); };
+const printTemplateFor = profile => ({ templateId: profile.templateId, jigHash: profile.jigHash,
+  page: profile.page, firstSourceSlot: profile.firstSourceSlot, lastSourceSlot: profile.lastSourceSlot });
 const reviewer = p => requireThat(p.role === 'REVIEWER', 403, 'LABEL_ACCESS_DENIED');
 export const LABEL_LAYOUT_FAILURE_CODES = Object.freeze(['NAME_OVERFLOW','METADATA_OVERFLOW','UNSUPPORTED_GLYPH','EMPTY_GLYPH_OUTLINE','CERTIFICATE_OVERFLOW']);
 export const labelFailureHash = r => digest(canonical({ itemId:r.id,cardId:r.card_id,actionId:r.action_id,approvalVersion:r.approval_version,
@@ -126,11 +129,20 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
   async function scopedExport(tx, principal, id, latest = true) {
     const [row] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_export WHERE id=$1::uuid AND actor_id=$2::uuid`, uuid(id), principal.id);
     requireThat(row, 404, 'LABEL_EXPORT_NOT_FOUND');
-    const items = row.kind === 'SHEET' ? (await scopedSheet(tx, principal, row.sheet_id, latest, true)).items : [await scopedItem(tx, principal, row.item_id, latest)];
+    let sheet = null, allItems;
+    if (row.kind === 'SHEET') ({ sheet, items: allItems } = await scopedSheet(tx, principal, row.sheet_id, latest, true));
+    else allItems = [await scopedItem(tx, principal, row.item_id, latest)];
+    const profile = getLabel25Profile(row.profile_id), items = selectLabel25Items(allItems, row.profile_id);
     const manifest = stored(row.manifest, row.manifest_hash);
-    requireThat(manifest.items.length === items.length && manifest.items.every((entry, i) => entry.itemId === items[i].id
+    requireThat(Array.isArray(manifest.items) && manifest.items.length === items.length && manifest.items.every((entry, i) => entry && entry.itemId === items[i].id
       && entry.artworkHash === items[i].artwork_hash && entry.slot === (row.kind === 'SHEET' ? items[i].slot : 1)), 503, 'LABEL_EXPORT_BINDING_INVALID');
-    if (latest) requireThat(items.every(item => item.state === 'READY'), 409, 'LABEL_SOURCE_SUPERSEDED');
+    if (profile) requireThat(row.kind === 'SHEET' && items.length > 0 && manifest.printTemplate
+      && canonical(manifest.printTemplate) === canonical(printTemplateFor(profile))
+      && manifest.sheetId === sheet.id && manifest.sheetRevision === row.sheet_revision
+      && manifest.jigHash === sheet.jig_hash && manifest.materialProfileId === sheet.material_profile_id
+      && canonical(manifest.items) === canonical(manifestFor(items, {}).items), 503, 'LABEL_EXPORT_BINDING_INVALID');
+    else requireThat(!Object.hasOwn(manifest, 'printTemplate'), 503, 'LABEL_EXPORT_BINDING_INVALID');
+    if (latest) requireThat(allItems.every(item => item.state === 'READY'), 409, 'LABEL_SOURCE_SUPERSEDED');
     return { row, items, manifest };
   }
   const manifestFor = (items, extra) => ({ version: 'atlas-label-export-manifest-v1', ...extra,
@@ -295,15 +307,20 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       const [prior] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_export WHERE actor_id=$1::uuid AND (request_id=$2::uuid OR retry_requests @> $3::jsonb)`, principal.id, input.requestId, JSON.stringify([{ requestId: input.requestId }]));
       if (prior) { const priorHash = prior.request_id === input.requestId ? prior.request_hash : prior.retry_requests.find(r => r.requestId === input.requestId)?.requestHash; requireThat(priorHash === requestHash, 409, 'LABEL_REQUEST_CONFLICT'); await scopedExport(tx, principal, prior.id, false); return exportView(prior); }
       let sheet = null, items;
+      const profile = getLabel25Profile(input.exportProfileId);
+      requireThat(!profile || kind === 'SHEET', 400, 'LABEL_PROFILE_INVALID');
       if (kind === 'SHEET') {
         ({ sheet, items } = await scopedSheet(tx, principal, id, true, Boolean(validateItems)));
         requireThat(sheet.revision === input.expectedSheetRevision, 409, 'LABEL_REVISION_CHANGED');
         requireThat(items.length > 0 && items.every(i => i.state === 'READY'), 409, 'LABEL_SHEET_NOT_READY');
-        validateItems?.(items);
+        const selectedItems = selectLabel25Items(items, input.exportProfileId);
+        requireThat(selectedItems.length > 0, 409, 'LABEL_SHEET_PAGE_EMPTY');
+        validateItems?.(selectedItems);
         if (sheet.state === 'OPEN') {
           const manifest = canonical(manifestFor(items, { sheetId: id, sheetRevision: sheet.revision + 1, jigHash: sheet.jig_hash, materialProfileId: sheet.material_profile_id }));
           [sheet] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_sheet SET state='SEALED',revision=revision+1,manifest=$2,manifest_hash=$3,sealed_at=clock_timestamp() WHERE id=$1::uuid RETURNING *`, id, manifest, digest(manifest));
         }
+        items = selectedItems;
       } else {
         items = [await scopedItem(tx, principal, id)]; requireThat(items[0].state === 'READY' && items[0].artwork_hash === input.expectedLabelHash, 409, 'LABEL_SOURCE_CHANGED');
         validateItems?.(items);
@@ -312,11 +329,14 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       if (existing) {
         requireThat(existing.state === 'FAILED', 409, 'LABEL_REQUEST_CONFLICT');
         requireThat(existing.retry_requests.length < 16, 409, 'LABEL_EXPORT_RETRY_LIMIT');
+        await scopedExport(tx, principal, existing.id);
         const retry = { requestId: input.requestId, requestHash, attemptBase: existing.attempts };
         const [resumed] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_export SET state='PREPARING',attempt_base=attempts,retry_requests=retry_requests||$2::jsonb,code=NULL,claim_id=NULL,lease_until=NULL WHERE id=$1::uuid RETURNING *`, existing.id, JSON.stringify([retry]));
         return exportView(resumed);
       }
-      const manifest = kind === 'SHEET' ? sheet.manifest : canonical(manifestFor([{ ...items[0], slot: 1 }], { itemId: id, jigHash: items[0].jig_hash, materialProfileId: items[0].material_profile_id }));
+      const manifest = kind === 'SHEET' ? profile ? canonical(manifestFor(items, { sheetId: id, sheetRevision: sheet.revision,
+        jigHash: sheet.jig_hash, materialProfileId: sheet.material_profile_id, printTemplate: printTemplateFor(profile) })) : sheet.manifest
+        : canonical(manifestFor([{ ...items[0], slot: 1 }], { itemId: id, jigHash: items[0].jig_hash, materialProfileId: items[0].material_profile_id }));
       const [row] = await tx.$queryRawUnsafe(`INSERT INTO ${S}.label_export(id,actor_id,access_version,kind,sheet_id,item_id,sheet_revision,profile_id,request_id,request_hash,manifest,manifest_hash)
         VALUES($1::uuid,$2::uuid,$3,$4,$5::uuid,$6::uuid,$7,$8,$9::uuid,$10,$11,$12) RETURNING *`, randomUUID(), principal.id, principal.accessVersion, kind,
       kind === 'SHEET' ? id : null, kind === 'SINGLE' ? id : null, sheet?.revision ?? null, input.exportProfileId, input.requestId, requestHash, manifest, digest(manifest)); return exportView(row);

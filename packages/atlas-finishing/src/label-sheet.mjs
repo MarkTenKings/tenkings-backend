@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { LABEL_JIG_V1, labelSlotTransform } from './label-sheet-geometry.mjs';
+import { LABEL_JIG_25, LABEL_25_PROFILE_DEFINITIONS, getLabel25Profile, label25PhysicalSlot, label25SlotTransform } from './label-sheet-25.mjs';
 import { APPROVED_B_MARKER, validateApprovedBArtwork, renderApprovedBBlackInk, renderApprovedBBack, colorApprovedBArtwork, approvedBHash } from './label-approved-b-artwork.mjs';
 export { LABEL_JIG_V1, labelSlotTransform, labelPointOnSheet } from './label-sheet-geometry.mjs';
 
@@ -41,8 +42,14 @@ export const LABEL_BLACK_INK_BACK_EXPORT_PROFILE_V1 = approvedProfile(sheet, 'bl
 export const LABEL_BLACK_INK_BACK_INDIVIDUAL_EXPORT_PROFILE_V1 = approvedProfile(individual, 'black-ink-transparent', 'BACK');
 export const LABEL_COLOR_BACK_EXPORT_PROFILE_V1 = approvedProfile(sheet, 'color', 'BACK');
 export const LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1 = approvedProfile(individual, 'color', 'BACK');
+export const LABEL_25_EXPORT_PROFILES = Object.freeze(LABEL_25_PROFILE_DEFINITIONS.map(definition => {
+  const value = { ...sheet, ...definition, version: 1, rasterizer: 'sharp-0.33.5-jig25-clipped-strip-png-v1', maxTileWidth: 2160,
+    ...(definition.mode === 'black-ink-transparent' ? blackInk : {}),
+    ...(definition.mode === 'color' ? { outputMode: 'COLOR_PRINT', materialPolicy: 'approved-label-material-v1' } : {}) };
+  return Object.freeze({ ...value, hash: hash(stable(value)) });
+}));
 export const LABEL_SHEET_EXPORT_PROFILES = Object.freeze([LABEL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1,
-  LABEL_COLOR_EXPORT_PROFILE_V1, LABEL_BACK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_BACK_EXPORT_PROFILE_V1, LABEL_COLOR_BACK_EXPORT_PROFILE_V1]);
+  LABEL_COLOR_EXPORT_PROFILE_V1, LABEL_BACK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_BACK_EXPORT_PROFILE_V1, LABEL_COLOR_BACK_EXPORT_PROFILE_V1, ...LABEL_25_EXPORT_PROFILES]);
 export const LABEL_SINGLE_EXPORT_PROFILES = Object.freeze([LABEL_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,
   LABEL_COLOR_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BACK_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_BACK_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1]);
 export const isApprovedBArtwork = item => typeof item?.printSvg === 'string' && item.printSvg.includes(`data-renderer="${APPROVED_B_MARKER}"`);
@@ -100,8 +107,10 @@ export function renderLabelBlackInkPreviewSvg(item, { previewMaterial = 'gold' }
     .replace('</defs>', `${foil}</defs><g clip-path="url(#body)"><rect width="68.342" height="20.082" fill="url(#black-ink-preview-foil)"/></g>`);
 }
 
-export function renderLabelSheetSvg(items, { blackInkTransparent = false, side = 'FRONT', color = false } = {}) {
-  if (!Array.isArray(items) || items.length < 1 || items.length > 50) throw new Error('LABEL_SHEET_ITEMS_INVALID');
+export function renderLabelSheetSvg(items, { blackInkTransparent = false, side = 'FRONT', color = false, exportProfileId = null } = {}) {
+  const layout = getLabel25Profile(exportProfileId);
+  if (exportProfileId && !LABEL_SHEET_EXPORT_PROFILES.some(value => value.id === exportProfileId)) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
+  if (!Array.isArray(items) || items.length < 1 || items.length > (layout ? 25 : 50)) throw new Error('LABEL_SHEET_ITEMS_INVALID');
   const seen = new Set();
   const content = [...items].sort((a, b) => a.slot - b.slot).map(item => {
     if (!Number.isInteger(item.slot) || item.slot < 1 || item.slot > 50 || seen.has(item.slot)) throw new Error('LABEL_SLOT_INVALID');
@@ -111,9 +120,10 @@ export function renderLabelSheetSvg(items, { blackInkTransparent = false, side =
     // Each label owns its mask/clip IDs. Prefix both definitions and references;
     // never let one card's dynamic grade mask alter another card's artwork.
     const renamed = inner.replace(/\bid="([^"]+)"/g, `id="s${item.slot}-$1"`).replace(/url\(#([^)]+)\)/g, `url(#s${item.slot}-$1)`);
-    return `<g data-slot="${item.slot}" transform="${labelSlotTransform(item.slot)}">${renamed}</g>`;
+    const position = layout ? label25PhysicalSlot(item.slot, exportProfileId) : item.slot;
+    return `<g data-slot="${position}" transform="${layout ? label25SlotTransform(position) : labelSlotTransform(position)}">${renamed}</g>`;
   }).join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="310mm" height="400mm" viewBox="0 0 310 400" data-atlas-artwork="PRINT_SHEET">${content}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="310mm" height="400mm" viewBox="0 0 310 400" data-atlas-artwork="PRINT_SHEET"${layout ? ` data-jig-hash="${LABEL_JIG_25.jigHash}"` : ''}>${content}</svg>`;
 }
 
 function mappingFor(exportProfile, calibrationProfile) {
@@ -121,7 +131,9 @@ function mappingFor(exportProfile, calibrationProfile) {
       || !/^[a-f0-9]{64}$/.test(calibrationProfile.hash)
       || calibrationProfile.anchor !== 'TOP_LEFT' || calibrationProfile.axes !== 'X_RIGHT_Y_DOWN'
       || !Number.isFinite(calibrationProfile.originXmm) || !Number.isFinite(calibrationProfile.originYmm))) throw new Error('LABEL_CALIBRATION_INVALID');
-  return { jigHash: LABEL_JIG_V1.jigHash, calibrationProfileHash: calibrationProfile?.hash ?? null,
+  const layout = getLabel25Profile(exportProfile.id);
+  return { jigHash: layout?.jigHash ?? LABEL_JIG_V1.jigHash, calibrationProfileHash: calibrationProfile?.hash ?? null,
+    ...(layout ? { templateId: layout.templateId, page: layout.page, sourceSlots: { first: layout.firstSourceSlot, last: layout.lastSourceSlot } } : {}),
     pixelWidth: exportProfile.pixelWidth, pixelHeight: exportProfile.pixelHeight,
     canvasWidthMm: exportProfile.widthMm, canvasHeightMm: exportProfile.heightMm, cropXmm: 0, cropYmm: 0,
     intendedImportWidthMm: exportProfile.widthMm, intendedImportHeightMm: exportProfile.heightMm,
@@ -175,9 +187,10 @@ export async function renderLabelSheetPng(items, { calibrationProfile = null, ex
   const exportProfile = LABEL_SHEET_EXPORT_PROFILES.find(value => value.id === exportProfileId);
   if (!exportProfile) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
   const mapping = mappingFor(exportProfile, calibrationProfile);
-  const svg = renderLabelSheetSvg(items, { blackInkTransparent: exportProfile.printMode === 'BLACK_INK_TRANSPARENT', side: exportProfile.side ?? 'FRONT', color: exportProfile.outputMode === 'COLOR_PRINT' }), result = await raster(svg, exportProfile);
+  const svg = renderLabelSheetSvg(items, { blackInkTransparent: exportProfile.printMode === 'BLACK_INK_TRANSPARENT', side: exportProfile.side ?? 'FRONT', color: exportProfile.outputMode === 'COLOR_PRINT', exportProfileId }), result = await raster(svg, exportProfile);
   return { bytes: result.bytes, sha256: result.sha256, manifest: { version: 'atlas-label-png-manifest-v1', ...mapping,
     sha256: result.sha256, byteCount: result.bytes.length, orderedArtwork: [...items].sort((a, b) => a.slot - b.slot).map(({ slot, artworkHash }) => ({ slot, artworkHash })),
+    ...(getLabel25Profile(exportProfileId) ? { slotMapping: [...items].sort((a, b) => a.slot - b.slot).map(({ slot }) => ({ sourceSlot: slot, position: label25PhysicalSlot(slot, exportProfileId) })) } : {}),
     rasterReceipt: result.rasterReceipt } };
 }
 

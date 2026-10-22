@@ -36,6 +36,19 @@ if(manifest.packages?.includes('packages/atlas-finishing')){
   const back=renderApprovedBBack(),backArtworkHash=hash(back);
   assert.equal(validateApprovedBArtwork({printSvg:back,artworkHash:backArtworkHash}),back);
   result.approvedLabelAssets={version:APPROVED_B_ASSETS.version,files:Object.keys(APPROVED_B_ASSETS.files).length,backArtworkHash};
+  const {LABEL_JIG_25}=await import('../../../packages/atlas-finishing/src/label-sheet-25.mjs');
+  const {LABEL_25_EXPORT_PROFILES}=await import('../../../packages/atlas-finishing/src/label-sheet.mjs');
+  const directory=resolve(root,'frontend/atlas-app/assets/label-templates');
+  const backs=JSON.parse(await readFile(resolve(directory,'atlas-25-backs-manifest.json'),'utf8'));
+  assert.equal(backs.jigHash,LABEL_JIG_25.jigHash);assert.equal(backs.artworkHash,backArtworkHash);
+  assert.deepEqual(backs.outputs.map(row=>row.filename),['atlas-25-back-black.png','atlas-25-back-gold.png','atlas-25-back-silver.png']);
+  for(const row of backs.outputs){
+    const bytes=await readFile(resolve(directory,row.filename));
+    assert.equal(hash(bytes),row.sha256);assert.equal(bytes.length,row.byteCount);
+    assert.equal(bytes.readUInt32BE(16),9764);assert.equal(bytes.readUInt32BE(20),12598);
+    assert.equal(row.renderProfileHash,LABEL_25_EXPORT_PROFILES.find(p=>p.id===row.exportProfileId)?.hash);
+  }
+  result.labelJig25={jigHash:LABEL_JIG_25.jigHash,positions:LABEL_JIG_25.slots.length,backFiles:backs.outputs.length};
 }
 if(manifest.packages?.includes('packages/card-catalog-evidence')){
   const {manufacturerRuntimeFiles}=await import(new URL('../../../packages/card-catalog-evidence/src/manufacturer-runtime-files.mjs',import.meta.url));

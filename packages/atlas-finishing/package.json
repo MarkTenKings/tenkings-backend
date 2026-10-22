@@ -23,7 +23,8 @@
     "./label-sheet": "./src/label-sheet.mjs",
     "./label-sheet-geometry": "./src/label-sheet-geometry.mjs",
     "./label-approved-b": "./src/label-approved-b.mjs",
-    "./label-approved-b-artwork": "./src/label-approved-b-artwork.mjs"
+    "./label-approved-b-artwork": "./src/label-approved-b-artwork.mjs",
+    "./label-sheet-25": "./src/label-sheet-25.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

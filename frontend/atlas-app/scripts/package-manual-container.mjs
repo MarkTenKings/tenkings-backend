@@ -21,8 +21,12 @@ export const LABEL_V4_SOURCES=Object.freeze([
 ]);
 export const LABEL_APPROVED_B_SOURCES=Object.freeze(['manifest.json','vectors.json','front-black.png','front-support-white.png',
   'front-support-black.png','back-black.png'].map(name=>'packages/atlas-finishing/assets/approved-b/'+name));
+export const LABEL_25_SOURCES=Object.freeze([
+  ...['atlas-label-jig-25-v1.json','atlas-label-jig-25-source.svg','atlas-label-jig-25-source.xs'].map(name=>'packages/atlas-finishing/assets/jigs/'+name),
+  ...['atlas-25-back-black.png','atlas-25-back-gold.png','atlas-25-back-silver.png','atlas-25-backs-manifest.json'].map(name=>'frontend/atlas-app/assets/label-templates/'+name),
+]);
 const staticRequired=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json',
-  ...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES,
+  ...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES,...LABEL_25_SOURCES,
   'frontend/atlas-shared/RapidCardCamera.jsx','frontend/atlas-shared/RapidCardCamera.module.css','frontend/atlas-shared/rapid-camera.mjs',
   'frontend/atlas-app/next.config.mjs','frontend/atlas-app/.eslintrc.json','frontend/atlas-app/prisma/schema.prisma',
   'packages/atlas-site-router/routes.mjs','packages/atlas-site-router/report-entry.mjs','packages/atlas-site-router/proof.mjs','packages/atlas-site-router/server.mjs',
