@@ -89,7 +89,8 @@ export function createOwnershipHistoryRuntime({ customerState, settings, createC
     }
   } });
   const composition = createOwnershipLifecycleReadComposition({ customerState, readerClient: restricted });
-  return Object.freeze({ handler: composition.handler, close() {
+  // UI discovery only: this does not prove a database role, session or read readiness.
+  return Object.freeze({ get configuredForDisplay() { return Boolean(selected) && !closed; }, handler: composition.handler, close() {
     if (!closePromise) {
       closed = true;
       closePromise = (async () => {

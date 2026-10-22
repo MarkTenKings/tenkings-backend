@@ -16,6 +16,8 @@ Two further application increments are locally qualified and independently revie
 
 Three Astra specialists separately qualified unregistered ownership contracts and collection/curation previews in `46621dad`; these remain local and are excluded from production. The lead owns integration, browser review, docs, tests/builds and every release effect. The original dirty checkout is untouched.
 
+The customer account now locally mounts separate Current collection and Ownership claim history views, with exact report links and shared access teardown. Specialist54 checks and independent review pass; root's updated44 changed-file checks, production build/secret boundary and full AccountWorkspace browser checks at1440/1024/390/320px pass. The scoped white theme now survives existing customer global styles. History remains default-off and the collection runtime is not configured. This completes the local mounted read journey, not ownership activation, collection media/settings or complete R1. See [mounted hub audit](../audits/2026-10-21/collection-history-mounted-hub.md).
+
 Existing `atlas_manual.public_report_identity` already provides a permanent certificate/token across report versions. Use it rather than minting a competing card identifier. The archive reads approved identity and grade snapshots, not mutable drafts. A staff workspace owner, grading submitter, recorded custodian and legal owner are different facts. Existing paid submission links provide order context, not verified current ownership.
 
 ## Complete scope and acceptance ledger

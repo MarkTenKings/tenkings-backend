@@ -53,7 +53,7 @@ test('workspace clears account/session replacement synchronously and ignores old
   const foreign = { ...next, customer: { id: '99999999-9999-4999-8999-999999999999' } };
   assert.equal(f.read(f.h.render(foreign)), undefined); await flush();
   f.requests[2].resolve(f.fixture.snapshot); await flush();
-  assert.equal(f.read(f.h.render(foreign)), undefined); assert.match(words(f.h.render(foreign)), /unavailable/);
+  assert.equal(f.read(f.h.render(foreign)), undefined); assert.match(words(f.h.render(foreign)), /Sign in again/);
 });
 
 test('logout/access-end aborts pending work and never resurrects its private response', async () => {
@@ -63,8 +63,10 @@ test('logout/access-end aborts pending work and never resurrects its private res
   f.requests[0].resolve(f.fixture.snapshot); await flush();
   assert.match(words(f.h.render(ended)), /Sign in again/); assert.equal(f.read(f.h.render(ended)), undefined);
   // Even re-enabling the parent before a new read cannot restore the old page.
-  assert.equal(f.read(f.h.render(f.props)), undefined); await flush(); assert.equal(f.requests.length, 2);
-  f.h.unmount(); assert.equal(f.requests[1].input.signal.aborted, true);
+  assert.equal(f.read(f.h.render(f.props)), undefined); await flush(); assert.equal(f.requests.length, 1);
+  assert.match(words(f.h.render(f.props)), /Sign in again/);
+  const next = { ...f.props, customer: { id: f.props.customer.id } }; f.h.render(next); await flush();
+  assert.equal(f.requests.length, 2); f.h.unmount(); assert.equal(f.requests[1].input.signal.aborted, true);
 });
 
 test('pagehide discards a ready page and prevents late fetches or bfcache revival', async () => {
@@ -97,7 +99,7 @@ test('injected readers still reject invalid data; unavailable/access errors clea
     if (outcome === 'foreign') f.requests[1].resolve({ ...f.fixture.snapshot, accountId: f.fixture.snapshot.cards[0].cardId });
     else f.requests[1].reject(Object.assign(Error('PRIVATE ERROR'), { code: outcome === 'ended' ? 'COLLECTION_ACCESS_ENDED' : 'NETWORK_FAILURE' }));
     await flush(); const tree = f.h.render(f.props); assert.equal(f.read(tree), undefined);
-    assert.match(words(tree), outcome === 'ended' ? /Sign in again/ : /unavailable/); assert.doesNotMatch(words(tree), /PRIVATE ERROR|No verified cards/);
+    assert.match(words(tree), outcome !== 'unavailable' ? /Sign in again/ : /unavailable/); assert.doesNotMatch(words(tree), /PRIVATE ERROR|No verified cards/);
   }
 });
 
@@ -109,4 +111,34 @@ test('actual read-only collection render contains report bindings and no preview
   const html = renderToStaticMarkup(React.createElement(exports.default, { ...f, readOnly: true }));
   assert.match(html, /Recorded preferences/); assert.match(html, /Find a card on this page/); assert.match(html, /Grade Report/);
   assert.doesNotMatch(html, /checkbox|Preview card preferences|Preview collection preferences|>Save|>Make Offer/);
+});
+
+
+test('captured account ID, reader and old buttons cannot expose or cancel a changed scope', async () => {
+  for (const change of ['id', 'reader']) {
+    const f = setup(); f.h.render(f.props); await flush(); f.requests[0].resolve(f.fixture.snapshot); await flush();
+    const old = f.h.render(f.props); let next = f.props;
+    if (change === 'id') f.props.customer.id = '99999999-9999-4999-8999-999999999999';
+    else next = { ...f.props, readPage: input => { const result = deferred(); f.requests.push({ input, ...result }); return result.promise; } };
+    assert.equal(f.read(f.h.render(next)), undefined); await flush();
+    click(old, 'Refresh collection'); await flush(); assert.equal(f.requests.length, 2);
+    assert.equal(f.requests[1].input.signal.aborted, false);
+    const page = structuredClone(f.fixture.snapshot); page.accountId = next.customer.id; page.preferences.accountId = next.customer.id;
+    for (const card of page.cards) card.ownership.ownerAccountId = next.customer.id;
+    f.requests[1].resolve(page); await flush(); assert.equal(f.read(f.h.render(next)).snapshot.accountId, next.customer.id);
+    f.h.unmount();
+  }
+});
+
+test('all authority refusals notify shared scope once and cannot be undone by a READY toggle', async () => {
+  for (const fail of [401, 403, 'account', 'owner']) {
+    const f=setup(); let lost=0; f.props.onAccessLost=()=>lost++;
+    f.h.render(f.props); await flush();
+    if(typeof fail==='number') f.requests[0].reject({status:fail});
+    else { const page=structuredClone(f.fixture.snapshot); if(fail==='account') page.accountId='99999999-9999-4999-8999-999999999999';
+      else page.cards[0].ownership.ownerAccountId='99999999-9999-4999-8999-999999999999'; f.requests[0].resolve(page); }
+    await flush(); assert.match(words(f.h.render(f.props)), /Sign in again/); assert.equal(lost,1);
+    f.h.render({...f.props,accessState:'ENDED'}); f.h.render(f.props); await flush(); assert.equal(f.requests.length,1);
+    f.h.unmount();
+  }
 });

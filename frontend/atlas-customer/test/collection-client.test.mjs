@@ -23,8 +23,8 @@ test('empty, unavailable and access-ended responses are distinct', async () => {
 });
 
 test('client refuses malformed, cacheable, oversized and foreign-account successes', async () => {
-  const f = fixture(), foreign = structuredClone(f.snapshot); foreign.accountId = f.snapshot.cards[0].cardId;
-  for (const get of [() => reply(foreign), () => reply(f.snapshot, { headers: { 'content-type': 'application/json', 'cache-control': 'public,max-age=100' } }),
+  const f = fixture();
+  for (const get of [() => reply(f.snapshot, { headers: { 'content-type': 'application/json', 'cache-control': 'public,max-age=100' } }),
     () => reply(f.snapshot, { headers: { 'content-type': 'text/html', 'cache-control': 'private,no-store' } }),
     () => reply({ extra: 'x'.repeat(262145) }), () => new Response('{bad', { headers: { 'content-type': 'application/json', 'cache-control': 'private,no-store' } })]) {
     await assert.rejects(readCollectionPage({ accountId: f.accountId }, async () => get()), { code: 'COLLECTION_UNAVAILABLE' });
@@ -48,4 +48,16 @@ test('strict keyset boundary rejects impossible pages and never invents totals',
     assert.throws(() => parseOwnerCollectionPage(changed, f.accountId, { limit: 1 }));
   assert.throws(() => parseOwnerCollectionPage(page, f.accountId, { afterCardId: card.cardId, limit: 1 }));
   for (const input of [{ limit: 51 }, { limit: '25' }, { afterCardId: '../card' }]) assert.throws(() => collectionPagePath(input));
+});
+
+
+test('foreign account or owner replies end shared access while malformed projections remain unavailable', async () => {
+  const f=fixture();
+  for(const mutate of [v=>v.accountId=f.snapshot.cards[0].cardId, v=>v.preferences.accountId=f.snapshot.cards[0].cardId,
+    v=>v.cards[0].ownership.ownerAccountId=f.snapshot.cards[0].cardId]){
+    const value=structuredClone(f.snapshot);mutate(value);
+    await assert.rejects(readCollectionPage({accountId:f.accountId},async()=>reply(value)),{code:'COLLECTION_ACCESS_ENDED'});
+  }
+  const invalid=structuredClone(f.snapshot);invalid.cards[0].approvedCard.report.publicHash='invalid';
+  await assert.rejects(readCollectionPage({accountId:f.accountId},async()=>reply(invalid)),{code:'COLLECTION_UNAVAILABLE'});
 });

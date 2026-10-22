@@ -60,7 +60,7 @@ test('configuration binds same database with distinct credentials, fixed schema/
 
 test('factory and disabled close have zero I/O, malformed settings stay unavailable and expose no credentials',async()=>{
   for(const selected of [{enabled:undefined,databaseUrl:undefined},{enabled:'1',databaseUrl:'postgresql://private-secret@bad'}]){
-    const f=setup({selected});assert.deepEqual(f.calls,{construct:0,disconnect:0,transaction:0});assert(Object.isFrozen(f.runtime));assert.deepEqual(Object.keys(f.runtime),['handler','close']);
+    const f=setup({selected});assert.equal(f.runtime.configuredForDisplay,false);assert.deepEqual(f.calls,{construct:0,disconnect:0,transaction:0});assert(Object.isFrozen(f.runtime));assert.deepEqual(Object.keys(f.runtime),['configuredForDisplay','handler','close']);
     const result=await f.read();assert.equal(result.code,503);assert.deepEqual(result.body,{error:'OWNERSHIP_CLAIMS_UNAVAILABLE'});
     await f.runtime.close();assert.deepEqual(f.calls,{construct:0,disconnect:0,transaction:0});assert.doesNotMatch(JSON.stringify(f.runtime),/secret|databaseUrl/);
   }
@@ -108,4 +108,11 @@ test('factory cannot smuggle general customer client and later method drift refu
   assert.equal((await g.read()).code,503);await g.runtime.close();assert.equal(g.calls.disconnect,1);
   const h=setup();assert.equal((await h.read()).code,200);h.owned.$disconnect=()=>assert.fail('Replaced disconnect invoked');
   assert.equal((await h.read()).code,503);await assert.rejects(h.runtime.close(),/OWNERSHIP_CLAIMS_UNAVAILABLE/);assert.equal(h.calls.disconnect,0);
+});
+
+test('display discovery is a boolean only, performs no I/O and never claims reader readiness',async()=>{
+  const f=setup({construct:()=>{throw Error('unavailable role');}});
+  assert.equal(f.runtime.configuredForDisplay,true);assert.equal(f.calls.construct,0);
+  assert.equal((await f.read()).code,503);assert.equal(f.runtime.configuredForDisplay,true);
+  await f.runtime.close();assert.equal(f.runtime.configuredForDisplay,false);
 });

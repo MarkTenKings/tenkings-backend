@@ -11,18 +11,24 @@ const account = customer => typeof customer?.id === 'string' && /^[a-f0-9]{8}-[a
  * requests only a read page; fixtures may inject a reader, never an authority.
  * Titles/media require a separate authorized exact-approval reader and are
  * deliberately absent. No settings, claim, transfer or offer writer is exposed. */
-export default function CollectionWorkspace({ customer, accessState = 'READY', readPage = readCollectionPage }) {
+export default function CollectionWorkspace({ customer, accessState = 'READY', readPage = readCollectionPage, onAccessLost }) {
+  const accountId = customer?.id;
+  const latest = useRef(null); latest.current = { customer, accountId, accessState, readPage, onAccessLost };
   const [view, setView] = useState(null), [ended, setEnded] = useState(false);
-  const active = useRef({ generation: 0, controller: null, ended: false });
+  const active = useRef({ generation: 0, controller: null, ended: false, closed: false, deniedCustomer: null });
   const cancel = useCallback(() => { active.current.generation++; active.current.controller?.abort(); active.current.controller = null; }, []);
   const load = useCallback((afterCardId = null) => {
+    const now = latest.current;
+    if (now.customer !== customer || now.accountId !== accountId || now.customer?.id !== accountId || now.readPage !== readPage || now.accessState !== 'READY'
+      || !account(customer) || active.current.closed || active.current.ended || active.current.deniedCustomer === customer) return;
     cancel();
-    if (!account(customer) || accessState !== 'READY' || active.current.ended) { setView(null); return; }
     const generation = active.current.generation, controller = new AbortController();
     active.current.controller = controller;
-    setView({ customer, status: 'LOADING', afterCardId });
-    const input = { accountId: customer.id, afterCardId, limit: LIMIT, signal: controller.signal };
-    const current = () => active.current.generation === generation && !controller.signal.aborted && !active.current.ended;
+    setView({ customer, accountId, readPage, status: 'LOADING', afterCardId });
+    const input = { accountId, afterCardId, limit: LIMIT, signal: controller.signal };
+    const current = () => active.current.generation === generation && !controller.signal.aborted && !active.current.closed && !active.current.ended
+      && active.current.deniedCustomer !== customer && latest.current.customer === customer && latest.current.accountId === accountId && latest.current.customer?.id === accountId
+      && latest.current.readPage === readPage && latest.current.accessState === 'READY';
     Promise.resolve().then(() => {
       if (!current()) return null;
       return readPage(input);
@@ -30,27 +36,34 @@ export default function CollectionWorkspace({ customer, accessState = 'READY', r
       if (!current()) return;
       // Keep validation here as well as in the real network reader: fixture
       // injection must never bypass account, approval or pagination checks.
-      const snapshot = parseOwnerCollectionPage(value, customer.id, input);
-      setView({ customer, status: 'READY', afterCardId, snapshot });
+      const snapshot = parseOwnerCollectionPage(value, accountId, input);
+      setView({ customer, accountId, readPage, status: 'READY', afterCardId, snapshot });
     }).catch(error => {
       if (!current()) return;
-      setView({ customer, status: error.code === 'COLLECTION_ACCESS_ENDED' || error.status === 401 || error.status === 403 ? 'ENDED' : 'UNAVAILABLE', afterCardId });
+      const denied = ['COLLECTION_ACCESS_ENDED', 'COLLECTION_ACCOUNT_MISMATCH', 'COLLECTION_OWNER_MISMATCH'].includes(error.code) || error.status === 401 || error.status === 403;
+      if (denied) { active.current.deniedCustomer = customer; cancel(); }
+      setView({ customer, accountId, readPage, status: denied ? 'ENDED' : 'UNAVAILABLE', afterCardId });
+      if (denied) latest.current.onAccessLost?.();
     });
-  }, [cancel, customer, accessState, readPage]);
+  }, [cancel, customer, accountId, readPage]);
   useEffect(() => {
-    load();
-    return cancel;
-  }, [cancel, load]);
-  useEffect(() => {
+    const lifecycle = active.current; lifecycle.closed = false;
     const hide = () => { active.current.ended = true; cancel(); setView(null); setEnded(true); };
     window.addEventListener('pagehide', hide);
-    return () => { window.removeEventListener('pagehide', hide); cancel(); };
+    return () => { lifecycle.closed = true; window.removeEventListener('pagehide', hide); cancel(); };
   }, [cancel]);
+  useEffect(() => {
+    cancel(); setView(null);
+    if (accessState !== 'READY') active.current.deniedCustomer = customer;
+    else load();
+    return cancel;
+  }, [cancel, load, customer, accessState]);
   // This identity comparison runs before effects, so neither the prior account
   // nor a replaced session's content survives even one render.
-  const shown = !ended && accessState === 'READY' && account(customer) && view?.customer === customer ? view : null;
+  const shown = !ended && active.current.deniedCustomer !== customer && accessState === 'READY' && account(customer)
+    && view?.customer === customer && view?.accountId === accountId && view?.readPage === readPage ? view : null;
   if (!shown || shown.status !== 'READY') {
-    const status = ended || accessState !== 'READY' || !account(customer) || shown?.status === 'ENDED' ? 'ENDED'
+    const status = ended || active.current.deniedCustomer === customer || accessState !== 'READY' || !account(customer) || shown?.status === 'ENDED' ? 'ENDED'
       : shown?.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'LOADING';
     return <section className={styles.workspace} aria-label="My Collection"><h1>My Collection</h1>
       <p role="status">{status === 'LOADING' ? 'Loading your collection…' : status === 'ENDED' ? 'Sign in again to open your collection.' : 'Your collection is unavailable. Please try again later.'}</p>

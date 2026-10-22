@@ -40,6 +40,7 @@ export async function readCollectionPage({ accountId, afterCardId = null, limit 
     return parseOwnerCollectionPage(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), accountId, { afterCardId, limit });
   } catch (error) {
     if (controller.signal.aborted) throw failure(signal?.aborted ? 'COLLECTION_CANCELLED' : 'COLLECTION_UNAVAILABLE');
+    if (['COLLECTION_ACCOUNT_MISMATCH', 'COLLECTION_OWNER_MISMATCH'].includes(error.code)) throw failure('COLLECTION_ACCESS_ENDED');
     if (['COLLECTION_ACCESS_ENDED', 'COLLECTION_UNAVAILABLE'].includes(error.code)) throw error;
     throw failure('COLLECTION_UNAVAILABLE');
   } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); }

@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-html-link-for-pages -- Exact published report links leave the /account application. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ownershipClaimsAccount, parseOwnershipClaimsPage, parseOwnershipClaimHistory } from '../../lib/ownership-claims-client.mjs';
 import styles from './OwnershipClaimsWorkspace.module.css';
@@ -18,7 +19,7 @@ const date = value => new Date(value).toLocaleString('en-US', { dateStyle: 'medi
 export default function OwnershipClaimsWorkspace({ customer, accessState = 'READY', enabled = false, readPage = null, readHistory = null, onAccessLost }) {
   const accountId = customer?.id;
   const [view, setView] = useState(null), [hidden, setHidden] = useState(false), [history, setHistory] = useState(null);
-  const active = useRef({ generation: 0, controller: null, closed: false, deniedCustomer: null, historyGeneration: 0, historyController: null, revisions: new Map() });
+  const active = useRef({ generation: 0, controller: null, closed: false, mounted: true, deniedCustomer: null, historyGeneration: 0, historyController: null, revisions: new Map() });
   const latest = useRef(null); latest.current = { customer, accessState, enabled, readPage, readHistory, onAccessLost, view, history };
   const cancelHistory = useCallback(() => { active.current.historyGeneration++; active.current.historyController?.abort(); active.current.historyController = null; }, []);
   const cancel = useCallback(() => { active.current.generation++; active.current.controller?.abort(); active.current.controller = null; cancelHistory(); }, [cancelHistory]);
@@ -26,10 +27,10 @@ export default function OwnershipClaimsWorkspace({ customer, accessState = 'READ
     const scope = latest.current;
     // Old page buttons and replies cannot cancel or replace a new session's read.
     if (scope.customer !== customer || scope.readPage !== readPage || scope.enabled !== true || scope.accessState !== 'READY'
-      || scope.customer?.id !== accountId || active.current.closed || active.current.deniedCustomer === customer || !ownershipClaimsAccount(accountId) || typeof readPage !== 'function') return;
+      || scope.customer?.id !== accountId || !active.current.mounted || active.current.closed || active.current.deniedCustomer === customer || !ownershipClaimsAccount(accountId) || typeof readPage !== 'function') return;
     cancel(); setHistory(null); active.current.revisions.clear();
     const generation = active.current.generation, controller = new AbortController(); active.current.controller = controller;
-    const current = () => active.current.generation === generation && !controller.signal.aborted && !active.current.closed
+    const current = () => active.current.generation === generation && !controller.signal.aborted && active.current.mounted && !active.current.closed
       && latest.current.customer === customer && latest.current.customer?.id === accountId && latest.current.readPage === readPage && latest.current.enabled === true
       && latest.current.accessState === 'READY' && active.current.deniedCustomer !== customer;
     setView({ customer, accountId, readPage, status: 'LOADING', afterClaimId });
@@ -47,27 +48,28 @@ export default function OwnershipClaimsWorkspace({ customer, accessState = 'READ
     });
   }, [cancel, customer, accountId, readPage]);
   useEffect(() => {
+    const lifecycle = active.current; lifecycle.mounted = true;
+    const hide = () => { active.current.closed = true; cancel(); setView(null); setHistory(null); setHidden(true); };
+    window.addEventListener('pagehide', hide);
+    return () => { lifecycle.mounted = false; window.removeEventListener('pagehide', hide); cancel(); };
+  }, [cancel]);
+  useEffect(() => {
     cancel(); setView(null); setHistory(null);
     if (accessState !== 'READY') active.current.deniedCustomer = customer;
     if (enabled === true && accessState === 'READY') load();
     return cancel;
   }, [cancel, load, customer, accessState, enabled]);
-  useEffect(() => {
-    const hide = () => { active.current.closed = true; cancel(); setView(null); setHistory(null); setHidden(true); };
-    window.addEventListener('pagehide', hide);
-    return () => { window.removeEventListener('pagehide', hide); cancel(); };
-  }, [cancel]);
   useEffect(() => { cancelHistory(); setHistory(null); return cancelHistory; }, [cancelHistory, readHistory]);
   const loadHistory = (row, afterRevision = 0) => {
     const scope = latest.current;
     if (scope.customer !== customer || scope.customer?.id !== accountId || scope.readPage !== readPage || scope.readHistory !== readHistory
-      || scope.enabled !== true || scope.accessState !== 'READY' || active.current.closed || active.current.deniedCustomer === customer
+      || scope.enabled !== true || scope.accessState !== 'READY' || !active.current.mounted || active.current.closed || active.current.deniedCustomer === customer
       || scope.view !== view || typeof readHistory !== 'function' || view?.status !== 'READY' || view.customer !== customer || view.accountId !== accountId) return;
     cancelHistory();
     const generation = active.current.historyGeneration, pageGeneration = active.current.generation, controller = new AbortController();
     active.current.historyController = controller;
     const current = () => active.current.historyGeneration === generation && active.current.generation === pageGeneration
-      && !controller.signal.aborted && !active.current.closed && active.current.deniedCustomer !== customer
+      && !controller.signal.aborted && active.current.mounted && !active.current.closed && active.current.deniedCustomer !== customer
       && latest.current.customer === customer && latest.current.customer?.id === accountId && latest.current.readPage === readPage
       && latest.current.readHistory === readHistory && latest.current.enabled === true && latest.current.accessState === 'READY';
     const context = { customer, accountId, readPage, readHistory, claimId: row.claimId, afterRevision };
@@ -113,7 +115,7 @@ export default function OwnershipClaimsWorkspace({ customer, accessState = 'READ
             <p className={styles.ownership}>{claim.currentlyOwnedByYou ? 'Current ownership is recorded to your account.' : 'No current ownership is recorded to your account.'}</p>
             <dl className={styles.facts}><div><dt>Current claim revision</dt><dd>{claim.claimRevision}</dd></div>
               <div><dt>Current evidence reference</dt><dd className={styles.reference}>{claim.bundleId ?? 'No v2 evidence bundle recorded'}</dd></div>
-              {claim.card && <div><dt>Published report</dt><dd>Version {claim.card.report.version}</dd></div>}
+              {claim.card && <div><dt>Published report</dt><dd><a href={`/reports/${claim.card.report.publicToken}?v=${claim.card.report.version}`} referrerPolicy="no-referrer">Grade Report · Version {claim.card.report.version}</a></dd></div>}
             </dl>
             {claim.blockedReasons.length > 0 && <div className={styles.blocked}><p>{claim.state === 'PENDING' ? 'Review blocked' : 'Current evidence and card availability'}</p>
               {claim.blockedReasons.map(reason => <p key={reason}>{reasons[reason]}</p>)}</div>}
@@ -136,7 +138,7 @@ export default function OwnershipClaimsWorkspace({ customer, accessState = 'READ
                     {detail.afterRevision > 0 && <button type="button" onClick={() => loadHistory(claim)}>First changes</button>}
                     {detail.snapshot.nextRevision !== null && <button type="button" onClick={() => loadHistory(claim, detail.snapshot.nextRevision)}>Next changes</button>}
                   </nav></>}
-              <div className={styles.actions}><button type="button" onClick={() => { if (latest.current.history === detail && latest.current.customer === customer && latest.current.customer?.id === accountId) { cancelHistory(); setHistory(null); } }}>Close changes</button></div>
+              <div className={styles.actions}><button type="button" onClick={() => { if (active.current.mounted && !active.current.closed && latest.current.accessState === 'READY' && latest.current.history === detail && latest.current.customer === customer && latest.current.customer?.id === accountId) { cancelHistory(); setHistory(null); } }}>Close changes</button></div>
             </section>}
           </li>;
         })}</ol>}

@@ -6,7 +6,8 @@ export async function customerPage({ req, res }, props = {}, resolve = runtime) 
     privateHeaders(res);
     try {
         const state = await resolve(); state.assertRequest(req);
-        return { props };
+        return { props: props.initialView === 'collection' ? { ...props,
+            historyConfiguredForDisplay: state.ownershipHistory?.configuredForDisplay === true } : props };
     } catch (error) {
         res.statusCode = error instanceof BoundaryError ? error.status : 503;
         return { props: { unavailable: true } };

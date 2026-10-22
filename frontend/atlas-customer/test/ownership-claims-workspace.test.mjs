@@ -60,8 +60,11 @@ test('actual component separates recorded current states, independent title and 
   assert.match(words(claims[5]), /earlier review policy/); assert.match(words(claims[6]), /review policy is unavailable/);
   assert.match(words(claims[7]), /Card details unavailable.*Withdrawn.*Evidence is unavailable/);
   assert.match(words(tree), /A verified claim records a review decision/); assert.match(words(tree), /up to 25 claims/);
-  assert.equal(all(tree, node => ['input', 'a', 'form', 'img'].includes(node.type)).length, 0);
+  assert.equal(all(tree, node => ['input', 'form', 'img'].includes(node.type)).length, 0);
   assert.deepEqual(all(tree, x => x.type === 'button').map(words), ['Refresh page']);
+  const reports = all(tree, x => x.type === 'a'); assert.equal(reports.length, 7);
+  assert(reports.every(x => x.props.href === '/reports/ar_' + 'A'.repeat(24) + '?v=2' && x.props.referrerPolicy === 'no-referrer'));
+  assert.equal(all(claims[7], x => x.type === 'a').length, 0);
 });
 
 test('account/session replacement hides private rows synchronously and rejects old buttons and late replies', async () => {
