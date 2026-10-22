@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { createDeflate } from 'node:zlib';
 import { once } from 'node:events';
 import { LABEL_JIG_V1, labelSlotTransform } from './label-sheet-geometry.mjs';
+import { LABEL_JIG_25, getLabel25Profile, label25SlotTransform } from './label-sheet-25.mjs';
 sharp.cache(false);
 sharp.concurrency(1);
 
@@ -21,16 +22,21 @@ for await (const bytes of process.stdin) { input += bytes; if (input.length > 54
 const { svg, exportProfile: p, outputPath } = JSON.parse(input); input = '';
 if (!Number.isInteger(p.pixelWidth) || !Number.isInteger(p.pixelHeight) || p.pixelWidth > 12800 || p.pixelHeight > 12800
     || ![800, 2400].includes(p.ppi) || p.stripRows !== 256) throw new Error('LABEL_RASTER_PROFILE_INVALID');
-const tiled = p.rasterizer === 'sharp-0.33.5-clipped-strip-png-v2';
+const layout25 = getLabel25Profile(p.id);
+const tiled25 = p.rasterizer === 'sharp-0.33.5-jig25-clipped-strip-png-v1';
+if (tiled25 !== Boolean(layout25) || layout25 && (p.jigHash !== layout25.jigHash || p.templateId !== layout25.templateId
+    || p.page !== layout25.page || p.firstSourceSlot !== layout25.firstSourceSlot || p.lastSourceSlot !== layout25.lastSourceSlot
+    || !svg.startsWith('<svg ') || !svg.slice(0, svg.indexOf('>')).includes(`data-jig-hash="${layout25.jigHash}"`))) throw new Error('LABEL_RASTER_PROFILE_INVALID');
+const tiled = tiled25 || p.rasterizer === 'sharp-0.33.5-clipped-strip-png-v2';
 const blackInk = p.printMode === 'BLACK_INK_TRANSPARENT';
 if (p.printMode != null && (!blackInk || p.artworkConversion !== 'white-and-gray-vector-knockouts-v1' || p.rgbPolicy !== 'black-rgb-zero-v1')) throw new Error('LABEL_RASTER_PROFILE_INVALID');
 if (tiled && (p.pixelWidth !== 9764 || p.pixelHeight !== 12598 || p.widthMm !== 310 || p.heightMm !== 400
-    || p.ppi !== 800 || p.tileHaloPixels !== 1 || p.maxTileWidth !== 640)) throw new Error('LABEL_RASTER_PROFILE_INVALID');
+    || p.ppi !== 800 || p.tileHaloPixels !== 1 || p.maxTileWidth !== (tiled25 ? 2160 : 640))) throw new Error('LABEL_RASTER_PROFILE_INVALID');
 const started = performance.now(), output = await open(outputPath, 'wx', 0o600), sha = createHash('sha256');
 let byteCount = 0, peakRssBytes = process.memoryUsage().rss, rasterizedTiles = 0, maxRasterTileBytes = 0;
 // Approved B embeds pinned raster artwork. Decode it once per occupied frame,
 // rather than once for every output strip; historical vector tiles are unchanged.
-const frameLimit = { width: 640, height: 2160, count: 10 };
+const frameLimit = tiled25 ? { width: 2160, height: 2160, maxPixels: 640 * 2160, count: 10 } : { width: 640, height: 2160, count: 10 };
 const frames = new Map();
 let rasterizedFrames = 0, maxRasterFrameBytes = 0, maxCachedFrames = 0, maxCachedFrameBytes = 0, cachedFrameBytes = 0;
 async function write(bytes) {
@@ -56,12 +62,12 @@ try {
     if (remainder.length) await write(chunk('IDAT', remainder));
   })();
   const content = svg.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
-  const matches = [...content.matchAll(/<g data-slot="(\d+)" transform="translate\(([^,]+),([^)]+)\) rotate\(90\)">/g)];
-  if (tiled && (matches.length < 1 || matches.length > 50 || matches[0].index !== 0)) throw new Error('LABEL_RASTER_SHEET_INVALID');
+  const matches = [...content.matchAll(/<g data-slot="(\d+)" transform="translate\(([^,]+),([^)]+)\) rotate\((?:0|90)\)">/g)];
+  if (tiled && (matches.length < 1 || matches.length > (tiled25 ? 25 : 50) || matches[0].index !== 0)) throw new Error('LABEL_RASTER_SHEET_INVALID');
   const seen = new Set();
   const groups = matches.map((match, i) => {
-    const slot = Number(match[1]), frame = LABEL_JIG_V1.slots.find(value => value.slot === slot);
-    if (!tiled || !frame || seen.has(slot) || match[0] !== `<g data-slot="${slot}" transform="${labelSlotTransform(slot)}">`) throw new Error('LABEL_RASTER_SHEET_INVALID');
+    const slot = Number(match[1]), frame = (tiled25 ? LABEL_JIG_25 : LABEL_JIG_V1).slots.find(value => value.slot === slot);
+    if (!tiled || !frame || seen.has(slot) || match[0] !== `<g data-slot="${slot}" transform="${tiled25 ? label25SlotTransform(slot) : labelSlotTransform(slot)}">`) throw new Error('LABEL_RASTER_SHEET_INVALID');
     seen.add(slot);
     const left = Math.floor(frame.xMm * p.pixelWidth / p.widthMm) - p.tileHaloPixels;
     const right = Math.ceil((frame.xMm + frame.widthMm) * p.pixelWidth / p.widthMm) + p.tileHaloPixels;
@@ -87,11 +93,11 @@ try {
           tile = frames.get(group.slot);
           if (!tile) {
             const frameHeight = group.bottom - group.top;
-            if (group.width > frameLimit.width || frameHeight > frameLimit.height || frameHeight < 1
+            if (group.width > frameLimit.width || frameHeight > frameLimit.height || group.width * frameHeight > 640 * 2160 || frameHeight < 1
                 || group.top < 0 || group.bottom > p.pixelHeight || frames.size >= frameLimit.count) throw new Error('LABEL_RASTER_FRAME_BOUNDS_INVALID');
             const frameTopMm = group.top * p.heightMm / p.pixelHeight, frameHeightMm = frameHeight * p.heightMm / p.pixelHeight;
             const frameSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${group.width}" height="${frameHeight}"><svg x="${-group.left}" width="${p.pixelWidth}" height="${frameHeight}" viewBox="0 ${frameTopMm} ${p.widthMm} ${frameHeightMm}" preserveAspectRatio="none">${group.svg}</svg></svg>`;
-            tile = await sharp(Buffer.from(frameSvg), { limitInputPixels: frameLimit.width * frameLimit.height, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+            tile = await sharp(Buffer.from(frameSvg), { limitInputPixels: 640 * 2160, density: 72 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
             if (tile.info.width !== group.width || tile.info.height !== frameHeight || tile.info.channels !== 4) throw new Error('LABEL_FRAME_DIMENSION_MISMATCH');
             frames.set(group.slot, tile); cachedFrameBytes += tile.data.length;
             rasterizedFrames += 1; maxRasterFrameBytes = Math.max(maxRasterFrameBytes, tile.data.length);

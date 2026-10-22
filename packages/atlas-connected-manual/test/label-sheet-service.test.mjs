@@ -11,6 +11,7 @@ import { LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-a
 import { APPROVED_B_LAYOUT, renderApprovedBBack, colorApprovedBArtwork } from '@atlas/finishing/label-approved-b-artwork';
 import { renderLabelV4, LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
+import { LABEL_25_PROFILE_DEFINITIONS, getLabel25Profile } from '@atlas/finishing/label-sheet-25';
 import { labelFailureHash } from '../src/label-sheet-repository.mjs';
 
 async function fixture({ cardProfile = 'SPORTS' } = {}) {
@@ -255,7 +256,46 @@ test('new export profiles reject historical members before reservation and bind 
     await assert.rejects(prepare(),{code:'LABEL_APPROVED_B_REQUIRED'});assert.equal(queued,null);
     item.renderer_profile_hash=out.rendererProfileHash;await prepare();assert.equal(await service.runPending(),1);assert.equal(finished,true);
   }
-  assert.equal(writes.length,8);assert.equal(failures,0);
+  assert.equal(writes.length,[...LABEL_SINGLE_EXPORT_PROFILES,...LABEL_SHEET_EXPORT_PROFILES]
+    .filter(value=>value.side==='BACK'||value.outputMode==='COLOR_PRINT').length);assert.equal(failures,0);
+});
+
+test('25-position page profiles retain original source slots through service rendering and storage',async()=>{
+  const f=await fixture();await f.service.runPending();const artwork=f.saved[0],writes=[];
+  const source={...f.item,state:'READY',print_svg:artwork.printSvg,artwork_hash:artwork.artworkHash,
+    renderer_profile_hash:artwork.rendererProfileHash,material_profile_id:artwork.materialProfileId,
+    snapshot:canonical(artwork.snapshot),snapshot_hash:digest(canonical(artwork.snapshot))};
+  let queued=null,finished=null,failures=0;
+  f.repository.prepareExport=async(_staff,{kind,id,input,validateItems})=>{
+    assert.equal(kind,'SHEET');const profile=getLabel25Profile(input.exportProfileId);
+    const items=[profile.firstSourceSlot,profile.lastSourceSlot].map(slot=>({...source,slot}));
+    validateItems?.(items);
+    queued={row:{id:randomUUID(),kind,sheet_id:id,profile_id:input.exportProfileId,manifest_hash:digest(input.exportProfileId)},items};
+    return{exportId:queued.row.id,exportProfileId:input.exportProfileId};
+  };
+  f.repository.pendingCandidates=async()=>queued&&!finished?[{id:queued.row.id,actor_id:f.item.actor_id,access_version:1,kind:'EXPORT'}]:[];
+  f.repository.claimExport=async()=>queued;f.repository.export=async()=>({row:queued.row});
+  f.repository.finishExport=async(_staff,_claim,result)=>{finished=result;};f.repository.failExport=async()=>{failures++;};
+  f.storage.write=async(binding,bytes,{sha256})=>{assert.equal(binding.exportId,queued.row.id);assert.equal(sha256,digest(bytes));
+    writes.push(binding);return{object:{},sha256,byteCount:bytes.length};};
+  const service=createLabelService({repository:f.repository,boundary:f.boundary,finishing:{loadPacket(){}},storage:f.storage,
+    renderer:{label(){},individual(){assert.fail('Sheet profiles cannot render an individual');},sheet:async(labels,options)=>{
+      const profile=getLabel25Profile(options.exportProfileId);
+      assert.deepEqual(labels.map(label=>label.slot),[profile.firstSourceSlot,profile.lastSourceSlot]);
+      assert.ok(labels.every(label=>label.printSvg===artwork.printSvg&&label.artworkHash===artwork.artworkHash));
+      const bytes=Buffer.from(options.exportProfileId);return{bytes,sha256:digest(bytes),manifest:{exportProfileId:options.exportProfileId}};
+    }}});
+  for(const profile of LABEL_25_PROFILE_DEFINITIONS) {
+    finished=null;
+    await service.prepareSheetExport({},randomUUID(),{requestId:randomUUID(),expectedSheetRevision:1,exportProfileId:profile.id});
+    assert.equal(await service.runPending(),1);assert.equal(finished.mapping.exportProfileId,profile.id);
+    assert.throws(()=>service.prepareIndividualExport({},source.id,{requestId:randomUUID(),expectedLabelHash:source.artwork_hash,
+      exportProfileId:profile.id}),{code:'LABEL_PROFILE_INVALID'});
+  }
+  assert.equal(writes.length,12);assert.equal(failures,0);
+  for(const extra of [{page:2},{slots:[26,50]},{jigHash:digest('client jig')}])
+    assert.throws(()=>service.prepareSheetExport({},randomUUID(),{requestId:randomUUID(),expectedSheetRevision:1,
+      exportProfileId:LABEL_25_PROFILE_DEFINITIONS[0].id,...extra}),{code:'LABEL_REQUEST_INVALID'});
 });
 
 

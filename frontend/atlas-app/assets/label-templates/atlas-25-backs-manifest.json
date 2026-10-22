@@ -1,0 +1,904 @@
+{
+  "version": "atlas-reusable-25-backs-v1",
+  "jigHash": "b876c615c5a1f5f771bb3beb29751e3b2cc644b0dc4537c63299c05c0db0d826",
+  "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4",
+  "outputs": [
+    {
+      "filename": "atlas-25-back-black.png",
+      "stock": "gold",
+      "version": "atlas-label-png-manifest-v1",
+      "jigHash": "b876c615c5a1f5f771bb3beb29751e3b2cc644b0dc4537c63299c05c0db0d826",
+      "calibrationProfileHash": null,
+      "templateId": "atlas-25-label-xtool-v1",
+      "page": 1,
+      "sourceSlots": {
+        "first": 1,
+        "last": 25
+      },
+      "pixelWidth": 9764,
+      "pixelHeight": 12598,
+      "canvasWidthMm": 310,
+      "canvasHeightMm": 400,
+      "cropXmm": 0,
+      "cropYmm": 0,
+      "intendedImportWidthMm": 310,
+      "intendedImportHeightMm": 400,
+      "intendedImportXmm": null,
+      "intendedImportYmm": null,
+      "importPositionAnchor": null,
+      "importAxes": null,
+      "rotationDeg": 0,
+      "effectivePpiX": 800.0180645161289,
+      "effectivePpiY": 799.9729999999998,
+      "alphaPolicy": "straight-rgba-alpha-threshold-128-v1",
+      "renderProfileHash": "f163dff2544bc074f10f91e788ee7fcdbadacf8d4ca3b67ada254b5cb12a3cb8",
+      "exportProfileId": "atlas-approved-b-jig25-page1-800ppi-black-ink-transparent-back-v1",
+      "contentType": "image/png",
+      "printMode": "BLACK_INK_TRANSPARENT",
+      "artworkConversion": "white-and-gray-vector-knockouts-v1",
+      "rgbPolicy": "black-rgb-zero-v1",
+      "side": "BACK",
+      "qualification": "DIAGNOSTIC_PHYSICAL_IMPORT_UNQUALIFIED",
+      "transparentMarginsVerified": false,
+      "sha256": "43c950753da1d74d3ac6576631c70425d5e55b9f5e3c1a080c5166d1c4ecc1b5",
+      "byteCount": 910970,
+      "orderedArtwork": [
+        {
+          "slot": 1,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 2,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 3,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 4,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 5,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 6,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 7,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 8,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 9,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 10,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 11,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 12,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 13,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 14,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 15,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 16,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 17,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 18,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 19,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 20,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 21,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 22,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 23,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 24,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 25,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        }
+      ],
+      "slotMapping": [
+        {
+          "sourceSlot": 1,
+          "position": 1
+        },
+        {
+          "sourceSlot": 2,
+          "position": 2
+        },
+        {
+          "sourceSlot": 3,
+          "position": 3
+        },
+        {
+          "sourceSlot": 4,
+          "position": 4
+        },
+        {
+          "sourceSlot": 5,
+          "position": 5
+        },
+        {
+          "sourceSlot": 6,
+          "position": 6
+        },
+        {
+          "sourceSlot": 7,
+          "position": 7
+        },
+        {
+          "sourceSlot": 8,
+          "position": 8
+        },
+        {
+          "sourceSlot": 9,
+          "position": 9
+        },
+        {
+          "sourceSlot": 10,
+          "position": 10
+        },
+        {
+          "sourceSlot": 11,
+          "position": 11
+        },
+        {
+          "sourceSlot": 12,
+          "position": 12
+        },
+        {
+          "sourceSlot": 13,
+          "position": 13
+        },
+        {
+          "sourceSlot": 14,
+          "position": 14
+        },
+        {
+          "sourceSlot": 15,
+          "position": 15
+        },
+        {
+          "sourceSlot": 16,
+          "position": 16
+        },
+        {
+          "sourceSlot": 17,
+          "position": 17
+        },
+        {
+          "sourceSlot": 18,
+          "position": 18
+        },
+        {
+          "sourceSlot": 19,
+          "position": 19
+        },
+        {
+          "sourceSlot": 20,
+          "position": 20
+        },
+        {
+          "sourceSlot": 21,
+          "position": 21
+        },
+        {
+          "sourceSlot": 22,
+          "position": 22
+        },
+        {
+          "sourceSlot": 23,
+          "position": 23
+        },
+        {
+          "sourceSlot": 24,
+          "position": 24
+        },
+        {
+          "sourceSlot": 25,
+          "position": 25
+        }
+      ],
+      "rasterReceipt": {
+        "sha256": "43c950753da1d74d3ac6576631c70425d5e55b9f5e3c1a080c5166d1c4ecc1b5",
+        "byteCount": 910970,
+        "pixelWidth": 9764,
+        "pixelHeight": 12598,
+        "peakRssBytes": 460029952,
+        "elapsedMs": 7431,
+        "sharpVersions": {
+          "aom": "3.9.1",
+          "archive": "3.7.4",
+          "cairo": "1.18.0",
+          "cgif": "0.4.1",
+          "exif": "0.6.24",
+          "expat": "2.6.2",
+          "ffi": "3.4.6",
+          "fontconfig": "2.15.0",
+          "freetype": "2.13.2",
+          "fribidi": "1.0.15",
+          "glib": "2.81.1",
+          "harfbuzz": "9.0.0",
+          "heif": "1.18.2",
+          "highway": "1.2.0",
+          "imagequant": "2.4.1",
+          "lcms": "2.16",
+          "mozjpeg": "4.1.5",
+          "pango": "1.54.0",
+          "pixman": "0.43.4",
+          "png": "1.6.43",
+          "proxy-libintl": "0.4",
+          "rsvg": "2.58.93",
+          "spng": "0.7.4",
+          "tiff": "4.6.0",
+          "vips": "8.15.3",
+          "webp": "1.4.0",
+          "xml": "2.13.3",
+          "zlib-ng": "2.2.1",
+          "sharp": "0.33.5"
+        },
+        "alphaBinary": true,
+        "stripRows": 256,
+        "rasterizer": "sharp-0.33.5-jig25-clipped-strip-png-v1",
+        "rasterizedTiles": 0,
+        "maxRasterTileBytes": 0,
+        "frameStrategy": "approved-b-final-grid-frame-cache-v1",
+        "rasterizedFrames": 25,
+        "maxRasterFrameBytes": 5484864,
+        "maxCachedFrames": 6,
+        "maxCachedFrameBytes": 32909184,
+        "frameLimits": {
+          "width": 2160,
+          "height": 2160,
+          "maxPixels": 1382400,
+          "count": 10
+        },
+        "printMode": "BLACK_INK_TRANSPARENT",
+        "blackInkOnly": true
+      }
+    },
+    {
+      "filename": "atlas-25-back-gold.png",
+      "stock": "gold",
+      "version": "atlas-label-png-manifest-v1",
+      "jigHash": "b876c615c5a1f5f771bb3beb29751e3b2cc644b0dc4537c63299c05c0db0d826",
+      "calibrationProfileHash": null,
+      "templateId": "atlas-25-label-xtool-v1",
+      "page": 1,
+      "sourceSlots": {
+        "first": 1,
+        "last": 25
+      },
+      "pixelWidth": 9764,
+      "pixelHeight": 12598,
+      "canvasWidthMm": 310,
+      "canvasHeightMm": 400,
+      "cropXmm": 0,
+      "cropYmm": 0,
+      "intendedImportWidthMm": 310,
+      "intendedImportHeightMm": 400,
+      "intendedImportXmm": null,
+      "intendedImportYmm": null,
+      "importPositionAnchor": null,
+      "importAxes": null,
+      "rotationDeg": 0,
+      "effectivePpiX": 800.0180645161289,
+      "effectivePpiY": 799.9729999999998,
+      "alphaPolicy": "straight-rgba-alpha-threshold-128-v1",
+      "renderProfileHash": "124d4b217222ae49e0cf1239240eb90d383ec367484de873bad287b3c6d501ec",
+      "exportProfileId": "atlas-approved-b-jig25-page1-800ppi-color-back-v1",
+      "contentType": "image/png",
+      "side": "BACK",
+      "outputMode": "COLOR_PRINT",
+      "materialPolicy": "approved-label-material-v1",
+      "qualification": "DIAGNOSTIC_PHYSICAL_IMPORT_UNQUALIFIED",
+      "transparentMarginsVerified": false,
+      "sha256": "e8ca6a649bbc12cc7717fcfd0ac75e61a30dde9c6a48deca082e26c4d26c8a55",
+      "byteCount": 3463960,
+      "orderedArtwork": [
+        {
+          "slot": 1,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 2,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 3,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 4,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 5,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 6,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 7,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 8,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 9,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 10,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 11,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 12,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 13,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 14,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 15,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 16,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 17,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 18,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 19,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 20,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 21,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 22,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 23,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 24,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 25,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        }
+      ],
+      "slotMapping": [
+        {
+          "sourceSlot": 1,
+          "position": 1
+        },
+        {
+          "sourceSlot": 2,
+          "position": 2
+        },
+        {
+          "sourceSlot": 3,
+          "position": 3
+        },
+        {
+          "sourceSlot": 4,
+          "position": 4
+        },
+        {
+          "sourceSlot": 5,
+          "position": 5
+        },
+        {
+          "sourceSlot": 6,
+          "position": 6
+        },
+        {
+          "sourceSlot": 7,
+          "position": 7
+        },
+        {
+          "sourceSlot": 8,
+          "position": 8
+        },
+        {
+          "sourceSlot": 9,
+          "position": 9
+        },
+        {
+          "sourceSlot": 10,
+          "position": 10
+        },
+        {
+          "sourceSlot": 11,
+          "position": 11
+        },
+        {
+          "sourceSlot": 12,
+          "position": 12
+        },
+        {
+          "sourceSlot": 13,
+          "position": 13
+        },
+        {
+          "sourceSlot": 14,
+          "position": 14
+        },
+        {
+          "sourceSlot": 15,
+          "position": 15
+        },
+        {
+          "sourceSlot": 16,
+          "position": 16
+        },
+        {
+          "sourceSlot": 17,
+          "position": 17
+        },
+        {
+          "sourceSlot": 18,
+          "position": 18
+        },
+        {
+          "sourceSlot": 19,
+          "position": 19
+        },
+        {
+          "sourceSlot": 20,
+          "position": 20
+        },
+        {
+          "sourceSlot": 21,
+          "position": 21
+        },
+        {
+          "sourceSlot": 22,
+          "position": 22
+        },
+        {
+          "sourceSlot": 23,
+          "position": 23
+        },
+        {
+          "sourceSlot": 24,
+          "position": 24
+        },
+        {
+          "sourceSlot": 25,
+          "position": 25
+        }
+      ],
+      "rasterReceipt": {
+        "sha256": "e8ca6a649bbc12cc7717fcfd0ac75e61a30dde9c6a48deca082e26c4d26c8a55",
+        "byteCount": 3463960,
+        "pixelWidth": 9764,
+        "pixelHeight": 12598,
+        "peakRssBytes": 473989120,
+        "elapsedMs": 6207,
+        "sharpVersions": {
+          "aom": "3.9.1",
+          "archive": "3.7.4",
+          "cairo": "1.18.0",
+          "cgif": "0.4.1",
+          "exif": "0.6.24",
+          "expat": "2.6.2",
+          "ffi": "3.4.6",
+          "fontconfig": "2.15.0",
+          "freetype": "2.13.2",
+          "fribidi": "1.0.15",
+          "glib": "2.81.1",
+          "harfbuzz": "9.0.0",
+          "heif": "1.18.2",
+          "highway": "1.2.0",
+          "imagequant": "2.4.1",
+          "lcms": "2.16",
+          "mozjpeg": "4.1.5",
+          "pango": "1.54.0",
+          "pixman": "0.43.4",
+          "png": "1.6.43",
+          "proxy-libintl": "0.4",
+          "rsvg": "2.58.93",
+          "spng": "0.7.4",
+          "tiff": "4.6.0",
+          "vips": "8.15.3",
+          "webp": "1.4.0",
+          "xml": "2.13.3",
+          "zlib-ng": "2.2.1",
+          "sharp": "0.33.5"
+        },
+        "alphaBinary": true,
+        "stripRows": 256,
+        "rasterizer": "sharp-0.33.5-jig25-clipped-strip-png-v1",
+        "rasterizedTiles": 0,
+        "maxRasterTileBytes": 0,
+        "frameStrategy": "approved-b-final-grid-frame-cache-v1",
+        "rasterizedFrames": 25,
+        "maxRasterFrameBytes": 5484864,
+        "maxCachedFrames": 6,
+        "maxCachedFrameBytes": 32909184,
+        "frameLimits": {
+          "width": 2160,
+          "height": 2160,
+          "maxPixels": 1382400,
+          "count": 10
+        }
+      }
+    },
+    {
+      "filename": "atlas-25-back-silver.png",
+      "stock": "holo",
+      "version": "atlas-label-png-manifest-v1",
+      "jigHash": "b876c615c5a1f5f771bb3beb29751e3b2cc644b0dc4537c63299c05c0db0d826",
+      "calibrationProfileHash": null,
+      "templateId": "atlas-25-label-xtool-v1",
+      "page": 1,
+      "sourceSlots": {
+        "first": 1,
+        "last": 25
+      },
+      "pixelWidth": 9764,
+      "pixelHeight": 12598,
+      "canvasWidthMm": 310,
+      "canvasHeightMm": 400,
+      "cropXmm": 0,
+      "cropYmm": 0,
+      "intendedImportWidthMm": 310,
+      "intendedImportHeightMm": 400,
+      "intendedImportXmm": null,
+      "intendedImportYmm": null,
+      "importPositionAnchor": null,
+      "importAxes": null,
+      "rotationDeg": 0,
+      "effectivePpiX": 800.0180645161289,
+      "effectivePpiY": 799.9729999999998,
+      "alphaPolicy": "straight-rgba-alpha-threshold-128-v1",
+      "renderProfileHash": "124d4b217222ae49e0cf1239240eb90d383ec367484de873bad287b3c6d501ec",
+      "exportProfileId": "atlas-approved-b-jig25-page1-800ppi-color-back-v1",
+      "contentType": "image/png",
+      "side": "BACK",
+      "outputMode": "COLOR_PRINT",
+      "materialPolicy": "approved-label-material-v1",
+      "qualification": "DIAGNOSTIC_PHYSICAL_IMPORT_UNQUALIFIED",
+      "transparentMarginsVerified": false,
+      "sha256": "b47cfc0c3888043f2c049a8581a3c858c949a4bcfc92fc72dd8c0e1e4fd64d04",
+      "byteCount": 3549031,
+      "orderedArtwork": [
+        {
+          "slot": 1,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 2,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 3,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 4,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 5,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 6,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 7,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 8,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 9,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 10,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 11,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 12,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 13,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 14,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 15,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 16,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 17,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 18,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 19,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 20,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 21,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 22,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 23,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 24,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        },
+        {
+          "slot": 25,
+          "artworkHash": "0fd05517a9406add216f6bdbd828969ae6da3a57391bd0e5b3ba7c053039a6c4"
+        }
+      ],
+      "slotMapping": [
+        {
+          "sourceSlot": 1,
+          "position": 1
+        },
+        {
+          "sourceSlot": 2,
+          "position": 2
+        },
+        {
+          "sourceSlot": 3,
+          "position": 3
+        },
+        {
+          "sourceSlot": 4,
+          "position": 4
+        },
+        {
+          "sourceSlot": 5,
+          "position": 5
+        },
+        {
+          "sourceSlot": 6,
+          "position": 6
+        },
+        {
+          "sourceSlot": 7,
+          "position": 7
+        },
+        {
+          "sourceSlot": 8,
+          "position": 8
+        },
+        {
+          "sourceSlot": 9,
+          "position": 9
+        },
+        {
+          "sourceSlot": 10,
+          "position": 10
+        },
+        {
+          "sourceSlot": 11,
+          "position": 11
+        },
+        {
+          "sourceSlot": 12,
+          "position": 12
+        },
+        {
+          "sourceSlot": 13,
+          "position": 13
+        },
+        {
+          "sourceSlot": 14,
+          "position": 14
+        },
+        {
+          "sourceSlot": 15,
+          "position": 15
+        },
+        {
+          "sourceSlot": 16,
+          "position": 16
+        },
+        {
+          "sourceSlot": 17,
+          "position": 17
+        },
+        {
+          "sourceSlot": 18,
+          "position": 18
+        },
+        {
+          "sourceSlot": 19,
+          "position": 19
+        },
+        {
+          "sourceSlot": 20,
+          "position": 20
+        },
+        {
+          "sourceSlot": 21,
+          "position": 21
+        },
+        {
+          "sourceSlot": 22,
+          "position": 22
+        },
+        {
+          "sourceSlot": 23,
+          "position": 23
+        },
+        {
+          "sourceSlot": 24,
+          "position": 24
+        },
+        {
+          "sourceSlot": 25,
+          "position": 25
+        }
+      ],
+      "rasterReceipt": {
+        "sha256": "b47cfc0c3888043f2c049a8581a3c858c949a4bcfc92fc72dd8c0e1e4fd64d04",
+        "byteCount": 3549031,
+        "pixelWidth": 9764,
+        "pixelHeight": 12598,
+        "peakRssBytes": 463781888,
+        "elapsedMs": 6158,
+        "sharpVersions": {
+          "aom": "3.9.1",
+          "archive": "3.7.4",
+          "cairo": "1.18.0",
+          "cgif": "0.4.1",
+          "exif": "0.6.24",
+          "expat": "2.6.2",
+          "ffi": "3.4.6",
+          "fontconfig": "2.15.0",
+          "freetype": "2.13.2",
+          "fribidi": "1.0.15",
+          "glib": "2.81.1",
+          "harfbuzz": "9.0.0",
+          "heif": "1.18.2",
+          "highway": "1.2.0",
+          "imagequant": "2.4.1",
+          "lcms": "2.16",
+          "mozjpeg": "4.1.5",
+          "pango": "1.54.0",
+          "pixman": "0.43.4",
+          "png": "1.6.43",
+          "proxy-libintl": "0.4",
+          "rsvg": "2.58.93",
+          "spng": "0.7.4",
+          "tiff": "4.6.0",
+          "vips": "8.15.3",
+          "webp": "1.4.0",
+          "xml": "2.13.3",
+          "zlib-ng": "2.2.1",
+          "sharp": "0.33.5"
+        },
+        "alphaBinary": true,
+        "stripRows": 256,
+        "rasterizer": "sharp-0.33.5-jig25-clipped-strip-png-v1",
+        "rasterizedTiles": 0,
+        "maxRasterTileBytes": 0,
+        "frameStrategy": "approved-b-final-grid-frame-cache-v1",
+        "rasterizedFrames": 25,
+        "maxRasterFrameBytes": 5484864,
+        "maxCachedFrames": 6,
+        "maxCachedFrameBytes": 32909184,
+        "frameLimits": {
+          "width": 2160,
+          "height": 2160,
+          "maxPixels": 1382400,
+          "count": 10
+        }
+      }
+    }
+  ]
+}
