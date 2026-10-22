@@ -32,7 +32,7 @@ export function createMountedDisplayFixture(f) {
   if(!compiled.has(file))compiled.set(file,babel.transformSync(readFileSync(file,'utf8'),{filename:file,presets:[[require.resolve('next/babel'),{'preset-env':{targets:{node:'current'}},'transform-runtime':{helpers:false}}]],babelrc:false,configFile:false}).code);
   const exports={};modules.set(file,exports);vm.runInNewContext(compiled.get(file),{exports,window,IntersectionObserver:Visibility,AbortController,Promise,Intl,Error,
    require:name=>name==='react'?react:name.endsWith('.css')?{__esModule:true,default:new Proxy({},{get:(_t,k)=>k})}:name.endsWith('/collection-contract.mjs')?collection
-    :name.endsWith('/collection-display-contract.mjs')?display:name.endsWith('/collection-client.mjs')?client:load(resolve(dirname(file),name))});return exports;}
+    :name.endsWith('/CollectionPreferences.jsx')?{__esModule:true,default:()=>null}:name.endsWith('/collection-display-contract.mjs')?display:name.endsWith('/collection-client.mjs')?client:load(resolve(dirname(file),name))});return exports;}
  const Workspace=load(fileURLToPath(new URL('../components/collection/CollectionWorkspace.jsx',import.meta.url))).default;
  function descend(node,path,seen){if(node==null||typeof node!=='object')return node;if(Array.isArray(node))return node.map((n,i)=>descend(n,path+'.'+i,seen));
   if(typeof node.type==='function'){const key=path+':'+node.type.name+':'+(node.props.key??'');seen.add(key);let o=instances.get(key);if(!o){o={slots:[],effects:[],mounted:true};instances.set(key,o);}o.cursor=0;o.name=node.type.name;o.props=node.props;owner=o;return descend(node.type(node.props),key,seen);}

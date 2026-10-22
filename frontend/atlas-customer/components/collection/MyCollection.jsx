@@ -4,7 +4,7 @@ import styles from './collection.module.css';
 
 /** Isolated owner-projection preview. No fetch, storage, persistence or offer
  * action is supplied here; the root must connect an authenticated reader. */
-export default function MyCollection({ accountId, snapshot, displays = {}, accessState = 'READY', renderCardMedia, readOnly = false, afterCardId = null }) {
+export default function MyCollection({ accountId, snapshot, displays = {}, accessState = 'READY', renderCardMedia, renderPreferences, renderCardPreferences, readOnly = false, afterCardId = null }) {
   const prefix = useId(), [searchState, setSearchState] = useState(null), [draftState, setDraftState] = useState(null), [pageEnded, setPageEnded] = useState(false);
   useEffect(() => {
     const end = () => setPageEnded(true);
@@ -30,7 +30,7 @@ export default function MyCollection({ accountId, snapshot, displays = {}, acces
   return <section className={styles.workspace} aria-labelledby={`${prefix}-title`}>
     <header className={styles.heading}><div><p className={styles.eyebrow}>YOUR CARDS</p><h1 id={`${prefix}-title`}>My Collection</h1>
       <p>Cards linked to your verified ownership record.</p></div><span className={styles.count}>{collection.cards.length} {readOnly || collection.nextCardId ? 'on this page' : collection.cards.length === 1 ? 'card' : 'cards'}</span></header>
-    {readOnly ? <aside className={styles.notice}><strong>Recorded preferences</strong><p>Collection: {collection.preferences.visibility === 'PRIVATE' ? 'Private' : 'Public'} · {collection.preferences.offersDisabled ? 'Offers disabled' : 'Open to offers'}. Settings changes and offer delivery are not available here.</p></aside>
+    {renderPreferences ? renderPreferences() : readOnly ? <aside className={styles.notice}><strong>Recorded preferences</strong><p>Collection: {collection.preferences.visibility === 'PRIVATE' ? 'Private' : 'Public'} · {collection.preferences.offersDisabled ? 'Offers disabled' : 'Open to offers'}. Settings changes and offer delivery are not available here.</p></aside>
       : <aside className={styles.notice}><strong>Local preview</strong><p>Privacy and offer controls below preview your choices. Changes are not saved, and offers cannot be sent.</p></aside>}
     {!readOnly && <details className={styles.settings}><summary>Preview collection preferences</summary>
       <div className={styles.controls}>
@@ -46,10 +46,11 @@ export default function MyCollection({ accountId, snapshot, displays = {}, acces
           {renderCardMedia ? <div className={styles.media}>{renderCardMedia(card)}</div> : null}
           <p className={styles.eyebrow}>CERTIFICATE {display.certificateNumber}</p><h2>{display.title}</h2>
           {display.grade !== null && <p className={styles.grade}>ATLAS {display.grade}</p>}
-          <div className={styles.statuses}><span>{card.visibility === 'PRIVATE' ? 'Private' : 'Public'}</span><span className={styles.offer}>{card.offers.preference === 'OPEN_TO_OFFERS' ? 'Open to offers' : 'Offers disabled'}</span></div>
-          <p className={styles.help}>Offer preference recorded. Offer delivery is not available.</p>
+          {!renderCardPreferences&&<><div className={styles.statuses}><span>{card.visibility === 'PRIVATE' ? 'Private' : 'Public'}</span><span className={styles.offer}>{card.offers.preference === 'OPEN_TO_OFFERS' ? 'Open to offers' : 'Offers disabled'}</span></div>
+          <p className={styles.help}>Offer preference recorded. Offer delivery is not available.</p></>}
           <dl className={styles.facts}><div><dt>Ownership</dt><dd>Verified record</dd></div><div><dt>Current physical holder</dt><dd>Unknown</dd></div></dl>
           <a className={styles.reportLink} href={display.reportPath}>Grade Report <span aria-hidden="true">↗</span></a>
+          {renderCardPreferences?renderCardPreferences(card):null}
           {!readOnly && <details className={styles.cardSettings}><summary>Preview card preferences</summary><div className={styles.controls}>
             <label><input type="checkbox" checked={cardPreview.cardVisibility === 'PUBLIC'} onChange={event => updateCard(card.cardId, { visibility: event.target.checked ? 'PUBLIC' : 'PRIVATE' })}/> Show this card publicly</label>
             <label><input type="checkbox" checked={cardPreview.cardDisabled} onChange={event => updateCard(card.cardId, { offersDisabled: event.target.checked })}/> Disable offers for this card</label>

@@ -27,6 +27,7 @@ function harness() {
   const exports = {}, MyCollection = () => null;
   vm.runInNewContext(code, { exports, AbortController, Promise, window: { addEventListener: (event, fn) => listeners.set(event, fn), removeEventListener: event => listeners.delete(event) },
     require: name => name === 'react' ? react : name.endsWith('MyCollection.jsx') ? { __esModule: true, default: MyCollection }
+      : name.endsWith('CollectionPreferences.jsx') ? { __esModule: true, default: () => null }
       : name.endsWith('CollectionCardMedia.jsx') ? { __esModule: true, default: () => null }
       : name.endsWith('/collection-display-contract.mjs') ? displayContract : name.endsWith('/collection-contract.mjs') ? contract : name.endsWith('/collection-client.mjs') ? client : name.endsWith('.css') ? {} : require(name),
   });
