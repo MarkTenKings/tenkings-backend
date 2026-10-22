@@ -15,7 +15,7 @@ const prefix = [
 ];
 test('010 retains complete qualified component bytes and unchanged002–009; no top-level seeds, roles or grants', async () => {
   const { migration, migrations, routines } = await collectionFoundationDefinition();
-  assert.equal(migrations.length, 9); assert.strictEqual(migrations[8], migration);
+  assert.equal(migrations.length, 10); assert.strictEqual(migrations[8], migration);
   assert.deepEqual(migrations.slice(0, 8).map(m => m.sqlSha256), prefix);
   const topLevel = migration.sql.replace(/--[^\n]*/g, '').replace(/\$\$[\s\S]*?\$\$/g, '$$BODY$$');
   assert.doesNotMatch(topLevel, /(?:^|;)\s*(?:GRANT|INSERT|UPDATE|DELETE|TRUNCATE|DROP|CREATE ROLE|ALTER ROLE)\b|IF NOT EXISTS/i);
@@ -34,7 +34,7 @@ test('fixture compatibility requires exact complete ledger and installed source,
     assert(sql.startsWith('SELECT '));
     return { rows: sql.includes('_standalone_migrations') ? v.ledger : sql.includes("n.nspname IN ('atlas_ownership'") ? v.routines : [{ owner: 'reviewed_fixture_owner' }] };
   };
-  assert.equal((await assertRegisteredOwnershipFoundation(query(valid))).ledgerRows, 10);
+  assert.equal((await assertRegisteredOwnershipFoundation(query(valid))).ledgerRows, 11);
   const bad = [v => v.ledger.pop(), v => { v.ledger[1].checksum = '0'.repeat(64); }, v => v.routines.pop(),
     ...['source', 'owner', 'arguments', 'language'].map(key => v => { v.routines[0][key] = 'drift'; }),
     v => { v.routines[0].definer = !v.routines[0].definer; }, v => { v.routines[0].config = ['search_path=public']; }];

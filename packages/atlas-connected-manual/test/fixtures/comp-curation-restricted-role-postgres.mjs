@@ -3,6 +3,7 @@
 // No environment/database discovery, remote modes, existing cluster or serving
 // import. Every mutation is confined to this nonce-owned synthetic database.
 import assert from 'node:assert/strict';
+import { assertRegisteredCompFoundation } from '../../../atlas-standalone-database/test/comp-foundation-fixture.mjs';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -38,6 +39,8 @@ assert(['--prepare', '--execute'].includes(mode) && output && resolve(output) ==
 assert(!Object.keys(process.env).some(k => /^(DATABASE_URL|DIRECT_URL|ATLAS_DATABASE_URL|PGHOST|PGPORT|PGUSER|PGPASSWORD|PGDATA|PGSERVICE|PGSERVICEFILE)$/.test(k)));
 const bin = '/opt/homebrew/opt/postgresql@17/bin', pgModule = '/Users/markthomas/.codex/atlas-handoffs/atlas-v4-labels-pg-runtime/node_modules/pg';
 const planPath = resolve(output, 'launch-plan.json'), sourcePaths = [
+  'packages/atlas-standalone-database/test/comp-foundation-fixture.mjs',
+  'packages/atlas-standalone-database/registered-migrations.mjs',
   'packages/atlas-connected-manual/src/comp-curation-database.mjs',
   'packages/atlas-connected-manual/sql/comp-curation-role-proposal.sql',
   'packages/atlas-connected-manual/test/comp-curation-database.test.mjs',
@@ -55,7 +58,7 @@ const planPath = resolve(output, 'launch-plan.json'), sourcePaths = [
   'packages/atlas-standalone-database/sql/baseline.sql',
   'packages/atlas-standalone-database/baseline.manifest.json',
   'packages/atlas-standalone-database/migrations.manifest.json',
-  ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance','010-collection-foundation'].map(n => `packages/atlas-standalone-database/sql/${n}.sql`),
+  ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance','010-collection-foundation','011-comp-curation'].map(n => `packages/atlas-standalone-database/sql/${n}.sql`),
 ];
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
 const pin = async path => ({ path, sha256: digest(await readFile(resolve(root, path))) });
@@ -107,7 +110,8 @@ if (mode === '--prepare') {
     assert.deepEqual((await control.query("SELECT current_setting('data_directory') data,current_setting('listen_addresses') host,current_setting('unix_socket_directories') sockets")).rows[0], { data: plan.data, host: '127.0.0.1', sockets: '' });
     await control.query(`CREATE DATABASE ${dbName}`);
     const setup = await socket(); await applyStandaloneBaseline(setup); await applyStandaloneMigrations(setup); await initializeStandaloneCoordination(setup, { geometryConcurrency: 2 });
-    await setup.query(await readFile(resolve(root, 'packages/atlas-connected-manual/sql/comp-curation-proposal.sql'), 'utf8'));
+    await setup.query('SET search_path=pg_catalog');
+    await assertRegisteredCompFoundation((sql, ...values) => setup.query(sql, values));
     // Synthetic owned database only. Production inherited PUBLIC TEMP remains an
     // operator prerequisite; the proposal never changes database-wide grants.
     await setup.query(`REVOKE TEMPORARY ON DATABASE ${dbName} FROM PUBLIC`);
@@ -342,10 +346,10 @@ if (mode === '--prepare') {
     assert.equal(receiptRow.actor_id, owner.principal.id); assert.equal(receiptRow.request_id, first.requestId); assert.equal(receiptRow.revision, 1);
     assert.equal(JSON.parse(receiptRow.receipt).guidance, null); assert.equal(JSON.parse(receiptRow.receipt).policy, null);
     assert.equal(wholeDelta['atlas_manual.publication'].added[0].state, 'PENDING');
-    assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_staff._standalone_migrations')).rows[0].n, 10);
+    assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_staff._standalone_migrations')).rows[0].n, 11);
     assert.deepEqual(await files(), initialArtifacts);
     result = { pass: true, checks, phases, waitProofs, exchanges, schemaSha256: schemaPin.sha256, tableCount: tables.length,
-      wholeJourney: { changes: counts(wholeDelta), exactDelta: wholeDelta, unchangedTables: tables.length - Object.keys(wholeDelta).length }, artifactsPreserved: initialArtifacts, ledgerRows: 10,
+      wholeJourney: { changes: counts(wholeDelta), exactDelta: wholeDelta, unchangedTables: tables.length - Object.keys(wholeDelta).length }, artifactsPreserved: initialArtifacts, ledgerRows: 11,
       rowLockGrant: 'UPDATE(id) only; real changes and no-op writes refused', schemaOwner: ownerRole, servingRole: role,
       directTableRoleTrust: 'native service owns session/ACL/artifact authority; not per-user database RLS', policy: null };
     native.close(); db.close();

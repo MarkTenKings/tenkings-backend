@@ -2,6 +2,7 @@
 // Synthetic policy:null, retained local artifacts and in-process signed HTTP;
 // no proxy/route activation, external provider, real session or browser claim.
 import assert from 'node:assert/strict';
+import { assertRegisteredCompFoundation, captureCompFoundation } from '../../../atlas-standalone-database/test/comp-foundation-fixture.mjs';
 import { createHmac, randomUUID } from 'node:crypto';
 import { chmod, copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
@@ -25,6 +26,7 @@ assert(output && resolve(output) === output, 'Fresh absolute evidence directory 
 assert(args.includes('--postgres-bin') && args.includes('--ack-disposable-local-postgres'));
 assert(!args.some(arg => ['--serve', '--docker-image', '--ack-disposable-remote-pg17'].includes(arg)), 'Finite native local fixture only');
 await mkdir(output, { mode: 0o700 });
+const foundationSources = await captureCompFoundation(output);
 const root = fileURLToPath(new URL('../../../../', import.meta.url)), sourceRefs = [];
 await mkdir(resolve(output, 'source-used'), { mode: 0o700 });
 for (const path of [
@@ -56,8 +58,10 @@ try {
   assert.equal(ownership.createdByHarness, true); assert.equal(ownership.ownerPid, process.pid);
   const ownUrl = new URL(fixture.database.adminUrl);
   assert.equal(ownUrl.hostname, '127.0.0.1'); assert(Number(ownUrl.port) > 0);
-  const sql = await readFile(resolve(root, 'packages/atlas-connected-manual/sql/comp-curation-proposal.sql'), 'utf8');
-  await fixture.cluster.sql(sql, [], fixture.database.name);
+  await fixture.admin.$transaction(async tx => {
+    await tx.$executeRawUnsafe('SET LOCAL search_path=pg_catalog');
+    await assertRegisteredCompFoundation(async (sql, ...values) => ({ rows: await tx.$queryRawUnsafe(sql, ...values) }));
+  });
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual') + '\n' + compCurationGrantSQL('atlas_fixture_manual')
     + '\nGRANT SELECT ON atlas_manual.publication,atlas_manual.public_report_identity,atlas_manual.presentation_market TO atlas_fixture_manual;', [], fixture.database.name);
   const connection = fixture.connect(), admin = fixture.admin;
@@ -283,8 +287,8 @@ try {
     for (const name of ['cleanup.json', 'validation.log', 'postgres.log', 'ownership.json', 'standalone-baseline.json']) {
       const saved = resolve(output, name); await copyFile(resolve(fixture.cluster.directory, name), saved); await chmod(saved, 0o600);
     }
-    result = { ...result, stoppedVerified: true, ownedDataAbsent: true, cleanupPath, cleanupSha256: digest(await readFile(cleanupPath)) };
-  } else result = { ...result, stoppedVerified: false, note: 'Creation failed before fixture returned; inspect retained harness evidence.' };
+    result = { ...result, foundationSources, stoppedVerified: true, ownedDataAbsent: true, cleanupPath, cleanupSha256: digest(await readFile(cleanupPath)) };
+  } else result = { ...result, foundationSources, stoppedVerified: false, note: 'Creation failed before fixture returned; inspect retained harness evidence.' };
   await writeFile(resolve(output, 'postgres-result.json'), JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   process.stdout.write(JSON.stringify({ pass: result.pass, reads: readPhases.length, mutations: mutationPhases.length, stoppedVerified: result.stoppedVerified, output }) + '\n');
 }

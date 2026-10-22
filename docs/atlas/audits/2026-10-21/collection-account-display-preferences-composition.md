@@ -18,6 +18,8 @@ The unstarted `preview-01` under the same evidence root contains the actual Acco
 
 Preview freeze SHA256 `0fc17f06ce17c85c33e5b7b3013759de6465e494411f28fbac96fcb96909b0a3` and preparer `43ed913061f6b94de31123595541ef1f1035e2a0edc68597e490c7029f3ed702` pin browser inputs separately from server test evidence. Root owns bundling, listener/browser, responsive acceptance and final build. This lane has not started a listener, built the application, run PostgreSQL, acquired production data or activated any feature. Source peer review and root acceptance are recorded separately when observed.
 
+Independent ownership-lane source review passed on envelope86667651: all 30 current/saved refs and two evidence hashes matched. The reviewer traced SSR admission, stable account/CSRF scope, absent optional requests, pre-effect private-state hiding, cancellation/Blob teardown, shared denial and old-callback refusal, and read the actual 30-pass log. No tests, browser, database or network operations were repeated; actual root browser/build acceptance remains separate.
+
 ## Root combined acceptance — October22
 
 The three optional runtime/display/account increments are integrated locally. The full customer wildcard passed370/370 with no skips under OS network denial; root routing/boundary checks passed5/5 and scoped integration lint is clean. The customer production build and browser-secret boundary pass. The earlier focused suites overlap these checks and are not added as a separate total. Independent ownership review of account composition and collection review of preference-runtime/wiring passed; detail independently reviewed display composition.

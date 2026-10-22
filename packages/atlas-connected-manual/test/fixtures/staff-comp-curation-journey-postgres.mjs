@@ -2,6 +2,7 @@
 // --prepare writes a plan, --execute is finite; preview lifetime belongs to its
 // separately logged loopback runner. All remote fetch is injected in process.
 import assert from 'node:assert/strict';
+import { assertRegisteredCompFoundation } from '../../../atlas-standalone-database/test/comp-foundation-fixture.mjs';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -38,7 +39,9 @@ const bin = '/opt/homebrew/opt/postgresql@17/bin', pgModule = '/Users/markthomas
 const ownPath = 'packages/atlas-connected-manual/test/fixtures/staff-comp-curation-journey-postgres.mjs';
 const paths = [ownPath, 'frontend/atlas-app/test/staff-comp-curation-journey.test.mjs',
  'frontend/atlas-app/test/staff-comp-curation-ui-fixture.mjs','frontend/atlas-app/test/staff-comp-curation-fixture.mjs',
- 'packages/atlas-connected-manual/src/comp-curation-database.mjs','packages/atlas-connected-manual/sql/comp-curation-role-proposal.sql',
+ 'packages/atlas-standalone-database/test/comp-foundation-fixture.mjs',
+  'packages/atlas-standalone-database/registered-migrations.mjs',
+  'packages/atlas-connected-manual/src/comp-curation-database.mjs','packages/atlas-connected-manual/sql/comp-curation-role-proposal.sql',
  'packages/atlas-connected-manual/sql/comp-curation-proposal.sql','packages/atlas-connected-manual/src/comp-curation-service.mjs',
  'packages/atlas-connected-manual/src/comp-curation-contract.mjs','packages/atlas-connected-manual/src/publication-repository.mjs',
  'packages/atlas-connected-manual/src/finishing.mjs','packages/atlas-connected-manual/src/presentation-market.mjs',
@@ -52,7 +55,7 @@ const paths = [ownPath, 'frontend/atlas-app/test/staff-comp-curation-journey.tes
  ...['staff-comp-curation-response-transport','staff-comp-curation-transport-contract','staff-comp-curation-client','staff-comp-curation-controller','staff-comp-curation-entry','card-history-client'].map(n=>`frontend/atlas-app/lib/${n}.mjs`),
  ...['CardHistory.jsx','StaffCompCuration.jsx','StaffCompCuration.module.css'].map(n=>`frontend/atlas-app/components/${n}`),
  'packages/atlas-standalone-database/sql/baseline.sql','packages/atlas-standalone-database/baseline.manifest.json','packages/atlas-standalone-database/migrations.manifest.json',
- ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance','010-collection-foundation'].map(n=>`packages/atlas-standalone-database/sql/${n}.sql`)];
+ ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance','010-collection-foundation','011-comp-curation'].map(n=>`packages/atlas-standalone-database/sql/${n}.sql`)];
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2)+'\n', {flag:'wx',mode:0o600});
 const pin = async path => ({path,sha256:digest(await readFile(path))});
 function noInheritedDatabase() { assert(!Object.keys(process.env).some(k=>/^(DATABASE_URL|DIRECT_URL|ATLAS_DATABASE_URL|PGHOST|PGPORT|PGUSER|PGPASSWORD|PGDATA|PGSERVICE|PGSERVICEFILE)$/.test(k))); }
@@ -128,7 +131,8 @@ export async function openCompJourney(output, purpose) {
   const control=await socket(ownerRole,'postgres');assert.deepEqual((await control.query("SELECT current_setting('data_directory') data,current_setting('listen_addresses') host,current_setting('unix_socket_directories') sockets")).rows[0],{data:plan.data,host:'127.0.0.1',sockets:''});
   await control.query(`CREATE DATABASE ${dbName}`);const setup=await socket();
   await applyStandaloneBaseline(setup);await applyStandaloneMigrations(setup);await initializeStandaloneCoordination(setup,{geometryConcurrency:2});
-  await setup.query(await readFile(resolve(root,'packages/atlas-connected-manual/sql/comp-curation-proposal.sql'),'utf8'));
+  await setup.query('SET search_path=pg_catalog');
+  await assertRegisteredCompFoundation((sql, ...values) => setup.query(sql, values));
   await setup.query(`REVOKE TEMPORARY ON DATABASE ${dbName} FROM PUBLIC`);
   for(const [i,who]of [[1,staffRole],[2,role]])await control.query(`CREATE ROLE ${who} LOGIN PASSWORD '${passwords[i]}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`);
   await setup.query(staffGrantSQL(staffRole));await setup.query((await readFile(resolve(root,'packages/atlas-connected-manual/sql/comp-curation-role-proposal.sql'),'utf8')).replaceAll(':"curation_role"',`"${role}"`));

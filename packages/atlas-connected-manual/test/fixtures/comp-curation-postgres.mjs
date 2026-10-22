@@ -1,6 +1,7 @@
 // Finite disposable native PostgreSQL qualification. Root must log the exact
 // command before execution; never imported by serving code or ordinary units.
 import assert from 'node:assert/strict';
+import { assertRegisteredCompFoundation, captureCompFoundation } from '../../../atlas-standalone-database/test/comp-foundation-fixture.mjs';
 import { randomUUID } from 'node:crypto';
 import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -20,14 +21,17 @@ assert(output && resolve(output) === output, 'A new absolute qualification outpu
 assert(args.includes('--postgres-bin') && args.includes('--ack-disposable-local-postgres'));
 assert(!args.some(arg => ['--serve', '--docker-image', '--ack-disposable-remote-pg17'].includes(arg)), 'Finite native local fixture only');
 await mkdir(output, { mode: 0o700 });
+const foundationSources = await captureCompFoundation(output);
 const sourceSha256 = {};
 for (const path of ['../../sql/comp-curation-proposal.sql', '../../src/comp-curation-contract.mjs', '../../src/comp-curation-service.mjs', '../comp-curation.test.mjs', './comp-curation-postgres.mjs'])
   sourceSha256[path] = digest(await readFile(new URL(path, import.meta.url)));
 const fixture = await createOwnedManualFixture(args), checks = [], preservation = [], waitProofs = [];
 let result;
 try {
-  const sql = await readFile(new URL('../../sql/comp-curation-proposal.sql', import.meta.url), 'utf8');
-  await fixture.cluster.sql(sql, [], fixture.database.name);
+  await fixture.admin.$transaction(async tx => {
+    await tx.$executeRawUnsafe('SET LOCAL search_path=pg_catalog');
+    await assertRegisteredCompFoundation(async (sql, ...values) => ({ rows: await tx.$queryRawUnsafe(sql, ...values) }));
+  });
   // No publication/market writer grants: the tested service needs these reads
   // plus INSERT on its own receipt table and the existing staff boundary.
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual') + '\n' + compCurationGrantSQL('atlas_fixture_manual')
@@ -195,7 +199,7 @@ try {
 } finally {
   await fixture.stop();
   const cleanupPath = resolve(fixture.cluster.directory, 'cleanup.json'), cleanup = JSON.parse(await readFile(cleanupPath, 'utf8'));
-  result = { ...result, stoppedVerified: cleanup.stoppedVerified === true, cleanupPath };
+  result = { ...result, foundationSources, stoppedVerified: cleanup.stoppedVerified === true, cleanupPath };
   await copyFile(cleanupPath, resolve(output, 'cleanup.json')); await chmod(resolve(output, 'cleanup.json'), 0o600);
   await copyFile(resolve(fixture.cluster.directory, 'validation.log'), resolve(output, 'harness-validation.log'));
   await writeFile(resolve(output, 'postgres-result.json'), JSON.stringify(result, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
