@@ -1,4 +1,4 @@
-import { financeAssert as check, integerCents as cents, safeSum, digest, copy, identifier, postJournal, posting as line, accountBalance } from './ledger.mjs';
+import { financeAssert as check, integerCents as cents, safeSum, digest, copy, identifier, postJournal, posting as line, accountBalance, recordProviderTransaction, cashLedgerHash } from './ledger.mjs';
 
 const TERMINAL_FAILURE = new Set(['FAILED', 'CANCELED']);
 const allocationKeys = ['sellerCents', 'feeCents', 'taxCents', 'shippingCents'];
@@ -10,7 +10,7 @@ function state(tx) {
   return tx.state;
 }
 function policyCheck(policy) {
-  check(policy && ['synthetic', 'stripe-sandbox'].includes(policy.environment), 'FINANCE_POLICY_REQUIRED');
+  check(policy && ['synthetic', 'stripe-sandbox', 'stripe-production'].includes(policy.environment), 'FINANCE_POLICY_REQUIRED');
   identifier(policy.version);
   for (const key of policyRefs) identifier(policy[key]);
   check(Number.isSafeInteger(policy.maxEvidenceAgeMs) && policy.maxEvidenceAgeMs > 0 && policy.maxEvidenceAgeMs <= 300000, 'INVALID_EVIDENCE_WINDOW');
@@ -19,10 +19,24 @@ function policyCheck(policy) {
 function fresh(tx, evidence, policy) {
   check(evidence && Number.isSafeInteger(evidence.observedAt) && evidence.observedAt <= tx.now && tx.now - evidence.observedAt <= policy.maxEvidenceAgeMs, 'STALE_PROVIDER_EVIDENCE');
 }
+function restrictedByException(tx, intent) {
+  return Object.values(state(tx).financeExceptions ?? {}).some(item => item.status === 'OPEN' && (!item.orderId || item.orderId === intent.orderId) && [intent.accountId, intent.platformAccountId, intent.connectedAccountId].includes(item.accountId));
+}
 function accountCheck(tx, account, intent, { payout = false } = {}) {
   fresh(tx, account, intent.policy);
-  check(account.accountId === intent.connectedAccountId && account.livemode === false && account.requirementsSatisfied === true && account.transfersActive === true, 'ACCOUNT_INELIGIBLE');
+  check(account.accountId === intent.connectedAccountId && account.livemode === (intent.policy.environment === 'stripe-production') && account.requirementsSatisfied === true && account.transfersActive === true, 'ACCOUNT_INELIGIBLE');
   if (payout) check(account.payoutsEnabled === true && account.manualPayouts === true && account.verifiedExternalAccountIds?.includes(intent.externalAccountId), 'PAYOUT_ACCOUNT_INELIGIBLE');
+}
+function requireAccountReconciliation(tx, intent, balanceEvidence) {
+  if (intent.policy.environment === 'synthetic') return;
+  for (const accountId of [intent.platformAccountId, intent.connectedAccountId]) {
+    const book = `${accountId === intent.platformAccountId ? 'platform' : 'connected'}:${accountId}`;
+    const reports = Object.values(state(tx).financeReconciliationReports ?? {}).filter(report => report.accountId === accountId && report.platformAccountId === intent.platformAccountId).sort((a, b) => (b.sequence ?? 0) - (a.sequence ?? 0));
+    const report = reports[0];
+    check(report?.status === 'RECONCILED' && report.provider === 'stripe' && report.livemode === (intent.policy.environment === 'stripe-production'), 'ACCOUNT_RECONCILIATION_REQUIRED');
+    fresh(tx, report, intent.policy);
+    check(report.cashLedgerHash === cashLedgerHash(tx.state, book) && report.ledgerCashCents === accountBalance(tx.state, book, 'provider_cash') && (accountId === intent.platformAccountId || report.providerAvailableCents === balanceEvidence.availableCents), 'ACCOUNT_RECONCILIATION_CHANGED');
+  }
 }
 function allocations(value, amount) {
   check(value && Object.keys(value).sort().join(',') === [...allocationKeys].sort().join(','), 'INVALID_ALLOCATION');
@@ -84,7 +98,7 @@ export function prepareTransfer(tx, input) {
   const payment = getIntent(tx, input.paymentIntentId, 'PAYMENT');
   check(payment.confirmed && payment.status === 'SUCCEEDED', 'PAYMENT_UNCONFIRMED');
   const order = getOrder(tx, payment.orderId);
-  check(!order.blocked, 'ORDER_FUNDS_RESTRICTED');
+  check(!order.blocked && !restrictedByException(tx, payment), 'ORDER_FUNDS_RESTRICTED');
   ensureUniqueScope(tx, 'TRANSFER', 'orderId', payment.orderId);
   const release = input.releaseEvidence;
   check(release?.approved === true && release.orderId === payment.orderId && release.bindingHash === payment.bindingHash && release.policyVersion === payment.policy.version && Number.isSafeInteger(release.releasedAt) && release.releasedAt <= tx.now, 'RELEASE_EVIDENCE_REQUIRED'); identifier(release.evidenceRef);
@@ -134,13 +148,15 @@ export function preparePayout(tx, input) {
   const orders = input.allocationOrderIds.map(id => getOrder(tx, id));
   const payments = orders.map(order => getIntent(tx, order.paymentIntentId, 'PAYMENT'));
   const base = payments[0];
+  check(!payments.some(payment => restrictedByException(tx, payment)), 'SELLER_FUNDS_RESTRICTED');
   check(payments.every(payment => payment.sellerId === input.sellerId && payment.connectedAccountId === input.connectedAccountId && digest(payment.policy) === digest(base.policy)), 'PAYOUT_SCOPE_MISMATCH');
   check(!Object.values(state(tx).financeOrders).some(order => order.sellerId === input.sellerId && order.blocked), 'SELLER_FUNDS_RESTRICTED');
   const fields = { ...baseFrom(base), orderId: null, order: null, kind: 'PAYOUT', accountId: input.connectedAccountId, externalAccountId: input.externalAccountId, amountCents: input.amountCents, bindingHash: digest({ sellerId: input.sellerId, connectedAccountId: input.connectedAccountId, externalAccountId: input.externalAccountId, amountCents: input.amountCents, allocationOrderIds: input.allocationOrderIds }) };
   accountCheck(tx, input.accountEvidence, fields, { payout: true });
   fresh(tx, input.balanceEvidence, base.policy);
   const balance = input.balanceEvidence;
-  check(balance.accountId === input.connectedAccountId && balance.livemode === false && balance.currency === 'USD', 'BALANCE_SCOPE_MISMATCH'); cents(balance.availableCents);
+  check(balance.accountId === input.connectedAccountId && balance.livemode === (base.policy.environment === 'stripe-production') && balance.currency === 'USD', 'BALANCE_SCOPE_MISMATCH'); cents(balance.availableCents);
+  requireAccountReconciliation(tx, fields, balance);
   const inFlight = Object.values(state(tx).intents).filter(i => i.kind === 'PAYOUT' && i.accountId === input.connectedAccountId && !['SUCCEEDED', ...TERMINAL_FAILURE].includes(i.status));
   check(safeSum(input.amountCents, ...inFlight.map(i => i.amountCents)) <= balance.availableCents, 'PROVIDER_BALANCE_INSUFFICIENT');
   let remaining = input.amountCents; const allocation = [];
@@ -161,11 +177,13 @@ export function claimDispatch(tx, intentId, accountEvidence = null, balanceEvide
   if (['TRANSFER', 'REVERSAL', 'PAYOUT'].includes(intent.kind)) accountCheck(tx, accountEvidence, intent, { payout: intent.kind === 'PAYOUT' });
   if (intent.kind === 'PAYOUT') {
     fresh(tx, balanceEvidence, intent.policy);
-    check(balanceEvidence.accountId === intent.accountId && balanceEvidence.livemode === false && balanceEvidence.currency === 'USD', 'BALANCE_SCOPE_MISMATCH');
+    check(balanceEvidence.accountId === intent.accountId && balanceEvidence.livemode === (intent.policy.environment === 'stripe-production') && balanceEvidence.currency === 'USD', 'BALANCE_SCOPE_MISMATCH');
     cents(balanceEvidence.availableCents);
     check(balanceEvidence.availableCents >= intent.amountCents, 'PROVIDER_BALANCE_INSUFFICIENT');
+    requireAccountReconciliation(tx, intent, balanceEvidence);
   }
   if (['TRANSFER', 'PAYOUT'].includes(intent.kind)) {
+    check(!restrictedByException(tx, intent), 'SELLER_FUNDS_RESTRICTED');
     check(!Object.values(state(tx).financeOrders).some(order => order.sellerId === intent.sellerId && order.blocked), 'SELLER_FUNDS_RESTRICTED');
   }
   intent.status = 'DISPATCHING'; intent.dispatchCount = 1; intent.dispatchedAt = tx.now;
@@ -187,13 +205,13 @@ function balanceTransaction(evidence, expectedAmount, expectedSource, { connecte
 }
 function evidenceCheck(tx, intent, evidence) {
   fresh(tx, evidence, intent.policy);
-  check(evidence.provider === (intent.policy.environment === 'synthetic' ? 'synthetic' : 'stripe') && evidence.livemode === false && evidence.accountId === intent.accountId && evidence.kind === intent.kind && evidence.intentId === intent.id && evidence.orderId === intent.orderId && evidence.bindingHash === intent.bindingHash && evidence.currency === 'USD' && evidence.amountCents === intent.amountCents, 'PROVIDER_EVIDENCE_MISMATCH');
+  check(evidence.provider === (intent.policy.environment === 'synthetic' ? 'synthetic' : 'stripe') && evidence.livemode === (intent.policy.environment === 'stripe-production') && evidence.accountId === intent.accountId && evidence.kind === intent.kind && evidence.intentId === intent.id && evidence.orderId === intent.orderId && evidence.bindingHash === intent.bindingHash && evidence.currency === 'USD' && evidence.amountCents === intent.amountCents, 'PROVIDER_EVIDENCE_MISMATCH');
   identifier(evidence.objectId);
   check(intent.dispatchCount === 1 && (!intent.objectId || intent.objectId === evidence.objectId), 'UNBOUND_PROVIDER_OBJECT');
   if (intent.parentObjectId) check(intent.parentObjectId === evidence.parentObjectId, 'PROVIDER_PARENT_MISMATCH');
   if (intent.kind === 'TRANSFER') check(evidence.destinationAccountId === intent.connectedAccountId, 'PROVIDER_DESTINATION_MISMATCH');
   if (intent.kind === 'PAYOUT') check(evidence.externalAccountId === intent.externalAccountId, 'PROVIDER_DESTINATION_MISMATCH');
-  for (const key of ['balanceTransaction', 'connectedBalanceTransaction']) {
+  for (const key of ['balanceTransaction', 'connectedBalanceTransaction', 'failureBalanceTransaction']) {
     const previous = state(tx).financeObservations[intent.id]?.[key];
     const next = evidence[key];
     if (previous && next) check(previous.id === next.id && previous.source === next.source && previous.amountCents === next.amountCents && previous.feeCents === next.feeCents && previous.netCents === next.netCents && previous.currency === next.currency, 'BALANCE_TRANSACTION_CHANGED');
@@ -204,11 +222,16 @@ function evidenceCheck(tx, intent, evidence) {
   state(tx).financeObjects[objectKey] = intent.id;
   intent.objectId = evidence.objectId;
 }
+function remember(tx, intent, evidence, key = 'balanceTransaction', connected = false) {
+  const transaction = evidence[key]; if (!transaction) return;
+  recordProviderTransaction(tx, { accountId: connected ? intent.connectedAccountId : intent.accountId, transaction, owner: intent.id, observedAt: evidence.observedAt, livemode: evidence.livemode });
+}
 function postPayment(tx, intent, evidence) {
   identifier(evidence.chargeId);
   check(evidence.amountReceivedCents === intent.amountCents && evidence.chargeCapturedCents === intent.amountCents && evidence.chargePaid === true && evidence.chargeCurrency === 'USD' && evidence.chargeAmountCents === intent.amountCents, 'CHARGE_MISMATCH');
   const bt = balanceTransaction(evidence, intent.amountCents, evidence.chargeId);
   check(bt.netCents >= 0, 'INVALID_PROCESSING_FEE');
+  remember(tx, intent, evidence);
   if (intent.confirmed) { check(intent.chargeId === evidence.chargeId, 'CHARGE_MISMATCH'); return; }
   const a = intent.allocations;
   journal(tx, intent, 'PAYMENT_SETTLED', evidence, [line(pbook(intent), 'provider_cash', bt.netCents), line(pbook(intent), 'processing_expense', bt.feeCents), line(pbook(intent), account('seller_payable', intent.orderId), -a.sellerCents), line(pbook(intent), 'fee_revenue', -a.feeCents), line(pbook(intent), 'tax_payable', -a.taxCents), line(pbook(intent), 'shipping_payable', -a.shippingCents)]);
@@ -221,6 +244,7 @@ function postTransfer(tx, intent, evidence) {
   identifier(evidence.destinationPaymentId);
   const connected = balanceTransaction(evidence, intent.amountCents, evidence.destinationPaymentId, { connected: true });
   check(connected.feeCents === 0, 'UNSUPPORTED_TRANSFER_FEE');
+  remember(tx, intent, evidence); remember(tx, intent, evidence, 'connectedBalanceTransaction', true);
   if (!intent.confirmed) journal(tx, intent, 'TRANSFER_SETTLED', evidence, [line(pbook(intent), account('seller_payable', intent.orderId), intent.amountCents), line(pbook(intent), 'provider_cash', -intent.amountCents), line(cbook(intent), 'provider_cash', intent.amountCents), line(cbook(intent), account('seller_pending', intent.orderId), -intent.amountCents)]);
   if (!intent.available && connected.status === 'available' && connected.availableOn <= tx.now) {
     const remaining = liability(tx, intent, 'seller_pending'); cents(remaining);
@@ -233,18 +257,45 @@ function maybeUnblock(tx, intent) {
   const pending = Object.values(state(tx).intents).some(i => i.orderId === intent.orderId && ['REFUND', 'REVERSAL'].includes(i.kind) && ![ 'SUCCEEDED', ...TERMINAL_FAILURE].includes(i.status));
   const disputed = Object.values(state(tx).financeDisputes).some(d => d.orderId === intent.orderId && d.status !== 'won');
   const held = Object.values(state(tx).financeHolds ?? {}).some(h => h.orderId === intent.orderId && h.active);
-  if (!pending && !disputed && !held && accountBalance(tx.state, pbook(intent), account('seller_recovery', intent.orderId)) === 0) order.blocked = false;
+  if (!pending && !disputed && !held && !restrictedByException(tx, intent) && accountBalance(tx.state, pbook(intent), account('seller_recovery', intent.orderId)) === 0) order.blocked = false;
+}
+function refundDebit(tx, intent, evidence) {
+  const bt = balanceTransaction(evidence, -intent.amountCents, intent.objectId);
+  remember(tx, intent, evidence);
+  if (!intent.cashDebited) {
+    journal(tx, intent, 'REFUND_DEBITED', evidence, [line(pbook(intent), `refund_clearing:${intent.id}`, intent.amountCents), line(pbook(intent), 'processing_expense', bt.feeCents), line(pbook(intent), 'provider_cash', bt.netCents)]);
+    intent.cashDebited = true;
+  }
+}
+function refundAllocationLines(intent, sign = 1) {
+  const a = intent.allocations;
+  return [line(pbook(intent), intent.recoverSeller ? account('seller_recovery', intent.orderId) : account('seller_payable', intent.orderId), sign * a.sellerCents), line(pbook(intent), 'fee_revenue', sign * a.feeCents), line(pbook(intent), 'tax_payable', sign * a.taxCents), line(pbook(intent), 'shipping_payable', sign * a.shippingCents)];
 }
 function postRefund(tx, intent, evidence) {
-  const bt = balanceTransaction(evidence, -intent.amountCents, intent.objectId);
-  const a = intent.allocations;
-  journal(tx, intent, 'REFUND_SETTLED', evidence, [line(pbook(intent), intent.recoverSeller ? account('seller_recovery', intent.orderId) : account('seller_payable', intent.orderId), a.sellerCents), line(pbook(intent), 'fee_revenue', a.feeCents), line(pbook(intent), 'tax_payable', a.taxCents), line(pbook(intent), 'shipping_payable', a.shippingCents), line(pbook(intent), 'processing_expense', bt.feeCents), line(pbook(intent), 'provider_cash', bt.netCents)]);
+  refundDebit(tx, intent, evidence);
+  journal(tx, intent, 'REFUND_SETTLED', evidence, [...refundAllocationLines(intent), line(pbook(intent), `refund_clearing:${intent.id}`, -intent.amountCents)]);
+}
+function failRefund(tx, intent, evidence) {
+  if (!evidence.balanceTransaction) {
+    check(!intent.cashDebited && !intent.confirmed && evidence.failureConfirmed === true && !evidence.failureBalanceTransaction, 'FAILURE_UNCONFIRMED');
+    return;
+  }
+  refundDebit(tx, intent, evidence);
+  const returned = balanceTransaction({ balanceTransaction: evidence.failureBalanceTransaction }, intent.amountCents, intent.objectId);
+  check(returned.feeCents === 0 && returned.id !== evidence.balanceTransaction.id && returned.status === 'available' && returned.availableOn <= tx.now, 'REFUND_RETURN_UNCONFIRMED');
+  remember(tx, intent, evidence, 'failureBalanceTransaction');
+  if (!intent.returned) {
+    if (intent.confirmed && intent.recoverSeller) check(accountBalance(tx.state, pbook(intent), account('seller_recovery', intent.orderId)) >= intent.allocations.sellerCents, 'REFUND_RECOVERY_REQUIRES_REVIEW');
+    journal(tx, intent, 'REFUND_RETURNED', evidence, [line(pbook(intent), 'provider_cash', intent.amountCents), ...(intent.confirmed ? refundAllocationLines(intent, -1) : [line(pbook(intent), `refund_clearing:${intent.id}`, -intent.amountCents)])]);
+    intent.returned = true;
+  }
 }
 function postReversal(tx, intent, evidence) {
   const bt = balanceTransaction(evidence, intent.amountCents, intent.objectId); check(bt.feeCents === 0, 'UNSUPPORTED_REVERSAL_FEE');
   identifier(evidence.destinationPaymentRefundId);
   const connected = balanceTransaction(evidence, -intent.amountCents, evidence.destinationPaymentRefundId, { connected: true });
   check(connected.feeCents === 0, 'UNSUPPORTED_REVERSAL_FEE');
+  remember(tx, intent, evidence); remember(tx, intent, evidence, 'connectedBalanceTransaction', true);
   const available = liability(tx, intent, 'seller_available'); const pending = liability(tx, intent, 'seller_pending');
   check(safeSum(available, pending) >= intent.amountCents, 'REVERSAL_FUNDS_UNAVAILABLE');
   const fromAvailable = Math.min(available, intent.amountCents);
@@ -252,6 +303,7 @@ function postReversal(tx, intent, evidence) {
 }
 function payoutDebit(tx, intent, evidence) {
   const bt = balanceTransaction(evidence, -intent.amountCents, intent.objectId); check(bt.feeCents === 0, 'UNSUPPORTED_PAYOUT_FEE');
+  remember(tx, intent, evidence);
   if (!intent.cashDebited) {
     journal(tx, intent, 'PAYOUT_DEBITED', evidence, [line(cbook(intent), `payout_clearing:${intent.id}`, intent.amountCents), line(cbook(intent), 'provider_cash', -intent.amountCents)]);
     intent.cashDebited = true;
@@ -266,6 +318,7 @@ function failPayout(tx, intent, evidence) {
   payoutDebit(tx, intent, evidence);
   const returned = balanceTransaction({ balanceTransaction: evidence.failureBalanceTransaction }, intent.amountCents, intent.objectId);
   check(returned.status === 'available' && returned.availableOn <= tx.now && returned.feeCents === 0 && returned.id !== evidence.balanceTransaction.id, 'PAYOUT_RETURN_UNCONFIRMED');
+  remember(tx, intent, evidence, 'failureBalanceTransaction');
   if (!intent.returned) {
     journal(tx, intent, 'PAYOUT_RETURNED', evidence, [line(cbook(intent), 'provider_cash', intent.amountCents), ...(intent.confirmed ? [] : [line(cbook(intent), `payout_clearing:${intent.id}`, -intent.amountCents)]), ...intent.payoutAllocations.flatMap(a => [...(intent.confirmed ? [] : [line(cbook(intent), account('seller_withdrawing', a.orderId), a.amountCents)]), line(cbook(intent), account('seller_available', a.orderId), -a.amountCents)])]);
     intent.returned = true;
@@ -290,24 +343,28 @@ export function reconcileFinance(tx, { intentId, evidence }) {
     intent.status = 'CANCELED'; intent.terminalUnpaid = true;
   } else if (intent.kind === 'PAYOUT' && ['failed', 'canceled'].includes(evidence.status)) {
     failPayout(tx, intent, evidence); intent.status = evidence.status.toUpperCase();
-  } else if (['REFUND', 'REVERSAL'].includes(intent.kind) && ['failed', 'canceled'].includes(evidence.status)) {
+  } else if (intent.kind === 'REFUND' && ['failed', 'canceled'].includes(evidence.status)) {
+    failRefund(tx, intent, evidence); intent.status = evidence.status.toUpperCase();
+  } else if (intent.kind === 'REVERSAL' && ['failed', 'canceled'].includes(evidence.status)) {
     check(!intent.confirmed, 'TERMINAL_PROVIDER_CONTRADICTION');
     check(evidence.failureConfirmed === true && evidence.balanceTransaction == null, 'FAILURE_UNCONFIRMED'); intent.status = evidence.status.toUpperCase();
   } else {
     check(['pending', 'processing', 'requires_payment_method', 'requires_confirmation', 'requires_action', 'requires_capture', 'in_transit'].includes(evidence.status), 'UNSUPPORTED_PROVIDER_STATUS');
     check(!intent.confirmed, 'TERMINAL_PROVIDER_CONTRADICTION');
     if (intent.kind === 'PAYOUT' && evidence.balanceTransaction) payoutDebit(tx, intent, evidence);
+    if (intent.kind === 'REFUND' && evidence.balanceTransaction) refundDebit(tx, intent, evidence);
     intent.status = 'PENDING';
   }
   intent.reconciledAt = evidence.observedAt; intent.evidenceHash = digest(evidence);
   state(tx).financeObservations[intent.id] = copy(evidence);
   if (['REFUND', 'REVERSAL'].includes(intent.kind)) maybeUnblock(tx, intent);
+  if (intent.kind === 'REFUND' && TERMINAL_FAILURE.has(intent.status) && intent.order.sellerNetCents > 0) recordHold(tx, { orderId: intent.orderId, holdId: `refund-failed:${intent.id}`, reason: 'REFUND_OBLIGATION_UNPAID', evidenceRef: intent.evidenceHash, amountCents: Math.max(1, Math.min(intent.amountCents, intent.order.sellerNetCents)) });
   tx.emit?.('FINANCE_RECONCILED', { intentId, kind: intent.kind, status: intent.status, objectId: intent.objectId });
   return copy(intent);
 }
 export function sellerBalance(stateValue, sellerId) {
   identifier(sellerId);
-  const sellerRestricted = Object.values(stateValue.financeOrders ?? {}).some(order => order.sellerId === sellerId && order.blocked);
+  const sellerRestricted = Object.values(stateValue.financeOrders ?? {}).some(order => order.sellerId === sellerId && (order.blocked || Object.values(stateValue.financeExceptions ?? {}).some(item => item.status === 'OPEN' && (!item.orderId || item.orderId === order.order.orderId) && [order.connectedAccountId, stateValue.intents[order.paymentIntentId].platformAccountId].includes(item.accountId))));
   const values = { pendingCents: 0, availableCents: 0, reservedCents: 0, withdrawingCents: 0, paidOutCents: 0, recoveryDueCents: 0, currency: 'USD' };
   for (const order of Object.values(stateValue.financeOrders ?? {}).filter(order => order.sellerId === sellerId)) {
     const payment = stateValue.intents[order.paymentIntentId];
@@ -327,7 +384,7 @@ export function sellerBalance(stateValue, sellerId) {
 export function reconcileDispute(tx, { paymentIntentId, evidence, policyEvidence }) {
   const payment = getIntent(tx, paymentIntentId, 'PAYMENT'); check(payment.confirmed, 'PAYMENT_UNCONFIRMED');
   fresh(tx, evidence, payment.policy);
-  check(evidence.provider === (payment.policy.environment === 'synthetic' ? 'synthetic' : 'stripe') && evidence.livemode === false && evidence.accountId === payment.platformAccountId && evidence.chargeId === payment.chargeId && evidence.currency === 'USD' && ['needs_response', 'under_review', 'lost', 'won'].includes(evidence.status), 'DISPUTE_EVIDENCE_MISMATCH');
+  check(evidence.provider === (payment.policy.environment === 'synthetic' ? 'synthetic' : 'stripe') && evidence.livemode === (payment.policy.environment === 'stripe-production') && evidence.accountId === payment.platformAccountId && evidence.chargeId === payment.chargeId && evidence.currency === 'USD' && ['needs_response', 'under_review', 'lost', 'won'].includes(evidence.status), 'DISPUTE_EVIDENCE_MISMATCH');
   identifier(evidence.objectId); cents(evidence.amountCents, { positive: true }); check(evidence.amountCents <= payment.amountCents, 'EXCESS_DISPUTE');
   check(policyEvidence?.approved === true && policyEvidence.orderId === payment.orderId && policyEvidence.policyVersion === payment.policy.version, 'DISPUTE_POLICY_REQUIRED'); identifier(policyEvidence.evidenceRef);
   const sellerRecoveryCents = cents(policyEvidence.sellerRecoveryCents); check(sellerRecoveryCents <= evidence.amountCents, 'EXCESS_SELLER_RECOVERY');
@@ -337,6 +394,7 @@ export function reconcileDispute(tx, { paymentIntentId, evidence, policyEvidence
   check(safeSum(sellerRecoveryCents, refundedSeller) <= payment.allocations.sellerCents, 'EXCESS_SELLER_RECOVERY');
   if (prior) check(prior.orderId === payment.orderId && prior.amountCents === evidence.amountCents && prior.sellerRecoveryCents === sellerRecoveryCents && evidence.observedAt >= prior.observedAt && !(prior.status === 'won' && evidence.status !== 'won'), 'DISPUTE_CONFLICT');
   const bt = balanceTransaction(evidence, -evidence.amountCents, evidence.objectId);
+  remember(tx, { ...payment, id: `dispute:${evidence.objectId}` }, evidence);
   const debitHash = digest({ id: bt.id, source: bt.source, amountCents: bt.amountCents, feeCents: bt.feeCents, netCents: bt.netCents, currency: bt.currency });
   if (prior) check(prior.debitHash === debitHash, 'DISPUTE_DEBIT_CHANGED');
   if (!prior) {
@@ -345,6 +403,7 @@ export function reconcileDispute(tx, { paymentIntentId, evidence, policyEvidence
   if (evidence.status === 'won' && prior?.status !== 'won') {
     const returned = balanceTransaction({ balanceTransaction: evidence.reinstatementBalanceTransaction }, evidence.amountCents, evidence.objectId);
     check(returned.feeCents === 0, 'UNSUPPORTED_DISPUTE_RETURN_FEE');
+    remember(tx, { ...payment, id: `dispute:${evidence.objectId}` }, evidence, 'reinstatementBalanceTransaction');
     // Recovery already collected requires a separately approved refund to the seller; never silently re-transfer.
     const outstanding = accountBalance(tx.state, pbook(payment), account('seller_recovery', payment.orderId));
     check(outstanding >= sellerRecoveryCents, 'DISPUTE_RECOVERY_REQUIRES_REVIEW');

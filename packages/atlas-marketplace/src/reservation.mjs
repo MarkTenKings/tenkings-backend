@@ -1,10 +1,13 @@
 import { cents, clone, hash, requireValue, sumCents } from './contract.mjs';
-import { demoId, requiredText, SYNTHETIC_ENVIRONMENT } from './eligibility.mjs';
+import { requiredText } from './eligibility.mjs';
+import { authorityContext, contextFor, domainId, authorityId } from './authority-context.mjs';
 import { assertCurrentHoldConsent, assertCurrentListingAuthority, assertListingBinding } from './listing.mjs';
 
-export function assertBuyerQuote(quote, listing, now) {
+export function assertBuyerQuote(quote, listing, now, suppliedContext) {
+  const context = authorityContext(suppliedContext);
+  assertListingBinding(listing, context);
   requireValue(quote && typeof quote === 'object', 'QUOTE_REQUIRED', 'A complete current buyer quote is required.');
-  demoId(quote.quoteId, 'quote');
+  domainId(quote.quoteId, 'quote', context);
   requireValue(quote.policyId === listing.policy.id && quote.policyVersion === listing.policy.version && quote.listingHash === listing.bindingHash, 'QUOTE_BINDING_MISMATCH', 'The quote must bind this exact listing and policy.');
   requireValue(quote.itemCents === listing.askingPriceCents, 'QUOTE_PRICE_MISMATCH', 'The item price changed.');
   for (const field of ['itemCents', 'shippingCents', 'taxCents', 'buyerFeeCents', 'totalCents']) cents(quote[field]);
@@ -19,10 +22,15 @@ export function assertBuyerQuote(quote, listing, now) {
 }
 
 function assertReservation(tx, reservationId) {
-  demoId(reservationId, 'reservation');
+  const context = contextFor(tx);
+  domainId(reservationId, 'reservation', context);
   const reservation = tx.state.reservations[reservationId];
   requireValue(reservation, 'RESERVATION_NOT_FOUND', 'Reservation not found.');
-  const listing = assertListingBinding(tx.state.listings[reservation.listingId]);
+  const current = tx.state.listings[reservation.listingId];
+  // Released historical checkouts retain their exact earlier price/report binding.
+  const historical = reservation.status === 'RELEASED' && current?.bindingHash !== reservation.listingHash
+    ? Object.values(tx.state.listingRevisions ?? {}).find(row => row.id === reservation.listingId && row.bindingHash === reservation.listingHash) : null;
+  const listing = assertListingBinding(historical ?? current, context);
   requireValue(listing.bindingHash === reservation.listingHash && reservation.order.bindingHash === reservation.listingHash, 'RESERVATION_BINDING_INVALID', 'Reservation no longer matches its immutable listing.');
   requireValue(reservation.quoteHash === hash(reservation.quote), 'RESERVATION_BINDING_INVALID', 'The reserved buyer quote changed.');
   requireValue(hash(reservation.order) === hash(orderFromListing(reservation.id, reservation.orderId, reservation.buyerId, listing, reservation.quote)), 'RESERVATION_BINDING_INVALID', 'The order allocation must retain the exact reserved quote and listing.');
@@ -52,12 +60,13 @@ function hasReconciledObject(intent, now) {
 }
 
 export function reserveListing(tx, input) {
-  demoId(input.requestId, 'request');
-  demoId(input.reservationId, 'reservation');
-  demoId(input.listingId, 'listing');
-  demoId(input.buyerId, 'buyer');
-  const orderId = input.orderId ?? `demo_order_${input.reservationId.slice(5)}`;
-  demoId(orderId, 'order');
+  const context = contextFor(tx);
+  domainId(input.requestId, 'request', context);
+  domainId(input.reservationId, 'reservation', context);
+  domainId(input.listingId, 'listing', context);
+  authorityId(input.buyerId, 'buyer', context);
+  const orderId = input.orderId ?? (context.environment === 'SYNTHETIC_LOCAL' ? `demo_order_${input.reservationId.slice(5)}` : `order_${hash(input.reservationId).slice(0, 32)}`);
+  domainId(orderId, 'order', context);
   const requestHash = hash({ reservationId: input.reservationId, orderId, listingId: input.listingId, listingVersion: input.listingVersion, listingHash: input.listingHash, buyerId: input.buyerId, quote: input.quote });
   const receiptKey = `reservation:${input.requestId}`;
   const receipt = tx.state.receipts[receiptKey];
@@ -66,12 +75,12 @@ export function reserveListing(tx, input) {
     // Historical receipt remains the exact accepted result; current state is a separate read.
     return clone(receipt.result);
   }
-  const listing = assertListingBinding(tx.state.listings[input.listingId]);
+  const listing = assertListingBinding(tx.state.listings[input.listingId], context);
   requireValue(listing.version === input.listingVersion && listing.bindingHash === input.listingHash, 'LISTING_CHANGED', 'Review the current exact listing before purchase.');
   requireValue(input.buyerId !== listing.sellerId, 'SELF_PURCHASE_REFUSED', 'A seller cannot purchase their own listing.');
-  assertCurrentListingAuthority(listing, input.eligibility, tx.now);
+  assertCurrentListingAuthority(listing, input.eligibility, tx.now, context);
   assertCurrentHoldConsent(tx, listing);
-  assertBuyerQuote(input.quote, listing, tx.now);
+  assertBuyerQuote(input.quote, listing, tx.now, context);
   requireValue(!tx.state.reservations[input.reservationId], 'RESERVATION_ID_CONFLICT', 'This reservation identity is already used.');
   requireValue(!Object.values(tx.state.reservations).some((other) => other.orderId === orderId), 'ORDER_ID_CONFLICT', 'This order identity is already used.');
   // Expiry frees only an untouched reservation. Payment work must reconcile first.
@@ -86,7 +95,7 @@ export function reserveListing(tx, input) {
   requireValue(listing.status === 'ACTIVE' && listing.activeReservationId === null, 'CARD_UNAVAILABLE', 'This card is not available for purchase.');
   const order = orderFromListing(input.reservationId, orderId, input.buyerId, listing, input.quote);
   const reservation = {
-    id: input.reservationId, orderId, environment: SYNTHETIC_ENVIRONMENT, listingId: listing.id, cardId: listing.cardId,
+    id: input.reservationId, orderId, environment: contextFor(tx).environment, listingId: listing.id, cardId: listing.cardId,
     sellerId: listing.sellerId, buyerId: input.buyerId, listingHash: listing.bindingHash, status: 'HELD',
     createdAt: new Date(tx.now).toISOString(), expiresAt: new Date(Math.min(tx.now + listing.policy.reservationTtlMs, Date.parse(input.quote.expiresAt))).toISOString(),
     paymentIntentId: null, quote: clone(input.quote), quoteHash: hash(input.quote), order,
@@ -95,7 +104,7 @@ export function reserveListing(tx, input) {
   listing.status = 'RESERVED';
   listing.activeReservationId = reservation.id;
   tx.state.receipts[receiptKey] = { requestHash, result: clone(reservation) };
-  tx.emit('CARD_RESERVED', { reservationId: reservation.id, listingId: listing.id, cardId: listing.cardId, environment: SYNTHETIC_ENVIRONMENT });
+  tx.emit('CARD_RESERVED', { reservationId: reservation.id, listingId: listing.id, cardId: listing.cardId, environment: contextFor(tx).environment });
   return clone(reservation);
 }
 
@@ -105,15 +114,15 @@ export function markReservationPaymentPending(tx, { reservationId, paymentIntent
     const intent = assertPaymentIntent(tx, reservation, paymentIntentId);
     if (intent.status === 'PREPARED') {
       requireValue(reservation.status === 'PAYMENT_PENDING' && listing.status === 'RESERVED' && listing.activeReservationId === reservationId, 'RESERVATION_UNAVAILABLE', 'Only the still-held original checkout may dispatch its prepared payment.');
-      assertCurrentListingAuthority(listing, eligibility, tx.now);
+      assertCurrentListingAuthority(listing, eligibility, tx.now, contextFor(tx));
       assertCurrentHoldConsent(tx, listing);
     }
     return clone(reservation);
   }
-  demoId(paymentIntentId, 'payment intent');
+  domainId(paymentIntentId, 'payment intent', contextFor(tx));
   requireValue(reservation.status === 'HELD' && listing.activeReservationId === reservationId && listing.status === 'RESERVED', 'RESERVATION_UNAVAILABLE', 'The checkout no longer owns this card.');
   requireValue(Date.parse(reservation.expiresAt) > tx.now, 'RESERVATION_EXPIRED', 'The reservation expired before payment began.');
-  assertCurrentListingAuthority(listing, eligibility, tx.now);
+  assertCurrentListingAuthority(listing, eligibility, tx.now, contextFor(tx));
   assertCurrentHoldConsent(tx, listing);
   // Verify before mutating; the local store also rolls back the enclosing transaction.
   const intent = tx.state.intents[paymentIntentId];
@@ -121,7 +130,7 @@ export function markReservationPaymentPending(tx, { reservationId, paymentIntent
   requireValue(hash(intent.order) === hash(reservation.order) && intent.amountCents === reservation.order.totalCents && intent.currency === 'USD', 'PAYMENT_BINDING_MISMATCH', 'Payment must bind the exact reserved buyer total and seller allocation.');
   reservation.paymentIntentId = paymentIntentId;
   reservation.status = 'PAYMENT_PENDING';
-  tx.emit('RESERVATION_PAYMENT_PENDING', { reservationId, paymentIntentId, environment: SYNTHETIC_ENVIRONMENT });
+  tx.emit('RESERVATION_PAYMENT_PENDING', { reservationId, paymentIntentId, environment: contextFor(tx).environment });
   return clone(reservation);
 }
 
@@ -136,11 +145,11 @@ export function settleReservation(tx, { reservationId, paymentIntentId, orderId 
     return clone(existing);
   }
   requireValue(reservation.status === 'PAYMENT_PENDING' && listing.activeReservationId === reservationId && listing.status === 'RESERVED', 'RESERVATION_UNAVAILABLE', 'Confirmed money requires manual reconciliation if the original reservation no longer owns the card.');
-  const order = { ...clone(reservation.order), environment: SYNTHETIC_ENVIRONMENT, status: 'PAID', paymentIntentId, paymentObjectId: intent.objectId, paidAt: new Date(tx.now).toISOString(), approvedCard: clone(listing.approvedCard), policy: clone(listing.policy), quote: clone(reservation.quote), connectedAccountId: listing.connectedAccountId };
+  const order = { ...clone(reservation.order), environment: contextFor(tx).environment, status: 'PAID', paymentIntentId, paymentObjectId: intent.objectId, paidAt: new Date(tx.now).toISOString(), approvedCard: clone(listing.approvedCard), policy: clone(listing.policy), quote: clone(reservation.quote), connectedAccountId: listing.connectedAccountId };
   tx.state.orders[orderId] = order;
   reservation.status = 'SOLD';
   listing.status = 'SOLD';
-  tx.emit('SALE_CONFIRMED', { orderId, reservationId, listingId: listing.id, environment: SYNTHETIC_ENVIRONMENT });
+  tx.emit('SALE_CONFIRMED', { orderId, reservationId, listingId: listing.id, environment: contextFor(tx).environment });
   return clone(order);
 }
 
@@ -163,6 +172,24 @@ export function releaseReservation(tx, { reservationId, reason, buyerId, payment
   reservation.releaseReason = reason;
   listing.status = 'ACTIVE';
   listing.activeReservationId = null;
-  tx.emit('RESERVATION_RELEASED', { reservationId, reason, environment: SYNTHETIC_ENVIRONMENT });
+  tx.emit('RESERVATION_RELEASED', { reservationId, reason, environment: contextFor(tx).environment });
   return clone(reservation);
+}
+
+export function cancelReservation(tx, { requestId, reservationId, buyerId }) {
+  domainId(requestId, 'request', contextFor(tx)); authorityId(buyerId, 'buyer', contextFor(tx));
+  const reservation = tx.state.reservations[reservationId];
+  requireValue(reservation?.buyerId === buyerId, 'RELEASE_UNAUTHORIZED');
+  const key = `reservation-cancel:${requestId}`, requestHash = hash({ reservationId, buyerId }), prior = tx.state.receipts[key];
+  if (prior) { requireValue(prior.requestHash === requestHash, 'IDEMPOTENCY_CONFLICT'); return clone(prior.result); }
+  requireValue(reservation.paymentIntentId === null, 'PAYMENT_RECONCILIATION_REQUIRED', 'A saved payment must be reconciled; cancellation cannot release an uncertain payment.');
+  const result = releaseReservation(tx, { reservationId, buyerId, reason: 'BUYER_CANCELED' });
+  tx.state.receipts[key] = { requestHash, result: clone(result) };
+  return result;
+}
+
+export function expireReservations(tx) {
+  return Object.values(tx.state.reservations)
+    .filter(row => row.status === 'HELD' && row.paymentIntentId === null && Date.parse(row.expiresAt) <= tx.now)
+    .map(row => releaseReservation(tx, { reservationId: row.id, reason: 'LEASE_EXPIRED' }));
 }

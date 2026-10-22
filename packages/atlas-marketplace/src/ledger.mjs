@@ -84,3 +84,23 @@ export function accountBalance(state, book, account) {
   return Number(total);
 }
 export function posting(book, account, cents) { return { book, account, currency: 'USD', cents }; }
+
+// One observed provider transaction can fund exactly one accounting owner. Status and
+// availability may mature; the amount, source, fee, currency and owner cannot change.
+export function recordProviderTransaction(tx, { accountId, transaction, owner, observedAt, livemode = false }) {
+  identifier(accountId); identifier(owner);
+  const t = transaction; identifier(t?.id); identifier(t?.source);
+  financeAssert(t.currency === 'USD' && Number.isSafeInteger(t.amountCents) && Number.isSafeInteger(t.netCents) && safeSum(t.amountCents, -integerCents(t.feeCents)) === t.netCents, 'INVALID_PROVIDER_TRANSACTION');
+  financeAssert(['pending', 'available'].includes(t.status) && Number.isSafeInteger(t.availableOn) && Number.isSafeInteger(observedAt) && observedAt <= tx.now, 'INVALID_PROVIDER_TRANSACTION');
+  financeAssert(typeof livemode === 'boolean', 'PROVIDER_MODE_REQUIRED');
+  const immutable = { accountId, livemode, owner, id: t.id, source: t.source, currency: t.currency, amountCents: t.amountCents, feeCents: t.feeCents, netCents: t.netCents };
+  const registry = tx.state.financeBalanceTransactions ??= {}, key = `${accountId}:${t.id}`, old = registry[key];
+  if (old) financeAssert(old.immutableHash === digest(immutable) && observedAt >= old.observedAt, 'PROVIDER_TRANSACTION_REUSED_OR_CHANGED');
+  registry[key] = { ...immutable, immutableHash: digest(immutable), status: t.status, availableOn: t.availableOn, observedAt, rawHash: t.rawHash ?? null };
+  return copy(registry[key]);
+}
+
+export function cashLedgerHash(state, book) {
+  assertJournal(state.journals ?? []);
+  return digest((state.journals ?? []).filter(entry => entry.lines.some(line => line.book === book && line.account === 'provider_cash')).map(entry => ({ id: entry.id, hash: entry.hash })));
+}

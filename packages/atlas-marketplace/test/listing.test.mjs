@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createListing, assertListingBinding } from '../src/listing.mjs';
 import { catalogListings } from '../src/catalog.mjs';
+import { publicApprovedCard } from '../src/card-projection.mjs';
 import { makeListingInput, makeTestTx, makeSyntheticPolicy } from './listing-fixtures.mjs';
 
 test('listing requires explicit policy and independent Hold and list consent', () => {
@@ -33,12 +34,24 @@ test('fee/net has no default; immutable listing and exact request retry cannot d
 
 test('public catalog distinguishes available listings, filters unknown honestly and redacts authority', () => {
   const tx = makeTestTx();
-  createListing(tx, makeListingInput());
+  const input = makeListingInput();
+  const approved = structuredClone(input.eligibility.approvedCard);
+  input.eligibility.approvedCard.privateOwnerNote = 'private adapter metadata';
+  input.eligibility.approvedCard.identity.privatePurchasePriceCents = 1;
+  input.eligibility.approvedCard.media.privateOriginalLocation = 'private storage key';
+  input.eligibility.approvedCard.media.front.privateUploadOwner = 'private uploader';
+  createListing(tx, input);
   const catalog = catalogListings(tx.state, { query: 'synthetic', numberedDenominator: 99, autograph: false });
   assert.equal(catalog.total, 1);
   assert.equal(catalog.items[0].authority, undefined);
   assert.equal(catalog.items[0].sellerId, undefined);
   assert.equal(catalog.items[0].connectedAccountId, undefined);
+  assert.deepEqual(catalog.items[0].approvedCard, approved);
+  catalog.items[0].approvedCard.media.front.url = '/demo/modified';
+  assert.equal(tx.state.listings.demo_listing.approvedCard.media.front.url, approved.media.front.url);
+  assert.equal(tx.state.listings.demo_listing.approvedCard.privateOwnerNote, 'private adapter metadata');
+  assert.equal(publicApprovedCard({ ...approved, reportUrl: { privateAccessToken: 'private token' } }), null);
+  assert.equal(publicApprovedCard({ ...approved, identity: { ...approved.identity, name: { privateName: 'private' } } }), null);
   assert.equal(catalogListings(tx.state, { relic: false }).total, 0);
   tx.state.listings.demo_listing.status = 'RESERVED';
   assert.equal(catalogListings(tx.state).total, 0);

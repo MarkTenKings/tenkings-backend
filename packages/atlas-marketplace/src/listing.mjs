@@ -1,9 +1,11 @@
 import { cents, clone, hash, requireValue } from './contract.mjs';
-import { assertEligibility, demoId, eligibilityBinding, requiredText, SYNTHETIC_ENVIRONMENT } from './eligibility.mjs';
+import { assertEligibility, eligibilityBinding, requiredText } from './eligibility.mjs';
+import { authorityContext, contextFor, domainId, authorityId } from './authority-context.mjs';
 
-export function assertListingPolicy(policy) {
-  requireValue(policy?.environment === SYNTHETIC_ENVIRONMENT, 'POLICY_REQUIRED', 'An explicit synthetic policy is required; no commercial fee or protection terms are assumed.');
-  demoId(policy.id, 'policy');
+export function assertListingPolicy(policy, suppliedContext) {
+  const context = authorityContext(suppliedContext);
+  requireValue(policy?.environment === context.environment, 'POLICY_REQUIRED', 'An explicit synthetic policy is required; no commercial fee or protection terms are assumed.');
+  domainId(policy.id, 'policy', context);
   requiredText(policy.version, 'Policy version');
   requiredText(policy.approvalRef, 'Policy approval reference');
   cents(policy.feeCents);
@@ -19,13 +21,14 @@ export function listingBindingHash(listing) {
   return hash(Object.fromEntries(IMMUTABLE_FIELDS.map((field) => [field, listing[field]])));
 }
 
-export function assertListingBinding(listing) {
-  requireValue(listing && listing.environment === SYNTHETIC_ENVIRONMENT && listing.bindingHash === listingBindingHash(listing), 'LISTING_BINDING_INVALID', 'The saved listing/report/media/terms binding changed.');
+export function assertListingBinding(listing, suppliedContext) {
+  const context = authorityContext(suppliedContext);
+  requireValue(listing && listing.environment === context.environment && listing.bindingHash === listingBindingHash(listing), 'LISTING_BINDING_INVALID', 'The saved listing/report/media/terms binding changed.');
   return listing;
 }
 
-export function assertCurrentListingAuthority(listing, eligibility, now) {
-  assertEligibility(eligibility, { cardId: listing.cardId, sellerId: listing.sellerId, now });
+export function assertCurrentListingAuthority(listing, eligibility, now, context) {
+  assertEligibility(eligibility, { cardId: listing.cardId, sellerId: listing.sellerId, now, context });
   requireValue(hash(eligibilityBinding(eligibility)) === hash(listing.authority), 'LISTING_AUTHORITY_CHANGED', 'Seller, title, consent, custody or approved evidence changed; this listing must be reviewed again.');
 }
 
@@ -35,11 +38,12 @@ export function assertCurrentHoldConsent(tx, listing) {
 }
 
 export function createListing(tx, input) {
-  demoId(input.requestId, 'request');
-  demoId(input.listingId, 'listing');
-  demoId(input.sellerId, 'seller');
+  const context = contextFor(tx);
+  domainId(input.requestId, 'request', context);
+  domainId(input.listingId, 'listing', context);
+  authorityId(input.sellerId, 'seller', context);
   const eligibility = input.eligibility;
-  const policy = assertListingPolicy(input.policy);
+  const policy = assertListingPolicy(input.policy, context);
   requireValue(eligibility, 'ELIGIBILITY_UNAVAILABLE', 'Seller/title/custody authority is required.');
   const requestHash = hash({ listingId: input.listingId, sellerId: input.sellerId, askingPriceCents: input.askingPriceCents, cardId: eligibility?.cardId, authority: eligibility ? eligibilityBinding(eligibility) : null, policy: input.policy });
   const receiptKey = `listing:${input.requestId}`;
@@ -48,7 +52,7 @@ export function createListing(tx, input) {
     requireValue(receipt.requestHash === requestHash, 'IDEMPOTENCY_CONFLICT', 'This listing request already has different immutable inputs.');
     return clone(receipt.result);
   }
-  const authority = assertEligibility(eligibility, { cardId: eligibility?.cardId, sellerId: input.sellerId, now: tx.now });
+  const authority = assertEligibility(eligibility, { cardId: eligibility?.cardId, sellerId: input.sellerId, now: tx.now, context });
   requireValue(authority.consignment.policyId === policy.id, 'POLICY_MISMATCH', 'Consignment must bind the selected listing policy.');
   const consent = tx.state.consent[authority.cardId];
   requireValue(consent?.choice === 'HOLD_AND_LIST' && consent.sellerId === input.sellerId && consent.evidenceRef === authority.consignment.holdConsentRef, 'HOLD_CONSENT_REQUIRED', 'Record explicit Hold and list consent before listing this card.');
@@ -58,7 +62,7 @@ export function createListing(tx, input) {
   const conflicts = Object.values(tx.state.listings).some((listing) => listing.cardId === authority.cardId && ['ACTIVE', 'RESERVED', 'SOLD'].includes(listing.status));
   requireValue(!conflicts, 'CARD_UNAVAILABLE', 'The permanent card already has an active, reserved or sold listing.');
   const listing = {
-    id: input.listingId, version: 1, environment: SYNTHETIC_ENVIRONMENT,
+    id: input.listingId, version: 1, environment: context.environment,
     cardId: authority.cardId, sellerId: input.sellerId, connectedAccountId: authority.seller.connectedAccountId,
     currency: 'USD', askingPriceCents, feeCents: policy.feeCents, sellerNetCents: askingPriceCents - policy.feeCents,
     approvedCard: clone(authority.approvedCard), authority: eligibilityBinding(authority), policy: clone(policy), createdAt: new Date(tx.now).toISOString(),
@@ -68,6 +72,58 @@ export function createListing(tx, input) {
   listing.activeReservationId = null;
   tx.state.listings[listing.id] = listing;
   tx.state.receipts[receiptKey] = { requestHash, result: clone(listing) };
-  tx.emit('LISTING_CREATED', { listingId: listing.id, cardId: listing.cardId, policyVersion: policy.version, environment: SYNTHETIC_ENVIRONMENT });
+  tx.emit('LISTING_CREATED', { listingId: listing.id, cardId: listing.cardId, policyVersion: policy.version, environment: context.environment });
   return clone(listing);
+}
+
+function changeListing(tx, input, operation, action) {
+  const context = contextFor(tx);
+  for (const key of ['requestId', 'listingId']) domainId(input[key], key, context);
+  authorityId(input.sellerId, 'seller', context);
+  const request = { listingId: input.listingId, sellerId: input.sellerId, expectedVersion: input.expectedVersion, expectedBindingHash: input.expectedBindingHash, ...(operation === 'revise' ? { askingPriceCents: input.askingPriceCents } : {}) };
+  const requestHash = hash(request), key = `listing-${operation}:${input.requestId}`, prior = tx.state.receipts[key];
+  if (prior) {
+    requireValue(prior.requestHash === requestHash, 'IDEMPOTENCY_CONFLICT');
+    return clone(prior.result);
+  }
+  const listing = assertListingBinding(tx.state.listings[input.listingId], context);
+  requireValue(listing.sellerId === input.sellerId, 'LISTING_UNAUTHORIZED');
+  requireValue(listing.version === input.expectedVersion && listing.bindingHash === input.expectedBindingHash, 'LISTING_CHANGED', 'Review the latest listing before changing it.');
+  requireValue(listing.status === 'ACTIVE' && listing.activeReservationId === null, 'LISTING_CHANGE_UNAVAILABLE', 'Only an available listing without an active checkout can change.');
+  requireValue(!Object.values(tx.state.reservations).some(row => row.listingId === listing.id && row.status !== 'RELEASED'), 'LISTING_FINANCIAL_EXPOSURE');
+  requireValue(!Object.values(tx.state.orders).some(row => row.listingId === listing.id), 'LISTING_FINANCIAL_EXPOSURE');
+  const associated = Object.values(tx.state.intents).filter(row => row.listingId === listing.id || row.order?.listingId === listing.id);
+  requireValue(associated.every(row => row.kind === 'PAYMENT' && row.status === 'CANCELED' && row.terminalUnpaid === true && row.confirmed === false && typeof row.objectId === 'string' && row.objectId.length > 0 && Number.isSafeInteger(row.reconciledAt) && row.reconciledAt >= 0 && row.reconciledAt <= tx.now), 'LISTING_FINANCIAL_EXPOSURE', 'Unresolved or confirmed money prevents a listing change.');
+  const result = action(listing);
+  tx.state.receipts[key] = { requestHash, result: clone(result) };
+  tx.emit(operation === 'revise' ? 'LISTING_REVISED' : 'LISTING_WITHDRAWN', { listingId: listing.id, cardId: listing.cardId, version: result.version, bindingHash: result.bindingHash, environment: context.environment });
+  return clone(result);
+}
+
+export function reviseListing(tx, input) {
+  return changeListing(tx, input, 'revise', listing => {
+    assertCurrentListingAuthority(listing, input.eligibility, tx.now, contextFor(tx));
+    assertCurrentHoldConsent(tx, listing);
+    const price = cents(input.askingPriceCents, { positive: true });
+    requireValue(price > listing.feeCents, 'SELLER_NET_INVALID');
+    requireValue(price !== listing.askingPriceCents, 'LISTING_UNCHANGED');
+    requireValue(Number.isSafeInteger(listing.version + 1), 'LISTING_VERSION_OVERFLOW');
+    const revisions = tx.state.listingRevisions ??= {};
+    const key = `${listing.id}:${listing.version}`;
+    requireValue(!revisions[key], 'LISTING_REVISION_CONFLICT');
+    revisions[key] = clone(listing);
+    listing.version += 1;
+    listing.askingPriceCents = price;
+    listing.sellerNetCents = price - listing.feeCents;
+    listing.bindingHash = listingBindingHash(listing);
+    return listing;
+  });
+}
+
+export function withdrawListing(tx, input) {
+  return changeListing(tx, input, 'withdraw', listing => {
+    listing.status = 'WITHDRAWN';
+    listing.withdrawnAt = new Date(tx.now).toISOString();
+    return listing;
+  });
 }

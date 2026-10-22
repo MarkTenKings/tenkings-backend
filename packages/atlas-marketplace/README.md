@@ -1,10 +1,10 @@
 # ATLAS R2 marketplace pilot
 
-Default-off, dependency-free local implementation for an ATLAS-held fixed-price marketplace. It does not register with any existing app, deployment, database manifest or grading/Ten Kings runtime. All local cards, actors, money and fulfillment evidence are explicitly synthetic. Claims and customer ownership history remain disabled.
+Default-off, isolated implementation of an ATLAS-held fixed-price marketplace. Nothing in this package registers routes, applies shared migrations, reads grading credentials, schedules jobs or changes grading/Ten Kings. Ownership claims and customer ownership history remain disabled pending Fingerprint and separate authority/policy approval.
 
-## Run locally
+## Local preview and tests
 
-Use Node 22.16.0 or later with `node:sqlite`. From the repository root:
+Use Node 22.16.0 or later with `node:sqlite`, from the repository root:
 
 ```sh
 node --test packages/atlas-marketplace/test/*.test.mjs
@@ -12,29 +12,35 @@ mkdir -m 700 /absolute/owned/new-demo-directory
 node packages/atlas-marketplace/scripts/demo-server.mjs --synthetic-local --data-dir /absolute/owned/new-demo-directory
 ```
 
-The server prints its random loopback URL. The owned directory must exist, be absolute and resolve without symlink parents. Stop with Ctrl-C. Reopening the same directory retains the original intents, provider fixture state and ledger. A fresh demonstration needs a new directory; do not erase an uncertain transaction to retry it. Existing R1/production servers are unrelated.
+The server prints its random loopback URL. `/` is the explicit synthetic seller/buyer/staff workspace; `/marketplace/` is the public catalog. The directory must exist, be absolute and resolve without symlink parents. Reopening it retains original intents and provider state. Use a new directory for a fresh demonstration; never erase uncertain financial state to retry. Stop with Ctrl-C. The public sign-in link targets the intended `/account/marketplace/` integration mount, which the standalone demo does not implement.
 
-The page deliberately switches among local seller, buyer and staff fixtures. It is not production authentication. Its provider-simulation buttons move only the durable local simulator. It shows explicit Hold and list, exact fee/net, a complete buyer quote, one-card reservation, pending payment, fulfillment evidence, separate transfer settlement, balance states and bank-payout reconciliation. The illustrative $5 fee, $12 shipping, $10 tax and zero return-window are synthetic inputs, not approved terms. No real money can move through this demo.
+The demo uses synthetic identities, artwork, policy and provider effects. The illustrative $5 fee, $12 shipping, $10 tax and zero return window are fixtures. No actual customer, inventory, shipment or money is involved. The proposed production 8% fee remains unapproved.
 
-## Boundaries
+## Implemented boundaries
 
-`service.mjs` composes synchronous domain reducers with async evidence/provider ports. `store.mjs` owns local SQLite `BEGIN IMMEDIATE`, append-only journal/event checks and hashed commit snapshots. This finite JSON snapshot store is for local qualification; it is not a production migration or scalable ledger service.
-
-| Port | Required contract |
+| Component | Contract |
 | --- | --- |
-| Eligibility | Current, separate title, consignment, explicit hold consent, ATLAS custody and eligible seller/account evidence; permanent card/certificate and exact approved report/media/identity revision. Default adapter returns unavailable. |
-| Listing/quote | Immutable source/policy/fulfillment-policy hash, seller-controlled integer-cent ask and agreed fee/net; server-derived tax/shipping/total, zero buyer premium and expiry. |
-| R1 guidance | Explicitly supplied copied curation receipt and selected-sale provenance, current source binding and approved usage rights. Refresh appends a new receipt without changing report or asking price. Real unresolved rights remain unavailable. |
-| Finance | Frozen reservation order; once-only durable intent before I/O; exact account/object/order/binding/currency/amount retrieval; balanced independent platform/connected books. |
-| Fulfillment/protection | Exact purchased policy, paid order and recorded packing/tracking/delivery/release evidence. Cases can open before packing. Refund review binds immutable case amount, allocation and policy; only its confirmed refund closes the obligation. |
-| Provider | `create`, `retrieve`, `getAccount`, `getBalance`; every uncertain result reconciles the same original intent. No automatic replacement or POST retry. |
+| `service.mjs` | Async composition over atomic reducers; explicit policy/evidence/provider ports. Non-local environments require matching server qualification bindings. |
+| `authority-context.mjs`, `authority-r1.mjs` | Separate synthetic/sandbox/production identity and evidence contracts. R1 copied owner/display facts do not establish sale authority; unresolved title/consignment/custody fails closed. |
+| `listing.mjs`, `reservation.mjs` | Frozen identity, Front/Back/report, policies and quote. Price revision/withdrawal use exact version/hash and reject financial exposure. Atomic reservation, untouched cancellation and conservative expiry. |
+| `public-http.mjs`, `runtime-public-node.mjs` | Default-off session-free GET catalog; mandatory request admission, typed facets and a closed public projection. No financial commands. Exact public media/report access requires a qualified host reader. |
+| `http.mjs`, `runtime-node.mjs`, `auth-r1.mjs` | Mounted account/staff workspace, exact Host/Origin/CSRF, opaque per-request authorization and role projections. Preserve the original request/socket. Short R1 authority checks before/after I/O; no R1 lock across Stripe calls. |
+| `provider-stripe.mjs`, `payment.mjs` | Explicit account/mode/API authorization; buyer-bound ephemeral Payment Element collection, prebound Connect onboarding, once-only dispatch, exact original retrieval/discovery. Unknown outcomes never create a replacement. |
+| `ledger.mjs`, `finance.mjs`, `reconciliation.mjs` | Integer-cent append-only journal; separate platform and connected books; exact refunds/reversals, disputes, capability loss and failed payouts; reviewed opening balances and two-account reconciliation before cash-out. |
+| `fulfillment.mjs` | Purchased policy and retained physical evidence. Packing/dispatch/release stop on financial or protection holds. Delivery observations can still be recorded. Exact reviewed refund obligation must reconcile before case closure. |
+| `store.mjs`, `store-postgres.mjs` | Owned local SQLite and separate function-only PostgreSQL adapter/proposal. PostgreSQL rechecks role, effective database-wide privileges, exact gateway ownership and search paths on every acquisition. |
+| `ui/` | Public filters, exact card evidence, seller listing lifecycle, buyer quote/reservation/payment, staff fulfillment/refund queue, USD proceeds and bank-payout status. Synthetic controls exist only in the local demo mode. |
 
-The synthetic adapter requires `demo_` identities. A real R1 adapter, genuine auth and production persistence require separate implementation and qualification, not a flag change. Seller authority must never be inferred from staff access, grading submission, certificate knowledge or possession. Real ownership transfer writes are not implemented or enabled.
+`ui/workspace.html` loads relative assets. Configure customer routes inside the existing `/account` cookie path and staff routes inside the existing staff cookie path; pass matching `mountPath` and `apiPath`. `auth-r1.mjs` takes canonical R1 class instances and explicit audience/role policy. REVIEWER alone can map to STAFF; OBSERVER is refused. The customer passive-session gateway in `sql/r1-session-access-proposal.sql` is intentionally guarded and unapplied. Shared signed-ingress allowlists and route registration remain R1 integration work.
 
-The Stripe sandbox adapter is opt-in, accepts an explicitly supplied test key and pinned account/API configuration, and is tested using injected HTTP fixtures only. No real sandbox session was run. It creates an unconfirmed PaymentIntent without exposing a client secret; real checkout collection/confirmation, Connect onboarding, complete webhook routing, operational reconciliation and exception handling remain integration work. Manual cash-out and transfer are separate. Spending proceeds, offers, dealer/direct shipping and instant payouts remain outside this pilot.
+The hosted Stripe UI can confirm only its original buyer/reservation capability. Client secrets stay ephemeral and are removed from return URLs before application reads. Raw webhook verification uses the exact received bytes; payment and early-dispute events settle the original order without requiring a buyer return. A financial review hold is preserved while settlement completes.
 
-## Verification and handoff
+Stripe payout eligibility is not proof of bank ownership. Actual account capability, manual payout schedule, supported bank destination and fresh platform/connected reconciliation are independently required. A provider outage leaves saved work visible and removes payout readiness. ATLAS Balance represents USD sale proceeds; it has no connection to Ten Kings TKD. Spending proceeds, dealer/direct shipping, offers and instant payout remain outside this pilot.
 
-The final local suite has 45 passing groups, including real SQLite multiprocess contention/reopen, uncertain payment/refund recovery, duplicate/out-of-order provider evidence, signed raw webhooks, capability loss, refund/reversal bounds, payout failure before/after paid and disputes after payout. Desktop Chrome completed the synthetic listing-to-paid-out flow. Mobile acceptance remains pending; no responsive screenshot is claimed.
+## Qualification and integration
 
-See [lead handoff](../../docs/handoffs/ATLAS_R2_MARKETPLACE_HANDOFF_20261022.md), [integration audit](../../docs/atlas/audits/2026-10-22/r2-marketplace-pilot.md), [listing interface](../../docs/atlas/audits/2026-10-22/r2-listing-implementation.md) and [finance interface](../../docs/atlas/audits/2026-10-22/r2-finance-implementation.md). Shared production operations remain exclusively with the R1 lead.
+The original 45-group checkpoint and desktop synthetic sale-to-payout remain retained historical evidence. Continuation evidence adds actual PostgreSQL 17 contention/restart and 17 transactional privilege-drift checks, authenticated HTTP and original-request boundaries, actual Chrome 320px workspace inspection, and the public catalog. Tests that inject Stripe HTTP responses are explicitly mocked.
+
+The owner-created ATLAS R2 Marketplace QA sandbox is isolated from the live grading account. Connect platform setup and synthetic seller agreement submission are complete; submission alone is not proof of enabled capabilities. The dedicated, resumable CLI `scripts/qualify-stripe-sandbox.mjs` binds only that sandbox and test keys. Its exact private-file/plan schema and safe invocation are documented in the [finance audit](../../docs/atlas/audits/2026-10-22/r2-finance-implementation.md). Never copy test-plan references into live approval or treat a test payout as real bank settlement.
+
+Use the current [lead handoff](../../docs/handoffs/ATLAS_R2_MARKETPLACE_HANDOFF_20261022.md), [integration audit](../../docs/atlas/audits/2026-10-22/r2-marketplace-pilot.md), [auth bridge](../../docs/atlas/audits/2026-10-22/r2-auth-r1-bridge.md), [listing interface](../../docs/atlas/audits/2026-10-22/r2-listing-implementation.md) and finance audit for exact evidence and open gates. Shared production operations remain with the R1 lead. A flag change alone cannot supply real authority, legal terms, infrastructure qualification or physical acceptance.

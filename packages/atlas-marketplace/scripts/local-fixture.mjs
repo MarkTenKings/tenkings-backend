@@ -24,7 +24,7 @@ export function createLocalFixture({ store, clock = Date.now, assets = true }) {
   const eligibility = createSyntheticEligibilityAdapter({ enabled: true, fixtures: [eligibilityFixture], clock, assertionTtlMs: 60000 });
   const quoteProvider = async ({ listing, now }) => makeSyntheticQuote(listing, { quoteId: demoRequestId(), expiresAt: new Date(now + 300000).toISOString() });
   const service = createMarketplacePilot({ enabled: true, environment: 'SYNTHETIC_LOCAL', store, provider, eligibility, quoteProvider, listingPolicy, financePolicy, fulfillmentPolicy, platformAccountId: 'demo_platform', clock });
-  return { service, provider, eligibility, eligibilityFixture, listingPolicy, financePolicy, fulfillmentPolicy };
+  return { service, provider, eligibility, eligibilityFixture, listingPolicy, financePolicy, fulfillmentPolicy, quoteProvider };
 }
 export function syntheticFulfillmentEvidence(order, action) {
   const evidence = { environment: 'SYNTHETIC_LOCAL', orderId: order.orderId, cardId: order.cardId, ref: `demo_${action.toLowerCase()}_evidence` };

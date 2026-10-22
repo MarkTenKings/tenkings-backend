@@ -38,6 +38,7 @@ export function openLocalStore({ filename, clock = Date.now, environment } = {})
     return { row, state };
   }
   function transaction(fn) {
+    requireValue(typeof fn==='function'&&fn.constructor?.name!=='AsyncFunction','ASYNC_TRANSACTION_REFUSED');
     requireValue(!active, 'NESTED_TRANSACTION');
     active = true;
     let began = false;
@@ -53,7 +54,7 @@ export function openLocalStore({ filename, clock = Date.now, environment } = {})
         state.events.push({ sequence: state.events.length + 1, type, payload: clone(payload), at: now, environment: 'SYNTHETIC_LOCAL' });
       } };
       const result = fn(tx);
-      requireValue(!result || typeof result.then !== 'function', 'ASYNC_TRANSACTION_REFUSED');
+      if(result&&typeof result.then==='function') {Promise.resolve(result).catch(()=>{});requireValue(false,'ASYNC_TRANSACTION_REFUSED');}
       requireValue(state.journals.length >= beforeJournals.length && hash(state.journals.slice(0, beforeJournals.length)) === hash(beforeJournals), 'JOURNAL_MUTATION');
       requireValue(state.events.length >= beforeEvents.length && hash(state.events.slice(0, beforeEvents.length)) === hash(beforeEvents), 'EVENT_MUTATION');
       const serialized = canonicalJSON(state), stateHash = hash(state);

@@ -1,4 +1,5 @@
 import { clone, hash, requireValue } from './contract.mjs';
+import { authorityContext, authorityId, domainId, approvedEvidenceUrl } from './authority-context.mjs';
 
 export const SYNTHETIC_ENVIRONMENT = 'SYNTHETIC_LOCAL';
 
@@ -16,23 +17,21 @@ function digest(value, label) {
   requireValue(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value), 'EVIDENCE_BINDING_INVALID', `${label} must be an exact SHA-256 digest.`);
 }
 
-function localEvidenceUrl(value) {
-  requireValue(typeof value === 'string' && /^\/demo\/[a-zA-Z0-9_./?-]+$/.test(value) && !value.includes('..'), 'EVIDENCE_URL_INVALID', 'Synthetic evidence must stay on the local demo route.');
-}
-
-export function assertApprovedCard(card) {
+export function assertApprovedCard(card, suppliedContext) {
+  const context = authorityContext(suppliedContext);
   requireValue(card && typeof card === 'object', 'APPROVAL_REQUIRED', 'An exact approved-card snapshot is required.');
-  demoId(card.cardId, 'card');
-  demoId(card.approvalId, 'approval');
+  authorityId(card.cardId, 'card', context);
+  authorityId(card.approvalId, 'approval', context);
   requiredText(card.certificateId, 'Permanent certificate');
+  if (context.environment !== SYNTHETIC_ENVIRONMENT) requireValue(/^ATLAS-[A-F0-9]{12}$/.test(card.certificateId), 'EVIDENCE_BINDING_INVALID', 'Retain the exact approved permanent ATLAS certificate.');
   requireValue(Number.isSafeInteger(card.reportVersion) && card.reportVersion > 0, 'EVIDENCE_BINDING_INVALID', 'An exact report version is required.');
   digest(card.reportHash, 'Report hash');
-  localEvidenceUrl(card.reportUrl);
+  approvedEvidenceUrl(card.reportUrl, context);
   const identity = card.identity;
   requireValue(identity && typeof identity === 'object', 'IDENTITY_REQUIRED', 'Approved identity is required.');
   requiredText(identity.name, 'Approved name');
   requireValue(['SPORTS', 'POKEMON'].includes(identity.category), 'IDENTITY_INVALID', 'A supported approved category is required.');
-  requireValue(Number.isFinite(identity.grade) && identity.grade >= 1 && identity.grade <= 10, 'IDENTITY_INVALID', 'Approved grade is invalid.');
+  requireValue(Number.isFinite(identity.grade) && identity.grade >= (context.environment === SYNTHETIC_ENVIRONMENT ? 1 : 0) && identity.grade <= 10, 'IDENTITY_INVALID', 'Approved grade is invalid.');
   for (const key of ['year', 'set']) {
     requireValue(identity[key] === null || (typeof identity[key] === 'string' && identity[key].length > 0 && identity[key].length <= 200), 'IDENTITY_INVALID', `${key} must preserve its approved value or explicit unknown.`);
   }
@@ -41,22 +40,24 @@ export function assertApprovedCard(card) {
   for (const side of ['front', 'back']) {
     const media = card.media?.[side];
     requireValue(media && typeof media === 'object', 'MEDIA_REQUIRED', `Exact ${side} media is required.`);
-    demoId(media.objectId, `${side} media`);
+    domainId(media.objectId, `${side} media`, context);
     digest(media.sha256, `${side} media hash`);
-    localEvidenceUrl(media.url);
+    approvedEvidenceUrl(media.url, context);
     requireValue(Number.isSafeInteger(media.width) && media.width > 0 && Number.isSafeInteger(media.height) && media.height > 0, 'MEDIA_INVALID', 'Recorded media dimensions are required.');
   }
   requireValue(card.media.front.objectId !== card.media.back.objectId, 'MEDIA_INVALID', 'Front and Back must identify their own retained evidence.');
   return card;
 }
 
-// A local fixture assertion is deliberately incapable of authorizing a real card.
-// The future real adapter must be separately qualified; it is not implemented here.
-export function assertEligibility(assertion, { cardId, sellerId, now }) {
-  requireValue(assertion?.environment === SYNTHETIC_ENVIRONMENT, 'ELIGIBILITY_UNAVAILABLE', 'Real seller/title/custody authority is disabled pending Fingerprint and policy qualification.');
-  demoId(cardId, 'card');
-  demoId(sellerId, 'seller');
-  demoId(assertion.assertionId, 'assertion');
+// Assertions cannot select their own environment. The default context and the
+// synthetic adapter remain incapable of authorizing a real card. A separately
+// qualified authenticated port is still required for nonlocal authority.
+export function assertEligibility(assertion, { cardId, sellerId, now, context: suppliedContext }) {
+  const context = authorityContext(suppliedContext);
+  requireValue(assertion?.environment === context.environment, 'ELIGIBILITY_UNAVAILABLE', 'Authority must match the server-owned environment; real authority remains subject to separate Fingerprint and policy qualification.');
+  authorityId(cardId, 'card', context);
+  authorityId(sellerId, 'seller', context);
+  domainId(assertion.assertionId, 'assertion', context);
   requireValue(Number.isSafeInteger(now), 'TIME_INVALID', 'A trusted transaction clock is required.');
   const issued = Date.parse(assertion.issuedAt);
   const expires = Date.parse(assertion.expiresAt);
@@ -73,8 +74,9 @@ export function assertEligibility(assertion, { cardId, sellerId, now }) {
   requiredText(assertion.custody.locationRef, 'Custody location');
   requiredText(assertion.custody.evidenceRef, 'Custody evidence');
   requireValue(assertion.seller?.accountId === sellerId && assertion.seller.paymentsEligible === true && assertion.seller.currency === 'USD', 'SELLER_INELIGIBLE', 'Eligible seller account authority is required.');
-  demoId(assertion.seller.connectedAccountId, 'Synthetic connected account');
-  assertApprovedCard(assertion.approvedCard);
+  domainId(assertion.seller.connectedAccountId, 'Connected account', context);
+  if (context.environment !== SYNTHETIC_ENVIRONMENT) requireValue(/^acct_[A-Za-z0-9]+$/.test(assertion.seller.connectedAccountId), 'SELLER_INELIGIBLE');
+  assertApprovedCard(assertion.approvedCard, context);
   requireValue(assertion.approvedCard.cardId === cardId, 'EVIDENCE_BINDING_INVALID', 'Approved media/report must belong to the exact permanent card.');
   return clone(assertion);
 }

@@ -22,6 +22,8 @@ test('consent, packing, scan investigation, inspected return and release obey ac
     const run = (action, overrides = {}) => transact(tx => recordFulfillment(tx, { requestId: `demo_${action}`, orderId: 'demo_order', action, actor, evidence: evidence(action), policy, ...overrides }));
     assert.throws(() => run('PACK'), { code: 'PAID_ORDER_REQUIRED' });
     transact(tx => { tx.state.orders.demo_order = paidOrder(); tx.state.intents.demo_payment = paidIntent(); });
+    assert.throws(() => run('PACK'), { code: 'FINANCE_HOLD' });
+    transact(tx => { (tx.state.financeOrders ??= {}).demo_order = { confirmed: true, blocked: false }; });
     assert.throws(() => run('DISPATCH'), { code: 'FULFILLMENT_TRANSITION' });
     assert.throws(() => run('PACK', { evidence: { ...evidence('PACK'), secondSealRef: null } }), { code: 'SYNTHETIC_ID_REQUIRED' });
     assert.throws(() => run('PACK', { policy: { ...policy, returnWindowMs: 0 } }), { code: 'FULFILLMENT_POLICY_MISMATCH' });

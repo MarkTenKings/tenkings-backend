@@ -47999,3 +47999,77 @@ Plan: capture immutable local evidence/source hashes, stop only owned PID58504, 
 ### 2026-10-22 — Owned R2 preview shutdown observed
 
 Owned listener PID58504 exited0; explicit PID absence verified. Read-only final SQLite receipt verifies one paid order, one payment/transfer/payout with one dispatch each, $120 Paid out, balanced journals and synthetic-only events. r2-local-journey-receipt.json and source/evidence manifest are retained outside Git with the test log and desktop screenshot. Both earlier and final synthetic databases remain available for inspection. No shared process changed.
+
+
+### 2026-10-22 — R2 continued implementation and authorized isolated Stripe sandbox
+
+Owner requested continued complete R2 build with the same two Astra/xHigh specialists and a production-capable candidate, with shared production coordination retained by R1. Existing local implementation d2945cd2 remains the base. Specialists now cover listing lifecycle/operator UI and payment collection/onboarding/reconciliation. Root implements async PostgreSQL persistence in a separate inactive namespace, authenticated HTTP boundaries, projections/metrics and integrated qualification. No R1 source edits or live integration.
+
+Owner explicitly authorized setting up a Stripe test account and signed in to the Atlas Grading Dashboard in Chrome. Read-only inspection found live Atlas Grading plus an existing sandbox/test mode. Prepared a new sandbox named ATLAS R2 Marketplace QA with Copy live account to sandbox explicitly off. Planned action is only creating this isolated test sandbox; no live balance, key, shipping/labels configuration, connected seller or production setting is changed.
+
+
+### 2026-10-22 — Isolated Stripe sandbox creation observed
+
+Created ATLAS R2 Marketplace QA, test account acct_1UTTwXKDyZHjIV6p. Dashboard explicitly identifies Sandbox/Test and zero balance; Copy live account to sandbox was off. Screenshot continuation/r2-stripe-sandbox.png retained. Live account acct_1ULu5FGlGXoKJ35h was only inspected; no live settings, keys or funds changed. Connect setup is being inspected within the new sandbox only.
+
+
+### 2026-10-22 R2 continuation — authenticated and durable boundaries
+- Added default-off framework-neutral authenticated HTTP boundary with session/role/CSRF/request-admission ports; safe role projections, staff queue and metrics exclude synthetic data. No existing route registration or shared runtime changes.
+- Added portable domain context composition and evidence environment binding; financial provider live/test separation is being completed independently. All non-local activation remains disabled without explicit matching server qualification. Existing local fulfillment/service risk checks: 5/5 pass.
+- Planned local verification only: initialize a new owned PostgreSQL 17 QA cluster in the external continuation evidence directory, bind loopback port 65432, apply the inactive isolated marketplace proposal there, and create restricted QA roles. No shared or production database/role is a target. Retain qualification artifacts, stop the owned cluster after checks.
+- Stripe sandbox Connect setup paused at explicit responsibility acknowledgement awaiting owner confirmation; unchecked.
+
+- Local PostgreSQL initialization succeeded. First start failed because the Unix socket pathname exceeded macOS’s limit; no listener started. Revised plan uses a mode-0700 short owned `/private/tmp/atlas-r2-qa-20261022` socket directory with TCP disabled (stronger isolation than the initial loopback plan).
+
+- Owned PostgreSQL QA cluster started with TCP disabled and a private socket directory. Inactive schema applied only in `atlas_r2_qa`; runtime writer has function execution only, reader cannot lock/write, neither can read the unrelated sentinel schema. First harness run correctly rejected a mismatched synthetic consent evidence reference; fixed the fixture reference and resumed without deleting state.
+- PostgreSQL integration passed concurrent buyer contention, rollback, async transaction refusal, unknown payment recovery, store reopen, full sale/fulfillment/transfer/payout, append-only history, duplicate card DB constraint, and one provider dispatch. Synthetic payout 12000 cents; 6 journals, 21 events. Receipt retained in continuation/r2-postgres-qualification.json. Planned next: restart only this owned QA cluster, verify exact persisted hash and untouched sentinel, then stop it.
+
+- Owned PostgreSQL restart verified the exact state hash `cf8055d0ca00b3bc057f5387a38cc5ecfffc8389991b184ca625572319bb7c0e`, all six journals, and unchanged unrelated sentinel. QA cluster stopped successfully; no TCP listener was used.
+- Authenticated service additions now include buyer-bound ephemeral payment collection, server-bound onboarding, role-safe workspace/catalog/evidence ports, strict runtime approval binding, and evidence-validation ports for consent/physical milestones/reviews. Finance review found a stale-ledger payout risk after external provider changes; adding fresh account reconciliation as a prerequisite to Stripe-mode payout dispatch.
+
+- Planned local browser verification: start only the isolated synthetic demo server against new owned continuation/local-demo-03 SQLite state, loopback and ephemeral port. No real card/provider or shared process is involved. Browser → API → persistent state checks will target newly added lifecycle/protection/authenticated boundaries.
+
+- Actual Chrome continuation: revised asking price125→130 dollars, canceled untouched reservation, started a fresh152-dollar checkout, confirmed synthetic payment, opened an appeal. Packing was disabled and proceeds held. Exact152-dollar refund obligation froze; provider simulation correctly refused confirmation with SYNTHETIC_INSUFFICIENT_FUNDS because its149-dollar net cash was3dollars short after processing. Original refund remains PENDING and case OPEN; no hidden funding or altered obligation. This is valid working-capital/failure evidence, not completed-refund acceptance.
+- Actual Chrome responsive device toolbar reached320×740 CSS pixels; DOM document width320, overflow candidates none. Final source screenshot/interaction check follows server restart. Planned stop/restart only owned demo PID76361 to load new static Stripe module allowlist, preserve same local-demo-03 state.
+
+- Planned additional owned PostgreSQL verification after security review: restart only continuation/postgres-qa on private mode0700 socket `/private/tmp/atlas-r2-qa-20261022`, port65432 with TCP disabled; specialist runs the new drift phase against unchanged atlas_r2_qa, rolls back each temporary ACL/function drift, compares existing state hash, and stops this exact cluster. This tests privilege drift beyond initial correct provisioning. No shared credentials/databases involved.
+- Owner explicitly approved both sandbox responsibility acknowledgement and final Connect Platform Agreement. Dedicated acct_1UTTwXKDyZHjIV6p now shows Connect overview with0accounts/$0volume; live account untouched. Screenshot continuation/r2-stripe-connect-ready.png.
+- Final-bundle mobile check after owned demo restart:320×740 CSS pixels, documentWidth320, zero overflowing main descendants, Back image complete/naturalWidth600, no captured browser errors. Preserved PENDING refund/open case survived restart. Evidence continuation/r2-mobile-320.png and r2-mobile-native.png; DevTools dock position restored and emulation closed.
+
+
+### 2026-10-22 — R2 continuation: privilege drift, scoped integration and webhook settlement
+
+Owned PostgreSQL qualification passed all17 temporary privilege/function-drift scenarios, preserved state hash cf8055d0ca00b3bc057f5387a38cc5ecfffc8389991b184ca625572319bb7c0e and the unrelated sentinel, and stopped the exact QA cluster (pg_ctl status3). Receipt: continuation/r2-postgres-qualification-privilege-drift.json. The function-only adapter now requalifies expected function owner, exact search path and database-wide effective rights on each acquisition. Async reducers are refused before execution; unexpected thenables are consumed and rolled back.
+
+Added trusted account/staff path composition to HTTP, Node static assets and Stripe return paths, preserving original signed ingress requests. R1 customer cookies are scoped to /account and staff cookies to STAFF_BASE_PATH; no cookie scope or shared router changed. Request-scoped auth integration requires opaque authorization around dispatch and closes its capability after response. Added service-level signed webhook composition so exact paid-payment evidence settles the reservation/order without a buyer browser return; duplicate delivery remains idempotent. Fifteen affected service/HTTP/runtime/Stripe UI groups pass. No actual R1 auth/route or provider webhook delivery acceptance is claimed.
+
+Sandbox seller acct_1UTUO8KDyZ4wwGG0 was created once in dedicated platform acct_1UTTwXKDyZHjIV6p and is Restricted pending test onboarding. Stripe-provided phone0000000000 is entered; separate connected-account terms submission remains pending owner per-action confirmation. No credentials acquired or provider API payments yet; live account untouched.
+
+
+### 2026-10-22 — R2 continuation: request authority, public catalog and financial holds
+
+Added the request-scoped R1 auth bridge with original opaque staff authority and fresh short transactions before/after provider work. No R1 database lock spans provider I/O. OBSERVER and mixed write policies fail closed. The customer passive-session gateway remains an unapplied proposal; existing R1 ingress/routes are unchanged. Node now preserves the original IncomingMessage, socket, mounted URI and exact body through authentication; actual HTTP and custom Stripe return-path checks pass8groups.
+
+Added a separate session-free, read-only catalog UI/runtime with exact public projections, typed facets, price bounds, paging and account-path sign-in handoff. Private financial routes are absent. Non-local public photo/report delivery still requires a qualified host reader. Seller bank display describes Stripe payout eligibility without claiming verified ownership. A provider outage preserves saved order visibility and disables payout readiness.
+
+Early dispute notifications now retain the affected original payment identity, settle the paid order idempotently and retain the financial exception. Atomic PACK/DISPATCH/RELEASE gates refuse blocked or unreconciled finance state; delivery observations remain recordable. Eight webhook groups and6 affected fulfillment/service groups pass after correcting the isolated reducer fixture to include confirmed finance state.
+
+Owner approved the final sandbox seller agreement; Stripe displayed Information submitted at the completion page. Proof: continuation/r2-stripe-seller-submitted.png. Connected seller remains acct_1UTUO8KDyZ4wwGG0 in dedicated sandbox acct_1UTTwXKDyZHjIV6p. Subsequent dashboard access redirected to login; owner asked to sign back in. No test API keys or actual payment qualification yet.
+
+Planned owned preview action: stop only PID77677 serving old continuation/local-demo-03, preserve that database and its insufficient-refund evidence, start current source on a new mode0700 continuation/local-demo-04 loopback preview, seed one explicit synthetic listing through the service, and inspect the new public catalog. No shared runtime or production operation.
+
+
+### 2026-10-22 — R2 continuation aggregate and final preview preservation
+
+Default-off recovery runner now performs bounded original-object GET/discovery and platform/connected reconciliation, retains sanitized durable run receipts and payment IDs for host settlement, excludes new PREPARED dispatch and has no write-provider capability or scheduler. Six focused tests pass, including overlap, lease expiry, interruption and unresolved movement. Seller provider-outage regression confirms saved work remains visible with payouts unavailable.
+
+Final package aggregate on Node22.16.0:147 tests across121 top-level groups, zero failures/skips; continuation/r2-continuation-tests.tap. Existing PostgreSQL restart/drift evidence was reused; no broad unchanged R1 suite rerun. Chrome local-demo-04 on owned PID82731/loopback56396 passed public Front/Back,125-dollar listing excluded by124.99 maximum, empty/clear restoration and scoped account-path handoff. Actual320×740 preview: documentWidth320, no overflowing main descendants, loaded600px Back image and no captured browser errors. Screenshots r2-public-mobile-320.png, r2-public-mobile-native.png, r2-public-desktop.png. Emulation disabled and DevTools closed; Stripe sign-in window restored. This is responsive browser evidence, not physical-device performance.
+
+Updated README, master-plan R2 statuses and complete lead/specialist handoffs. All30 scope IDs retained. Sandbox seller final submission is confirmed; dashboard reauthentication remains the immediate external blocker to actual Stripe API qualification. No test keys acquired, real payments or shared production changes. R1 owns every shared activation step; claims/history remain off.
+
+Planned closeout: capture read-only receipts for retained demo03 funding-shortfall and demo04 catalog state, stop only owned PID82731, verify stopped state, retain source/evidence hashes, and commit this isolated additive continuation. No shared runtime/restart/migration.
+
+
+### 2026-10-22 — R2 continuation shutdown observed
+
+Owned preview PID82731 exited0; exact old PID77677 and PID82731 absence verified. Retained demo03 hash370eeec37d79fd366c01e3580386f40de11a5f3cce23248bbabd17d9566767c2 preserves one paid order and pending insufficient-cash refund; demo04 hashf6ae7b82e94f2e835585be7e09c5db770ecbc09235af1958b8bde7bbc503e3a0 preserves one active catalog listing and zero orders/journals. Read-only receipt continuation/r2-continuation-local-receipts.json. PostgreSQL QA remained stopped. Scoped credential-pattern scan found no potential real credential; all30 master IDs present; git diff check clean. Ready to commit isolated continuation; actual sandbox payment remains blocked only at restored dashboard access and subsequent qualification, not claimed complete.

@@ -171,3 +171,42 @@ test('failed in-flight payout returns its reservation only once and retains the 
   const types = f.store.read(state => state.journals.filter(entry => entry.intentId === 'payout_one').map(entry => entry.kind));
   assert.deepEqual(types, ['PAYOUT_RESERVED', 'PAYOUT_DEBITED', 'PAYOUT_RETURNED']);
 });
+
+test('pending refund debit stays in clearing and failed refund returns cash once without erasing its unpaid obligation', async t => {
+  const f = financeFixture(); t.after(() => f.store.close()); await f.paid();
+  f.store.transaction(tx => prepareRefund(tx, refundInput(f))); await f.execute('refund_one');
+  const original = f.store.read(state => state.financeObservations.refund_one);
+  const movement = (id, amount) => ({ id, source: original.objectId, currency: 'USD', amountCents: amount, feeCents: 0, netCents: amount, status: 'available', availableOn: NOW });
+  const pending = { ...original, status: 'pending', balanceTransaction: movement('txn_pendingrefund', -2800) };
+  f.store.transaction(tx => reconcileFinance(tx, { intentId: 'refund_one', evidence: pending }));
+  assert.equal(f.store.read(state => accountBalance(state, 'platform:acct_platform', 'refund_clearing:refund_one')), 2800);
+  assert.equal(f.store.read(state => sellerBalance(state, 'seller_one').pendingCents), 9200);
+  const failed = { ...pending, status: 'failed', failureBalanceTransaction: movement('txn_refundreturn', 2800) };
+  assert.throws(() => f.store.transaction(tx => reconcileFinance(tx, { intentId: 'refund_one', evidence: { ...failed, failureBalanceTransaction: null } })), { code: 'BALANCE_TRANSACTION_MISMATCH' });
+  f.store.transaction(tx => reconcileFinance(tx, { intentId: 'refund_one', evidence: failed }));
+  const count = f.store.read(state => state.journals.length);
+  f.store.transaction(tx => reconcileFinance(tx, { intentId: 'refund_one', evidence: failed }));
+  assert.equal(f.store.read(state => state.journals.length), count);
+  assert.equal(f.store.read(state => accountBalance(state, 'platform:acct_platform', 'provider_cash')), 10900);
+  assert.equal(f.store.read(state => accountBalance(state, 'platform:acct_platform', 'refund_clearing:refund_one')), 0);
+  assert.equal(f.store.read(state => state.financeHolds['refund-failed:refund_one'].active), true);
+  assert.equal(f.store.read(state => state.intents.refund_one.status), 'FAILED');
+  await assert.rejects(f.transferred(), { code: 'ORDER_FUNDS_RESTRICTED' });
+});
+
+test('production finance reducers require live observations and matching account capability mode; mocked evidence only', async t => {
+  const f = financeFixture(); t.after(() => f.store.close());
+  const { claimDispatch, prepareTransfer } = await import('../src/finance.mjs');
+  const policy = { ...f.policy, environment: 'stripe-production' };
+  f.store.transaction(tx => preparePayment(tx, { intentId: 'payment_mock_live', order: f.order, platformAccountId: 'acct_platform', connectedAccountId: 'acct_seller', policy }));
+  f.store.transaction(tx => claimDispatch(tx, 'payment_mock_live'));
+  const evidence = { provider: 'stripe', accountId: 'acct_platform', livemode: true, kind: 'PAYMENT', objectId: 'pi_mocklive', intentId: 'payment_mock_live', orderId: f.order.orderId, bindingHash: f.order.bindingHash, currency: 'USD', amountCents: 11200, status: 'succeeded', observedAt: NOW, chargeId: 'ch_mocklive', chargePaid: true, chargeCapturedCents: 11200, chargeAmountCents: 11200, chargeCurrency: 'USD', amountReceivedCents: 11200, balanceTransaction: { id: 'txn_mocklive', source: 'ch_mocklive', currency: 'USD', amountCents: 11200, feeCents: 300, netCents: 10900, status: 'available', availableOn: NOW } };
+  assert.throws(() => f.store.transaction(tx => reconcileFinance(tx, { intentId: 'payment_mock_live', evidence: { ...evidence, livemode: false } })), { code: 'PROVIDER_EVIDENCE_MISMATCH' });
+  f.store.transaction(tx => reconcileFinance(tx, { intentId: 'payment_mock_live', evidence }));
+  const accountEvidence = await f.provider.getAccount('acct_seller');
+  const input = { intentId: 'transfer_mock_live', paymentIntentId: 'payment_mock_live', releaseEvidence: { approved: true, orderId: f.order.orderId, bindingHash: f.order.bindingHash, policyVersion: policy.version, releasedAt: NOW, evidenceRef: 'mock-only-release' }, accountEvidence };
+  assert.throws(() => f.store.transaction(tx => prepareTransfer(tx, input)), { code: 'ACCOUNT_INELIGIBLE' });
+  f.store.transaction(tx => prepareTransfer(tx, { ...input, accountEvidence: { ...accountEvidence, livemode: true } }));
+  assert.throws(() => f.store.transaction(tx => claimDispatch(tx, 'transfer_mock_live', accountEvidence)), { code: 'ACCOUNT_INELIGIBLE' });
+  assert.equal(f.store.read(state => state.intents.transfer_mock_live.dispatchCount), 0);
+});
