@@ -1,0 +1,143 @@
+You are the replacement lead for the COMPLETE ATLAS archive, collection and marketplace project. Continue execution from this checkpoint; do not restart discovery or narrow the project to the archive. This handoff is dated October 22, 2026, America/Los_Angeles. All explicit UTC evidence timestamps remain UTC.
+
+The owner previously requested an Astra Ultra lead with up to three Astra xHigh/Ultra specialists. His latest instruction is to conserve credits. Use specialists only for specific independent tasks with clear file ownership; do not keep three agents busy by default. Reuse valid evidence for unchanged source, avoid repeated broad tests and long status reports, and report genuine blockers promptly. Do not create extra sidebar chats. The previous three agents are idle and all owned test databases/listeners are stopped.
+
+WORKSPACE AND FIRST READS
+
+Work ONLY in:
+/Users/markthomas/.codex/worktrees/atlas-marketplace-foundation/ten-kings-mystery-packs-clean
+Branch: codex/atlas-marketplace-foundation
+Latest implementation/checkpoint before this handoff: 599d1559bd256eba043a13a7dc201d677d9f84a6; migration/qualification commit 5c3047fc. A documentation-only handoff commit follows. Inspect actual HEAD and git status first. The tree was clean before creating this handoff.
+
+Do NOT edit the original dirty/conflicted checkout:
+/Users/markthomas/tenkings/ten-kings-mystery-packs-clean
+
+Read AGENTS.md and its mandatory documents first:
+- docs/context/MASTER_PRODUCT_CONTEXT.md
+- docs/runbooks/DEPLOY_RUNBOOK.md
+- docs/runbooks/SET_OPS_RUNBOOK.md
+- docs/HANDOFF_SET_OPS.md
+- docs/handoffs/SESSION_LOG.md, including the latest October22 entries
+Also read docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md for preservation boundaries.
+
+Then read these relative to the correct workspace:
+1. docs/atlas/plans/ATLAS_MARKETPLACE_MASTER_PLAN_20261020.md — canonical full 30-item scope and owner design directions.
+2. docs/atlas/audits/2026-10-22/r1-activation-readiness.md — precise remaining technical gates, configurations, role boundaries and policy exclusions.
+3. docs/handoffs/ATLAS_MARKETPLACE_LEAD_HANDOFF_20261021.md — detailed historical evidence and exact production checkpoint. Its latest top checkpoint supersedes older dated sections; this new handoff supersedes older continuation instructions.
+4. docs/atlas/audits/2026-10-22/comp-foundation-qualification.md and collection-foundation-registration.md — completed SQL011/010 local qualification.
+5. docs/atlas/audits/2026-10-22/native-comp-host-integration.md and staff-comp-web-integration.md — optional staff comp integration and limits.
+6. docs/atlas/audits/2026-10-22/r2-stripe-balance-payout-design.md — proposed money flow, not implemented payments.
+7. docs/atlas/audits/2026-10-21/fingerprint-isolation-feasibility.md — isolated offline work, no matcher.
+
+Evidence beats stale docs; reconcile discrepancies in the same session. Append SESSION_LOG after each commit-worthy change and before/after deployments, restarts or migrations. Destructive data operations require explicit owner authorization; destructive Set Ops also require impact dry run and typed confirmation. Root owns shared integration, commits and ALL release effects.
+
+NON-NEGOTIABLE OWNER DIRECTIONS
+
+- Preserve the working Grading workflow, review step order, geometry/defect logic, scoring, human approvals, reports, labels, provider requests and Ten Kings independence. Marketplace work must not alter them. Preserve the separately authorized Corners 0.25 policy from 713573fc and the subsequent photo fix.
+- OWNERSHIP CLAIMS STAY DISABLED UNTIL FINGERPRINT IS READY. The owner explicitly rejected a manual ATLAS-held claims-review pilot. Do not enable real claim submission/review or fabricate title for testing. Fingerprint readiness alone will not prove legal ownership or automatically authorize activation; evidence/reviewer/retention policies remain unresolved.
+- Fingerprint must not touch Grading runtime, imports, DB/API, workers, queues, credentials, deployment, model settings or inference budget. Current work is an offline copied-reference importer, not an authentication matcher. Separate resources and failure behavior are required for any future service.
+- Staff "Your cards" means assigned staff intake records, including completed cards; it is not legal ownership or all-site inventory. Its gallery shows original human-captured Front photos and real status, not fabricated graded slabs for ungraded cards.
+- A workspace entry into review must use the SAME existing Review Queue workflow. No alternate grading implementation. Do not initialize, re-import, reset, approve, regrade or rerun a real card just to test a read.
+- Preserve white #ffffff, restrained emerald #047857, large source-bound slabs, metadata/actions aligned with slab edges, Front/Back and a separate Grade Report. No detail Inspect/zoom or redundant Approved Card/Human Approved hero labels. Missing reverse artwork stays missing.
+- All ATLAS graded cards DEFAULT Open to offers; owners can opt out per card/collection. This preference does not make private cards public, establish title, authorize SMS or create a deliverable offer. Listed eligible cards eventually use price/Buy Now; unlisted eligible cards use Open to offers/Make Offer. Offer engine remains R3 unless owner reorders it.
+- No paid searches, printing, NFC writes, notifications or money movement merely to verify read features. Never invent ownership, sales, balances, comp prices, physical results or customer activity.
+
+WHAT IS LIVE / OWNER-TESTED
+
+The staff Graded Cards archive/gallery/table, dedicated card detail, source-bound Front/Back, separate report and Card Detail return, staff grading/custody history and raw-photo intake gallery are deployed. Optional illustrative 3D is deployed; the owner tested Graded Cards/3D on a physical phone successfully. Expanded numbered/autograph/relic identity is technically deployed, but full real-card review/provider accuracy acceptance remains separate.
+
+Workspace review entry was corrected to pass the saved batch context into existing Review Queue startup. Saved findings versus suggestions were clarified without changing scoring or review decisions. A subsequent photo recovery release preserves the corner-policy release. Fresh signed-in David Njoku read checks passed: Front/Back marked and clean images decoded, revisit and explicit Reload images worked, exact card/job/action/approval rows were unchanged. The transient failure did not recur; live failed-image Retry was not exercised and the original HTTP cause remains unknown. Do not claim it was conclusively diagnosed or that agents graded these cards.
+
+LAST OBSERVED PRODUCTION — REFRESH BEFORE ANY RELEASE
+
+Source native/staff/public: f0fd4f15cefa59d0b57ebdd5deee7fedc170f61e, direct child of 713573fcc8c0c2701ba413e5e79585d8f074fa1b.
+Native image: 045ed35c9225f2a13c167fc485050e73049b806656779b3940fafb8a7a18422b
+Main container: cefc6d815eaf04e2d734b1dd7a6ef2081c056b0b6935514a01bcbadd6d90e0fb
+Worker: 16a855f2c37c786e1cfc92751a36f328e7453655e54ae3a145c0a792cd76ddf4
+Staff deployment: dpl_BuJUQjbxL54NZeL3QhDpDz7ijv7k / atlas-grading-staff-payvajcob-ten-kings.vercel.app
+Public: dpl_EQtu3jE4kmtnmVwXJkRaRwZPg6rM / atlas-grading-public-19lexsby8-ten-kings.vercel.app
+Customer unchanged: c68e9ea7c77b35fc53cab6ee162e063dfb02b0fe / dpl_2aW7K6CTUftYNKaWanBouvgUaDS5
+Controls: 141/103/109; customer 83/SMS35. Schema is SQL009, ledger9. SQL010/011 are NOT applied live.
+The prior release holder explicitly released at 2026-10-22 08:01:12.847 UTC and absence was proved. No hold is intentionally left active. Never replay consumed intents or promote the older held candidates.
+Production evidence root: /Users/markthomas/.codex/atlas-handoffs/atlas-photo-after-corners-20261021
+Signed-in read acceptance: signed-in-01/acceptance.json SHA806da8a8ad60faa3278b443be90457d70a22a804c6936af0ed3f07f1bb41796f.
+
+IMPORTANT SOURCE ANCESTRY: f0fd4f15 is NOT an ancestor of the foundation branch. Serving grading source was compared and retained; the only difference in the inspected protected grading packages was a test assertion file. Still, do not deploy this branch blindly. Prepare a fresh isolated release candidate from the actual production successor, apply the reviewed intended R1 delta, and verify exact protected-source preservation and builds. Existing source tests are not a whole-branch deployment approval.
+
+NEW LOCAL COMPLETIONS — TESTED, COMMITTED, DEFAULT OFF
+
+1. Collection/account integration, commit525cc79f: current-owner collection, approved Front evidence transport, private/public preferences and offer opt-outs, exact save/recovery, stable account/CSRF lifecycle. 370 customer tests, 5 routed checks, scoped lint, production build/boundary and actual full-account synthetic browser checks at1440/320 pass. Root envelope52055875. No real ownership backfill or customer activation.
+2. Staff Card History/web comp integration421dae41: dedicated browser route and signed private adapter; private aliases cannot enter generic browser proxy. 961 staff tests, lint, production build/static boundary pass. Root envelope9659dd72. Reads/Skip/No suitable only with policy:null; no selected price guidance or provider acquisition.
+3. Native dispatcher0797c6f3: bounded dedicated comp family, no fallback into grading;44 tests. Native factory/host010aa4ca: separate bounded DB client, separate GET-only artifact client, immutable saved-report/market checks, config/auth fences and owned cleanup.54 network-denied checks and packaging closure pass. No grading worker/process/math changes. Actual live storage permissions and Linux image remain unqualified.
+4. SQL010 commit2a632429: additive collection authority/preferences schema, no ownership seed or serving grant.13 focused tests and6 ownedPG groups;114 prior tables/746 catalog entries preserved except intended ledger append. Restricted preference save/recovery, no-op/fresh/refusal and cleanup pass. Envelopefd359467.
+5. SQL011 commit5c3047fc: exact comp proposal minus outer transaction wrapper, no role grants/seeds.6 ownedPG groups PASS,115 prior tables/764 catalog entries preserved except ledger append. Actual restricted auth/service/native signed read and historical replay add exactly2 private receipts, no other rows/artifact changes. Fresh/no-op/rollback/partial/tamper refusal pass. Result75f814ce, cleanup36f799d8, final enveloped23f832f. All owned resources closed/data removed. Initial PG01 test comparator ordering failure is preserved; only qualifier/test changed, not product SQL.
+6. R2 Stripe/balance proposal599d1559: documentation only. No Connect onboarding, marketplace ledger, transfer/payout integration, live provider configuration or money movement completed.
+
+FULL MASTER SCOPE — ALL 30 IDS RETAINED
+
+Statuses describe bounded completion, not complete requirements where follow-up remains. The canonical master document contains the full wording/evidence.
+01 PARTIAL: permanent card identity/cert/report continuity reused; ownership/title/transfer/reholder operational lifecycle remains.
+02 LIVE CORE: complete authorized staff archive/gallery/table/search. Some filters depend on future marketplace records; live multi-page acceptance remains.
+03 LIVE CORE: dedicated larger slab, Front/Back, report link, saved comps/history and optional3D. Full-resolution paired masters, physical calibration, real video/360 and commerce context remain.
+04 PARTIAL: existing review/order tools reused; saved filters, exports, custody/fulfillment/dispute administration remain.
+05 REMAINING: public marketplace navigation, listings and filters; listing-versus-collection distinction.
+06 LOCAL CORE: My Collection/current-owner reads, photos, privacy and opt-outs qualified but disabled. Past/for-sale/wanted, albums, profiles, follows/watchlists/searches/alerts remain.
+07 PARTIAL: live staff grading/custody provenance. Customer-readable transfer/sale/reholder history, privacy and consent remain.
+08 LOCAL CONTRACTS ONLY: separate ownership/custody journals, claims/participating transfers, evidence/lifecycle/history tested. Real claims explicitly disabled pending Fingerprint; operational title process remains.
+09 TECHNICALLY LIVE: exact numbered printing such as007/099, separate numerator/denominator/evidence; real-card acceptance remains.
+10 TECHNICALLY LIVE: autograph presence/type, no authenticity inference; real-card acceptance remains.
+11 TECHNICALLY LIVE: relic material/windows/manufacturer use statements; real-card acceptance remains.
+12 TECHNICALLY LIVE: both-side Vision/Astra identity proposals with human review and historical compatibility; live accuracy acceptance remains.
+13 LOCAL CORE: optional1–5 comp curation contract/UI/persistence; read/Skip/No suitable integration qualified. Live roles/storage/release/session acceptance and selection-policy activation remain. Missing comps never block grading approval.
+14 PARTIAL: expanded printing/autograph/relic matching deployed; bounded guidance matching local. Exclude contradictory/missing designation, lots and hidden accepted-offer amounts. Provider benchmarking remains.
+15 LOCAL CONTRACTS: explain selected sales/count/dates/range/method; selected guidance policy/rights/product acceptance and deliberate listing refresh remain. Never rewrite approved report price snapshots or set seller ask automatically.
+16 REMAINING: ownership-approved seller listing flow, price, fee/net and explicit List for sale.
+17 REMAINING: single-card reservation, buyer total/protection/ETA, checkout, exact payment reconciliation and double-sale prevention.
+18 REMAINING: consented Ship to me versus Hold and list before grading-return shipment.
+19 PROPOSED ONLY:8% including ordinary domestic processing; no listing fee/buyer premium/standard withdrawal percentage proposed. Fee/net basis, shipping, optional instant charges and low/high-value economics are NOT finalized.
+20 REMAINING: ATLAS-held pilot first, approved dealer-held then qualified direct shipping; transparent verification routes/cost/time.
+21 REMAINING: buyer/seller protection, intake/packing evidence, tracked covered shipment, missing-scan investigations, inspected returns and appeals.
+22 REMAINING: reusable fitted packaging, second/replacement tamper seals, label area, instructions and replacement kit; physical prototype/validation.
+23 REMAINING: realUSD ATLAS Balance Pending/Available/Reserved/Withdrawal processing/Paid out, bank withdrawals and eligible instant payouts. Separate from Ten Kings TKD; never call it an established bank account.
+24 REMAINING R3: spending proceeds only under provider-approved arrangement, reconciliation and correct disclosures.
+25 LIVE DESIGN CORE: white/emerald spacious responsive gallery/detail and accessible controls. Wider device/performance and calibrated physical-media quality remain.
+26 INCOMPLETE R1: integrate archive/identity/continuity/provenance/collection/curation with real authorization and acceptance. Local components do not equal complete operational R1.
+27 REMAINING R2: real ATLAS-held fixed-price end-to-end listing→checkout→fulfillment/protection→balance→withdrawal pilot.
+28 REMAINING R3: offers, dealer/direct shipping, expanded social and approved balance spending.
+29 UNRESOLVED POLICY: title/consignment, provider setup, fee, transfer/payout timing, reserves, returns, protection/shipping costs, privacy and comp-data rights. No invented defaults.
+30 REMAINING: real event instrumentation for listing time/conversion/repeats/staff time/comp accuracy/disputes/payout reliability/contribution profit.
+
+Additional owner work: original-photo staff landing gallery is live; review-entry/photo fixes are live with limits stated above. Fingerprint is separate offline feasibility,13 importer checks, always UNAVAILABLE/no matcher; camera/report Authenticate entry, comparison accuracy/thresholds, spoof resistance and real capture tests are unfinished.
+
+PAYMENTS ANSWER TO PRESERVE
+
+Marketplace payments are NOT complete. Existing packages/atlas-commerce Stripe code serves grading submissions/shipping, not seller Connect accounts or payouts. The intended experience is ATLAS Balance sale proceeds followed by verified bank cash-out.8% is only the recorded proposal. Separate charges/transfers is a conditional design if seller transfer is delayed; destination charges may be simpler if only bank payout is delayed. Transfer and bank payout are different operations. Before live money, qualify provider/account/capabilities, legal/custody model, fees/timing/refunds/disputes and an integer-cent ledger with exact unknown-result reconciliation. Earnings spending stays R3/provider-approved. No indefinite holding, escrow or banking promise.
+
+NEXT WORK — CONCRETE ORDER
+
+1. Refresh Git and read the bounded readiness audit. Do not rerun the already-passing broad suites unless code changes or a new unresolved concern justifies it. No new production testing is currently requested from the owner.
+2. Refresh production source/deployments/controls/schema read-only; verify preservation and release coordination. Prepare a fresh isolated candidate from the actual production source, not a blind branch deploy. Keep claims/history activation and selected pricing guidance off.
+3. Prepare/review additive live009→010→011 migration and EXACT separate restricted clients: collection reader, preferences-only gateway, native comp curation. Actual TLS/owners/effective rights must match; no original combined ownership writer. Provision/qualify a separate GET-only saved-artifact credential. See readiness audit for exact env names/contracts. No credential values are in this package.
+4. Qualify actual native Linux package plus staff/customer/public builds, route/gateway coverage, immutable bindings/controls and protected-source/runtime preservation. Do not use historical Prisma first-install/dbpush instructions for the standalone target. Preserve all old reports/photos/labels/containers/images and unrelated controls/resources.
+5. Follow fresh logged release admission/drain/cutover/postflight/explicit-holder-release-and-absence procedure. Never reuse consumed release packets. Technical release holds must not wait indefinitely for human login.
+6. Normal-session acceptance: account settings/empty collection; approved Front/card settings only for genuinely recorded owners; staff saved-comp reads and an explicitly chosen Skip/No suitable with exact receipt recovery. No fabricated title or grading actions. If no real owner exists, record the positive-owned-card case as pending, not a fake success.
+7. Continue independent R1 media/identity/provenance/curation work and separately isolated Fingerprint feasibility. Claims remain off. Once operational prerequisites permit, R2 listings/checkout/fulfillment/protection and separate marketplace ledger/Stripe sandbox integration follow. R3 stays later. Independent engineering can continue while ownership business activation waits.
+
+REUSABLE EVIDENCE / OPERATIONS
+
+Node22: /Users/markthomas/.npm/_npx/2ad0c2d1aba2dd61/node_modules/node/bin/node
+pnpm: /opt/homebrew/bin/pnpm; PostgreSQL17: /opt/homebrew/opt/postgresql@17/bin
+Use actual APIs/tools and current runbooks. Do not print secret files or copy production credentials into artifacts. Browser sessions can expire; use ordinary owner login when genuinely required, not repeated speculative sign-in requests.
+
+Evidence roots under /Users/markthomas/.codex/atlas-handoffs/:
+- atlas-collection-account-composition-20261022/root-integration-01/qualification.json —52055875
+- atlas-collection-foundation-20261022/qualification-01/qualification.json —fd359467
+- atlas-comp-foundation-20261022/qualification-01/qualification.json —d23f832f (67 current/saved source pairs+13 evidence refs)
+- atlas-staff-comp-curation-20261021/registration-integration-01/qualification.json —9659dd72
+- atlas-staff-comp-curation-20261021/native-host-integration-01/qualification.json —9bdd5134
+- atlas-staff-comp-curation-20261021/native-runtime-qualification-01/qualification.json —57d24e7b
+These are exact bounded proofs, not interchangeable source snapshots. Full hashes and limits are in the linked audits.
+
+Separate user-authorized release-coordination chat: “Investigate card grading scores”, thread01a16227-6d93-7203-a52b-e473866de7b6, hostlocal. Last observed idle, no further changes. User explicitly authorized coordinating those releases. Refresh before any overlapping release; do not attach unrelated threads or send messages to other people without authorization.
+
+Immediate reporting style: short checkboxes, clearly distinguish LIVE / LOCAL VERIFIED / IN PROGRESS / REMAINING. Do not call all30 items complete. Keep the owner informed of material progress, preserve grading, conserve credits and carry the entire master plan forward.
