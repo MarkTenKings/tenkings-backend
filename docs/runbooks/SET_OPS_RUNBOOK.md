@@ -1,6 +1,8 @@
 # Set Ops Runbook
 
-## Current ATLAS Workspace review-entry release — October 21, 2026 Pacific
+> Latest verified ATLAS checkpoint (2026-10-22 16:52–17:03 UTC): approved-labels successor `cf5fcefa` serves native/staff/public; image `5336fca9…`, controls Staff142/Public104/STAFF SMS110. Customer remains `c68e9ea7`/controls83/35 and SQL009/ledger9 is retained. Both native processes are running with zero restarts; no admission locks were present. Prior labels-release holder release/absence is retained. Full pins and evidence: `docs/atlas/audits/2026-10-22/r1-lead-takeover.md`. Isolated R1 candidate `a0f4951f` is source-reviewed, not build-qualified or activated. Preserve current labels/media/homepage and grading; claims/history remain disabled until the owner's Fingerprint gate is met. Earlier production identities below are historical. No Ten Kings or Set Ops effects occurred in this takeover.
+
+## Historical ATLAS Workspace review-entry release — October 21, 2026 Pacific
 
 Native, staff and public now serve isolated source `f9742346410324293a679e115ef04fe5deaf0016`. Workspace entry now supplies the same exact saved batch context to the existing human-review startup used by Review Queue. This corrects missing findings adoption before review begins. Four serving files change entry/context/error recovery; three change suggestion counts, wording and layout. Six other files provide qualification. Defect detection, AI prompts/provider configuration, measurement and grading math, review-step ordering, suggestion action handlers and human approval authority are unchanged. The owner explicitly reinforced this boundary.
 
