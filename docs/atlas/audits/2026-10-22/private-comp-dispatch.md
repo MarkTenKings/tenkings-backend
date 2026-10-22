@@ -1,0 +1,7 @@
+# Optional private comp dispatch
+
+Added one optional handler input to the existing unstarted private HTTP server. Reserved comp paths use a separate handler with at most 4,096 raw request bytes. Its own verifier consumes the signature nonce exactly once. Disabled, malformed, failed and unhandled comp requests cannot fall through to grading; the ordinary request path retains its existing verifier, parser, limits and handler.
+
+Four new in-process tests exercise the real unstarted server callback, signer, private comp adapter and saved-evidence service. They cover refusal, raw bytes, body bounds, successful private read/Skip, replay rejection and an unchanged generic read. The first test run had a fixture assertion at the wrong response level; the assertion was corrected without changing the protocol. The four groups then passed under OS network denial. A combined retained transport/archive/provenance/gallery/public-reader/image run passed44/44 with zero skips; existing ephemeral loopback servers closed normally. No provider, database or production action occurred.
+
+Independent collection review passed. Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-staff-comp-curation-20261021/native-dispatch-qualification-01/qualification.json`, SHA256 `41ee48b513fa90cf06846ba2f60197c343297fdc969b3a0f9d8fd8984ab7a67d`. This captures the two exact source files and regression log. The actual serving host does not yet supply this optional handler. Native restricted-client construction, schema/role qualification and deployment remain separate.
