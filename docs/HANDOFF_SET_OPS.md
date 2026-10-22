@@ -1,5 +1,12 @@
 # Set Ops Handoff (Living)
 
+## Current handoff — original-photo staff gallery technically live — October 21, 2026 Pacific
+
+ATLAS native/staff/public now serve isolated gallery sourcec1815115, image2741bf9d, staffdpl_CnDnsjJmd8Mf47xkFGJR9YRtvcpF/publicdpl_As3boP14tGmpmM86ZcZ5sQiou79X. Controls138/100/106; customer83/35, SQL009, both gateways and project environments retained.434 native tests,31 canonical checks, four reports/eight image hashes and37-table preservation pass; holder explicitly released00:54:31.820UTC October22 with absence proved. Native readiness gap8m07s. Fresh ordinary staff sign-in and real gallery acceptance remain pending; archive/detail/history/report return were accepted at the previous release. See the gallery audit at `docs/atlas/audits/2026-10-21/staff-workspace-gallery.md`.
+
+Set Ops and Ten Kings behavior/data are unchanged. Ownership/collection/curation/claim UI remain local and disabled. Proposed Fingerprint must be entirely separate from Grading, with copied references and no grading-system connection or mutation during offline work. Earlier dated release identities below are historical checkpoints. Never replay consumed release actions or restart retired native processes.
+
+
 ## Current ATLAS archive release — October 21, 2026 UTC
 
 The completed archive release supersedes the older deployment identities below. Staff/public web source is `c4b7cc85f01754eb5776042147e6c0fdf50f845a`; native source is `31c6685e8ae49e05c8f78b748a6233d143776131` and image is `sha256:f64dfc31485603df756ec9cd64976fda8cc5effe8b0155fa727a45fb82b4fa52`. Registered SQL008 is installed with manual-only access; customer deployment and Set Ops behavior are unchanged. The release hold was explicitly released at 2026-10-21T06:42:09.621Z and absence independently verified. The owner approved the live Graded Cards gallery in signed-in Chrome. Dedicated card-detail, SQL009 history, and reviewed Sports identity enhancements remain local next-release work.

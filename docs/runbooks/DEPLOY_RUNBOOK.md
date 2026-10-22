@@ -1,12 +1,12 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Current detail and report-return release — October 21, 2026
+## Current staff original-photo gallery release — October 21, 2026 Pacific
 
-Native/staff retain source `ca3a848d4d6eb28f149a8f253115df90b5fc60ac`; public now serves isolated `105270bcf29db376d5bf756edd91b29516420a98`, deployment `dpl_QrEgUVB8qLb8hkru4ojhD8xqq4BZ`. Staff stays `dpl_2vc2nkyRmUhPMyJaZBLKbaCpow6y`; SQL009 is installed; controls137/99/105. Customer remainsc68e9ea7 with controls83/35. Both gateways are retained. The earlier admission holder was explicitly released; the public-only correction acquired no holder and restarted no process.
+Native/staff/public source is `c18151157aeddc0b98ebf83f8045e4c75837a6b7`, native image2741bf9d, main d1db3d9b / worker a3f7aee6. Staff `dpl_CnDnsjJmd8Mf47xkFGJR9YRtvcpF`; public `dpl_As3boP14tGmpmM86ZcZ5sQiou79X`; controls138/100/106. Customer sourcec68e9ea7/deploymentdpl_2aW7K6CTUftYNKaWanBouvgUaDS5 and controls83/35 are retained. SQL009, both gateways and all project environments are unchanged. Both new native roles are ready, zero restarts, sealed unless-stopped. The old ca3 pair remains stopped/detached with restart=no.
 
-Signed-in archive/detail/history and actual report reload→Card Detail/direct-entry checks pass. See [report-return audit](../atlas/audits/2026-10-21/report-return-reload.md) for exact one-use staging/activation and read-only reconciliation receipts. The public promotion's empty cron bookkeeping was reconciled by a filesystem-only supplemental verifier; no CAS or promotion replay occurred. See [detail release audit](../atlas/audits/2026-10-21/detail-production-release.md) for retained native IDs and the earlier observed interruption.
+Technical release and31 canonical checks, four reports/eight image hashes and37-table/schema/provider/label preservation pass. The same admission holder explicitly released at2026-10-22T00:54:31.820Z; absence is proved. Native readiness gap was8m07s; canonical verification completed00:52:51UTC. Actual staff gallery acceptance awaits the owner's fresh normal sign-in, required by the changed release binding. Do not acquire or retain a release hold while waiting for sign-in.
 
-Do not replay consumed packets or restart the retired native pair. The staff original-photo landing gallery and local ownership/collection work remain excluded from this release. Earlier dated sections below are historical.
+See [gallery audit](../atlas/audits/2026-10-21/staff-workspace-gallery.md) for complete identities, one-use release plans and receipts. Activation01 aborted before cutover; activation02 completed. A transient precontrol read and staff alias propagation were reconciled with reads, without effect replay. Consumed packets are evidence only. Never replay them or restart the retired pair; any later recovery needs a fresh observed plan. Ownership/collection/curation/claim UI and Fingerprint are excluded from this release. Fingerprint must remain separate from Grading with no production connection during offline feasibility work. Earlier dated sections below are historical.
 
 ## Current Graded Cards production release — October 20, 2026 Pacific
 
