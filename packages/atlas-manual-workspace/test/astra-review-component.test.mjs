@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, webcrypto } from 'node:crypto';
 import vm from 'node:vm';
 import * as traceCodec from '@atlas/grading-core/trace-codec';
 import * as traceWire from '@atlas/grading-core/trace-bitmap-wire';
@@ -11,6 +11,7 @@ import * as findingImpact from '../src/finding-impact.mjs';
 import * as actions from '../src/defect-actions.mjs';
 import * as presentation from '../src/astra-review-ui.mjs';
 import * as inspectionViewport from '../src/inspection-viewport.mjs';
+import { verifiedImageContentKey } from '../src/verified-image.mjs';
 import { workspace } from './defect-fixtures.mjs';
 
 // The actual JSX and real trace tools run here; only React scheduling and image
@@ -19,6 +20,10 @@ const require = createRequire(new URL('../../../frontend/atlas-app/package.json'
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const compiled = babel.transformSync(readFileSync(new URL('../src/DefectReviewWorkspace.jsx', import.meta.url), 'utf8'), {
   filename: 'DefectReviewWorkspace.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]],
+  babelrc: false, configFile: false,
+}).code;
+const verifiedImageCompiled = babel.transformSync(readFileSync(new URL('../src/verified-image.mjs', import.meta.url), 'utf8'), {
+  filename: 'verified-image.mjs', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]],
   babelrc: false, configFile: false,
 }).code;
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
@@ -34,17 +39,31 @@ function astraFor(state, status = 'READY') {
       canonicalContour: [{ x: .2, y: .2 }, { x: .22, y: .2 }, { x: .22, y: .22 }, { x: .2, y: .22 }],
       observation: 'Possible short scratch.', uncertainty: 'May be a printed line.' }] };
 }
-function harness(initial = {}, browser) {
-  const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree;
+function harness(initial = {}, browser, imageTransport) {
+  const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree, rendered;
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((value, n) => !Object.is(value, old.deps[n]))) current[i] = { deps, value: make() }; return current[i].value; };
   const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initialValue) { const i = cursor++, slots = current; if (!(i in slots)) slots[i] = typeof initialValue === 'function' ? initialValue() : initialValue;
       return [slots[i], update => { const next = typeof update === 'function' ? update(slots[i]) : update; if (!Object.is(next, slots[i])) { slots[i] = next; dirty = true; } }]; },
     useRef(value) { const i = cursor++; if (!(i in current)) current[i] = { current: value }; return current[i]; },
-    useMemo: memo, useCallback: (value, deps) => memo(() => value, deps),
+    useMemo: memo, useCallback: (value, deps) => memo(() => value, deps), useContext: () => ({ pool: null, blocked: Boolean(imageTransport?.blocked) }),
     useEffect(action, deps) { const i = cursor++, slots = current, old = slots[i]; if (!old || deps.some((value, n) => !Object.is(value, old.deps[n]))) {
       slots[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { slots[i].cleanup?.(); slots[i].cleanup = action(); }); } },
   };
+  const verifiedImages = {};
+  if (imageTransport) vm.runInNewContext(verifiedImageCompiled, {
+    exports: verifiedImages, crypto: webcrypto, Uint8Array, Blob, AbortController, setTimeout, clearTimeout,
+    location: { origin: 'https://staff.example.invalid' }, fetch: (...args) => imageTransport.fetch(...args),
+    URL: class extends URL {
+      static createObjectURL(blob) { imageTransport.blobs.push(blob); return `blob:verified-${imageTransport.blobs.length}`; }
+      static revokeObjectURL(url) { imageTransport.revoked.push(url); }
+    },
+    require(name) {
+      if (name === 'react') return react;
+      if (name === './verified-image-context.mjs') return { VerifiedImageContext: {}, VERIFIED_IMAGE_ACCESS_ENDED: 'access-ended' };
+      return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
+    },
+  });
   const exports = {};
   vm.runInNewContext(compiled, { exports, window:browser, crypto: { randomUUID }, ResizeObserver: class {
     constructor(callback) { this.callback = callback; }
@@ -59,7 +78,7 @@ function harness(initial = {}, browser) {
     if (name === './defect-actions.mjs') return actions;
     if (name === './astra-review-ui.mjs') return presentation;
     if (name === './inspection-viewport.mjs') return inspectionViewport;
-    if (name === './verified-image.mjs') return { useVerifiedImage: image => ({ url: image?.url ?? null }) };
+    if (name === './verified-image.mjs') return imageTransport ? verifiedImages : { verifiedImageContentKey, useVerifiedImage: image => ({ url: image?.url ?? null }) };
     return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
   } });
   function expand(node, path = 'root') {
@@ -67,6 +86,7 @@ function harness(initial = {}, browser) {
     if (!node || typeof node !== 'object') return node;
     if (typeof node.type === 'function') {
       const identity = `${path}:${node.type.name}`; if (!instances.has(identity)) instances.set(identity, []);
+      rendered.add(identity);
       current = instances.get(identity); cursor = 0; return expand(node.type(node.props), `${identity}.out`);
     }
     if (node.props?.ref && ['ad-plane', 'ad-viewport'].some(name => node.props.className?.split(' ').includes(name))) {
@@ -87,7 +107,9 @@ function harness(initial = {}, browser) {
     side: 'FRONT', findingId: null, onSideChange: side => { f.props.side = side; f.props.findingId = null; }, onSelectFinding: finding => { f.props.findingId = finding?.id ?? null; }, onEdit: async request => f.calls.push({ kind: 'edit', request }),
     onReviewProposal: async request => f.calls.push({ kind: 'proposal', request }), onAnalyzeDefects: async request => f.calls.push({ kind: 'analyze', request }),
     ...initial } };
-  f.render = () => { let count = 0; do { dirty = false; tree = expand({ type: exports.DefectReviewWorkspace, props: f.props }); const pending = effects; effects = []; pending.forEach(run => run());
+  f.render = () => { let count = 0; do { dirty = false; rendered = new Set(); tree = expand({ type: exports.DefectReviewWorkspace, props: f.props });
+    for (const [identity, slots] of instances) if (!rendered.has(identity)) { for (const slot of slots) slot?.cleanup?.(); instances.delete(identity); }
+    const pending = effects; effects = []; pending.forEach(run => run());
     assert.ok(++count < 20, 'effects settled'); } while (dirty); return tree; };
   f.nodes = (predicate, side) => all(side ? f.side(side) : tree, predicate);
   f.side = side => all(tree, node => node.type === 'section' && node.props['aria-label'] === `${side} defects`)[0];
@@ -109,6 +131,7 @@ function harness(initial = {}, browser) {
   f.wheel = (pane, deltaY = -150, x = 200, y = 260) => { const element = f.control(pane).props.ref.current; const rect = element.getBoundingClientRect(); element.listeners.get('wheel')({ deltaY, clientX: rect.left + x, clientY: rect.top + y, preventDefault() {} }); f.render(); };
   f.planes = () => f.nodes(node => node.props?.className?.split(' ').includes('ad-plane'));
   f.view = () => f.planes()[0].props.style;
+  f.dispose = () => { for (const slots of instances.values()) for (const slot of slots) slot?.cleanup?.(); };
   f.render(); return f;
 }
 
@@ -137,6 +160,143 @@ test('image mismatch hides authoritative markings and disables edits and side ap
   const f = harness({ workspace: state, images: { FRONT: { inspection: { url: 'blob:bad', sha256: '0'.repeat(64) } } }, renderReviewActions: value => { review.push(value); return null; } }); f.ready();
   assert.equal(f.nodes(n => n.props.className === 'ad-exact-trace').length, 0);
   assert.equal(f.button('Add finding').props.disabled, true); assert.equal(review.at(-1).disabled, true);
+  assert.equal(review.at(-1).message, 'Inspection photograph unavailable.');
+  assert.deepEqual(f.nodes(n => n.props.className === 'ad-photo-empty').map(text), ['Inspection photograph unavailable.', 'Inspection photograph unavailable.']);
+  assert.equal(f.has('Verifying'), false); assert.equal(f.has('Retry photograph'), false);
+});
+
+test('both panes report a failed verified read and explicit retry enables approval only after exact bytes and both image loads', async () => {
+  // Synthetic header-bearing bytes qualify the real bounded/hash loader and JSX
+  // state transitions. Browser image decoding remains represented by onLoad.
+  const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const state = structuredClone(workspace(false)); state.sides.FRONT.frame.inspectionImageSha256 = sha256;
+  const before = structuredClone(state), readiness = [], review = [], requests = [];
+  let resolveRead, response = () => new Promise(resolve => { resolveRead = resolve; });
+  const transport = { blobs: [], revoked: [], fetch: (url, options) => { requests.push({ url, options }); return response(); } };
+  const f = harness({ workspace: state, images: { FRONT: { inspection: { url: '/saved-photo', sha256, byteCount: bytes.length } } },
+    onReadyChange: value => readiness.push(value), renderReviewActions: value => { review.push(value); return null; } }, undefined, transport);
+  const settle = async () => { for (let i = 0; i < 8; i++) { await new Promise(setImmediate); f.render(); } };
+  try {
+    await settle();
+    assert.deepEqual(f.nodes(n => n.props.className === 'ad-photo-empty').map(text), ['Verifying photograph…', 'Verifying photograph…']);
+    assert.equal(review.at(-1).disabled, true); assert.equal(readiness.at(-1), false);
+    assert.equal(review.at(-1).message, 'Verifying photograph…');
+    resolveRead(new Response(null, { status: 503 })); await settle();
+    assert.deepEqual(f.nodes(n => n.props.className === 'ad-photo-empty').map(text), ['Photograph unavailable.', 'Photograph unavailable.']);
+    assert.equal(f.has('Verifying photograph'), false); assert.equal(f.button('Add finding').props.disabled, true);
+    assert.equal(review.at(-1).disabled, true); assert.equal(requests.length, 1, 'failure does not retry automatically');
+    assert.equal(review.at(-1).message, 'Photograph unavailable.');
+    response = async () => new Response(Uint8Array.from([...bytes.slice(0, -1), 9]));
+    await f.click('Retry photograph'); await settle();
+    assert.equal(transport.blobs.length, 0, 'a same-length wrong hash never reaches an image');
+    assert.equal(review.at(-1).disabled, true); assert.equal(requests.length, 2);
+    response = async () => new Response(bytes);
+    await f.click('Retry photograph'); await settle();
+    assert.equal(requests.length, 3); assert.equal(transport.blobs.length, 1);
+    assert.equal(requests.every(request => request.url === 'https://staff.example.invalid/saved-photo' && request.options.method === 'GET'), true);
+    assert.equal(review.at(-1).disabled, true, 'verified bytes alone do not approve an unloaded photograph');
+    const photos = f.nodes(n => n.type === 'img'); assert.equal(photos.length, 2);
+    photos[0].props.onLoad({ currentTarget: { naturalWidth: 1, naturalHeight: 1 } }); f.render();
+    assert.equal(readiness.at(-1), false, 'incorrect decoded dimensions remain blocked');
+    photos[0].props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } }); f.render();
+    assert.equal(readiness.at(-1), false, 'clean comparison must load too');
+    photos[1].props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } }); f.render();
+    assert.equal(readiness.at(-1), true); assert.equal(review.at(-1).disabled, false);
+    assert.deepEqual(state, before); assert.deepEqual(f.calls, [], 'photo recovery makes no grading decisions');
+  } finally { f.dispose(); }
+  assert.deepEqual(transport.revoked, ['blob:verified-1']);
+});
+
+function expiredPhotoFixture(onRefreshImages) {
+  const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 4, 3, 2, 1]);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const state = structuredClone(workspace(false)); state.sides.FRONT.frame.inspectionImageSha256 = sha256;
+  const descriptor = { url: '/expired', sha256, byteCount: bytes.length }, requests = [], review = [];
+  const transport = { blobs: [], revoked: [], fetch: async url => {
+    requests.push(url); return url.endsWith('/fresh') ? new Response(bytes) : new Response(null, { status: 403 });
+  } };
+  const f = harness({ workspace: state, images: { FRONT: { inspection: descriptor } }, onRefreshImages,
+    renderReviewActions: value => { review.push(value); return null; } }, undefined, transport);
+  const settle = async () => { for (let i = 0; i < 8; i++) { await new Promise(setImmediate); f.render(); } };
+  return { f, settle, requests, transport, review, descriptor, fresh: { FRONT: { inspection: { ...descriptor, url: '/fresh' } } } };
+}
+
+test('explicit photo retry renews access first and waits for the matching published descriptor without retrying the old grant', async () => {
+  let finishRefresh, reads = 0;
+  const x = expiredPhotoFixture(() => { reads++; return new Promise(resolve => { finishRefresh = resolve; }); });
+  const before = structuredClone(x.f.props.workspace);
+  try {
+    await x.settle(); const retry = x.f.button('Retry photograph').props.onClick;
+    const pending = retry(); x.f.render();
+    assert.equal(x.f.button('Refreshing photograph…').props.disabled, true);
+    await retry(); assert.equal(reads, 1, 'an old double-click handler cannot start another refresh');
+    assert.equal(x.requests.length, 1);
+    finishRefresh(x.fresh); await pending; x.f.render(); await x.settle();
+    assert.equal(x.requests.length, 1, 'refresh completion alone cannot retry the old descriptor');
+    x.f.props.images = x.fresh; x.f.render(); await x.settle();
+    assert.deepEqual(x.requests, ['https://staff.example.invalid/expired', 'https://staff.example.invalid/fresh']);
+    assert.equal(x.review.at(-1).disabled, true); x.f.ready(); assert.equal(x.review.at(-1).disabled, false);
+    assert.deepEqual(x.f.props.workspace, before); assert.deepEqual(x.f.calls, []);
+  } finally { x.f.dispose(); }
+});
+
+test('photo refresh failure or changed source cannot fall back to retrying an old URL', async () => {
+  for (const reason of ['denied', 'missing', 'source', 'length']) {
+    let x;
+    x = expiredPhotoFixture(async () => {
+      if (reason === 'denied') throw { status: 401, code: 'SIGN_IN_REQUIRED' };
+      if (reason === 'missing') return undefined;
+      return { FRONT: { inspection: { ...x.descriptor, url: '/fresh',
+        ...(reason === 'source' ? { sha256: '0'.repeat(64) } : { byteCount: x.descriptor.byteCount + 1 }) } } };
+    });
+    try {
+      await x.settle(); await x.f.click('Retry photograph'); await x.settle();
+      assert.equal(x.requests.length, 1); assert.equal(x.transport.blobs.length, 0);
+      assert.equal(x.review.at(-1).disabled, true); assert.equal(x.f.has('could not be refreshed'), true);
+      assert.deepEqual(x.f.calls, []);
+    } finally { x.f.dispose(); }
+  }
+});
+
+test('a successful same-URL refresh still retries the failed exact photo once', async () => {
+  let x, reads = 0;
+  x = expiredPhotoFixture(async () => {
+    reads++;
+    x.transport.fetch = async url => { x.requests.push(url); return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 4, 3, 2, 1])); };
+    return { FRONT: { inspection: { ...x.descriptor } } };
+  });
+  try {
+    await x.settle(); await x.f.click('Retry photograph'); await x.settle();
+    assert.equal(reads, 1); assert.deepEqual(x.requests, ['https://staff.example.invalid/expired', 'https://staff.example.invalid/expired']);
+    assert.equal(x.transport.blobs.length, 1); assert.equal(x.review.at(-1).disabled, true);
+    x.f.ready(); assert.equal(x.review.at(-1).disabled, false); assert.deepEqual(x.f.calls, []);
+  } finally { x.f.dispose(); }
+});
+
+test('pending-command gates, changed frame and unmount suppress a delayed photo retry', async () => {
+  for (const change of ['disabled-before', 'disabled-after', 'frame', 'side', 'access', 'unmount']) {
+    let finishRefresh, reads = 0;
+    const x = expiredPhotoFixture(() => { reads++; return new Promise(resolve => { finishRefresh = resolve; }); });
+    try {
+      await x.settle(); const retry = x.f.button('Retry photograph').props.onClick;
+      if (change === 'disabled-before') {
+        x.f.props.disabled = true; x.f.render(); await retry(); assert.equal(reads, 0);
+      } else {
+        const pending = retry();
+        if (change === 'disabled-after') x.f.props.disabled = true;
+        if (change === 'side') x.f.props.side = 'BACK';
+        if (change === 'access') x.transport.blocked = true;
+        if (change === 'frame') x.f.props.workspace = { ...x.f.props.workspace, draftRevision: x.f.props.workspace.draftRevision + 1,
+          sides: { ...x.f.props.workspace.sides, FRONT: { ...x.f.props.workspace.sides.FRONT,
+            findingRevision: x.f.props.workspace.sides.FRONT.findingRevision + 1 } } };
+        if (change === 'unmount') x.f.dispose(); else x.f.render();
+        finishRefresh(x.fresh); await pending;
+        if (change !== 'unmount') await x.settle();
+      }
+      assert.equal(x.requests.length, 1); assert.equal(x.transport.blobs.length, 0); assert.deepEqual(x.f.calls, []);
+    } finally { x.f.dispose(); }
+  }
 });
 
 test('every exact current-side trace remains visible while a finding focuses both views', async () => {
