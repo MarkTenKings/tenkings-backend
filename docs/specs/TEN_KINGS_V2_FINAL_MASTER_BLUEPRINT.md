@@ -1,3 +1,9 @@
+## Owner-directed ATLAS Fingerprint isolation — October 21, 2026
+
+Mark proposes an optional NFC/report entry into a separate phone-photo comparison feature and explicitly requires that it **not touch or interfere with the working ATLAS Grading workflow, processes or systems**. The current approved scope is independent offline feasibility using supplied comparison photos and copied, immutable approved reference evidence. It must not import or call grading runtimes, connect to their databases/APIs, consume their queues/workers/credentials/inference capacity, change grading configuration or enroll captures into grading/learning. Grades, saved reports, approvals, ownership and NFC records remain outside its mutation authority.
+
+Any future hosted Fingerprint service requires separate deployment, resources, storage, processing limits and spending allowance. Grading and report display must work when Fingerprint is absent, unavailable or overloaded. A future optional report-host link must not add a synchronous processing dependency or alter saved report bytes. Current fingerprint contour artwork is a visualization, not a physical-card matcher; phone/slab comparison accuracy and replay resistance are unqualified. No camera flow, production acquisition, service integration or authenticity claim is activated by this direction. See `docs/atlas/plans/ATLAS_MARKETPLACE_MASTER_PLAN_20261020.md` and `docs/atlas/audits/2026-10-21/fingerprint-isolation-feasibility.md` for source evidence and the separate feasibility gates. Ten Kings V2 is unchanged.
+
 ## Owner-directed ATLAS recognition and nonblocking identity — October 15, 2026
 
 ## Owner-directed whole-number final awards — October 17, 2026
