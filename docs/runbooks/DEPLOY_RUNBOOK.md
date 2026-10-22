@@ -1,5 +1,10 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## Workspace review-entry correction — October 21, 2026 Pacific
+
+The owner accepted the new gallery visually, but found that direct Workspace entry skipped the saved machine-findings import performed by Review Queue. Nick Bosa has retained geometry edits and three available Front suggestions; zero saved findings does not establish a flawless card. Henderson was successfully completed through Review Queue. The source correction discovers only the authenticated current card/source/revision batch and uses the existing final-review startup checks. It preserves existing human edits and approvals. Suggestion counts and approval wording are clarified. This correction is locally under qualification and is **not yet deployed**; serving source remains c1815115 with the identities below. Public Marketplace navigation remains pending. Details and evidence: `docs/atlas/audits/2026-10-21/workspace-review-entry.md`.
+
+
 ## Current staff original-photo gallery release — October 21, 2026 Pacific
 
 Native/staff/public source is `c18151157aeddc0b98ebf83f8045e4c75837a6b7`, native image2741bf9d, main d1db3d9b / worker a3f7aee6. Staff `dpl_CnDnsjJmd8Mf47xkFGJR9YRtvcpF`; public `dpl_As3boP14tGmpmM86ZcZ5sQiou79X`; controls138/100/106. Customer sourcec68e9ea7/deploymentdpl_2aW7K6CTUftYNKaWanBouvgUaDS5 and controls83/35 are retained. SQL009, both gateways and all project environments are unchanged. Both new native roles are ready, zero restarts, sealed unless-stopped. The old ca3 pair remains stopped/detached with restart=no.

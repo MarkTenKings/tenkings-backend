@@ -149,3 +149,43 @@ test('a partial machine report is not fabricated into an adoption', async () => 
   assert.deepEqual(await f.start(), f.view);
   assert.equal(f.calls.some(call => call.method === 'POST'), false);
 });
+
+function directView() {
+  const view = saved(1); view.card.draft = { source: { sourceHash: 'c'.repeat(64) } };
+  view.batchReview = { ...batchReview, sourceHash: view.card.draft.source.sourceHash,
+    manualRevision: view.card.revision, manualContentHash: view.card.contentHash };
+  return view;
+}
+test('direct entry discovers only the recovered source-bound report and uses the same durable adoption', async () => {
+  const f = fixture({ view: directView(), handler: async (_url, options, state) => {
+    if (options.method === 'POST') { state.view = saved(2, true); return response(committed(JSON.parse(options.body), state.view)); }
+  } });
+  await f.start(null);
+  assert.deepEqual(f.calls.filter(call => call.method === 'POST').map(call => call.body.action),
+    [{ type: 'BEGIN_FINAL_REVIEW', batchKey: batchReview.key, reportHash }]);
+  assert.equal(f.calls.some(call => call.url.endsWith('/cards/batch')), false);
+  assert.equal(f.values.size, 0);
+});
+test('discovered context must match the exact recovered card, source and manual base', async () => {
+  for (const [key, value] of [['cardId', 'other'], ['key', '../other'], ['state', 'RUNNING'], ['sourceHash', 'd'.repeat(64)],
+    ['manualRevision', 2], ['manualContentHash', 'changed']]) {
+    const view = directView(); view.batchReview[key] = value; const f = fixture({ view });
+    await assert.rejects(f.start(null), { code: 'BATCH_REVIEW_STALE' }); assert.equal(f.calls.length, 1);
+  }
+});
+test('current approval, prior adoption and missing context retain ordinary direct recovery without a report read', async () => {
+  for (const change of [view => { view.approval = { sourceHash: view.card.contentHash }; },
+    view => { view.finalReview = { reportHash }; }, view => { view.batchReview = null; }]) {
+    const view = directView(); change(view); const f = fixture({ view });
+    assert.deepEqual(await f.start(null), view); assert.equal(f.calls.length, 1);
+  }
+});
+test('direct entry preserves an unknown pending command and never discovers or adopts another report', async () => {
+  const command = { actionId: 'retained-action', expectedRevision: 1, action: { type: 'CONFIRM_GEOMETRY' } };
+  const f = fixture({ view: directView(), pending: command, handler: async url => {
+    if (url.includes('/actions/')) throw Error('status unavailable');
+  } });
+  await assert.rejects(f.start(null), /status unavailable/);
+  assert.deepEqual(JSON.parse(f.values.get(pendingKey)), command);
+  assert.equal(f.calls.some(call => call.method === 'POST' || call.url.includes('/batch/')), false);
+});

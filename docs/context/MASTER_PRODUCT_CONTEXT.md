@@ -1,5 +1,10 @@
 # Ten Kings Master Product Context
 
+## Workspace review-entry correction — October 21, 2026 Pacific
+
+The owner accepted the new gallery visually, but found that direct Workspace entry skipped the saved machine-findings import performed by Review Queue. Nick Bosa has retained geometry edits and three available Front suggestions; zero saved findings does not establish a flawless card. Henderson was successfully completed through Review Queue. The source correction discovers only the authenticated current card/source/revision batch and uses the existing final-review startup checks. It preserves existing human edits and approvals. Suggestion counts and approval wording are clarified. This correction is locally under qualification and is **not yet deployed**; serving source remains c1815115 with the identities below. Public Marketplace navigation remains pending. Details and evidence: `docs/atlas/audits/2026-10-21/workspace-review-entry.md`.
+
+
 ## Current ATLAS staff original-photo gallery — October 21, 2026 Pacific
 
 The staff intake gallery is technically live at `/admin/grading`, alongside the previously accepted archive, dedicated detail, history and exact report-return flow. **Your grading workspace** means the signed-in staff member's assigned intake cards, including unfinished and completed reviews, excluding discarded records and paging30 at a time. It is not legal ownership or all-site inventory. The gallery displays uncropped previews of the human-uploaded original Front, with saved status and source/access checks; it generates no slab and changes no grading decisions.

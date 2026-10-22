@@ -37,7 +37,7 @@ export function astraReviewState(workspace, astra) {
     REFUSED: astra.followLatest ? 'This request was not sent. Check the current saved analysis to continue.'
       : astra.code === 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR' ? `AI inspection failed${Number.isInteger(astra.httpStatus) ? ` (provider error ${astra.httpStatus})` : ''}; no AI result was returned. Retry or continue manual review.` : 'AI inspection did not complete. Retry or continue manual review.',
     FAILED: 'The analysis did not finish. You can try again or continue manual review.',
-    READY: astra.proposals?.length ? 'Review both sides and correct or reject suggestions as needed. Confirm findings accepts the remaining displayed suggestions together.'
+    READY: astra.proposals?.length ? 'Review both sides. Add or correct suggestions to save them, dismiss unwanted suggestions, and add any missed damage before confirming. Approving both sides confirms only saved findings; suggestions left unadded are excluded.'
       : 'ATLAS returned no suggestions. Inspect both sides before confirming your findings.',
     STALE: 'The card outline changed since AI inspection. You can retry it or continue reviewing your saved findings.',
   }[status];

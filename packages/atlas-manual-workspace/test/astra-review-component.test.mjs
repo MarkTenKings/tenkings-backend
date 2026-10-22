@@ -259,14 +259,62 @@ test('excluded old geometry is optional history and cannot disable current side 
 
   const reviews = [], f = harness({ workspace: state, renderReviewActions: value => { reviews.push(value); return null; } }); f.ready();
   assert.equal(f.nodes(n => n.props['data-finding-id']).length, 0);
-  assert.ok(f.has('Removed / excluded (1)')); assert.ok(f.has('No findings recorded on front.'));
+  assert.ok(f.has('Removed / excluded (1)')); assert.ok(f.has('No saved findings on front.'));
   assert.equal(reviews.at(-1).disabled, false); assert.equal(f.has('Original observations'), false);
 });
 
-test('new current suggestions require deliberate adoption without blocking the current roster', async () => {
+test('zero saved findings visibly separates current suggestions and explains approval outside the collapsed list', () => {
+  const state = workspace(false), astra = astraFor(state), original = astra.proposals[0], reviews = [];
+  astra.proposals.push({ ...original, id: 'proposal-2' }, { ...original, id: 'proposal-3', canonicalContour: null },
+    { ...original, id: 'back-only', side: 'BACK' }, { ...original, id: 'already-dismissed', reviewStatus: 'REJECTED' });
+  const f = harness({ workspace: state, astra, renderReviewActions: value => { reviews.push(value); return null; } }); f.ready();
+  const header = f.nodes(n => n.type === 'header' && n.props.className === 'ad-review-toolbar')[0];
+  assert.ok(text(header).includes('0 saved findings · 3 AI suggestions'));
+  assert.ok(f.has('No saved findings on front.')); assert.equal(f.has('Additional suggestions'), false);
+  assert.equal(f.nodes(n => n.props.className === 'ad-exact-trace').length, 0);
+  assert.equal(f.nodes(n => n.props.className === 'ad-proposal-outline').length, 2, 'unrenderable suggestions stay listed without inventing a trace');
+  const details = f.nodes(n => n.type === 'details' && n.props.className === 'ad-proposals')[0];
+  assert.ok(text(details).includes('AI suggestions (3)')); assert.equal(Boolean(details.props.open), false);
+  const help = f.control('Front suggestion review');
+  assert.equal(all(details, n => n.props['aria-label'] === 'Front suggestion review').length, 0, 'instructions remain visible when the list is collapsed');
+  assert.ok(text(help).includes('Blue dashed outlines mark AI suggestions.'));
+  for (const action of ['Add suggestion', 'Correct trace', 'Dismiss suggestion', 'Add finding']) assert.ok(text(help).includes(action));
+  assert.ok(text(help).includes('Approving both sides confirms only saved findings. Suggestions left unadded are excluded.'));
+  assert.equal(reviews.at(-1).message, 'Front · 0 saved findings · 3 AI suggestions');
+  assert.equal(reviews.at(-1).disabled, false, 'copy does not add an approval gate or accept suggestions');
+  assert.equal(f.calls.length, 0);
+});
+
+test('suggestion counts and instructions follow current side, frame and unresolved status', () => {
+  const state = workspace(false), astra = astraFor(state), f = harness({ workspace: state, astra }); f.ready();
+  assert.ok(f.has('0 saved findings · 1 AI suggestion'));
+  f.props.side = 'BACK'; f.render(); f.ready();
+  assert.equal(f.has('AI suggestions ('), false); assert.equal(f.nodes(n => n.props.className === 'ad-suggestion-help').length, 0);
+  f.props.side = 'FRONT'; f.props.astra = { ...astra, status: 'STALE' }; f.render(); f.ready();
+  assert.equal(f.has('AI suggestions ('), false); assert.equal(f.nodes(n => n.props.className === 'ad-proposal-outline').length, 0);
+  f.props.astra = structuredClone(astra); f.props.astra.base.FRONT.frame.frameId = 'an-earlier-frame'; f.render();
+  assert.equal(f.nodes(n => n.props.className === 'ad-suggestion-help').length, 0);
+  f.props.astra = { ...astra, proposals: astra.proposals.map(proposal => ({ ...proposal, reviewStatus: 'ACCEPTED' })) }; f.render();
+  assert.equal(f.has('AI suggestions ('), false); assert.equal(f.nodes(n => n.props.className === 'ad-suggestion-help').length, 0);
+  assert.equal(f.calls.length, 0);
+});
+
+test('ready analysis copy describes saved-roster approval without automatic suggestion acceptance', () => {
+  const state = workspace(false), astra = astraFor(state), ready = presentation.astraReviewState(state, astra);
+  assert.equal(ready.status, 'READY');
+  assert.ok(ready.message.includes('Add or correct suggestions to save them, dismiss unwanted suggestions, and add any missed damage before confirming.'));
+  assert.ok(ready.message.includes('Approving both sides confirms only saved findings; suggestions left unadded are excluded.'));
+  assert.equal(ready.message.includes('accepts the remaining'), false);
+  assert.ok(presentation.astraReviewState(state, { ...astra, proposals: [] }).message.includes('ATLAS returned no suggestions.'));
+});
+
+test('new current suggestions require deliberate adoption without blocking or changing the current roster', async () => {
   const state = workspace(), reviews = [], f = harness({ workspace: state, astra: astraFor(state), renderReviewActions: value => { reviews.push(value); return null; } }); f.ready();
+  assert.ok(f.has('1 saved finding · 1 AI suggestion')); assert.equal(f.nodes(n => n.props.className === 'ad-exact-trace').length, 1);
   assert.equal(reviews.at(-1).disabled, false); assert.equal(f.calls.length, 0);
   await f.click('Add suggestion'); assert.equal(f.calls[0].kind, 'proposal'); assert.equal(f.calls[0].request.action, 'ACCEPT');
+  assert.ok(f.has('1 saved finding · 1 AI suggestion'), 'counts wait for the authoritative refreshed roster');
+  assert.equal(f.nodes(n => n.props.className === 'ad-exact-trace').length, 1);
 });
 
 test('late model results do not replace an unsaved manual trace', async () => {

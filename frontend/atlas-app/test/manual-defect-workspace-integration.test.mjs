@@ -162,6 +162,44 @@ test('authorization loss during batch startup shows sign-in recovery with no int
   await flush();f.render();assert.equal(f.recoveries,1);assert.match(f.text(),/Sign in again/);
   assert.equal(f.geometry(),undefined);assert.equal(f.actions.length,0);assert.equal(f.button('Retry loading review'),undefined);f.dispose();
 });
+const directEntryView = () => ({ card: { revision: 1, contentHash: 'one', draft: { source: { sourceHash: 'a'.repeat(64) } } },
+  batchReview: { key: 'b'.repeat(64), cardId: 'card', state: 'REVIEW', sourceHash: 'a'.repeat(64), manualRevision: 1, manualContentHash: 'one' } });
+test('direct workspace adopts its exact saved roster before showing geometry or allowing review gestures', async () => {
+  const f = harness({ rapid: true, initialView: directEntryView() });
+  const findings = [{ id: 'saved-1' }, { id: 'saved-2' }, { id: 'saved-3' }];
+  f.respond = async path => path.endsWith(`/batch/${'b'.repeat(64)}`) ? { state: 'READY', reportHash: 'saved-report' } : { astra: f.current.astra };
+  f.onExecute = async action => {
+    if (action.type !== 'BEGIN_FINAL_REVIEW') return;
+    assert.equal(f.geometry(), undefined, 'intermediate recovered draft is still covered by startup');
+    assert.equal(action.type, 'BEGIN_FINAL_REVIEW');
+    f.current = { ...f.current, finalReview: { reportHash: action.reportHash },
+      defects: { sides: { FRONT: { findings }, BACK: { findings: [] } } } };
+  };
+  await flush(); f.render();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: 'b'.repeat(64), reportHash: 'saved-report' }]);
+  assert.ok(f.geometry());
+  await f.geometry().onApproveSide({ side: 'FRONT' }); await flush(); f.render();
+  await f.geometry().onApproveSide({ side: 'BACK' }); await flush(); f.render();
+  assert.deepEqual(f.defects().workspace.sides.FRONT.findings, findings);
+  assert.deepEqual(f.actions.map(action => action.type), ['BEGIN_FINAL_REVIEW', 'EXPLICIT_SIDE', 'EXPLICIT_SIDE', 'EXPLICIT_STAGE']);
+  assert.equal(f.calls.some(call => call.options?.method === 'POST'), false, 'no new analysis request');
+  assert.equal(f.popups.length, 0); f.dispose();
+});
+test('failed direct-entry report reads leave no intermediate editor and retry the owned recovery', async () => {
+  for (const code of ['SIGN_IN_REQUIRED', 'MANUAL_TEMPORARILY_UNAVAILABLE']) {
+    const f = harness({ rapid: true, initialView: directEntryView() });
+    f.respond = async () => { throw { code, status: code === 'SIGN_IN_REQUIRED' ? 401 : 503 }; };
+    await flush(); f.render(); assert.equal(f.geometry(), undefined); assert.equal(f.actions.length, 0);
+    if (code === 'SIGN_IN_REQUIRED') assert.match(f.text(), /Sign in again/);
+    else {
+      assert.ok(f.button('Retry loading review'));
+      f.respond = async () => ({ state: 'CURRENT_MANUAL' });
+      f.button('Retry loading review').props.onClick(); await flush(); f.render();
+      assert.equal(f.recoveries, 2); assert.ok(f.geometry()); assert.equal(f.actions.length, 0);
+    }
+    f.dispose();
+  }
+});
 test('known-commit recovery locks review, deduplicates clicks and preserves an active geometry draft',async()=>{
   let release;
   const f=harness({rapid:true,recover:async state=>{if(state.recoveries>1){await new Promise(resolve=>{release=resolve;});state.refreshNeeded=false;state.status('Saved');}}});

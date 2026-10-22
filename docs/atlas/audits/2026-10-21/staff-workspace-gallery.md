@@ -71,3 +71,7 @@ Ordinary authenticated Chrome at `https://atlasgrading.com/admin/grading` verifi
 - Screenshots `desktop-top.png`, `desktop.png`, `mobile-320.png` and raw `desktop-dom.json`/`mobile-dom.json` are retained in `browser-live-01/`. Photo/state/browser-layout acceptance passes. Owner aesthetic acceptance and physical-phone acceptance are not claimed.
 
 These were normal reads plus the single photo retry; no card workflow action, production business write, release, restart, migration, provider dispatch or ownership change was performed. All30 marketplace requirements remain in scope, and neither R1 nor the whole marketplace is complete.
+
+## Subsequent owner testing
+
+The owner reports the new surfaces otherwise look good. Their Workspace→Nick Bosa review exposed a distinct downstream startup defect: the direct route omitted saved machine-findings adoption that Review Queue performs. Exact read-only evidence confirms three measured Front machine findings were absent from Nick's editable roster, while saved geometry remains intact; Henderson was successfully completed through the normal queue. This supersedes the earlier untested navigation boundary without invalidating the photo/layout evidence. Correction is in progress; see [workspace review entry](workspace-review-entry.md). Public Marketplace navigation remains pending with listings/commerce.

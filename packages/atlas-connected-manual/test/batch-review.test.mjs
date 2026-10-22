@@ -17,6 +17,7 @@ import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 import { geometryBase } from '@atlas/manual-workspace/geometry-actions';
 import { proposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { batchActionId } from '@atlas/batch-grading';
+import { recoverManualReview } from '../../../frontend/atlas-app/lib/manual-review-startup.mjs';
 const sides = ['FRONT', 'BACK'], clone = structuredClone;
 async function fixture({ count = 2, native = false, unmeasurable = false, outside = false, missingPrinted = false, historicalMachine = false, halfPointMachine = false, withoutSavedProposals = false } = {}) {
   const p = await publicationFixture(), staff = { id: p.actorId }, principal = { id: p.actorId, canCertify: true };
@@ -500,4 +501,46 @@ test('batch navigation opens a newer current manual draft while old-report adopt
   assert.equal(detail.state,'CURRENT_MANUAL');assert.equal(detail.correctionAvailable,true);assert.equal(detail.reportHash,undefined);
   await assert.rejects(f.workflow.service.execute(f.staff,f.card.cardId,{actionId:randomUUID(),expectedRevision:f.card.revision,action:{type:'BEGIN_FINAL_REVIEW',batchKey:f.job.key,reportHash:f.input.reportHash}}),{code:'BATCH_REVIEW_STALE'});
   assert.deepEqual(await f.workflow.hydrate(f.card),before);assert.equal(f.approvals.size,0);
+});
+
+test('direct and queue startup adopt the same three measured findings without making human decisions or rereading the model', async () => {
+  for (const direct of [true, false]) {
+    const f = await fixture({ count: 3 }), original = clone(f.report), requests = [];
+    const read = async () => ({ card: clone(f.card), ...(await f.workflow.hydrate(f.card)), approval: null,
+      batchReview: { key: f.job.key, cardId: f.card.cardId, state: 'REVIEW', sourceHash: f.job.sourceHash,
+        manualRevision: f.report.manualRevision, manualContentHash: f.report.manualContentHash } });
+    const current = await recoverManualReview({ cardId: f.card.cardId,
+      batchReview: direct ? null : { key: f.job.key, cardId: f.card.cardId, state: 'REVIEW' },
+      client: { recover: read, hasPending: () => false, async execute(action) {
+        await f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision, action });
+        return read();
+      } }, request: async path => { requests.push(path); return f.review.detail(f.staff, f.job.key); } });
+    assert.deepEqual(sides.flatMap(side => current.defects.sides[side].findings), original.findings);
+    assert.deepEqual(current.finalReview.report, original);
+    assert.equal(current.defects.confirmation, null);
+    assert(sides.every(side => !current.geometry.sides[side].confirmation && !current.defects.sides[side].inspection));
+    assert.deepEqual(f.commits.map(command => command.action.type), ['BEGIN_FINAL_REVIEW']);
+    assert.equal(f.approvals.size, 0); assert.equal(f.lessons.length, 0);
+    assert.deepEqual(requests, [`/api/staff/manual-connected/cards/batch/${f.job.key}`]);
+  }
+});
+
+test('a direct-entry geometry confirmation remains saved and cannot be rebased onto its older unadopted report', async () => {
+  const f = await fixture({ count: 3 });
+  let state = await f.workflow.hydrate(f.card);
+  await f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: 1,
+    action: { type: 'CONFIRM_GEOMETRY', reviewed: true, base: Object.fromEntries(sides.map(side => [side, geometryBase(state.geometry, side, 'REVIEW')])) } });
+  state = await f.workflow.hydrate(f.card); const before = clone(state), originalReport = clone(f.report);
+  assert.equal(f.card.revision, 2); assert.equal(f.report.findings.length, 3);
+  assert(sides.every(side => state.defects.sides[side].findings.length === 0 && state.geometry.sides[side].confirmation));
+  assert.equal((await f.review.detail(f.staff, f.job.key)).state, 'CURRENT_MANUAL');
+  const current = await recoverManualReview({ cardId: f.card.cardId, client: {
+    recover: async () => ({ card: clone(f.card), ...state, batchReview: null }), hasPending: () => false,
+    execute: () => assert.fail('Cannot automatically replace saved human geometry'),
+  }, request: () => assert.fail('No current report adoption context') });
+  assert.deepEqual(current.geometry, before.geometry);
+  await assert.rejects(f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: 2,
+    action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } }), { code: 'BATCH_REVIEW_STALE' });
+  assert.deepEqual(await f.workflow.hydrate(f.card), before); assert.deepEqual(f.report, originalReport);
+  assert.equal(f.commits.length, 1); assert.equal(f.approvals.size, 0);
 });
