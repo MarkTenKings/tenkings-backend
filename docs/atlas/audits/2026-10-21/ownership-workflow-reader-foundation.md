@@ -19,3 +19,5 @@ PG02 result: `/Users/markthomas/.codex/atlas-handoffs/atlas-detail-release-20261
 Final source SHA256: SQL `32063d8cc06bfe72e828a6686953692c6f2ce3c1d797e509522ca825f4ef2958`; adapter `eee0aae322602c0e4a36ec4bb33831c237c3ed51fd0cd2087f2137a54785b8a7`; contract `e8d2f0d92fedd1f85a71c2ef19ba45704036e57c640d31e762674404b3c9b325`; fixture `330e249a2e45a667a8ec7e6cea155935b75e94ee93a047edc041a44ef8d45ee3`. Original writer and evidence SQL/services are unchanged.
 
 Practical proof upload/storage/retention policy, genuine reviewer provisioning, claim withdrawal/replacement, migration registration, authenticated routes, persistent UI, complete collection/provenance joins and operational activation remain unfinished. This qualification does not establish real customer ownership.
+
+Later scope reconciliation (October21): v2 proof/lifecycle and submission UI qualified withdrawal/replacement locally. This dated v1 reader remains unsuitable for v2 target/history and is not a fallback. A separate lifecycle-aware restricted reader is being qualified; neither reader is activated in production. Policy, reviewer provisioning, integration and operational acceptance remain pending.

@@ -1,6 +1,6 @@
 # My Collection reader — local foundation
 
-This increment is locally implemented and qualified. It is not deployed or operationally accepted. Production remains the ca3a848d detail/identity/history release; its normal signed-in real-card acceptance is still pending.
+This increment is locally implemented and qualified. It is not deployed or operationally accepted. At this reader qualification checkpoint, production was ca3a848d and signed-in detail acceptance was pending. Detail and later c1815115 gallery acceptance subsequently passed; see their dated audits. The separate Workspace review-entry correction is in progress.
 
 ## Behavior
 
@@ -43,6 +43,6 @@ Browser screenshots/build logs are under `collection-reader-preview/`; PostgreSQ
 
 ## Remaining work
 
-Complete ordinary real-card detail acceptance, then integrate retained ownership-evidence binding, genuine independent reviewer provisioning, claim status/review queue, participating transfer inbox and recipient resolution. Define supported disputes/corrections and reholder continuity. Qualify and register a fresh ownership release with separate serving roles; connect the customer reader and exact authorized media. Persistence of privacy/offer preferences and optional comp curation/pricing is still unfinished. Customer provenance and full collection search/history/social remain unfinished.
+Detail acceptance subsequently passed. Integrate retained ownership-evidence binding, genuine independent reviewer provisioning, claim status/review queue, participating transfer inbox and recipient resolution. Define supported disputes/corrections and reholder continuity. Qualify and register a fresh ownership release with separate serving roles; connect the customer reader and exact authorized media. Persistence of privacy/offer preferences and optional comp curation/pricing is still unfinished. Customer provenance and full collection search/history/social remain unfinished.
 
 No new production schema, ownership, approval, paid search, message, balance, sale, print or NFC operation occurred. All 30 master-plan requirements remain in scope; this local reader is not completion of R1.
