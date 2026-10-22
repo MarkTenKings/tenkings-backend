@@ -5,6 +5,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { APPROVED_LABEL_LAYOUT } from './approved-card-media.mjs';
+import { INSPECTION_SLAB_FRAME } from './slab-photo-frame.mjs';
 
 /** One reusable, illustrative holder. Exterior dimensions are owner supplied.
  * Internal profiles, card thickness and NFC placement are presentation geometry,
@@ -120,16 +121,34 @@ function addNfcReference(labels, texture, layoutVersion) {
   placeNfcReference(tag, layoutVersion);
   tag.userData.geometryAuthority = 'decorative-reference-only';
 }
-export function fitSlabPhoto(width, height) {
+const knownPhotoFrame = version => version === INSPECTION_SLAB_FRAME.version ? version : null;
+export function fitSlabPhoto(width, height, photoFrame) {
   if (!(width > 0 && height > 0)) throw error('SLAB_PHOTO_DIMENSIONS');
+  if (knownPhotoFrame(photoFrame)) { width = INSPECTION_SLAB_FRAME.cardWidth; height = INSPECTION_SLAB_FRAME.cardHeight; }
   const scale = Math.min(SLAB_MODEL.cardWidth / width, SLAB_MODEL.cardHeight / height);
   return { width: width * scale, height: height * scale };
 }
+function photoGeometry(image, photoFrame) {
+  const { width, height } = fitSlabPhoto(image.naturalWidth || image.width, image.naturalHeight || image.height, photoFrame);
+  const geometry = new PlaneGeometry(width, height);
+  if (knownPhotoFrame(photoFrame)) {
+    // The verified inspection viewport records the physical card inside a
+    // transparent padding margin. UVs select those known bounds without editing
+    // texture pixels; normalized bounds apply to both preview and full images.
+    const frame = INSPECTION_SLAB_FRAME, uv = geometry.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i,
+      (frame.x + uv.getX(i) * frame.cardWidth) / frame.width,
+      1 - (frame.y + (1 - uv.getY(i)) * frame.cardHeight) / frame.height);
+    uv.needsUpdate = true;
+  }
+  return geometry;
+}
 
 /** Textures are the caller's verified photographs/saved label. No relighting,
- * tone mapping, cropping or inferred findings are applied. Reverse label
+ * tone mapping or inferred findings are applied. Known inspection padding is
+ * omitted only through its verified frame contract. Reverse label
  * artwork is present only when the saved record supplied that texture. */
-export function createSlabModel({ front, back, label, backLabel, labelLayoutVersion, nfc, materialMode = SLAB_STUDIO.material }) {
+export function createSlabModel({ front, back, frontPhotoFrame, backPhotoFrame, label, backLabel, labelLayoutVersion, nfc, materialMode = SLAB_STUDIO.material }) {
   const model = new Group(); model.name = SLAB_MODEL.version; model.userData.geometryAuthority = 'illustrative';
   model.userData.materialMode = materialMode; model.userData.studioVersion = SLAB_STUDIO.version;
   model.userData.labelLayoutVersion = labelLayoutVersion ?? null;
@@ -143,7 +162,6 @@ export function createSlabModel({ front, back, label, backLabel, labelLayoutVers
     depthWrite: false, roughness: .23, envMapIntensity: .35 });
   const weld = new MeshPhysicalMaterial({ color: 0xbdbdbd, metalness: 0, ior: 1.49, opacity: .22, transparent: true,
     depthWrite: false, roughness: .20, envMapIntensity: .5 });
-  const ribGeometry = solid(.85, 86.7, .4, 1.05, .12);
   for (const [side, sign] of [['front', 1], ['back', -1]]) {
     // A thick curved wall, a rolled outer lip and a lower internal shoulder give
     // the two shell halves distinct depth cues at every angle.
@@ -152,10 +170,9 @@ export function createSlabModel({ front, back, label, backLabel, labelLayoutVers
     mesh(shell, `${side}-window-shoulder`, shoulder(), shoulderMaterial, 0, 0, sign * 2.31);
     mesh(shell, `${side}-recessed-weld-channel`, ring(75.36, 130.478, 1.95, .32, .24, .06), weld, 0, 0, sign * 2.13);
     mesh(shell, `${side}-label-bay`, ring(70.464, 22.5, 1.1, .75, .90, .16), rail, 0, 51.041, sign * 1.15);
-    mesh(shell, `${side}-card-pocket`, ring(65.064, 91, 1, .62, .85, .14), rail, 0, -10.209, sign * .95);
-    for (const x of [-33.4, 33.4]) mesh(shell, `${side}-retention-rail-${x < 0 ? 'left' : 'right'}`,
-      ribGeometry, polished, x, -10.259, sign * .95);
-    for (const [name, y, width, height] of [['label-divider', 37.891, 71.5, .85], ['card-support', -57.059, 70.264, .85], ['foot-rib', -61.609, 68.264, .55]])
+    // The open shoulder defines the card window without an additional raised
+    // surround. One lower support remains above the exterior joining wall.
+    for (const [name, y, width, height] of [['label-divider', 37.891, 71.5, .85], ['card-support', -57.059, 70.264, .85]])
       mesh(shell, `${side}-${name}`, solid(width, height, height / 2, .80, .11), rail, 0, y, sign * 1.1);
   }
   // An inset physical joining band, rather than a screen-space outline, remains
@@ -164,9 +181,8 @@ export function createSlabModel({ front, back, label, backLabel, labelLayoutVers
   // No broad glass cover is layered over the evidence windows.
   const backing = new MeshBasicMaterial({ color: 0xfafafa, toneMapped: false });
   mesh(card, 'generic-card-carrier', new BoxGeometry(SLAB_MODEL.cardWidth, SLAB_MODEL.cardHeight, .34), backing, 0, SLAB_MODEL.cardY);
-  for (const [side, texture, sign] of [['front', front, 1], ['back', back, -1]]) {
-    const { width, height } = fitSlabPhoto(texture.image.naturalWidth || texture.image.width, texture.image.naturalHeight || texture.image.height);
-    const face = mesh(card, `${side}-approved-photograph`, new PlaneGeometry(width, height),
+  for (const [side, texture, sign, photoFrame] of [['front', front, 1, frontPhotoFrame], ['back', back, -1, backPhotoFrame]]) {
+    const face = mesh(card, `${side}-approved-photograph`, photoGeometry(texture.image, photoFrame),
       new MeshBasicMaterial({ map: texture, toneMapped: false, transparent: true }), 0, SLAB_MODEL.cardY, sign * .181);
     if (sign < 0) face.rotation.y = Math.PI; // Viewed from behind, the saved Back remains readable, not mirrored.
   }
@@ -238,7 +254,7 @@ function rasterTexture(image, renderer, document, kind) {
 
 /** The renderer is created only after the 3D tab mounts. Work is event-driven:
  * a requested frame never schedules another frame, and hidden scenes pause. */
-export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion, nfcUrl, onReady = () => {}, onError = () => {}, onAssetError = () => {}, onAssetReady = () => {}, onFacing = () => {} }, overrides = {}) {
+export function createSlabScene(host, { frontUrl, backUrl, frontPhotoFrame, backPhotoFrame, labelUrl, backLabelUrl, labelLayoutVersion, nfcUrl, onReady = () => {}, onError = () => {}, onAssetError = () => {}, onAssetReady = () => {}, onFacing = () => {} }, overrides = {}) {
   if (![frontUrl, backUrl].every(url => typeof url === 'string' && url.startsWith('blob:'))
     || [labelUrl, backLabelUrl].some(url => url && (typeof url !== 'string' || !url.startsWith('blob:')))) throw error('SLAB_APPROVED_SOURCE_REQUIRED');
   const win = overrides.window ?? window, doc = overrides.document ?? document;
@@ -247,7 +263,7 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
   const aborter = new AbortController(), images = new Set(), textures = new Set(), listeners = [];
   let model, frame = null, disposed = false, ready = false, visible = true, angle = INITIAL_SLAB_ANGLE, drag = null;
   let resizeObserver, intersectionObserver, contactShadow;
-  let wantedAssets = { frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion };
+  let wantedAssets = { frontUrl, backUrl, frontPhotoFrame, backPhotoFrame, labelUrl, backLabelUrl, labelLayoutVersion };
   const currentAssets = {}, assetRequests = new Map(), photoImages = {};
   const canvas = renderer.domElement;
   renderer.outputColorSpace = SRGBColorSpace; renderer.toneMapping = NoToneMapping; scene.background = new Color(0xffffff);
@@ -380,7 +396,7 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
     let part = model.getObjectByName(name);
     if (part) {
       const old = part.material.map; part.material.map = texture; part.material.needsUpdate = true; releaseTexture(old);
-      if (isPhoto) { const fitted = fitSlabPhoto(image.naturalWidth, image.naturalHeight); part.geometry.dispose(); part.geometry = new PlaneGeometry(fitted.width, fitted.height); }
+      if (isPhoto) { part.geometry.dispose(); part.geometry = photoGeometry(image, wantedAssets[`${side}PhotoFrame`]); }
     } else if (isNfc) addNfcReference(model.getObjectByName('saved-label'), texture, currentAssets.labelLayoutVersion);
     else {
       part = mesh(model.getObjectByName('saved-label'), name, new PlaneGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight),
@@ -396,7 +412,7 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
       const nfc = model.getObjectByName('illustrative-front-nfc-reference');
       if (nfc) placeNfcReference(nfc, currentAssets.labelLayoutVersion);
     }
-    if (isPhoto) photoImages[side] = image;
+    if (isPhoto) { photoImages[side] = image; currentAssets[`${side}PhotoFrame`] = knownPhotoFrame(wantedAssets[`${side}PhotoFrame`]); }
     currentAssets[key] = url; onAssetReady({ slot: key }); requestRender();
     if (key === 'labelUrl') syncNfcReference();
   }
@@ -430,6 +446,14 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
     if (!model) return;
     model.userData.labelLayoutVersion = wanted.labelLayoutVersion ?? null;
     for (const key of ['frontUrl', 'backUrl', 'labelUrl', 'backLabelUrl']) replaceAsset(key, wanted[key] || null);
+    for (const side of ['front', 'back']) {
+      const frameKey = `${side}PhotoFrame`, frame = knownPhotoFrame(wanted[frameKey]);
+      if (currentAssets[`${side}Url`] === wanted[`${side}Url`] && currentAssets[frameKey] !== frame) {
+        const part = model.getObjectByName(`${side}-approved-photograph`);
+        part.geometry.dispose(); part.geometry = photoGeometry(part.material.map.image, frame);
+        currentAssets[frameKey] = frame; requestRender();
+      }
+    }
     const nfc = model.getObjectByName('illustrative-front-nfc-reference');
     if (currentAssets.labelUrl === wanted.labelUrl) {
       const changed = currentAssets.labelLayoutVersion !== wanted.labelLayoutVersion;
@@ -446,7 +470,8 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
       const back = photoTexture(backImage, renderer); textures.add(back);
       photoImages.front = frontImage; photoImages.back = backImage;
       currentAssets.frontUrl = frontUrl; currentAssets.backUrl = backUrl;
-      model = createSlabModel({ front, back, labelLayoutVersion, materialMode: overrides.materialMode });
+      currentAssets.frontPhotoFrame = knownPhotoFrame(frontPhotoFrame); currentAssets.backPhotoFrame = knownPhotoFrame(backPhotoFrame);
+      model = createSlabModel({ front, back, frontPhotoFrame, backPhotoFrame, labelLayoutVersion, materialMode: overrides.materialMode });
       model.rotation.y = angle; scene.add(model); clearTimeout(timeout);
       onFacing(slabFacing(angle)); resize(); updateAssets(wantedAssets);
     } catch (failure) { fail(failure); }

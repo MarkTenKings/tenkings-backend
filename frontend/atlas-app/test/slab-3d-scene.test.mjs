@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Box3, Texture, Vector3, SRGBColorSpace, NoToneMapping } from 'three';
 import { SLAB_MODEL, INITIAL_SLAB_ANGLE, createSlabModel, disposeSlabModel, fitSlabPhoto, assertSlabTextureSize,
   createSlabScene, slabFacing, createSlabStudioEnvironment, SLAB_STUDIO } from '../lib/slab-3d-scene.mjs';
+import { INSPECTION_SLAB_FRAME } from '../lib/slab-photo-frame.mjs';
 
 const texture = (width = 1350, height = 1858) => new Texture({ width, height, naturalWidth: width, naturalHeight: height });
 
@@ -38,6 +39,33 @@ test('Front and Back use uncropped unlit source textures, with the Back facing o
   assert.equal(model.getObjectByName('plain-label-carrier-no-reverse-artwork').material.map, null);
   assert.deepEqual(fitSlabPhoto(1000, 2000), { width: 44.45, height: 88.9 });
   disposeSlabModel(model);
+});
+
+test('verified inspection framing maps only its canonical card bounds for preview and full textures without changing pixels', () => {
+  const frame = INSPECTION_SLAB_FRAME;
+  const expected = [frame.x / frame.width, 1 - frame.y / frame.height,
+    (frame.x + frame.cardWidth) / frame.width, 1 - frame.y / frame.height,
+    frame.x / frame.width, 1 - (frame.y + frame.cardHeight) / frame.height,
+    (frame.x + frame.cardWidth) / frame.width, 1 - (frame.y + frame.cardHeight) / frame.height];
+  for (const [width, height] of [[558, 768], [1350, 1858]]) {
+    const front = texture(width, height), back = texture(width, height);
+    const model = createSlabModel({ front, back, frontPhotoFrame: frame.version, backPhotoFrame: frame.version });
+    model.updateMatrixWorld(true);
+    for (const [side, source, sign] of [['front', front, 1], ['back', back, -1]]) {
+      const face = model.getObjectByName(`${side}-approved-photograph`);
+      assert.equal(face.material.map, source); assert.equal(face.material.toneMapped, false);
+      assert.deepEqual([source.image.width, source.image.height], [width, height]);
+      assert.deepEqual(source.offset.toArray(), [0, 0]); assert.deepEqual(source.repeat.toArray(), [1, 1]);
+      assert.ok(Math.abs(face.geometry.parameters.width / face.geometry.parameters.height - 5 / 7) < 1e-12);
+      assert.equal(face.geometry.parameters.width, SLAB_MODEL.cardWidth); assert.equal(face.geometry.parameters.height, SLAB_MODEL.cardHeight);
+      Array.from(face.geometry.attributes.uv.array).forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 1e-7));
+      assert.ok(new Vector3(0, 0, 1).transformDirection(face.matrixWorld).z * sign > .99);
+    }
+    disposeSlabModel(model);
+  }
+  const unknown = createSlabModel({ front: texture(), back: texture(), frontPhotoFrame: 'unknown-frame' });
+  assert.deepEqual(Array.from(unknown.getObjectByName('front-approved-photograph').geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
+  disposeSlabModel(unknown);
 });
 
 test('saved back label faces outward and the separate NFC overlays the approved-B circle without changing saved art', () => {
@@ -332,6 +360,24 @@ test('progressive photo replacement preserves the model, camera angle, single re
   f.pending[3].resolve(1350, 1858); await settle(); f.flush();
   assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(f.renderer.domElement.dataset.slabAngle, angle);
   assert.equal(f.renderer.disposed, 0); assert.equal(f.ready.length, 1); assert.equal(f.frames.size, 0); f.scene.dispose();
+});
+
+test('verified frame updates and preview-to-full replacement preserve UV bounds, model and angle', async () => {
+  const f = fixture(); f.pending.forEach(image => image.resolve(558, 768)); await f.scene.started; f.flush();
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), face = model.getObjectByName('front-approved-photograph'), original = face.material.map;
+  f.scene.rotateBy(.8); f.flush(); const angle = f.renderer.domElement.dataset.slabAngle;
+  f.scene.updateAssets({ frontPhotoFrame: INSPECTION_SLAB_FRAME.version, backPhotoFrame: INSPECTION_SLAB_FRAME.version }); f.flush();
+  const framed = Array.from(face.geometry.attributes.uv.array);
+  assert.notDeepEqual(framed, [0, 1, 1, 1, 0, 0, 1, 0]); assert.equal(face.material.map, original);
+  f.scene.updateAssets({ frontUrl: 'blob:full-front', backUrl: 'blob:full-back' });
+  f.pending[2].resolve(1350, 1858); f.pending[3].resolve(1350, 1858); await settle(); f.flush();
+  assert.deepEqual(Array.from(face.geometry.attributes.uv.array), framed);
+  assert.equal(face.geometry.parameters.height, SLAB_MODEL.cardHeight); assert.equal(face.material.map.image.naturalWidth, 1350);
+  assert.deepEqual(Array.from(model.getObjectByName('back-approved-photograph').geometry.attributes.uv.array), framed);
+  assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(f.renderer.domElement.dataset.slabAngle, angle);
+  f.scene.updateAssets({ frontPhotoFrame: 'unknown-frame' }); f.flush();
+  assert.deepEqual(Array.from(face.geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
+  assert.equal(f.renderer.disposed, 0); f.scene.dispose();
 });
 
 test('oversized or failed full-photo updates retain an interactive preview on a 1024 texture-limit GPU', async () => {

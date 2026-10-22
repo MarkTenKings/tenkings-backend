@@ -84,9 +84,10 @@ test('access ended and pagehide immediately hide private fallback and dispose sc
 test('progressive photo and late saved-label updates preserve the ready scene and turn position', () => {
   const f = fixture(), scene = f.scenes[0]; scene.options.onReady(); f.render();
   f.button('Turn slab right').props.onClick();
-  f.update({ frontUrl: 'blob:full-front', backUrl: 'blob:full-back', labelUrl: 'blob:late-label', backLabelUrl: 'blob:saved-reverse' });
+  f.update({ frontUrl: 'blob:full-front', backUrl: 'blob:full-back', frontPhotoFrame: 'atlas-inspection-card-v1', backPhotoFrame: 'atlas-inspection-card-v1', labelUrl: 'blob:late-label', backLabelUrl: 'blob:saved-reverse' });
   assert.equal(f.scenes.length, 1); assert.equal(scene.disposals, 0); assert.equal(f.status(), 'ready');
   assert.equal(scene.updates.at(-1).frontUrl, 'blob:full-front'); assert.equal(scene.updates.at(-1).backLabelUrl, 'blob:saved-reverse');
+  assert.equal(scene.updates.at(-1).frontPhotoFrame, 'atlas-inspection-card-v1'); assert.equal(scene.updates.at(-1).backPhotoFrame, 'atlas-inspection-card-v1');
   assert.deepEqual(scene.rotations, [Math.PI / 6]); assert.equal(scene.resets, 0);
   scene.options.onAssetError({ code: 'SLAB_TEXTURE_LIMIT' }, { slot: 'frontUrl' }); f.render();
   assert.equal(f.status(), 'ready'); assert.match(f.text(), /Preview quality/); assert.equal(f.button('Turn slab right').props.disabled, false);

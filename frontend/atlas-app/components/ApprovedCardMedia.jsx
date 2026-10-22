@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { STAFF_BASE_PATH } from '../lib/routes.mjs';
 import { gradedCardPath, gradedCardTitle } from '../lib/graded-cards-client.mjs';
 import { APPROVED_LABEL_LAYOUT, APPROVED_MEDIA_ACCESS_ENDED, approvedMediaIdentity, approvedMediaSource, createApprovedMediaResource } from '../lib/approved-card-media.mjs';
+import { INSPECTION_SLAB_IMAGE_STYLE, slabPhotoFrame } from '../lib/slab-photo-frame.mjs';
 import archive from './GradedCards.module.css';
 import styles from './ApprovedCardMedia.module.css';
 
@@ -93,13 +94,16 @@ function useCardMedia(card, mode, enabled, requestFull = false) {
  * historical record without reverse artwork keeps its plain reverse bay. */
 export function ApprovedCardPresentation({ name, photo, side = 'FRONT', artwork, layoutVersion, actualSlab = false, onImageError }) {
   const digital = !actualSlab && (artwork?.url || artwork?.loading || artwork?.error || side === 'BACK');
+  const frame = digital ? slabPhotoFrame(photo) : null;
+  const cardPhoto = <img className={frame ? archive.slabCardImage : archive.slabCard} style={frame ? INSPECTION_SLAB_IMAGE_STYLE : undefined}
+    src={photo.url} onError={() => onImageError(side, photo.url)} alt="" aria-hidden="true" decoding="async"/>;
   return digital ? <span className={archive.slab} role="img" aria-label={side === 'FRONT'
     ? `${name}. Digital slab preview using the approved front photograph${artwork?.url ? ' and saved ATLAS label' : ' in an illustrative holder. Saved label artwork is not yet available'}. Physical holder and NFC completion are separate.`
     : `${name}. Digital slab preview using the approved back photograph${artwork?.url ? ' and saved ATLAS back label' : artwork?.loading
       ? ' in an illustrative holder. Saved back label artwork is loading' : artwork?.error
         ? ' in an illustrative holder. Saved back label artwork is unavailable' : ' in an illustrative holder. Reverse label artwork is not recorded'}. Physical holder and NFC completion are separate.`}>
     <img className={archive.slabShell} src={`${STAFF_BASE_PATH}/brand/archive/slab-shell-front.svg`} width="803" height="1354" alt="" aria-hidden="true" loading="lazy"/>
-    <img className={archive.slabCard} src={photo.url} onError={() => onImageError(side, photo.url)} alt="" aria-hidden="true" decoding="async"/>
+    {frame ? <span className={`${archive.slabCard} ${archive.slabCardWindow}`} data-photo-frame={frame} aria-hidden="true">{cardPhoto}</span> : cardPhoto}
     {side === 'FRONT' && artwork?.url && <span className={archive.slabNfc} style={layoutVersion === APPROVED_LABEL_LAYOUT.version ? approvedNfcStyle : undefined} aria-hidden="true"><img src={`${STAFF_BASE_PATH}/brand/archive/nfc-tag-reference-384.webp`} alt="" loading="lazy"/></span>}
     {artwork?.url && <img className={archive.slabLabel} src={artwork.url} onError={() => onImageError(side === 'BACK' ? 'LABEL_BACK' : 'LABEL', artwork.url)} alt="" aria-hidden="true"/>}
   </span> : <img className={`${archive.photo}${actualSlab ? ` ${archive.slabPhoto}` : ''}`} src={photo.url}
@@ -164,6 +168,7 @@ function DetailMedia({ card }) {
       {media.blocked ? <PhotoState image={empty} blocked side="FRONT"/>
         : is3D ? ready3D ? <OptionalSlabBoundary fallback={fallback3D}><Suspense fallback={fallback3D}><Slab3D key={approvedMediaIdentity(card)} name={gradedCardTitle(card)} frontUrl={front.url} backUrl={back.url}
           initialFrontUrl={frontPreview.url || front.url} initialBackUrl={backPreview.url || back.url}
+          frontPhotoFrame={slabPhotoFrame(front)} backPhotoFrame={slabPhotoFrame(back)}
           labelUrl={artwork.url} backLabelUrl={backArtwork.url} labelLayoutVersion={layoutVersion} fallback={fallback3D}/></Suspense></OptionalSlabBoundary>
           : <div className={styles.pending3D}>{fallback3D}<p className={styles.pending3DNote} role="status">{front.loading || back.loading
             ? 'Opening saved photographs for 3D…' : '3D needs both saved photographs. Front and Back remain available.'}</p></div>

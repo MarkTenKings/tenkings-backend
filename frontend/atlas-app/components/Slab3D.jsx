@@ -5,9 +5,9 @@ import { createSlabScene } from '../lib/slab-3d-scene.mjs';
 import styles from './Slab3D.module.css';
 
 /** Optional detail presentation; the approved Front/Back views stay independent. */
-export default function Slab3D({ name, frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion, initialFrontUrl, initialBackUrl, fallback }) {
+export default function Slab3D({ name, frontUrl, backUrl, frontPhotoFrame, backPhotoFrame, labelUrl, backLabelUrl, labelLayoutVersion, initialFrontUrl, initialBackUrl, fallback }) {
   const host = useRef(null), owned = useRef(null), assets = useRef(null), detailFailures = useRef(new Set()), labelFailures = useRef(new Set());
-  assets.current = { frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion, initialFrontUrl, initialBackUrl };
+  assets.current = { frontUrl, backUrl, frontPhotoFrame, backPhotoFrame, labelUrl, backLabelUrl, labelLayoutVersion, initialFrontUrl, initialBackUrl };
   const [status, setStatus] = useState('loading'), [facing, setFacing] = useState('Front visible'), [retry, setRetry] = useState(0);
   const [reason, setReason] = useState(null), [labelIssue, setLabelIssue] = useState(false);
   useEffect(() => {
@@ -37,8 +37,8 @@ export default function Slab3D({ name, frontUrl, backUrl, labelUrl, backLabelUrl
   useEffect(() => {
     // URLs may improve from verified presentation pixels to the full approved
     // photograph. Keep this scene, camera angle and context during that upgrade.
-    owned.current?.updateAssets({ frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion });
-  }, [frontUrl, backUrl, labelUrl, backLabelUrl, labelLayoutVersion]);
+    owned.current?.updateAssets({ frontUrl, backUrl, frontPhotoFrame, backPhotoFrame, labelUrl, backLabelUrl, labelLayoutVersion });
+  }, [frontUrl, backUrl, frontPhotoFrame, backPhotoFrame, labelUrl, backLabelUrl, labelLayoutVersion]);
   const ready = status === 'ready', blocked = status === 'blocked';
   return <div className={styles.root} data-slab-state={status}>
     <div ref={host} className={styles.viewport} tabIndex={ready ? 0 : -1} role={ready ? 'img' : undefined} aria-busy={status === 'loading'}

@@ -48,9 +48,11 @@
 .slabPhoto{height:100%;object-fit:contain}
 .mediaCaption{display:block;text-align:center;min-height:24px;font-size:8px;color:#727b86;line-height:1.5;padding-top:8px}
 .slab{display:block;width:100%;position:relative;aspect-ratio:80.264/135.382;isolation:isolate;line-height:0}
-.slabShell,.slabCard,.slabLabel{position:absolute;display:block;object-fit:contain;pointer-events:none;filter:none;border:0;box-shadow:none;padding:0;margin:0;background:transparent}
+.slabShell,.slabCard,.slabCardImage,.slabLabel{position:absolute;display:block;object-fit:contain;pointer-events:none;filter:none;border:0;box-shadow:none;padding:0;margin:0;background:transparent}
 .slabShell{inset:0;width:100%;height:100%;z-index:0;filter:drop-shadow(0 3px 3px #0f172a1a)}
 .slabCard{left:10.4426%;top:24.634%;width:79.1144%;height:65.6661%;z-index:1}
+.slabCardWindow{overflow:hidden}
+.slabCardImage{max-width:none;object-fit:fill}
 .slabLabel{left:7.4267%;top:4.8766%;width:85.1466%;height:14.8336%;z-index:2}
 .slabNfc{position:absolute;left:64.925%;top:8.526%;width:12.708%;aspect-ratio:1;overflow:hidden;border-radius:50%;z-index:1;background:#d18c0c;pointer-events:none}
 .slabNfc img{position:absolute;display:block;width:195.43%;height:260.57%;max-width:none;left:-50.86%;top:-54.71%;object-fit:fill;margin:0;padding:0;border:0;border-radius:0;filter:none}

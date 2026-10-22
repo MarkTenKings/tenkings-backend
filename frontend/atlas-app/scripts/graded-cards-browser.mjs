@@ -35,7 +35,9 @@ const samples = await Promise.all(manifest.records.map(async record => {
     // Display-only local rendition, bound to the exact public source bytes.
     // Production uses the already saved OpenCV preview; this fixture exercises
     // that same transport and verification contract without writing any record.
-    const previewBytes = await sharp(bytes).resize(558, 768).jpeg({ quality: 78 }).toBuffer();
+    // Match production preparation_encoding.py: transparent inspection padding
+    // is composited on white before JPEG encoding, never implicit black.
+    const previewBytes = await sharp(bytes).flatten({ background: '#ffffff' }).resize(558, 768).jpeg({ quality: 78 }).toBuffer();
     const preview = { bytes: previewBytes, descriptor: { sha256: createHash('sha256').update(previewBytes).digest('hex'),
       byteCount: previewBytes.length, mime: 'image/jpeg', width: 558, height: 768,
       sourceSha256: descriptor.sha256, policyVersion: 'atlas-inspection-preview-v1' } };

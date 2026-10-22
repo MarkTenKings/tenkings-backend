@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import * as media from '../lib/approved-card-media.mjs';
 import * as graded from '../lib/graded-cards-client.mjs';
+import * as photoFrame from '../lib/slab-photo-frame.mjs';
 
 const require = createRequire(new URL('../package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
@@ -56,6 +57,7 @@ function fixture(mode = 'detail', { label = false, backLabel = false, slab = fal
     if (name.endsWith('.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => `${name.includes('GradedCards') ? 'archive' : 'media'}.${String(key)}` }) };
     if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/admin' };
     if (name.endsWith('/graded-cards-client.mjs')) return graded;
+    if (name.endsWith('/slab-photo-frame.mjs')) return photoFrame;
     if (name.endsWith('/approved-card-media.mjs')) return { ...media, createApprovedMediaResource: () => media.createApprovedMediaResource({
       load: (source, { signal }) => new Promise((resolve, reject) => loads.push({ source, signal, reject,
         resolve(url = `blob:${source.kind}:${loads.length}`, metadata = {}) { resolve({ url, representation: source.delivery, ...metadata, dispose() { disposed.push(url); } }); } })),
@@ -200,6 +202,28 @@ test('3D mounts only when selected with the verified Front/Back pair, never a sl
   f.button('3D').props.onClick(); f.render(); f.revoke(); await f.flush();
   assert.equal(f.find(node => node.type === 'Slab3D').length, 0); assert.equal(f.find(node => node.type === 'img').length, 0);
   assert.ok(f.find(node => node.type === 'strong' && /Staff access ended/.test(text(node))).length); f.close();
+});
+
+test('verified inspection photos exclude only canonical padding in both stills and the 3D handoff', async () => {
+  const f = fixture('detail', { label: true }); await f.flush();
+  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`, { width: 558, height: 768, sourceSha256: 'a'.repeat(64) }));
+  await f.flush();
+  const frame = photoFrame.INSPECTION_SLAB_FRAME.version;
+  assert.equal(f.find(node => node.props['data-photo-frame'] === frame).length, 1);
+  assert.equal(f.find(node => node.props.className === 'archive.slabCardImage')[0].props.src, 'blob:FRONT');
+  f.button('Back').props.onClick(); f.render();
+  assert.equal(f.find(node => node.props['data-photo-frame'] === frame).length, 1);
+  assert.equal(f.find(node => node.props.className === 'archive.slabCardImage')[0].props.src, 'blob:BACK');
+  f.button('3D').props.onClick(); await f.flush();
+  let scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontPhotoFrame, frame); assert.equal(scene.props.backPhotoFrame, frame);
+  for (const load of f.loads.filter(load => load.source.delivery === 'full')) {
+    load.resolve(`blob:full-${load.source.kind}`, { width: 1350, height: 1858, sourceSha256: 'a'.repeat(64) });
+  }
+  await f.flush(); scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontUrl, 'blob:full-FRONT');
+  assert.equal(scene.props.frontPhotoFrame, frame); assert.equal(scene.props.backPhotoFrame, frame);
+  f.close();
 });
 
 test('saved approved-B back label appears on Back and in 3D without front NFC or stretched placement', async () => {
