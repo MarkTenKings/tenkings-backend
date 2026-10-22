@@ -10,6 +10,20 @@ The owner tested the live original-photo Workspace gallery and reported that Nic
 
 The deployed gallery links to the existing `/admin/manual/<cardId>` route. That route mounts ManualWorkspace without the batch context supplied by Review Queue. `recoverManualReview` therefore skips `BEGIN_FINAL_REVIEW`, leaving the saved machine findings outside the editable roster. The dashed blue traces are proposals; they do not establish a flawless card or an approved defect. The gallery preview is display-only and is not substituted for grading evidence.
 
+## Exact deployed code scope
+
+| Serving file | Change |
+|---|---|
+| `frontend/atlas-app/lib/manual-review-startup.mjs` | Discover the exact eligible batch context from the authenticated workspace; invoke the existing `BEGIN_FINAL_REVIEW` command used by Review Queue. Preserve pending work, existing final review, current approval and stale-source/revision checks. |
+| `packages/atlas-batch-grading/src/repository.mjs` | Add a read-only lookup for that staff member's exact current card/source/revision batch. No job creation, inference, grade mutation or queue-wide lookup. |
+| `packages/atlas-connected-manual/src/index.mjs` | Include that optional lookup result in the existing workspace response. |
+| `frontend/atlas-app/components/ManualCards.jsx` | Hide an intermediate editor if startup fails, including direct-card entry, until recovery succeeds. |
+| `packages/atlas-manual-workspace/src/DefectReviewWorkspace.jsx` | Distinguish saved findings from AI suggestions in counts/labels and explain the existing controls. Action handlers are unchanged. |
+| `packages/atlas-manual-workspace/src/astra-review-ui.mjs` | Correct misleading help text: approval confirms saved findings; unadded suggestions are excluded. No approval behavior change. |
+| `packages/atlas-manual-workspace/src/defects.css` | Wrap the longer count text and style its help panel. |
+
+The other six changed files are tests and an owned-disposable-PostgreSQL qualification script. The script was not a production migration. The production release's database writes were only the three reviewed release-binding control rows; there was no Nick-specific data patch. Existing Add/Correct/Dismiss controls were not introduced by this change, and staff are not given a new per-defect approval step.
+
 ## Read-only production evidence
 
 A bounded read-only repeatable-read transaction at `2026-10-22T02:09:08.080Z` inspected only Nick and Henderson's card, batch, action and approval rows, then rolled back. Private snapshot SHA256 `858857112045e00f244c8fb80a9d81f1252c0be12943de9cfb5bf3ec18852132` is under `~/.codex/atlas-handoffs/atlas-workspace-review-entry-20261021/read-01/`.
