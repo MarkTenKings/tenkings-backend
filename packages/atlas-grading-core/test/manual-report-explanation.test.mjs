@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { previewAtlasManualReport, explainAtlasManualReport, calculateAtlasFinalGrade, ATLAS_FINAL_GRADE_POLICY,
@@ -58,7 +59,7 @@ test('a nonzero 42-pixel Back surface mark correctly explains an exact 10 and pr
 
 test('condition descriptions match every scoring-percent band and all category multipliers', () => {
   const bands = explain([]).policy.conditionBands;
-  assert.deepEqual(explain([]).policy.categoryDamageMultipliers, { CORNERS: .5, EDGES: 1, SURFACE: 2 });
+  assert.deepEqual(explain([]).policy.categoryDamageMultipliers, { CORNERS: .25, EDGES: 1, SURFACE: 2 });
   assert.equal(explain([]).policy.globalDamageMultiplier, undefined);
   for (const [damage, score] of [[0,10],[.01,10],[.010001,9.5],[.02,9.5],[.020001,9],[.03,9],
     [.030001,8],[.04,8],[.040001,7],[.05,7],[.050001,6],[.06,6],[.060001,5],[.07,5],
@@ -67,7 +68,7 @@ test('condition descriptions match every scoring-percent band and all category m
       && (b.upperPercent === null || (b.upperInclusive ? damage <= b.upperPercent : damage < b.upperPercent)));
     assert.equal(matches.length, 1); assert.equal(matches[0].score, score);
   }
-  for (const [zone, multiplier] of [['CORNERS',.5],['EDGES',1],['SURFACE',2]]) {
+  for (const [zone, multiplier] of [['CORNERS',.25],['EDGES',1],['SURFACE',2]]) {
     assert.equal(calculateAtlasConditionScore(.02, zone), { CORNERS: 10, EDGES: 9.5, SURFACE: 8 }[zone]);
     close(calculateAtlasScoringDamagePercent(.02, zone), .02 * multiplier);
     const value = explain([finding({ zone, area: .02, denominator: 100 })]);
@@ -354,12 +355,13 @@ test('whole awards preserve precise Sports and Pokémon physical scores, finding
       finding({ id: 'edge', zone: 'EDGES', area: .015, denominator: 100 })]);
     if (cardProfile === 'POKEMON') Object.assign(input, { cardProfile,
       identity: { cardName: 'Synthetic', year: '2026', productSet: 'Report explanation', layoutType: 'POKEMON' } });
-    const report = previewAtlasManualReport(input), historical = historicalHalfReport(input);
+    const report = previewAtlasManualReport(input), historical = { ...historicalHalfReport(input),
+      ruleVersion: 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1' };
     // Literal hashes captured from the pre-change builder, including precise
     // grades, all measurements/findings and identity serialization.
     assert.equal(sha(historical), historicalHashes[cardProfile]);
-    const { finalGrade, finalGradePolicy, ...physical } = report;
-    const { finalGrade: oldAward, finalGradePolicy: oldPolicy, ...oldPhysical } = historical;
+    const { finalGrade, finalGradePolicy, ruleVersion, ...physical } = report;
+    const { finalGrade: oldAward, finalGradePolicy: oldPolicy, ruleVersion: oldRule, ...oldPhysical } = historical;
     assert.deepEqual(physical, oldPhysical); assert.equal(finalGrade, 8); assert.equal(oldAward, 8.5);
     assert.equal(report.grade.back.edges.score, 9.5);
     assert.equal(report.grade.overall.rawGrade, 8.387500000000001); assert.equal(report.grade.overall.displayGrade, 8.4);
@@ -367,6 +369,7 @@ test('whole awards preserve precise Sports and Pokémon physical scores, finding
     for (const key of ['sides', 'categories', 'findings']) assert.deepEqual(currentExplanation[key], oldExplanation[key]);
     const invariant = explanation => {
       const copy = structuredClone(explanation);
+      delete copy.ruleVersion; delete copy.policy.categoryDamageMultipliers; delete copy.policy.conditionFormula;
       delete copy.policy.finalGradePolicy; delete copy.policy.finalGradeFormula;
       delete copy.overall.finalGrade; delete copy.overall.finalGradePolicy; delete copy.overall.finalRoundingDelta;
       return copy;
@@ -376,6 +379,35 @@ test('whole awards preserve precise Sports and Pokémon physical scores, finding
     assert.throws(() => explainAtlasManualReport({ ...historical, finalGradePolicy }), /GRADE_MISMATCH/);
     assert.throws(() => explainAtlasManualReport({ ...report, finalGradePolicy: oldPolicy }), /GRADE_MISMATCH/);
   }
+});
+
+test('frozen 0.5-corner reports retain their original scores and bytes while new reviews use 0.25', () => {
+  // Written by the production f9742346 builder before changing the multiplier.
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/category-damage-v1.json', import.meta.url), 'utf8'));
+  const before = JSON.stringify(fixture.report), historical = explainAtlasManualReport(fixture.report);
+  assert.equal(fixture.report.ruleVersion, 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1');
+  assert.equal(historical.policy.categoryDamageMultipliers.CORNERS, .5);
+  assert.match(historical.policy.conditionFormula, /Corners 0\.5;/);
+  assert.equal(historical.sides.FRONT.CORNERS.scoringDamagePercent, .055);
+  assert.equal(historical.sides.FRONT.CORNERS.score, 6);
+  assert.equal(historical.categories.corners.subgrade, 7.2);
+  assert.equal(historical.overall.finalGrade, 9);
+  assert.equal(JSON.stringify(fixture.report), before);
+
+  const current = previewAtlasManualReport(fixture.source), explanation = explainAtlasManualReport(current);
+  assert.equal(current.ruleVersion, ATLAS_RULE_VERSION);
+  assert.equal(explanation.policy.categoryDamageMultipliers.CORNERS, .25);
+  assert.match(explanation.policy.conditionFormula, /Corners 0\.25;/);
+  assert.equal(current.grade.front.corners.score, 9);
+  assert.equal(current.grade.subgrades.corners, 9.3);
+  assert.equal(current.finalGrade, 10);
+  for (const category of ['centering', 'edges', 'surface']) {
+    assert.equal(current.grade.subgrades[category], fixture.report.grade.subgrades[category]);
+  }
+  assert.deepEqual(current.findings[0].canonicalContour, fixture.report.findings[0].canonicalContour);
+  assert.equal(current.findings[0].measurement.areaMm2, fixture.report.findings[0].measurement.areaMm2);
+  assert.throws(() => explainAtlasManualReport({ ...fixture.report, ruleVersion: ATLAS_RULE_VERSION }), /GRADE_MISMATCH/);
+  assert.throws(() => explainAtlasManualReport({ ...current, ruleVersion: fixture.report.ruleVersion }), /GRADE_MISMATCH/);
 });
 
 test('raw 9.5 awards 10 with a category score of 8 and no additional perfect-ten cap', () => {
