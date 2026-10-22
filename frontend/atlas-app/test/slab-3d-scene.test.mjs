@@ -40,10 +40,10 @@ test('Front and Back use uncropped unlit source textures, with the Back facing o
   disposeSlabModel(model);
 });
 
-test('saved back label faces outward at the original physical ratio and opaque approved-B art has no hidden NFC reference', () => {
+test('saved back label faces outward and the separate NFC overlays the approved-B circle without changing saved art', () => {
   for (const layout of [undefined, 'atlas-approved-b-v1']) {
-    const front = texture(), back = texture(), backLabel = texture(2048, 602);
-    const model = createSlabModel({ front, back, label: texture(2048, 602), backLabel, nfc: texture(512, 512), labelLayoutVersion: layout });
+    const front = texture(), back = texture(), label = texture(2048, 602), backLabel = texture(2048, 602);
+    const model = createSlabModel({ front, back, label, backLabel, nfc: texture(512, 512), labelLayoutVersion: layout });
     model.updateMatrixWorld(true);
     const reverse = model.getObjectByName('back-saved-label-artwork');
     assert.equal(reverse.material.map, backLabel); assert.equal(reverse.material.toneMapped, false);
@@ -51,8 +51,14 @@ test('saved back label faces outward at the original physical ratio and opaque a
     assert.ok(new Vector3(0, 0, 1).transformDirection(reverse.matrixWorld).z < -.99);
     assert.deepEqual(Array.from(reverse.geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
     const nfc = model.getObjectByName('illustrative-front-nfc-reference');
-    if (layout) assert.equal(nfc, undefined);
-    else { assert.equal(nfc.position.x, 17.08); assert.equal(nfc.position.y, SLAB_MODEL.labelY); }
+    assert.equal(model.getObjectByName('front-saved-label-artwork').material.map, label);
+    assert.equal(nfc.material.type, 'MeshBasicMaterial'); assert.equal(nfc.material.toneMapped, false);
+    assert.equal(nfc.geometry.parameters.radius, 5.1);
+    if (layout) {
+      assert.equal(nfc.position.x, 51.8 - SLAB_MODEL.labelWidth / 2);
+      assert.equal(nfc.position.y, SLAB_MODEL.labelY + SLAB_MODEL.labelHeight / 2 - 9.75);
+      assert.equal(nfc.position.z, .26); assert.ok(nfc.position.z > model.getObjectByName('front-saved-label-artwork').position.z);
+    } else { assert.equal(nfc.position.x, 17.08); assert.equal(nfc.position.y, SLAB_MODEL.labelY); assert.equal(nfc.position.z, .205); }
     disposeSlabModel(model);
   }
 });
@@ -156,7 +162,8 @@ test('perspective camera contains every holder vertex throughout a full turn at 
 });
 
 test('perspective depth precision separates saved photo and label planes from their opaque carriers', async () => {
-  const f = fixture(); await f.load();
+  const f = fixture({ sources: { labelUrl: 'blob:label', labelLayoutVersion: 'atlas-approved-b-v1', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
+  await f.load(); f.pending[2].resolve(68342, 20082); await settle(); f.pending[3].resolve(384, 512); await settle(); f.flush();
   const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version);
   for (const [width, height] of [[600, 540], [292, 438], [180, 540]]) {
     f.host.clientWidth = width; f.host.clientHeight = height; f.emit(f.win, 'resize'); f.flush();
@@ -170,6 +177,12 @@ test('perspective depth precision separates saved photo and label planes from th
           const separation = projectedDepth(carrierZ) - projectedDepth(faceZ);
           assert.ok(separation > 32 / 2 ** 24, `${name} ${width}×${height} at ${degrees}° has only ${separation * 2 ** 24} depth levels`);
         }
+      }
+      if (sign > 0) {
+        const nfc = model.getObjectByName('illustrative-front-nfc-reference'), label = model.getObjectByName('front-saved-label-artwork');
+        const nfcDepth = nfc.position.clone().applyMatrix4(model.matrixWorld).project(f.renderer.camera).z;
+        const labelDepth = new Vector3(nfc.position.x, nfc.position.y, label.position.z).applyMatrix4(model.matrixWorld).project(f.renderer.camera).z;
+        assert.ok((labelDepth - nfcDepth) / 2 > 32 / 2 ** 24, `NFC overlay remains distinct from saved label at ${degrees}°`);
       }
     }
   }
@@ -261,33 +274,36 @@ test('both saved label textures preserve image proportions and release their own
   assert.ok(f.pending.every(image => image.cleared));
 });
 
-test('opaque approved-B label never loads a hidden NFC and returning to historical art adds its reference in place', async () => {
+test('NFC placement follows only a successfully displayed B or historical label without replacing evidence', async () => {
   const f = fixture({ sources: { labelUrl: 'blob:label', labelLayoutVersion: 'atlas-approved-b-v1', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
   await f.load(); const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), photo = model.getObjectByName('front-approved-photograph').material.map;
   f.pending[2].resolve(68342, 20082); await settle(); f.flush();
-  assert.equal(f.pending.length, 3); assert.equal(model.getObjectByName('illustrative-front-nfc-reference'), undefined);
+  assert.equal(f.pending.length, 4); f.pending[3].resolve(384, 512); await settle(); f.flush();
+  const nfc = model.getObjectByName('illustrative-front-nfc-reference'); assert.equal(nfc.position.z, .26);
   f.scene.rotateBy(.6); f.flush(); const angle = f.renderer.domElement.dataset.slabAngle;
-  f.scene.updateAssets({ labelUrl: 'blob:legacy-label', labelLayoutVersion: undefined }); f.pending[3].resolve(258, 76); await settle();
-  f.pending[4].resolve(384, 512); await settle(); f.flush();
-  const nfc = model.getObjectByName('illustrative-front-nfc-reference');
-  assert.equal(nfc.position.x, 17.08); assert.equal(nfc.position.y, SLAB_MODEL.labelY);
+  f.scene.updateAssets({ labelUrl: 'blob:legacy-label', labelLayoutVersion: undefined }); f.pending[4].resolve(258, 76); await settle(); f.flush();
+  assert.equal(nfc.position.x, 17.08); assert.equal(nfc.position.y, SLAB_MODEL.labelY); assert.equal(nfc.position.z, .205);
   let nfcDisposed = 0; nfc.material.map.addEventListener('dispose', () => nfcDisposed++);
   f.scene.updateAssets({ labelUrl: 'blob:replacement-b-label', labelLayoutVersion: 'atlas-approved-b-v1' });
   f.pending[5].reject(); await settle(); f.flush();
   assert.equal(model.getObjectByName('illustrative-front-nfc-reference'), nfc, 'failed replacement retains the historical label reference');
+  assert.equal(nfc.position.z, .205);
   f.scene.retryAssets(['labelUrl']); f.pending[6].resolve(68342, 20082); await settle(); f.flush();
-  assert.equal(model.getObjectByName('illustrative-front-nfc-reference'), undefined); assert.equal(nfcDisposed, 1);
+  assert.equal(model.getObjectByName('illustrative-front-nfc-reference'), nfc); assert.equal(nfc.position.z, .26); assert.equal(nfcDisposed, 0);
   assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(model.getObjectByName('front-approved-photograph').material.map, photo);
-  assert.equal(f.renderer.domElement.dataset.slabAngle, angle); assert.equal(f.renderer.disposed, 0); f.scene.dispose();
+  assert.equal(f.renderer.domElement.dataset.slabAngle, angle); assert.equal(f.renderer.disposed, 0); f.scene.dispose(); assert.equal(nfcDisposed, 1);
 });
 
-test('successful opaque-label replacement aborts a pending historical NFC and ignores its late callback', async () => {
+test('NFC arriving after a label replacement uses the displayed layout and is removed with the label', async () => {
   const f = fixture({ sources: { labelUrl: 'blob:historical-label', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
   await f.load(); f.pending[2].resolve(258, 76); await settle();
-  const nfc = f.pending[3], late = nfc.onload;
+  const nfc = f.pending[3];
   f.scene.updateAssets({ labelUrl: 'blob:approved-b-label', labelLayoutVersion: 'atlas-approved-b-v1' });
   f.pending[4].resolve(68342, 20082); await settle(); f.flush();
-  assert.ok(nfc.cleared); nfc.naturalWidth = 384; nfc.naturalHeight = 512; late(); await settle(); f.flush();
+  assert.equal(nfc.cleared, undefined); nfc.resolve(384, 512); await settle(); f.flush();
+  const tag = f.renderer.scene.getObjectByName('illustrative-front-nfc-reference');
+  assert.equal(tag.position.x, 51.8 - SLAB_MODEL.labelWidth / 2); assert.equal(tag.position.z, .26);
+  f.scene.updateAssets({ labelUrl: null }); f.flush();
   assert.equal(f.renderer.scene.getObjectByName('illustrative-front-nfc-reference'), undefined);
   assert.equal(f.assetErrors.length, 0); assert.equal(f.errors.length, 0); f.scene.dispose();
 });

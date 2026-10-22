@@ -13,7 +13,6 @@ export const SLAB_MODEL = Object.freeze({ version: 'atlas-illustrative-slab-v2',
   cardWidth: 63.5, cardHeight: 88.9, cardY: -10.109, labelWidth: 68.342, labelHeight: 20.082, labelY: 51.048 });
 export const INITIAL_SLAB_ANGLE = -Math.PI / 12;
 export const SLAB_STUDIO = Object.freeze({ version: 'atlas-neutral-studio-v2', width: 256, height: 128, material: 'reflection' });
-const usesDecorativeNfc = layoutVersion => layoutVersion !== APPROVED_LABEL_LAYOUT.version;
 const TAU = Math.PI * 2;
 export const normalizeSlabAngle = value => ((value + Math.PI) % TAU + TAU) % TAU - Math.PI;
 export const slabFacing = angle => Math.abs(Math.cos(angle)) < .16 ? 'Edge view' : Math.cos(angle) > 0 ? 'Front visible' : 'Back visible';
@@ -113,7 +112,7 @@ function plastic(parameters, materialMode) {
 function placeNfcReference(tag, layoutVersion) {
   const approved = layoutVersion === APPROVED_LABEL_LAYOUT.version;
   tag.position.set(approved ? APPROVED_LABEL_LAYOUT.nfc.x - SLAB_MODEL.labelWidth / 2 : 17.08,
-    SLAB_MODEL.labelY + (approved ? SLAB_MODEL.labelHeight / 2 - APPROVED_LABEL_LAYOUT.nfc.y : 0), .205);
+    SLAB_MODEL.labelY + (approved ? SLAB_MODEL.labelHeight / 2 - APPROVED_LABEL_LAYOUT.nfc.y : 0), approved ? .26 : .205);
 }
 function addNfcReference(labels, texture, layoutVersion) {
   const tag = mesh(labels, 'illustrative-front-nfc-reference', new CircleGeometry(5.1, 48),
@@ -173,9 +172,10 @@ export function createSlabModel({ front, back, label, backLabel, labelLayoutVers
   }
   mesh(labels, backLabel ? 'saved-label-carrier' : 'plain-label-carrier-no-reverse-artwork', new BoxGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight, .38),
     new MeshBasicMaterial({ color: 0xf6f6f4, toneMapped: false }), 0, SLAB_MODEL.labelY);
-  // Approved-B saved previews already include an opaque material layer. A
-  // reference underneath is invisible; placing it above would alter the art.
-  if (nfc && label && usesDecorativeNfc(labelLayoutVersion)) addNfcReference(labels, nfc, labelLayoutVersion);
+  // The owner-authorized NFC reference is a separate presentation overlay over
+  // the opaque B circle; the saved/print artwork texture remains unchanged.
+  // Historical labels retain their original below-artwork placement.
+  if (nfc && label) addNfcReference(labels, nfc, labelLayoutVersion);
   if (label) mesh(labels, 'front-saved-label-artwork', new PlaneGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight),
     new MeshBasicMaterial({ map: label, transparent: true, toneMapped: false }), 0, SLAB_MODEL.labelY, .22);
   if (backLabel) {
@@ -416,8 +416,8 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
   }
   function syncNfcReference() {
     // Follow the successfully displayed label, including while a replacement is
-    // pending or has failed. Opaque B labels need no hidden request or texture.
-    replaceAsset('nfcUrl', currentAssets.labelUrl && usesDecorativeNfc(currentAssets.labelLayoutVersion) && nfcUrl ? nfcUrl : null);
+    // pending or has failed. The overlay never modifies its saved artwork map.
+    replaceAsset('nfcUrl', currentAssets.labelUrl && nfcUrl ? nfcUrl : null);
   }
   /** Same-card progressive replacement. Callers must remount at an approval/card
    * identity change. Each slot cancels stale loads; failure retains usable pixels. */

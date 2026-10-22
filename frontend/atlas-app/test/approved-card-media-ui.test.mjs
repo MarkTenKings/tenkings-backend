@@ -206,9 +206,11 @@ test('saved approved-B back label appears on Back and in 3D without front NFC or
   const f = fixture('detail', { label: true, backLabel: true }); await f.flush();
   assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK']);
   f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
-  // The exact B preview already has an opaque material/NFC circle; do not
-  // fetch a decorative reference that cannot be seen behind it.
-  assert.equal(f.find(node => node.props.className === 'archive.slabNfc').length, 0);
+  // The requested presentation overlay sits over B's opaque circle; source
+  // label bytes are unchanged, and the reference never appears on the back.
+  const nfc = f.find(node => node.props.className === 'archive.slabNfc')[0];
+  assert.equal(nfc.props.style.zIndex, 3);
+  assert.ok(parseFloat(nfc.props.style.left) > 65);
   f.button('Back').props.onClick(); f.render();
   const artwork = f.find(node => node.type === 'img' && node.props.className === 'archive.slabLabel')[0];
   assert.equal(artwork.props.src, 'blob:LABEL_BACK');

@@ -14,6 +14,9 @@ const { build } = require('esbuild');
 const sharp = createRequire(resolve(app, 'package.json'))('sharp');
 const materialMode = process.env.ATLAS_SLAB_MATERIAL_COMPARE || 'reflection';
 if (!['reflection', 'transmission'].includes(materialMode)) throw Error('Invalid slab material comparison.');
+// Keep a shared review link usable across fixture rebuilds when requested.
+const firstCardId = process.env.ATLAS_ARCHIVE_FIXTURE_CARD_ID;
+if (firstCardId && !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(firstCardId)) throw Error('Invalid fixture card ID.');
 // The fixture uses exact, hash-verified copies of already public approved
 // photographs. Its card IDs, staff, submissions and event history are synthetic.
 const references = process.env.ATLAS_ARCHIVE_APPROVED_REFERENCES;
@@ -46,7 +49,7 @@ const samples = await Promise.all(manifest.records.map(async record => {
 }));
 const staff = { id: randomUUID(), name: 'Fixture reviewer', role: 'REVIEWER', mode: 'LOCAL_FIXTURE', customerOperationsEnabled: true };
 const cards = Array.from({ length: 26 }, (_, index) => {
-  const sample = index % 4, reference = samples[sample], token = `ar_${String(index).padStart(24, '0')}`, cardId = randomUUID();
+  const sample = index % 4, reference = samples[sample], token = `ar_${String(index).padStart(24, '0')}`, cardId = index === 0 && firstCardId ? firstCardId : randomUUID();
   const published = index !== 5;
   return { cardId, identity: reference.identity,
     finalGrade: reference.finalGrade, approvedAt: `2026-10-${String(26 - index).padStart(2, '0')}T12:00:00.000000Z`,
@@ -124,6 +127,7 @@ let failure = null, hold = false, held = [], denySession = false, brokenPhoto = 
 let fullDelayMs = 0, brokenPreview = false;
 const requests = [];
 const server = createServer(async (req, res) => {
+  res.setHeader('cache-control', 'no-store');
   const url = new URL(req.url, 'http://127.0.0.1'), json = (data, status = 200) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(data)); };
   const requestRecord = { method: req.method, url: req.url, at: Date.now() }; requests.push(requestRecord);
   const end = res.end.bind(res);
