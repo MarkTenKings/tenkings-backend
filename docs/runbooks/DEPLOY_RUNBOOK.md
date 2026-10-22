@@ -1,10 +1,28 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-## Fresh read-only ATLAS observation — October22,2026 Pacific
+## Current approved Atlas B label release — October 22, 2026 Pacific
 
-At09:41–09:44UTC the serving native/staff/public source is `f0fd4f15cefa59d0b57ebdd5deee7fedc170f61e` (verified photograph recovery), superseding the713573fc identities below. Native image `sha256:045ed35c9225f2a13c167fc485050e73049b806656779b3940fafb8a7a18422b`; main `cefc6d815eaf04e2d734b1dd7a6ef2081c056b0b6935514a01bcbadd6d90e0fb`, worker `16a855f2c37c786e1cfc92751a36f328e7453655e54ae3a145c0a792cd76ddf4`, both running/zero restarts/unless-stopped. Staff `dpl_BuJUQjbxL54NZeL3QhDpDz7ijv7k`; public `dpl_EQtu3jE4kmtnmVwXJkRaRwZPg6rM` with all four canonical aliases. Controls Staff141/Public103/STAFF SMS109; customer retains c68e9ea7, deployment `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5`, controls83/35. No admission locks or sessions were observed. This is observation, not a held release baseline.
+Production native, staff and public serve **cf5fcefa1273e5a661691b0d4f877e224d48104a**. This incorporates the verified f0fd4f15 photo recovery. Approved B front and original smaller back use pinned artwork with preserved proportions; dynamic text uses owner-approved Montserrat Black900 and RobotoCondensed700. Color front/back, black/transparent and original print outputs use the existing versioned generator and immutable refresh path. Public examples and approved-card media consume the new artwork. Physical dimensions and the 50-position jig remain unchanged.
 
-The approved-label task merged the photo fix into its isolated source. Its assets/integration are preparation only; typography remains an explicit owner decision. No label deployment has occurred. Fresh future release must use the current observed source and a newly prepared release packet. See `docs/atlas/audits/2026-10-22/approved-labels-integration.md` and private read-only evidence `~/.codex/atlas-handoffs/atlas-approved-labels-20261022/release-readiness/`.
+| Surface | Current identity |
+| --- | --- |
+| Native image | sha256:5336fca9c4ef1d8ba7462d120ab226a401e9e63b4750aa4000f77a335be7d478 |
+| Main | ffcbbfcf94891357c3f7d07c2c1302e0402e996f6580d33e5c4d90468d044a93 / atlas-approved-labels-main-cf5fcefa-02 |
+| Worker | a138a9ff7275429e3a7ba09b1afb95dde3af3ad61c4ef96e91ad7cbb4c144fc7 / atlas-approved-labels-worker-cf5fcefa-02 |
+| Staff | dpl_89Wbq9hBih53SpwsKV7zXpgpbwct / atlas-grading-staff-ik6z5sizh-ten-kings.vercel.app |
+| Public | dpl_8j6wpzFdViSDX9EuKaCVvreunMsR / atlas-grading-public-ifz81mkm1-ten-kings.vercel.app |
+| Customer retained | c68e9ea7 / dpl_2aW7K6CTUftYNKaWanBouvgUaDS5 |
+| Controls | Staff142 / Public104 / STAFF SMS110; customer83 and CUSTOMER SMS35 retained |
+| Outer gateway | 23d08cb750f9d19425f119bd74cfd5ed2e93de394f2ca1c639232f6a984d8584 |
+| Inner gateway | e8f0543569b1ce882e18f01b718312573c1c3a9a0a76a2eba6ec68d8bc395e70 |
+
+Both gateway changes extend only the existing exact artwork-mode allowlist. Authentication, methods and invalid-query refusal remain intact. Outer was gracefully reloaded once; inner reused the existing graceful restart workflow. Historical containers/images and business data were retained. Native qualification passed 857/857 tests, including full-50-label bounded raster output; staff/public source and served assets were qualified. Canonical acceptance passed 83 technical checks plus four reports/eight image bindings. A mistaken acceptance-helper label-list URL was corrected in a separate successor helper; original failure remains preserved.
+
+Admission holder ba85b2c7-9c23-4970-9773-12ddd2af2a56 was explicitly released after fresh postflight and preservation. Release proof SHA256 6ec862f3bae4de0c0edb9b2edd30be72b3187487bf4e5f0781532828a836a1b0; strict absence census 84c27a4b1c42e5809127340042c391d8c8e81b3398208c3ef17d5e1df77c4482 proves no holder session or exclusive admission locks remain. Six eligible unprinted current labels were refreshed once via refreshLayout into immutable REPRINT successors; grades, approvals, old labels/sheets/exports/print history retained. Apply receipt 6b11f8310662595191317fbef9dd68fcf594e6c0e68059b281430e0e3aca41ee. No paid analysis, migration, approval, NFC write or physical printing was performed.
+
+Post-refresh acceptance passed: all six successors READY, 60 artwork modes and 36 PNG/profile checks, with current graded-card front/back selection and prior data preservation verified. Receipt SHA256 3d5598da1316aeefa83ba125273b1319773ec10482836a28d14a37c84b879e8b. Actual PNG artifacts are in ~/Downloads/ATLAS_Approved_Labels_2026-10-22.zip. This server evidence does not claim ordinary authenticated browser download acceptance or physical printer qualification.
+
+Packet: ~/.codex/atlas-handoffs/atlas-approved-labels-20261022/release-02; refresh-02 contains the exact six-item plan, dry-run/apply and generated-output acceptance. All effect intents are consumed: do not replay. See docs/atlas/audits/2026-10-22/approved-labels-integration.md for design, print constraints and remaining browser/physical checks. Staff sign-in is required after the release binding change; no authenticated UI acceptance is claimed until the owner completes it.
 
 ## Current ATLAS corner multiplier release — October 21, 2026 Pacific
 
