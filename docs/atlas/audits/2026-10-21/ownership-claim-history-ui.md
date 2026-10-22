@@ -1,0 +1,13 @@
+# Private ownership claim-history UI
+
+The isolated customer component and browser adapter are implemented and locally qualified. They default disabled, have no production endpoint or fetch fallback, and are not linked into the customer app. The six new source/test files add no runtime grants, uploads, evidence downloads, claims, reviews or title writes.
+
+Pending/verified/rejected decisions are shown separately from current ownership. An earlier verified claim can coexist with no current title. Expired, changed-policy and unavailable evidence are distinct; expiry describes usability, not physical deletion. A discarded card retains its own claim history without a current card binding. Report version is metadata, not proof of title.
+
+The browser parser is differentially checked against the real CUSTOMER projector, binds account and exact cursor/page shape, and refuses additional private fields. Account object or ID change, logout, pagehide and unmount clear rows and cancel work. Independent review found stalled injected transport/body cancellation could remain pending; the correction settles abort/timeouts, cancels streams and disposes late responses without waiting on a stuck cancellation.
+
+Qualification:16 focused Node22 tests pass with zero skips, scoped lint clean, both independent reviews pass, root rerun16/16. Actual-component synthetic browser checks pass at1440/1024/390/320px: decision/title/evidence states,25-to-1 pagination, empty/unavailable/retry,401/403/foreign-account refusal, delayed account-switch/logout rejection, no horizontal overflow,44px mobile buttons and visible keyboard paging focus. Preview02 uses memory responses and CSP connect-src none. No real customer/session/data acceptance is inferred. Exact server stopped, viewport reset and tab closed.
+
+Evidence: `~/.codex/atlas-handoffs/atlas-ownership-claims-20261021/browser-01/evidence.json`; preview02 manifest `cdb496159beada29de914956dcd80a46584f87e3ee8b1dfc3b9c9e24c647e590`. Preserved preview01 was superseded before browser qualification.
+
+Remaining: restricted authenticated reader route/runtime/migration/grants, actual customer media/provenance joins and persistence, operational proof policy, upload/retention and independent reviewer provisioning. Future wiring uses cookie-derived CustomerAuth plus a separate reader capability, cursor/limit-only GET, private/no-store responses and503 distinct from empty history. New v2 withdrawal/replacement requires a versioned projection; this v1 parser must not silently accept new states. R1 remains unfinished; all30 master-plan requirements remain in scope.
