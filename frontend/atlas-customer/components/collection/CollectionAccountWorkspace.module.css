@@ -1,0 +1,12 @@
+.page, .hub { --ink: #17211d; --muted: #52645b; --green: #047857; --paper: #fff; --line: #dbe4df; color-scheme: light; color: #17211d; background: #fff; }
+:global(body):has(.page) { background: #fff; color: #17211d; color-scheme: light; }
+.hub { min-width: 0; }
+.switcher { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; padding: 6px; border: 1px solid #dbe4df; border-radius: 12px; background: #fff; }
+.switcher button { min-height: 44px; flex: 1 1 180px; padding: 10px 16px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #33443c; font: inherit; font-weight: 600; cursor: pointer; }
+.switcher button[aria-pressed="true"] { background: #047857; color: #fff; }
+.switcher button:focus-visible, .notice a:focus-visible { outline: 3px solid #047857; outline-offset: 3px; }
+.switcher button:disabled { opacity: .65; cursor: default; }
+.notice { padding: 24px; border: 1px solid #dbe4df; border-radius: 12px; background: #fff; color: #172c22; overflow-wrap: anywhere; }
+.notice h1 { margin: 0 0 12px; font-size: clamp(1.4rem, 3vw, 2rem); }
+.notice a { display: inline-block; min-height: 44px; padding: 12px 0; color: #047857; }
+@media (max-width: 400px) { .switcher { gap: 4px; } .switcher button { flex-basis: 100%; } .notice { padding: 18px; } }

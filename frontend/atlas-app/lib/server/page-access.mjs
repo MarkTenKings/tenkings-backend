@@ -22,7 +22,7 @@ function diagnosis(error, stage, env) {
  * credentials. A failed check never returns staff or enables a workspace. */
 export function createPageAccess({ resolveRuntime, environment = () => process.env,
   log = entry => console.error(JSON.stringify(entry)), reference = randomUUID }) {
-  return async function pageAccess(ctx, { authenticated = true } = {}) {
+  return async function pageAccess(ctx, { authenticated = true, includeCompCuration = false } = {}) {
     privateHeaders(ctx.res);
     if (!['GET', 'HEAD'].includes(ctx.req.method)) {
       ctx.res.setHeader('Allow', 'GET, HEAD'); ctx.res.statusCode = 405;
@@ -45,7 +45,8 @@ export function createPageAccess({ resolveRuntime, environment = () => process.e
       // Display capability only. The private service independently enforces its
       // flag, actual reviewer session and deployment-bound operations grant.
       const customerOperationsEnabled = Boolean(state.connectedManual) && env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED === 'true';
-      return { props: { staff: { ...staff, customerOperationsEnabled }, manualEnabled: Boolean(state.connectedManual), customerOperationsEnabled } };
+      return { props: { staff: { ...staff, customerOperationsEnabled }, manualEnabled: Boolean(state.connectedManual), customerOperationsEnabled,
+        ...(includeCompCuration === true ? { compCurationConfiguredForDisplay: state.compCuration?.configuredForDisplay === true } : {}) } };
     } catch (error) {
       const { kind, code } = diagnosis(error, stage, env), id = reference();
       // Only fixed categories, allowlisted codes and a fresh opaque reference

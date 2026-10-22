@@ -40,6 +40,16 @@
       "version": "atlas-standalone-009-card-provenance",
       "file": "sql/009-card-provenance.sql",
       "sqlSha256": "5b014085bd88f1422da1f02ba7d8ddc5455073d5e79775e6d04e6a5218b3392b"
+    },
+    {
+      "version": "atlas-standalone-010-collection-foundation",
+      "file": "sql/010-collection-foundation.sql",
+      "sqlSha256": "a6de21a978dc5b3bb5e21dbdf408d60709fa2c724a3e17376ff11502e6ef42a9"
+    },
+    {
+      "version": "atlas-standalone-011-comp-curation",
+      "file": "sql/011-comp-curation.sql",
+      "sqlSha256": "aa19879134c9ad6261fa33ad96ed0f5be6ee2e498b601c3e2f12deee407fe36a"
     }
   ]
 }

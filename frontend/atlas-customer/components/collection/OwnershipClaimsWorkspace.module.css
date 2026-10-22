@@ -1,0 +1,32 @@
+.workspace { box-sizing: border-box; width: 100%; max-width: 1000px; margin: 0 auto; padding: 32px 24px 56px; color: #17211d; background: #fff; font-family: inherit; }
+.workspace * { box-sizing: border-box; }
+.heading { max-width: 720px; margin-bottom: 24px; }
+.heading h1 { margin: 0; font-size: clamp(1.8rem, 5vw, 3rem); line-height: 1.12; letter-spacing: -.045em; }
+.workspace p { line-height: 1.55; }
+.eyebrow { margin: 0 0 12px; color: #52645b; font-size: .7rem; font-weight: 700; letter-spacing: .13em; }
+.notice { border-left: 3px solid #047857; padding: 4px 0 4px 18px; margin: 24px 0 32px; }
+.notice p { margin: 8px 0; }
+.muted { color: #52645b; font-size: .88rem; }
+.list { list-style: none; padding: 0; margin: 0; }
+.claim { padding: 24px 0; border-bottom: 1px solid #dce5df; overflow-wrap: anywhere; }
+.claimHeading { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.claimHeading h2 { margin: 0; font-size: 1.15rem; line-height: 1.4; letter-spacing: -.02em; }
+.badge { flex-shrink: 0; padding: 5px 9px; border: 1px solid #b7d3c5; border-radius: 4px; color: #075f46; font-size: .75rem; }
+.ownership { font-weight: 600; }
+.blocked { color: #705719; font-weight: 600; }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 24px 0; font-size: .88rem; }
+.facts dt { color: #52645b; margin-bottom: 5px; }.facts dd { margin: 0; }
+.reference { margin-top: 20px; color: #52645b; font-size: .75rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.actions button { min-height: 44px; padding: 10px 16px; border: 1px solid #047857; border-radius: 5px; background: #fff; color: #075f46; font: inherit; font-weight: 600; cursor: pointer; }
+.actions button:focus-visible { outline: 3px solid #047857; outline-offset: 4px; }
+.empty { padding: 24px 0; }
+@media (max-width: 480px) { .workspace { padding: 24px 16px 40px; }.facts { grid-template-columns: 1fr; gap: 14px; }.claimHeading { flex-wrap: wrap; }.actions button { width: 100%; } }
+
+.history { margin-top: 20px; padding: 20px; background: #f5f7fa; border: 1px solid #d9e0e8; border-radius: 12px; min-width: 0; }
+.history h3 { margin: 0 0 12px; font-size: 18px; }
+.transitions { padding-left: 22px; margin: 20px 0; }
+.transitions li { padding: 0 0 16px 4px; }
+.transitions h4 { margin: 0; font-size: 15px; }
+.transitions p { margin: 6px 0; }
+@media (max-width: 480px) { .history { padding: 14px; } }

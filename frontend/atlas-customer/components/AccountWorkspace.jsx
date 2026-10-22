@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Public home/report links intentionally leave the /account application. */
 import Head from 'next/head';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { request } from '../lib/client.mjs';
 
 import ReturnFields, { emptyProfile, intakeProfile } from './intake/ProfileFields.jsx';
@@ -11,14 +11,21 @@ import SubmissionHero from './intake/SubmissionHero.jsx';
 import CustomerOrderHistory from './orders/CustomerOrderHistory.jsx';
 import ReportFilmLibrary from './report-films/ReportFilmLibrary.jsx';
 import ProgressPreferences from './notifications/ProgressPreferences.jsx';
-export default function AccountWorkspace({ initialView = 'dashboard', resumeDraftId = null, initialService = null, unavailable = false }) {
+import CollectionAccountWorkspace from './collection/CollectionAccountWorkspace.jsx';
+import collectionStyles from './collection/CollectionAccountWorkspace.module.css';
+export default function AccountWorkspace({ initialView = 'dashboard', resumeDraftId = null, initialService = null, unavailable = false, historyConfiguredForDisplay = false, displayConfiguredForDisplay = false, preferencesConfiguredForDisplay = false }) {
     const [service, setService] = useState(initialService), [serviceConfirmed, setServiceConfirmed] = useState(Boolean(initialService || resumeDraftId));
     const [customer, setCustomer] = useState(null), [csrf, setCsrf] = useState(''), [ready, setReady] = useState(false), [mode, setMode] = useState('');
     const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
     const [phone, setPhone] = useState(''), [code, setCode] = useState(''), [challenge, setChallenge] = useState(null);
     const [orderCards, setOrderCards] = useState([]);
     const [profileSection, setProfileSection] = useState('CONTACT');
+    const [collectionAccessEnded, setCollectionAccessEnded] = useState(false);
     const [profile, setProfile] = useState(emptyProfile);
+    // Stable through ordinary renders; a bootstrap account/CSRF change creates
+    // a new private collection lifetime without changing the auth protocol.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- In-place account ID mutation must replace this private lifetime too.
+    const collectionSession = useMemo(() => customer && typeof csrf === 'string' && csrf ? Object.freeze({ customer, csrf }) : null, [customer, customer?.id, csrf]);
     const started = useRef(false), active = useRef(false), sendRequest = useRef(null);
     const load = useCallback(async value => {
         setCustomer(value); setProfile({ ...emptyProfile, ...value.profile });
@@ -74,8 +81,8 @@ export default function AccountWorkspace({ initialView = 'dashboard', resumeDraf
         <main className="workspace"><span className="eyebrow">ATLAS Grading</span><h1>Account access is unavailable.</h1><p>Please return to ATLAS and try again later.</p><a href="https://atlasgrading.com/" className="secondary">Return to ATLAS</a></main></>;
     return <><Head><title>{signedIn ? 'Your account' : 'Sign in'} · ATLAS Grading</title><meta name="robots" content="noindex,nofollow"/></Head>
         <header className="site-header"><a href="/" className="atlas-brand" aria-label="ATLAS Grading home"><img src="/account/brand/atlas-grading-logo.png" width="1098" height="984" alt="ATLAS"/><span className="atlas-brand-copy">Your collection<small>Know what you have</small></span></a>
-            {signedIn ? <nav aria-label="Account"><Link href="/">Your cards</Link><Link href="/profile">Your details</Link><button disabled={busy} onClick={() => run(async () => { await request('/auth/logout', { body: {}, csrf }); window.location.assign('/account'); })}>Sign out</button></nav> : <a href="/" className="home-link">Back to ATLAS</a>}</header>
-        <main className={signedIn ? `workspace${initialView === 'dashboard' ? ' my-atlas-home' : initialView === 'profile' ? ' my-atlas-profile' : ''}` : 'entry'}>
+            {signedIn ? <nav aria-label="Account"><Link href="/">Your cards</Link><Link href="/collection">My Collection</Link><Link href="/profile">Your details</Link><button disabled={busy} onClick={() => { setCollectionAccessEnded(true); run(async () => { await request('/auth/logout', { body: {}, csrf }); window.location.assign('/account'); }); }}>Sign out</button></nav> : <a href="/" className="home-link">Back to ATLAS</a>}</header>
+        <main className={signedIn ? `workspace${initialView === 'dashboard' ? ' my-atlas-home' : initialView === 'profile' ? ' my-atlas-profile' : initialView === 'collection' ? ` ${collectionStyles.page}` : ''}` : 'entry'}>
             {mode === 'LOCAL_FIXTURE' && <div className="fixture-banner">Local demonstration · Synthetic SMS code: 424242 · No real submission or SMS delivery</div>}
             {error && <div className="error" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
             {!ready ? <p role="status" className="loading">Opening your account…</p> : !signedIn && initialView === 'submit' && !serviceConfirmed ? <ServiceChoice value={service} onChange={chooseService} showStations={false}/> : !signedIn ? <div className={`sign-in-layout${submitting ? ' submission-sign-in' : ''}`} data-submission-route={submitting ? service?.intakeMethod : undefined}>
@@ -84,7 +91,8 @@ export default function AccountWorkspace({ initialView = 'dashboard', resumeDraf
                     {challenge ? <><p>Enter the six-digit code sent to <strong>{phone}</strong>.</p><form onSubmit={verify}><label><span>Verification code</span><input autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} required disabled={busy}/></label>
                         <button className="primary" disabled={busy || code.length !== 6}>{busy ? 'Checking…' : 'Continue'}</button></form><div className="sign-in-actions"><button disabled={busy} onClick={() => run(resend)}>Send a new code</button><button disabled={busy} onClick={() => { setChallenge(null); sendRequest.current = null; setError(''); }}>Change number</button></div><p className="fine">Codes expire after five minutes. Resends are limited to one per minute.</p></> : <><p>New here or returning? Use the same simple phone sign-in.</p><form onSubmit={send}><label><span>Mobile number</span><input type="tel" autoComplete="tel" inputMode="tel" placeholder="(202) 555-0141" value={phone} onChange={event => setPhone(event.target.value)} maxLength={48} aria-describedby="phone-help" required disabled={busy}/></label><p className="fine" id="phone-help">U.S. number? Enter 10 digits—we add +1. For another country, include its country code.</p>
                         <button className="primary" disabled={busy || !phone || !csrf}>{busy ? 'Sending…' : 'Send verification code'}</button></form><p className="fine">We’ll text a verification code. A verified number creates your account automatically the first time. Message and data rates may apply.</p></>}
-                </section></div> : initialView === 'submit' ? <CustomerIntake customer={customer} csrf={csrf} initialService={service} resumeDraftId={resumeDraftId} onCustomer={value => { setCustomer(value); setProfile({ ...emptyProfile, ...value.profile }); }}/> : initialView === 'profile' ? <>
+                </section></div> : initialView === 'collection' ? <CollectionAccountWorkspace customer={customer} accessState={collectionAccessEnded ? 'ENDED' : 'READY'} historyConfiguredForDisplay={historyConfiguredForDisplay} session={collectionSession}
+                    displayConfiguredForDisplay={displayConfiguredForDisplay} preferencesConfiguredForDisplay={preferencesConfiguredForDisplay}/> : initialView === 'submit' ? <CustomerIntake customer={customer} csrf={csrf} initialService={service} resumeDraftId={resumeDraftId} onCustomer={value => { setCustomer(value); setProfile({ ...emptyProfile, ...value.profile }); }}/> : initialView === 'profile' ? <>
                 <div className="section-heading"><div><span className="eyebrow">Your profile</span><h1>Your details</h1><p>Your mobile number is verified. Keep your contact details here and add a return address when you mail cards to ATLAS.</p></div></div>
                 <div className="intake-actions" role="group" aria-label="Profile details"><button type="button" className={profileSection === 'CONTACT' ? 'primary' : 'secondary'} aria-pressed={profileSection === 'CONTACT'} disabled={busy} onClick={() => setProfileSection('CONTACT')}>Contact details</button><button type="button" className={profileSection === 'MAIL_IN' ? 'primary' : 'secondary'} aria-pressed={profileSection === 'MAIL_IN'} disabled={busy} onClick={() => setProfileSection('MAIL_IN')}>Mail-in return address</button></div>
                 <form className="panel profile-form" onSubmit={event => { event.preventDefault(); run(async () => { const method = profileSection === 'CONTACT' ? 'DEALER_DROP_OFF' : 'MAIL_IN'; const result = await request('/profile', { body: { profile: intakeProfile(profile, method) }, csrf }); setCustomer(result.customer); setProfile({ ...emptyProfile, ...result.customer.profile }); setNotice(profileSection === 'CONTACT' ? 'Contact details saved.' : 'Return details saved. Existing submission addresses are unchanged.'); }); }}><ReturnFields value={profile} onChange={setProfile} disabled={busy} intakeMethod={profileSection === 'CONTACT' ? 'DEALER_DROP_OFF' : 'MAIL_IN'}/><button className="primary" disabled={busy}>{busy ? 'Saving…' : profileSection === 'CONTACT' ? 'Save contact details' : 'Save return details'}</button>{profileSection === 'MAIL_IN' && <p className="fine">To change the return address of an existing submission, contact the ATLAS team before shipment.</p>}</form></> : <>

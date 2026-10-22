@@ -55,7 +55,7 @@ test('report and photo links remain bound to the exact token, side and saved ver
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const source = babel.transformSync(readFileSync(new URL('../components/CardHistory.jsx', import.meta.url), 'utf8'), { filename: 'CardHistory.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false }).code;
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
-function harness() {
+function harness(extraProps = {}) {
   let cursor = 0, dirty = false;
   const slots = [], effects = [], listeners = new Map(), exports = {}, calls = [];
   const staff = { id: randomUUID(), role: 'REVIEWER', mode: 'LOCAL_FIXTURE' };
@@ -71,6 +71,7 @@ function harness() {
     if (name === 'next/link') return 'a';
     if (name === './Shell') return { __esModule: true, default: 'Shell' };
     if (name === './ApprovedCardMedia') return { __esModule: true, default: 'ApprovedCardMedia' };
+    if (name === './StaffCompCuration') return { __esModule: true, default: 'StaffCompCuration' };
     if (name === '@atlas/manual-workspace/sold-references') return soldReferences;
     if (name === '@atlas/grading-core/identity') return identity;
     if (name === '@atlas/site-router/report-entry') return { ...reportEntry, rememberCardDetailReportClick: (...args) => f.reportEntries.push(args) };
@@ -82,7 +83,8 @@ function harness() {
     if (name.endsWith('.module.css')) return {};
     return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
   } });
-  f.render = () => { let count = 0; do { dirty = false; cursor = 0; f.tree = exports.default({ staff: f.staff, cardId, request }); effects.splice(0).forEach(work => work()); assert.ok(++count < 30); } while (dirty); };
+  f.props = extraProps;
+  f.render = () => { let count = 0; do { dirty = false; cursor = 0; f.tree = exports.default({ staff: f.staff, cardId, request, ...f.props }); effects.splice(0).forEach(work => work()); assert.ok(++count < 30); } while (dirty); };
   f.flush = async () => { for (let i = 0; i < 4; i++) { await new Promise(setImmediate); f.render(); } };
   f.event = name => { listeners.get(name)?.({ persisted: true }); f.render(); };
   f.text = () => JSON.stringify(f.tree);
@@ -247,4 +249,45 @@ test('a card-specific 404 during history pagination clears the retained detail a
   assert.match(f.text(), /This approved card is unavailable to this account/);
   assert.doesNotMatch(f.text(), /ATLAS-ABCDEF123456|Saved card|ApprovedCardMedia/);
   assert.doesNotMatch(f.text(), /Sign in again/); f.dispose();
+});
+
+test('private curation mounts only on Sold comps with an explicit separate transport and enablement', async () => {
+  const compRequest = () => assert.fail('The parent does not dispatch curation requests');
+  const f = harness(); await f.flush();
+  const openComps = () => { f.find(node => node.props?.id === 'card-tab-comps').props.onClick(); f.render(); };
+  openComps(); assert.equal(f.find(node => node.type === 'StaffCompCuration'), null);
+  f.props = { compCurationEnabled: true }; f.render(); assert.equal(f.find(node => node.type === 'StaffCompCuration'), null);
+  f.props = { compCurationRequest: compRequest }; f.render(); assert.equal(f.find(node => node.type === 'StaffCompCuration'), null);
+  f.props = { compCurationEnabled: true, compCurationRequest: compRequest }; f.render();
+  const panel = f.find(node => node.type === 'StaffCompCuration'); assert.ok(panel);
+  assert.equal(panel.props.request, compRequest); assert.equal(panel.props.staff, f.staff);
+  assert.equal(panel.props.card.approvalActionId, action); assert.equal(panel.props.enabled, true);
+  assert.ok(f.find(node => node.type?.name === 'SavedComparables'), 'Saved report sales remain a separate component');
+  f.find(node => node.props?.id === 'card-tab-overview').props.onClick(); f.render();
+  assert.equal(f.find(node => node.type === 'StaffCompCuration'), null);
+  assert.deepEqual(f.calls.map(call => call.path), ['session', history.cardHistoryPath(cardId)]); f.dispose();
+});
+
+test('curation access loss clears the whole private detail and a stale callback cannot clear a refreshed record', async () => {
+  const f = harness({ compCurationEnabled: true, compCurationRequest: () => assert.fail('Parent transport') }); await f.flush();
+  const openComps = () => { f.find(node => node.props?.id === 'card-tab-comps').props.onClick(); f.render(); };
+  openComps(); const old = f.find(node => node.type === 'StaffCompCuration').props.onAccessLost;
+  f.event('pageshow'); await f.flush(); old(); f.render(); assert.match(f.text(), /ATLAS-ABCDEF123456/);
+  openComps(); f.find(node => node.type === 'StaffCompCuration').props.onAccessLost(); f.render();
+  assert.match(f.text(), /Sign in again/); assert.doesNotMatch(f.text(), /ATLAS-ABCDEF123456|ApprovedCardMedia|StaffCompCuration/);
+  f.dispose();
+});
+
+test('replaced staff, transport, disabled curation and departed tab refuse stale child access callbacks', async () => {
+  for (const change of ['staff', 'transport', 'disabled', 'tab']) {
+    const f = harness({ compCurationEnabled: true, compCurationRequest: () => assert.fail('Parent transport') }); await f.flush();
+    f.find(node => node.props?.id === 'card-tab-comps').props.onClick(); f.render();
+    const old = f.find(node => node.type === 'StaffCompCuration').props.onAccessLost;
+    if (change === 'staff') f.staff = { ...f.staff };
+    if (change === 'transport') f.props.compCurationRequest = () => assert.fail('Replacement transport');
+    if (change === 'disabled') f.props.compCurationEnabled = false;
+    if (change === 'tab') f.find(node => node.props?.id === 'card-tab-overview').props.onClick();
+    f.render(); old(); f.render();
+    assert.match(f.text(), /ATLAS-ABCDEF123456/, change); assert.doesNotMatch(f.text(), /Sign in again/, change); f.dispose();
+  }
 });

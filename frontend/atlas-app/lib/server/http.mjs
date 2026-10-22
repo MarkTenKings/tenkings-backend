@@ -1,5 +1,6 @@
 import { BROWSER_COOKIE, SESSION_COOKIE, isBoundaryError, assertLocalRequest, assertWrite, deny, fixtureCookie, identifier, privateHeaders, strictObject } from './policy.mjs';
 import { recordApiFailure } from './api-failure.mjs';
+import { isStaffCompCurationPublicPath, isStaffCompCurationPrivateAlias } from './staff-comp-curation-frontend-runtime.mjs';
 
 /** Current staff boundary: authentication and the signed manual-service proxy. */
 export function createHandler(resolveRuntime, env = process.env, diagnostics = {}) {
@@ -13,6 +14,15 @@ export function createHandler(resolveRuntime, env = process.env, diagnostics = {
             stage = 'INGRESS';
             if (state.assertRequest) state.assertRequest(req);
             else assertLocalRequest(req, env);
+            // Native comp aliases must never use the generic browser proxy:
+            // private results require the dedicated proxy's final staff check.
+            if (isStaffCompCurationPrivateAlias(req.url)) deny(404, 'NOT_FOUND');
+            if (isStaffCompCurationPublicPath(req.url)) {
+                stage = 'COMP_CURATION_PROXY';
+                if (typeof state.compCuration?.handler !== 'function') deny(503, 'COMP_NOT_CONFIGURED');
+                if (await state.compCuration.handler(req, res) === false) deny(404, 'NOT_FOUND');
+                return;
+            }
             stage = 'MANUAL_PROXY';
             if (state.connectedManual && await state.connectedManual.handler(req, res)) return;
             stage = 'ROUTE';

@@ -4,7 +4,9 @@ import {readFile} from 'node:fs/promises';
 import {registeredMigrations,validateLedger} from '../registered-migrations.mjs';
 const baseline=JSON.parse(await readFile(new URL('../baseline.manifest.json',import.meta.url),'utf8'));
 test('registered additive suffix seals SQL independently of original baseline',async()=>{
- const migrations=await registeredMigrations();assert.equal(migrations.length,8);
+ const migrations=await registeredMigrations();assert.equal(migrations.length,10);
+ assert.equal(migrations[9].version,'atlas-standalone-011-comp-curation');
+ assert.equal(migrations[8].version,'atlas-standalone-010-collection-foundation');
  assert.equal(migrations[7].version,'atlas-standalone-009-card-provenance');
  assert.match(migrations[7].sql,/CREATE FUNCTION atlas_manual.card_provenance/);
  assert.doesNotMatch(migrations[7].sql,/CREATE TABLE|INSERT INTO|UPDATE atlas_manual\.|DELETE FROM|TRUNCATE/i);
