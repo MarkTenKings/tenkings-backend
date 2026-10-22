@@ -62,12 +62,6 @@ export function createSlabStudioEnvironment() {
   texture.mapping = EquirectangularReflectionMapping; texture.colorSpace = LinearSRGBColorSpace; texture.needsUpdate = true;
   return texture;
 }
-function solid(width, height, radius, depth, bevel = .1) {
-  const shape = rounded(width - bevel * 2, height - bevel * 2, Math.max(.03, radius - bevel));
-  const geometry = new ExtrudeGeometry(shape, { depth: depth - bevel * 2, bevelEnabled: true,
-    bevelSize: bevel, bevelThickness: bevel, bevelSegments: 3, curveSegments: 8, steps: 1 });
-  geometry.translate(0, 0, -depth / 2 + bevel); return geometry;
-}
 function shoulder() {
   const shape = rounded(74.464, 129.582, 1.8);
   // These windows stay physically open in the presentation model: decorative
@@ -170,10 +164,6 @@ export function createSlabModel({ front, back, frontPhotoFrame, backPhotoFrame, 
     mesh(shell, `${side}-window-shoulder`, shoulder(), shoulderMaterial, 0, 0, sign * 2.31);
     mesh(shell, `${side}-recessed-weld-channel`, ring(75.36, 130.478, 1.95, .32, .24, .06), weld, 0, 0, sign * 2.13);
     mesh(shell, `${side}-label-bay`, ring(70.464, 22.5, 1.1, .75, .90, .16), rail, 0, 51.041, sign * 1.15);
-    // The open shoulder defines the card window without an additional raised
-    // surround. One lower support remains above the exterior joining wall.
-    for (const [name, y, width, height] of [['label-divider', 37.891, 71.5, .85], ['card-support', -57.059, 70.264, .85]])
-      mesh(shell, `${side}-${name}`, solid(width, height, height / 2, .80, .11), rail, 0, y, sign * 1.1);
   }
   // An inset physical joining band, rather than a screen-space outline, remains
   // readable in edge view. It is illustrative mould anatomy, not measured CAD.
