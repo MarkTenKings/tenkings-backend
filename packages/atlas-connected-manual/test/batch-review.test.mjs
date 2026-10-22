@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createBatchReview } from '../src/batch-review.mjs';
 import { buildMachineReport } from '../src/batch-preparation.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
@@ -19,7 +20,7 @@ import { proposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mj
 import { batchActionId } from '@atlas/batch-grading';
 import { recoverManualReview } from '../../../frontend/atlas-app/lib/manual-review-startup.mjs';
 const sides = ['FRONT', 'BACK'], clone = structuredClone;
-async function fixture({ count = 2, native = false, unmeasurable = false, outside = false, missingPrinted = false, historicalMachine = false, halfPointMachine = false, withoutSavedProposals = false } = {}) {
+async function fixture({ count = 2, native = false, unmeasurable = false, outside = false, missingPrinted = false, historicalMachine = false, halfPointMachine = false, withoutSavedProposals = false, historicalCategoryReport = null } = {}) {
   const p = await publicationFixture(), staff = { id: p.actorId }, principal = { id: p.actorId, canCertify: true };
   const records = new Map(), approvals = new Map(), commits = [], lessons = [];
   const publishedLessons = new Set();
@@ -105,6 +106,16 @@ async function fixture({ count = 2, native = false, unmeasurable = false, outsid
     report.grade = historical.grade;
     report.findings = historical.defects;
     report.proposedGrade = calculateAtlasFinalGrade(historical.grade.overall.rawGrade);
+  }
+  if (historicalCategoryReport) {
+    assert.equal(report.findings.length, 1);
+    const saved = clone(historicalCategoryReport), finding = saved.findings[0];
+    // Keep the fixture's valid proposal/trace binding while using independently
+    // frozen measurements and scores from the retired category policy.
+    report.findings[0] = { ...report.findings[0], defectType: finding.defectType,
+      measurementRegions: [{ zone: finding.zone, canonicalContour: finding.canonicalContour, measurement: finding.measurement }] };
+    Object.assign(report, { ruleVersion: saved.ruleVersion, grade: saved.grade,
+      proposedGrade: saved.finalGrade, finalGradePolicy: saved.finalGradePolicy });
   }
   const reportHash = digest(JSON.stringify(report)), reportRef = await p.artifacts.write(report, { cardId: p.cardId, kind: 'BATCH_REPORT', sourceHash: reportHash });
   const job = { key: 'b'.repeat(64), cardId: p.cardId, state: 'REVIEW', sourceHash: card.draft.source.sourceHash,
@@ -264,6 +275,50 @@ test('retained machine report under the old rule is readable but requires a new 
   assert.equal(current.report.ruleVersion, ATLAS_RULE_VERSION);
   assert.equal(current.report.originalMachineReportHash, f.input.reportHash);
   assert.equal(current.explanation.ruleVersion, ATLAS_RULE_VERSION);
+});
+test('queued October 13 corner scores remain historical until human review uses the quarter multiplier and approves a new report', async () => {
+  const { report: historical } = JSON.parse(await readFile(new URL('../../atlas-grading-core/test/fixtures/category-damage-v1.json', import.meta.url), 'utf8'));
+  const f = await fixture({ count: 1, historicalCategoryReport: historical });
+  const original = clone(f.report), view = await f.review.detail(f.staff, f.job.key);
+  assert.equal(view.reviewRequiredReason, 'BATCH_SCORING_POLICY_UPDATED');
+  assert.equal(view.report.ruleVersion, 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1');
+  assert.equal(view.explanation.policy.categoryDamageMultipliers.CORNERS, .5);
+  assert.equal(view.report.grade.front.corners.score, 6);
+  assert.equal(view.report.grade.subgrades.corners, 7.2);
+  assert.equal(view.report.proposedGrade, 9);
+  assert.equal(f.commits.length, 0);
+  const execute = action => f.workflow.service.execute(f.staff, f.card.cardId, {
+    actionId: randomUUID(), expectedRevision: f.card.revision, action });
+  await execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash });
+  let state = await f.workflow.hydrate(f.card);
+  const current = await f.review.detail(f.staff, f.job.key);
+  assert.deepEqual(state.finalReview.report, original);
+  assert.equal(current.report.ruleVersion, ATLAS_RULE_VERSION);
+  assert.equal(current.explanation.policy.categoryDamageMultipliers.CORNERS, .25);
+  assert.equal(current.report.grade.front.corners.score, 9);
+  assert.equal(current.report.grade.subgrades.corners, 9.3);
+  assert.equal(current.report.proposedGrade, 10);
+  for (const category of ['centering', 'edges', 'surface'])
+    assert.equal(current.report.grade.subgrades[category], original.grade.subgrades[category]);
+  assert.equal(f.approvals.size, 0);
+  await execute({ type: 'CONFIRM_GEOMETRY', reviewed: true,
+    base: Object.fromEntries(sides.map(side => [side, geometryBase(state.geometry, side, 'REVIEW')])) });
+  for (const side of sides) {
+    state = await f.workflow.hydrate(f.card);
+    await execute({ type: 'INSPECT_SIDE', side, inspected: true, base: defectBase(state.defects, side) });
+  }
+  state = await f.workflow.hydrate(f.card);
+  await execute({ type: 'CONFIRM_FINDINGS', reviewed: true,
+    base: Object.fromEntries(sides.map(side => [side, defectBase(state.defects, side)])) });
+  const final = await f.workflow.service.previewReport(f.staff, f.card.cardId);
+  await assert.rejects(execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: f.input.reportHash }), { code: 'MANUAL_REPORT_STALE' });
+  assert.equal(f.approvals.size, 0);
+  await execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: final.reportHash });
+  const approved = f.approvals.values().next().value.report;
+  assert.equal(approved.ruleVersion, ATLAS_RULE_VERSION);
+  assert.equal(approved.grade.subgrades.corners, 9.3);
+  assert.equal(approved.finalGrade, 10);
+  assert.deepEqual((await f.workflow.hydrate(f.card)).finalReview.report, original);
 });
 test('retained half-point proposal opens current whole-number review without rewriting its precise evidence', async () => {
   const f = await fixture({ halfPointMachine: true });

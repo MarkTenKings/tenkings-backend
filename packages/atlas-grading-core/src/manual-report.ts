@@ -126,6 +126,8 @@ type AtlasManualReport = (Omit<ReturnType<typeof buildAtlasManualReportV1>, 'rul
 // Read-only historical descriptors remain exact for already approved reports.
 // New report creation cannot select this retired rule.
 const HISTORICAL_ATLAS_RULE_VERSION = 'ATLAS_2026_09_30_DAMAGE_1_5_V1';
+const HISTORICAL_CATEGORY_RULE_VERSION = 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1';
+const HISTORICAL_CATEGORY_DAMAGE_MULTIPLIERS = Object.freeze({ CORNERS: 0.5, EDGES: 1, SURFACE: 2 } as const);
 const LEGACY_CONDITION_BANDS = [
   { score: 10, lowerPercent: 0, lowerInclusive: true, upperPercent: 0.2, upperInclusive: true, label: 'Up to 0.2% weighted damage' },
   { score: 9, lowerPercent: 0.2, lowerInclusive: false, upperPercent: 1, upperInclusive: true, label: 'More than 0.2%, up to 1%' },
@@ -149,13 +151,15 @@ const REPORT_CATEGORIES = ['centering', 'corners', 'edges', 'surface'] as const;
  */
 export function explainAtlasManualReport(report: AtlasManualReport) {
   if (!record(report) || !['atlas-manual-draft-report-v1', 'atlas-manual-draft-report-v2'].includes(report.version)
-    || ![SPEEDSTER_RULE_VERSION, HISTORICAL_ATLAS_RULE_VERSION, ATLAS_RULE_VERSION].includes(report.ruleVersion)) throw new Error('ATLAS_REPORT_EXPLANATION_INVALID');
-  const isCategoryPolicy = report.ruleVersion === ATLAS_RULE_VERSION;
+    || ![SPEEDSTER_RULE_VERSION, HISTORICAL_ATLAS_RULE_VERSION, HISTORICAL_CATEGORY_RULE_VERSION, ATLAS_RULE_VERSION].includes(report.ruleVersion)) throw new Error('ATLAS_REPORT_EXPLANATION_INVALID');
+  const isCurrentPolicy = report.ruleVersion === ATLAS_RULE_VERSION;
+  const isCategoryPolicy = isCurrentPolicy || report.ruleVersion === HISTORICAL_CATEGORY_RULE_VERSION;
+  const categoryDamageMultipliers = isCurrentPolicy ? ATLAS_CATEGORY_DAMAGE_MULTIPLIERS : HISTORICAL_CATEGORY_DAMAGE_MULTIPLIERS;
   const isScaledPolicy = isCategoryPolicy || report.ruleVersion === HISTORICAL_ATLAS_RULE_VERSION;
-  const damageMultiplier = (zone: SpeedsterConditionZone) => isCategoryPolicy ? ATLAS_CATEGORY_DAMAGE_MULTIPLIERS[zone] : isScaledPolicy ? 1.5 : 1;
-  const scoringDamagePercent = (weighted: number, zone: SpeedsterConditionZone) => isCategoryPolicy
+  const damageMultiplier = (zone: SpeedsterConditionZone) => isCategoryPolicy ? categoryDamageMultipliers[zone] : isScaledPolicy ? 1.5 : 1;
+  const scoringDamagePercent = (weighted: number, zone: SpeedsterConditionZone) => isCurrentPolicy
     ? calculateAtlasScoringDamagePercent(weighted, zone) : Math.round(weighted * damageMultiplier(zone) * 1e12) / 1e12;
-  const conditionScore = (weighted: number, zone: SpeedsterConditionZone) => isCategoryPolicy
+  const conditionScore = (weighted: number, zone: SpeedsterConditionZone) => isCurrentPolicy
     ? calculateAtlasConditionScore(weighted, zone) : isScaledPolicy
       ? ATLAS_CONDITION_BANDS.find(band => band.upperPercent === null || scoringDamagePercent(weighted, zone) <= band.upperPercent)!.score
       : calculateConditionScore(weighted);
@@ -227,11 +231,11 @@ export function explainAtlasManualReport(report: AtlasManualReport) {
     ruleVersion: report.ruleVersion,
     policy: {
       conditionBands, defectMultipliers: SPEEDSTER_DEFECT_MULTIPLIERS,
-      ...(isCategoryPolicy ? { categoryDamageMultipliers: ATLAS_CATEGORY_DAMAGE_MULTIPLIERS }
+      ...(isCategoryPolicy ? { categoryDamageMultipliers }
         : isScaledPolicy ? { globalDamageMultiplier: 1.5 } : {}),
       frontWeight: 0.7, backWeight: 0.3, categoryWeight: 0.25,
       conditionFormula: isCategoryPolicy
-        ? '100 × sum(measured area × defect multiplier) ÷ eligible category area × category multiplier (Corners 0.5; Edges 1; Surface 2)'
+        ? `100 × sum(measured area × defect multiplier) ÷ eligible category area × category multiplier (Corners ${categoryDamageMultipliers.CORNERS}; Edges 1; Surface 2)`
         : isScaledPolicy ? '100 × sum(measured area × defect multiplier) ÷ eligible category area × 1.5'
         : '100 × sum(measured area × defect multiplier) ÷ eligible category area',
       centeringFormula: 'Worse border percentage ≤55: 10; through 95: 10 − (percentage − 55) ÷ 5; above 95: 1',

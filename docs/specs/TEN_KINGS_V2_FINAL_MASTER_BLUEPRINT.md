@@ -1,3 +1,7 @@
+## Owner-approved ATLAS corner multiplier — October 21, 2026
+
+Mark authorizes changing only the Corners category scoring-damage multiplier from0.5 to0.25. New rule ATLAS_2026_10_21_CATEGORY_DAMAGE_V1 retains Edges1, Surface2, measured areas/denominators, defect-type factors, condition bands, centering, Front70%/Back30%, equal category averaging and direct raw-to-whole-number final rounding. The10_13 historical rule remains0.5/1/2 for saved reports. Already-approved grades and report/label/NFC versions do not change automatically; a deliberate new grade/review and separate human approval are required. Pending human-review previews use the new rule without repeating AI analysis, while original machine proposals remain saved evidence. Implementation and actual release status are recorded in SESSION_LOG and DEPLOY_RUNBOOK; this amendment alone does not claim deployment.
+
 ## Owner-directed ATLAS recognition and nonblocking identity — October 15, 2026
 
 ## Owner-directed whole-number final awards — October 17, 2026

@@ -1,0 +1,245 @@
+{
+  "source": {
+    "cardProfile": "SPORTS",
+    "identity": {
+      "playerName": "Synthetic corner calibration",
+      "year": "2026",
+      "manufacturer": "Fixture",
+      "productSet": "Historical policy preservation"
+    },
+    "draftRevision": 7,
+    "findingRevisions": {
+      "front": 3,
+      "back": 2
+    },
+    "capture": {
+      "front": {
+        "centeringQuad": [
+          {
+            "x": 0.04,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.97
+          },
+          {
+            "x": 0.04,
+            "y": 0.97
+          }
+        ],
+        "inspectionImageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "back": {
+        "centeringQuad": [
+          {
+            "x": 0.04,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.97
+          },
+          {
+            "x": 0.04,
+            "y": 0.97
+          }
+        ],
+        "inspectionImageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "reviewedDefects": [
+      {
+        "id": "corner",
+        "side": "FRONT",
+        "zone": "CORNERS",
+        "defectType": "VISIBLE_WHITENING",
+        "confidence": 1,
+        "sourceViewId": "FRONT:inspection",
+        "supportingViewIds": [],
+        "reviewResult": "ACCEPTED",
+        "origin": "DETECTOR",
+        "canonicalContour": [
+          {
+            "x": 0.01,
+            "y": 0.01
+          },
+          {
+            "x": 0.02,
+            "y": 0.01
+          },
+          {
+            "x": 0.02,
+            "y": 0.02
+          }
+        ],
+        "measurement": {
+          "pixelCount": 44,
+          "widthMm": 0.65,
+          "heightMm": 0.35,
+          "areaMm2": 0.11,
+          "zonePercent": 0.11,
+          "multiplier": 1,
+          "weightedAreaMm2": 0.11,
+          "subgradeEffect": 0
+        }
+      }
+    ],
+    "manualInspection": {
+      "method": "HUMAN",
+      "front": {
+        "inspected": true,
+        "imageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "findingRevision": 3
+      },
+      "back": {
+        "inspected": true,
+        "imageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "findingRevision": 2
+      }
+    }
+  },
+  "report": {
+    "version": "atlas-manual-draft-report-v2",
+    "ruleVersion": "ATLAS_2026_10_13_CATEGORY_DAMAGE_V1",
+    "cardProfile": "SPORTS",
+    "identity": {
+      "playerName": "Synthetic corner calibration",
+      "year": "2026",
+      "manufacturer": "Fixture",
+      "productSet": "Historical policy preservation",
+      "parallel": null,
+      "insert": null,
+      "cardNumber": null
+    },
+    "draftRevision": 7,
+    "inspection": {
+      "method": "HUMAN",
+      "front": {
+        "inspected": true,
+        "imageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "findingRevision": 3
+      },
+      "back": {
+        "inspected": true,
+        "imageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "findingRevision": 2
+      }
+    },
+    "grade": {
+      "front": {
+        "centering": {
+          "leftRightBalance": [
+            50,
+            50
+          ],
+          "topBottomBalance": [
+            50,
+            50
+          ],
+          "score": 10
+        },
+        "corners": {
+          "weightedDamagePercent": 0.11,
+          "score": 6
+        },
+        "edges": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        },
+        "surface": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        }
+      },
+      "back": {
+        "centering": {
+          "leftRightBalance": [
+            50,
+            50
+          ],
+          "topBottomBalance": [
+            50,
+            50
+          ],
+          "score": 10
+        },
+        "corners": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        },
+        "edges": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        },
+        "surface": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        }
+      },
+      "subgrades": {
+        "centering": 10,
+        "corners": 7.2,
+        "edges": 10,
+        "surface": 10
+      },
+      "overall": {
+        "rawGrade": 9.3,
+        "displayGrade": 9.3
+      }
+    },
+    "findings": [
+      {
+        "id": "corner",
+        "side": "FRONT",
+        "zone": "CORNERS",
+        "defectType": "VISIBLE_WHITENING",
+        "confidence": 1,
+        "sourceViewId": "FRONT:inspection",
+        "supportingViewIds": [],
+        "reviewResult": "ACCEPTED",
+        "origin": "DETECTOR",
+        "canonicalContour": [
+          {
+            "x": 0.01,
+            "y": 0.01
+          },
+          {
+            "x": 0.02,
+            "y": 0.01
+          },
+          {
+            "x": 0.02,
+            "y": 0.02
+          }
+        ],
+        "measurement": {
+          "pixelCount": 44,
+          "widthMm": 0.65,
+          "heightMm": 0.35,
+          "areaMm2": 0.11,
+          "zonePercent": 0.11,
+          "multiplier": 1,
+          "weightedAreaMm2": 0.11,
+          "subgradeEffect": 2.8
+        }
+      }
+    ],
+    "findingCounts": {
+      "total": 1,
+      "included": 1,
+      "removed": 0,
+      "unreviewed": 0
+    },
+    "finalGrade": 9,
+    "finalGradePolicy": "atlas-final-whole-point-v1"
+  }
+}
