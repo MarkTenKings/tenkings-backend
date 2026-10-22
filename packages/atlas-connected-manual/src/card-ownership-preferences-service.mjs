@@ -12,7 +12,7 @@ export const OWNERSHIP_PREFERENCES_ROUTINE_PINS = Object.freeze([
     "config": [
       "search_path=pg_catalog"
     ],
-    "bodySha256": "484b2d972a5feb4109aa09a4dd67b3727b287526f8793dee255a8b2e63a72e92"
+    "bodySha256": "596992afa04adab0550ef87bc6356141bc871639757f01abbefeb952093eecf8"
   },
   {
     "schema": "atlas_ownership",
@@ -101,6 +101,13 @@ async function assertRole(tx, servingRole, schemaOwner) {
   const rows = await tx.$queryRawUnsafe(`SELECT current_user AS name,session_user AS session,
     r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls
     OR EXISTS(SELECT 1 FROM pg_auth_members WHERE member=r.oid OR roleid=r.oid)
+    OR NOT EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_class c ON c.oid=t.tgrelid
+      JOIN pg_namespace cn ON cn.oid=c.relnamespace JOIN pg_namespace pn ON pn.oid=p.pronamespace
+      WHERE cn.nspname='atlas_ownership' AND c.relname='event' AND c.relkind='r' AND t.tgname='immutable' AND NOT t.tgisinternal AND t.tgenabled='O'
+      AND t.tgtype=27 AND t.tgqual IS NULL AND t.tgnargs=0 AND octet_length(t.tgargs)=0
+      AND pn.nspname='atlas_manual' AND p.proname='immutable' AND p.pronargs=0 AND p.prorettype='trigger'::regtype
+      AND pg_get_userbyid(c.relowner)=$1 AND pg_get_userbyid(p.proowner)=$1
+      AND NOT p.prosecdef AND p.proconfig IS NULL AND encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='a06ecb8c212cb9ac364b78217a68733d4cfb4a4e12db96e2eeb2c63f19cbaa6b')
     OR has_database_privilege(current_user,current_database(),'CREATE,TEMPORARY')
     OR EXISTS(SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid)
     OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
@@ -114,7 +121,7 @@ async function assertRole(tx, servingRole, schemaOwner) {
        OR (c.relkind='S' AND has_sequence_privilege(current_user,c.oid,'USAGE,SELECT,UPDATE'))))
     OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT LIKE 'pg_%'
       AND n.nspname<>'information_schema' AND p.proowner=r.oid) AS unsafe
-    FROM pg_roles r WHERE r.rolname=current_user`);
+    FROM pg_roles r WHERE r.rolname=current_user`, schemaOwner);
   role(rows.length === 1 && rows[0].name === servingRole && rows[0].session === servingRole && rows[0].unsafe === false);
   const executable = await tx.$queryRawUnsafe(`SELECT n.nspname AS schema,p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name
     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'

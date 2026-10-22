@@ -58,6 +58,15 @@ BEGIN
     RETURN atlas_customer.problem(409,'OWNERSHIP_REQUEST_CONFLICT');
    END IF;
    IF saved.id IS NULL THEN
+    -- The exact account/card preference stream is append-only and each authorized
+    -- preference writer appends current+1 under this same account lock. Transfers
+    -- and discard never reset it. A strictly older expected revision can never
+    -- become valid later. A prior exact receipt above always wins this witness.
+    current_value:=atlas_ownership.preferences(actor.id,(d->>'cardId')::uuid);
+    IF (current_value->>'revision')::integer>(d->>'expectedPreferenceRevision')::integer THEN
+     result:=jsonb_build_object('accountId',actor.id,'requestId',d->>'requestId','action',act,'cardId',d->'cardId',
+      'input',d,'observedPreferenceRevision',current_value->'revision');
+    ELSE
     -- SECURITY DEFINER preserves the explicit cookie proofs and release binding;
     -- the original function still performs live auth, title/discard/revision
     -- checks and its final expiry refresh. No caller account is accepted.
@@ -69,11 +78,14 @@ BEGIN
      OR saved.preference_revision IS DISTINCT FROM (d->>'expectedPreferenceRevision')::integer+1 OR result->>'eventId' IS DISTINCT FROM saved.id::text THEN
      RAISE EXCEPTION 'OWNERSHIP_PREFERENCES_RESPONSE_INVALID' USING ERRCODE='23514';
     END IF;
+    END IF;
    END IF;
   END IF;
+  IF result IS NULL OR NOT result ? 'observedPreferenceRevision' THEN
   result:=jsonb_build_object('accountId',actor.id,'requestId',d->>'requestId','receipt',CASE WHEN saved.id IS NULL THEN NULL ELSE
    jsonb_build_object('eventId',saved.id,'requestId',saved.request_id,'action',saved.action,'kind',saved.kind,'cardId',saved.card_id,
     'input',saved.input,'preferenceRevision',saved.preference_revision,'recordedAt',to_char(saved.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) END);
+  END IF;
  ELSIF act='read_access' THEN
   result:=jsonb_build_object('accountId',actor.id);
  ELSIF act='read_preferences' THEN

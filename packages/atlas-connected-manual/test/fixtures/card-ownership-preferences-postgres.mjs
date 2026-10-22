@@ -117,9 +117,9 @@ if (mode === '--prepare') {
       }
       return service.call(who.cookie, action, input, who.csrf);
     };
-    const raw = async (action, input, who = owner, binding = config.binding) => {
+    const raw = async (action, input, who = owner, binding = config.binding, db = restricted) => {
       const proof = auth.authority(who.cookie);
-      return (await restricted.query('SELECT atlas_ownership_preferences.customer_call($1,$2,$3::jsonb,$4,$5::jsonb) result', [proof.sessionHash,proof.browserHash,JSON.stringify(binding),action,JSON.stringify(input)])).rows[0].result;
+      return (await db.query('SELECT atlas_ownership_preferences.customer_call($1,$2,$3::jsonb,$4,$5::jsonb) result', [proof.sessionHash,proof.browserHash,JSON.stringify(binding),action,JSON.stringify(input)])).rows[0].result;
     };
     async function seed() {
       const c = { id: randomUUID(), createId: randomUUID() }, actionId = randomUUID();
@@ -178,6 +178,7 @@ if (mode === '--prepare') {
     async function phase(name, expected, fn) { const before = await census(); await fn(); const after = await census(), changes = delta(before,after);
       assert.deepEqual(counts(changes), expected, name); await assertRows(changes);
       phases.push({ name, beforeSha256:hash(stable(before)),afterSha256:hash(stable(after)),changes }); }
+    const sleep = ms => new Promise(done=>setTimeout(done,ms));
     const baseline = await census(), coll = (revision, patch = {}) => ({ requestId:randomUUID(),expectedPreferenceRevision:revision,visibility:'PRIVATE',offersDisabled:false,...patch });
     const perCard = (c, revision = 0, patch = {}) => ({ ...coll(revision),cardId:c.id,expectedOwnershipRevision:1,...patch });
     let savedCardInput, transferInput, discardInput, lostInput, lostReceipt;
@@ -194,10 +195,24 @@ if (mode === '--prepare') {
       assert.equal((await raw('read_preferences',{},owner,{...config.binding,releaseSha:'f'.repeat(40)})).error.code,'CUSTOMER_ACCESS_NOT_ENABLED');
     }); checks.push('sole gateway/live actual customer authority/defaults/non-UTC');
     await phase('independent collection/card CAS and retained opt-outs', { 'atlas_ownership.event':{removed:0,added:4} }, async () => {
-      const a = coll(0,{visibility:'PUBLIC',offersDisabled:true}); await call('set_collection_preferences',a);
+      const a = coll(0,{visibility:'PUBLIC',offersDisabled:true}), delayed = coll(0);
+      const blocker=await socket(); await blocker.query('BEGIN');
+      await blocker.query("SELECT pg_advisory_xact_lock(hashtextextended('atlas-ownership-account:'||$1::text,0))",[owner.customer.id]);
+      const blockerPid=(await blocker.query('SELECT pg_backend_pid() pid')).rows[0].pid; let pid; observedBackend=v=>pid=v;
+      const pending=call('set_collection_preferences',delayed).then(v=>({v}),error=>({error}));
+      try {
+        const end=Date.now()+1000; while(!pid&&Date.now()<end)await sleep(5);assert(pid);
+        const proof=await witness(pid,blockerPid);proof.kind='SERIALIZED_STALE_PREFERENCE';
+        attempts.set(`${owner.customer.id}:${a.requestId}`,{action:'set_collection_preferences',input:a,accountId:owner.customer.id});
+        const applied=await raw('set_collection_preferences',a,owner,config.binding,blocker);assert.equal(applied.receipt.preferenceRevision,1);
+        await blocker.query('COMMIT');const result=await pending;assert(!result.error);assert.equal(result.v.outcome,'NOT_APPLIED_STALE');
+        assert.equal(result.v.observedPreferenceRevision,1);assert.deepEqual(result.v.input,delayed);
+      }finally{observedBackend=null;await blocker.query('ROLLBACK');await pending;}
       savedCardInput = perCard(card,0,{visibility:'PUBLIC',offersDisabled:true}); const r = await call('set_card_preferences',savedCardInput);
       assert.equal((await call('set_card_preferences',savedCardInput)).receipt.eventId,r.receipt.eventId);
-      await assert.rejects(call('set_card_preferences',{...savedCardInput,requestId:randomUUID()}),{code:'OWNERSHIP_PREFERENCE_CHANGED'});
+      const staleInput={...savedCardInput,requestId:randomUUID()};const stale=await call('set_card_preferences',staleInput);
+      assert.equal(stale.outcome,'NOT_APPLIED_STALE');assert.equal(stale.observedPreferenceRevision,1);assert.deepEqual(stale.input,staleInput);
+      await assert.rejects(call('set_card_preferences',{...savedCardInput,requestId:randomUUID(),expectedPreferenceRevision:2}),{code:'OWNERSHIP_PREFERENCE_CHANGED'});
       await assert.rejects(call('set_card_preferences',perCard(card),other),{code:'OWNERSHIP_NOT_FOUND'});
       await call('set_collection_preferences',coll(1,{visibility:'PRIVATE',offersDisabled:false}));
       const now = await call('read_card',{cardId:card.id}); assert.equal(now.collectionPreferences.revision,2); assert.equal(now.cardPreferences.revision,1);
@@ -215,7 +230,7 @@ if (mode === '--prepare') {
       await assert.rejects(call('set_collection_preferences',{...lostInput,offersDisabled:true}),{code:'OWNERSHIP_REQUEST_CONFLICT'});
       for (const [id,who] of [[randomUUID(),owner],[unrelatedRequest,owner],[lostInput.requestId,other]]) assert.equal((await call('recover_request',{requestId:id},who)).outcome,'ABSENT');
     }); checks.push('unknown outcome resolved only by exact original receipt; no duplicate append');
-    await phase('own historical receipts after transfer/discard do not disclose current title', { 'atlas_ownership.event':{removed:0,added:3},'atlas_manual_intake.discard_request':{removed:0,added:1},'atlas_manual_intake.discarded_card':{removed:0,added:1} }, async () => {
+    await phase('own historical receipts after transfer/discard do not disclose current title', { 'atlas_ownership.event':{removed:0,added:4},'atlas_manual_intake.discard_request':{removed:0,added:1},'atlas_manual_intake.discarded_card':{removed:0,added:1} }, async () => {
       transferInput=perCard(transferCard,0,{offersDisabled:true}); discardInput=perCard(discardedCard,0,{offersDisabled:true});
       await call('set_card_preferences',transferInput); await call('set_card_preferences',discardInput);
       await title(transferCard,other.customer.id,2); await discard(discardedCard);
@@ -223,9 +238,15 @@ if (mode === '--prepare') {
         const prior=await call('recover_request',{requestId:input.requestId}); assert.deepEqual(prior.receipt.input,input);
         assert.deepEqual((await call('set_card_preferences',input)).receipt,prior.receipt);
         assert.doesNotMatch(JSON.stringify(prior),new RegExp(other.customer.id)); await assert.rejects(call('read_card',{cardId:c.id}),{code:'OWNERSHIP_NOT_FOUND'});
+        const stale=await call('set_card_preferences',{...input,requestId:randomUUID()});assert.equal(stale.outcome,'NOT_APPLIED_STALE');assert.equal(stale.observedPreferenceRevision,1);
+        assert.doesNotMatch(JSON.stringify(stale),new RegExp(other.customer.id));
         await assert.rejects(call('set_card_preferences',{...input,requestId:randomUUID(),expectedPreferenceRevision:1}));
       }
       const next=await call('read_card',{cardId:transferCard.id},other); assert.equal(next.cardPreferences.revision,0); assert.equal(next.cardPreferences.visibility,'PRIVATE'); assert.equal(next.cardPreferences.offersDisabled,false);
+      await title(transferCard,owner.customer.id,3);const returned=await call('read_card',{cardId:transferCard.id});
+      assert.equal(returned.cardPreferences.revision,1);assert.equal(returned.cardPreferences.offersDisabled,true);assert.equal(returned.cardPreferences.ownershipRevision,3);
+      assert.equal((await call('set_card_preferences',{...transferInput,requestId:randomUUID(),expectedOwnershipRevision:3})).outcome,'NOT_APPLIED_STALE');
+      assert.deepEqual((await call('set_card_preferences',transferInput)).receipt.input,transferInput);
     }); checks.push('historical own recovery/replay survives card access loss without owner leakage');
     await phase('actual privilege and definition drift is rejected', {}, async () => {
       const attempts = [
@@ -235,11 +256,11 @@ if (mode === '--prepare') {
         [`GRANT USAGE ON SEQUENCE atlas_ownership.event_sequence_seq TO ${servingRole}`,`REVOKE USAGE ON SEQUENCE atlas_ownership.event_sequence_seq FROM ${servingRole}`],
         [`GRANT TEMPORARY ON DATABASE ${dbName} TO ${servingRole}`,`REVOKE TEMPORARY ON DATABASE ${dbName} FROM ${servingRole}`],
         [`ALTER DATABASE ${dbName} OWNER TO ${servingRole}`,`ALTER DATABASE ${dbName} OWNER TO ${ownerRole}`],
+        ["ALTER TABLE atlas_ownership.event DISABLE TRIGGER immutable","ALTER TABLE atlas_ownership.event ENABLE TRIGGER immutable"],
         ["ALTER FUNCTION atlas_ownership_preferences.customer_call(text,text,jsonb,text,jsonb) SET search_path=public","ALTER FUNCTION atlas_ownership_preferences.customer_call(text,text,jsonb,text,jsonb) SET search_path=pg_catalog"],
       ];
       for (const [grant,revoke] of attempts) { await setup.query(grant); try { await assert.rejects(call('read_preferences',{}),{code:'OWNERSHIP_PREFERENCES_DATABASE_ROLE_INVALID'}); } finally { await setup.query(revoke); } }
     }); checks.push('MAINTAIN/database owner/original mutator/table/sequence/TEMP/config drift refused');
-    const sleep = ms => new Promise(done=>setTimeout(done,ms));
     async function witness(pid, blocker, expiryHash=null) {
       const end=Date.now()+1000; let row;
       while(Date.now()<end) {
@@ -249,7 +270,9 @@ if (mode === '--prepare') {
       assert.equal(row?.wait_event_type,'Lock'); assert(row.blockers.includes(blocker));
       const proof={waiterPid:pid,blockerPid:blocker,waitEventType:row.wait_event_type,observedAt:row.observed_at};
       if(expiryHash) {
-        const session=(await setup.query('SELECT clock_timestamp() observed_at,"expiresAt" stored_expiry,"expiresAt">clock_timestamp() authorized FROM atlas_customer."CustomerSession" WHERE "tokenHash"=$1',[expiryHash])).rows[0];
+        const session=(await setup.query(`SELECT clock_timestamp() observed_at,"expiresAt" stored_expiry,
+          to_char("expiresAt" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') stored_expiry_utc,
+          "expiresAt">clock_timestamp() authorized FROM atlas_customer."CustomerSession" WHERE "tokenHash"=$1`,[expiryHash])).rows[0];
         assert.equal(session.authorized,true); proof.authorization=session;
       }
       waitProofs.push(proof); return proof;
@@ -265,9 +288,19 @@ if (mode === '--prepare') {
       const pending=call('set_collection_preferences',input,expiring).then(v=>({v}),error=>({error}));
       try {
         { const end=Date.now()+1000; while(!pid && Date.now()<end) await sleep(5); assert(pid,'Observed transaction backend required'); } const proof=await witness(pid,blockerPid,sessionHash); proof.kind='POST_APPEND_SESSION_EXPIRY';
-        await sleep(Math.max(0,Date.parse(proof.authorization.stored_expiry)-Date.now()+25));
-        const expired=(await setup.query('SELECT clock_timestamp() observed_at,"expiresAt" stored_expiry,"expiresAt"<=clock_timestamp() expired FROM atlas_customer."CustomerSession" WHERE "tokenHash"=$1',[sessionHash])).rows[0];
-        assert.equal(expired.expired,true); assert.equal(String(expired.stored_expiry),String(proof.authorization.stored_expiry)); proof.beforeUnlock=expired;
+        // Observe the database condition itself. Date.parse(Date) stringifies a
+        // Date without fractional seconds and can unlock before actual expiry.
+        const expiryDeadline=performance.now()+2000;let expired;
+        do {
+          expired=(await setup.query(`SELECT clock_timestamp() observed_at,"expiresAt" stored_expiry,
+            to_char("expiresAt" AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') stored_expiry_utc,
+            "expiresAt"<=clock_timestamp() expired FROM atlas_customer."CustomerSession" WHERE "tokenHash"=$1`,[sessionHash])).rows[0];
+          proof.beforeUnlock=expired;
+          assert.equal(expired.stored_expiry_utc,proof.authorization.stored_expiry_utc);
+          if(expired.expired)break;
+          await sleep(10);
+        }while(performance.now()<expiryDeadline);
+        assert.equal(expired.expired,true);
         await blocker.query('SELECT pg_advisory_unlock(814020,51)'); const outcome=await pending;
         assert.equal(outcome.error?.code,'28000'); assert.equal(outcome.error?.message,'SIGN_IN_REQUIRED');
         assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_ownership.event WHERE request_id=$1',[input.requestId])).rows[0].n,0);
@@ -292,10 +325,10 @@ if (mode === '--prepare') {
         } finally {observedBackend=null;await blocker.query('ROLLBACK');await pending;}
       }
     }); checks.push('observed title/discard wait denies stale new write');
-    const final=await census(), whole=delta(baseline,final), expected={'atlas_ownership.event':{removed:0,added:10},'atlas_customer.CustomerSession':{removed:1,added:1},'atlas_manual_intake.discard_request':{removed:0,added:2},'atlas_manual_intake.discarded_card':{removed:0,added:2}};
+    const final=await census(), whole=delta(baseline,final), expected={'atlas_ownership.event':{removed:0,added:11},'atlas_customer.CustomerSession':{removed:1,added:1},'atlas_manual_intake.discard_request':{removed:0,added:2},'atlas_manual_intake.discarded_card':{removed:0,added:2}};
     assert.deepEqual(counts(whole),expected);
     const sessionDelta=whole['atlas_customer.CustomerSession']; assert.deepEqual(sessionDelta.added[0],{...sessionDelta.removed[0],expiresAt:sessionDelta.added[0].expiresAt});
-    const events=whole['atlas_ownership.event'].added; assert.equal(events.filter(e=>e.kind==='CLAIM_VERIFIED').length,2);
+    const events=whole['atlas_ownership.event'].added; assert.equal(events.filter(e=>e.kind==='CLAIM_VERIFIED').length,3);
     await assertRows(whole);
     assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_staff._standalone_migrations')).rows[0].n,9);
     result={pass:true,checks,phases,waitProofs,tableCount:tables.length,wholeJourney:{changes:counts(whole),exactDelta:whole,unchangedTables:tables.length-Object.keys(whole).length},ledgerRows:9,

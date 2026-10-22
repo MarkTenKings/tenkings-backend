@@ -39,6 +39,15 @@ export function projectOwnershipPreferences(action, value, rawInput, expectedAcc
   const request = ownershipPreferencesInput(action, rawInput);
   response(record(value) && id(expectedAccountId) && value.accountId === expectedAccountId && date(value.observedAt));
   const base = { accountId: expectedAccountId, observedAt: value.observedAt };
+  if (isOwnershipPreferenceWrite(action) && Object.hasOwn(value, 'observedPreferenceRevision')) {
+    response(exact(value, ['accountId', 'observedAt', 'requestId', 'action', 'cardId', 'input', 'observedPreferenceRevision'])
+      && value.requestId === request.requestId && value.action === action && value.cardId === (request.cardId ?? null)
+      && revision(value.observedPreferenceRevision) && value.observedPreferenceRevision > request.expectedPreferenceRevision);
+    let original; try { original = ownershipPreferencesInput(action, value.input); } catch { response(false); }
+    response(sameInput(original, request));
+    return { schema: 'atlas-ownership-preferences-stale-v1', ...base, outcome: 'NOT_APPLIED_STALE', requestId: request.requestId,
+      action, cardId: request.cardId ?? null, input: original, observedPreferenceRevision: value.observedPreferenceRevision };
+  }
   if (action === 'read_access') {
     response(exact(value, ['accountId', 'observedAt']));
     return { schema: 'atlas-ownership-preferences-access-v1', ...base };

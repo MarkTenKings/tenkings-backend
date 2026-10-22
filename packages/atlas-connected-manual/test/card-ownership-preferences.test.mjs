@@ -160,3 +160,32 @@ test('post-commit capability loss reports uncertainty, not a fabricated rollback
   await assert.rejects(f.service.setCollectionPreferences(f.cookie, f.csrf, input), { code: 'OWNERSHIP_PREFERENCES_UNAVAILABLE' });
   assert.equal(f.stats.commits, 1); assert.equal(f.stats.rollbacks, 0);
 });
+
+test('typed monotone stale witness binds exact account/action/card/input, never generic error or ABSENT', async () => {
+  const input = cardRequest(), raw = { ...access(aid), requestId: input.requestId, action: 'set_card_preferences', cardId: cid, input,
+    observedPreferenceRevision: 3 };
+  const output = projectOwnershipPreferences('set_card_preferences', raw, input, aid);
+  assert.equal(output.schema, 'atlas-ownership-preferences-stale-v1'); assert.equal(output.outcome, 'NOT_APPLIED_STALE'); assert.deepEqual(output.input, input);
+  for (const change of [v => { v.observedPreferenceRevision = 0; }, v => { v.action = 'set_collection_preferences'; }, v => { v.accountId = randomUUID(); },
+    v => { v.requestId = randomUUID(); }, v => { v.cardId = randomUUID(); }, v => { v.input.visibility = 'PUBLIC'; }, v => { v.receipt = null; }]) {
+    const bad = structuredClone(raw); change(bad); assert.throws(() => projectOwnershipPreferences('set_card_preferences', bad, input, aid));
+  }
+  assert.throws(() => projectOwnershipPreferences('recover_request', raw, { requestId: input.requestId }, aid));
+  const f = fixture({ answer: raw }); assert.deepEqual(await f.service.setCardPreferences(f.cookie, f.csrf, input), output);
+  assert.equal(f.stats.commits, 1); assert.deepEqual(f.actions, ['read_access', 'set_card_preferences', 'read_access']);
+});
+test('stale witness is withheld on final live auth/source rejection and requires reviewed immutable journal guard', async () => {
+  const input = request(), raw = { ...access(aid), requestId: input.requestId, action: 'set_collection_preferences', cardId: null, input, observedPreferenceRevision: 2 };
+  for (const kind of ['AUTH', 'SOURCE']) {
+    let reads = 0;
+    const f = fixture({ answer: raw, onQuery(args, f) {
+      if (kind === 'SOURCE' && args[3] === 'set_collection_preferences') f.defs[0].bodySha256 = 'f'.repeat(64);
+      if (kind === 'AUTH' && args[3] === 'read_access' && ++reads === 2) return { error: { status: 401, code: 'SIGN_IN_REQUIRED' } };
+    } });
+    await assert.rejects(f.service.setCollectionPreferences(f.cookie, f.csrf, input)); assert.equal(f.stats.commits, 0); assert.equal(f.stats.rollbacks, 1);
+  }
+  const source = await readFile(new URL('../src/card-ownership-preferences-service.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /'atlas_[^']+'::reg(?:class|procedure)/);
+  assert.match(source, /cn\.nspname='atlas_ownership' AND c\.relname='event'/); assert.match(source, /pn\.nspname='atlas_manual' AND p\.proname='immutable' AND p\.pronargs=0/);
+  assert.match(source, /t\.tgtype=27/); assert.match(source, /t\.tgenabled='O'/);
+});
