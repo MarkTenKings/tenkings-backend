@@ -13,6 +13,7 @@ export const SLAB_MODEL = Object.freeze({ version: 'atlas-illustrative-slab-v2',
   cardWidth: 63.5, cardHeight: 88.9, cardY: -10.109, labelWidth: 68.342, labelHeight: 20.082, labelY: 51.048 });
 export const INITIAL_SLAB_ANGLE = -Math.PI / 12;
 export const SLAB_STUDIO = Object.freeze({ version: 'atlas-neutral-studio-v2', width: 256, height: 128, material: 'reflection' });
+const usesDecorativeNfc = layoutVersion => layoutVersion !== APPROVED_LABEL_LAYOUT.version;
 const TAU = Math.PI * 2;
 export const normalizeSlabAngle = value => ((value + Math.PI) % TAU + TAU) % TAU - Math.PI;
 export const slabFacing = angle => Math.abs(Math.cos(angle)) < .16 ? 'Edge view' : Math.cos(angle) > 0 ? 'Front visible' : 'Back visible';
@@ -172,7 +173,9 @@ export function createSlabModel({ front, back, label, backLabel, labelLayoutVers
   }
   mesh(labels, backLabel ? 'saved-label-carrier' : 'plain-label-carrier-no-reverse-artwork', new BoxGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight, .38),
     new MeshBasicMaterial({ color: 0xf6f6f4, toneMapped: false }), 0, SLAB_MODEL.labelY);
-  if (nfc && label) addNfcReference(labels, nfc, labelLayoutVersion);
+  // Approved-B saved previews already include an opaque material layer. A
+  // reference underneath is invisible; placing it above would alter the art.
+  if (nfc && label && usesDecorativeNfc(labelLayoutVersion)) addNfcReference(labels, nfc, labelLayoutVersion);
   if (label) mesh(labels, 'front-saved-label-artwork', new PlaneGeometry(SLAB_MODEL.labelWidth, SLAB_MODEL.labelHeight),
     new MeshBasicMaterial({ map: label, transparent: true, toneMapped: false }), 0, SLAB_MODEL.labelY, .22);
   if (backLabel) {
@@ -290,8 +293,19 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
     if (disposed) return;
     const width = host.clientWidth, height = host.clientHeight; if (!(width > 0 && height > 0)) return;
     renderer.setPixelRatio(Math.min(win.devicePixelRatio || 1, 2)); renderer.setSize(width, height, false);
-    const viewHeight = Math.max(SLAB_MODEL.height * 1.065, (SLAB_MODEL.width + SLAB_MODEL.depth) * 1.07 * height / width);
-    camera.aspect = width / height; camera.position.z = viewHeight / (2 * Math.tan(camera.fov * Math.PI / 360));
+    camera.aspect = width / height;
+    const tangentY = Math.tan(camera.fov * Math.PI / 360), tangentX = tangentY * camera.aspect;
+    const turnRadius = Math.hypot(SLAB_MODEL.width, SLAB_MODEL.depth) / 2, margin = 1.03;
+    // Fit the full rotation envelope, including the near edge moving toward the
+    // perspective camera. Keep distance fixed while turning, with 3% headroom.
+    camera.position.z = Math.max(SLAB_MODEL.height / 2 * margin / tangentY + turnRadius,
+      turnRadius * Math.hypot(1, margin / tangentX));
+    // The evidence planes sit 0.011 mm above their carriers. A generic .1–1000
+    // frustum quantizes that gap away at this distance, causing white stripes.
+    // Bound depth to the same turn envelope so those separate surfaces remain
+    // resolved without moving, cropping or relighting the saved artwork.
+    camera.near = Math.max(1, camera.position.z - turnRadius - 10);
+    camera.far = camera.position.z + turnRadius + 10;
     camera.updateProjectionMatrix(); requestRender();
   }
   function setAngle(value) { if (disposed || !model) return; angle = normalizeSlabAngle(value); model.rotation.y = angle;
@@ -384,7 +398,7 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
     }
     if (isPhoto) photoImages[side] = image;
     currentAssets[key] = url; onAssetReady({ slot: key }); requestRender();
-    if (key === 'labelUrl' && nfcUrl) replaceAsset('nfcUrl', nfcUrl);
+    if (key === 'labelUrl') syncNfcReference();
   }
   function replaceAsset(key, url) {
     const previous = assetRequests.get(key);
@@ -399,6 +413,11 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
       catch (failure) { image.removeAttribute('src'); images.delete(image); onAssetError(failure, { slot: key }); }
     }).catch(failure => { if (!disposed && !request.aborter.signal.aborted) onAssetError(failure, { slot: key }); })
       .finally(() => { if (assetRequests.get(key) === request) assetRequests.delete(key); });
+  }
+  function syncNfcReference() {
+    // Follow the successfully displayed label, including while a replacement is
+    // pending or has failed. Opaque B labels need no hidden request or texture.
+    replaceAsset('nfcUrl', currentAssets.labelUrl && usesDecorativeNfc(currentAssets.labelLayoutVersion) && nfcUrl ? nfcUrl : null);
   }
   /** Same-card progressive replacement. Callers must remount at an approval/card
    * identity change. Each slot cancels stale loads; failure retains usable pixels. */
@@ -417,7 +436,7 @@ export function createSlabScene(host, { frontUrl, backUrl, labelUrl, backLabelUr
       currentAssets.labelLayoutVersion = wanted.labelLayoutVersion;
       if (nfc && changed) { placeNfcReference(nfc, currentAssets.labelLayoutVersion); requestRender(); }
     }
-    replaceAsset('nfcUrl', wanted.labelUrl && currentAssets.labelUrl && nfcUrl ? nfcUrl : null);
+    syncNfcReference();
   }
   const started = (async () => {
     try {

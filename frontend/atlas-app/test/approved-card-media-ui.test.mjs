@@ -206,8 +206,9 @@ test('saved approved-B back label appears on Back and in 3D without front NFC or
   const f = fixture('detail', { label: true, backLabel: true }); await f.flush();
   assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK']);
   f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
-  const nfc = f.find(node => node.props.className === 'archive.slabNfc')[0];
-  assert.ok(nfc.props.style); assert.ok(parseFloat(nfc.props.style.left) > 65);
+  // The exact B preview already has an opaque material/NFC circle; do not
+  // fetch a decorative reference that cannot be seen behind it.
+  assert.equal(f.find(node => node.props.className === 'archive.slabNfc').length, 0);
   f.button('Back').props.onClick(); f.render();
   const artwork = f.find(node => node.type === 'img' && node.props.className === 'archive.slabLabel')[0];
   assert.equal(artwork.props.src, 'blob:LABEL_BACK');
@@ -223,12 +224,15 @@ test('saved approved-B back label appears on Back and in 3D without front NFC or
 
 test('back-label decode retry preserves both photographs and front artwork', async () => {
   const f = fixture('detail', { label: true, backLabel: true }); await f.flush();
-  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  f.loads.slice(0, 3).forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
   f.button('Back').props.onClick(); f.render();
+  assert.match(f.find(node => node.type === 'span' && node.props.role === 'img')[0].props['aria-label'], /Saved back label artwork is loading/);
+  f.loads[3].resolve('blob:LABEL_BACK'); await f.flush();
   f.find(node => node.type === 'img' && node.props.src === 'blob:LABEL_BACK')[0].props.onError(); f.render();
   assert.deepEqual(f.disposed, ['blob:LABEL_BACK']);
   assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:BACK').length);
   assert.ok(f.find(node => node.type === 'p' && /Saved back label artwork unavailable/.test(text(node))).length);
+  assert.match(f.find(node => node.type === 'span' && node.props.role === 'img')[0].props['aria-label'], /Saved back label artwork is unavailable/);
   f.button('Retry preview').props.onClick(); await f.flush();
   assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK', 'LABEL_BACK']);
   f.loads.at(-1).resolve('blob:back-label-retry'); await f.flush();

@@ -8,10 +8,6 @@ import styles from './ApprovedCardMedia.module.css';
 
 const empty = { loading: false, url: null, error: null };
 const label = side => side === 'BACK' ? 'Back' : 'Front';
-// The approved label uses the same physical bay. Only its recorded NFC cutout
-// position changes; historical previews retain the existing CSS placement.
-const approvedNfcStyle = { left: `${(5.961 + APPROVED_LABEL_LAYOUT.nfc.x - APPROVED_LABEL_LAYOUT.nfc.radius) / 80.264 * 100}%`,
-  top: `${(6.602 + APPROVED_LABEL_LAYOUT.nfc.y - APPROVED_LABEL_LAYOUT.nfc.radius) / 135.382 * 100}%` };
 // The 3D renderer and its dependencies are requested only on this optional tab.
 const Slab3D = lazy(() => import('./Slab3D'));
 
@@ -92,10 +88,14 @@ export function ApprovedCardPresentation({ name, photo, side = 'FRONT', artwork,
   const digital = !actualSlab && (artwork?.url || artwork?.loading || artwork?.error || side === 'BACK');
   return digital ? <span className={archive.slab} role="img" aria-label={side === 'FRONT'
     ? `${name}. Digital slab preview using the approved front photograph${artwork?.url ? ' and saved ATLAS label' : ' in an illustrative holder. Saved label artwork is not yet available'}. Physical holder and NFC completion are separate.`
-    : `${name}. Digital slab preview using the approved back photograph${artwork?.url ? ' and saved ATLAS back label' : ' in an illustrative holder. Reverse label artwork is not recorded'}. Physical holder and NFC completion are separate.`}>
+    : `${name}. Digital slab preview using the approved back photograph${artwork?.url ? ' and saved ATLAS back label' : artwork?.loading
+      ? ' in an illustrative holder. Saved back label artwork is loading' : artwork?.error
+        ? ' in an illustrative holder. Saved back label artwork is unavailable' : ' in an illustrative holder. Reverse label artwork is not recorded'}. Physical holder and NFC completion are separate.`}>
     <img className={archive.slabShell} src={`${STAFF_BASE_PATH}/brand/archive/slab-shell-front.svg`} width="803" height="1354" alt="" aria-hidden="true" loading="lazy"/>
     <img className={archive.slabCard} src={photo.url} onError={() => onImageError(side, photo.url)} alt="" aria-hidden="true" decoding="async"/>
-    {side === 'FRONT' && artwork?.url && <span className={archive.slabNfc} style={layoutVersion === APPROVED_LABEL_LAYOUT.version ? approvedNfcStyle : undefined} aria-hidden="true"><img src={`${STAFF_BASE_PATH}/brand/archive/nfc-tag-reference-384.webp`} alt="" loading="lazy"/></span>}
+    {/* The B preview is opaque, including its NFC circle. Keep its exact saved
+        pixels; only historical transparent artwork uses the reference behind it. */}
+    {side === 'FRONT' && artwork?.url && layoutVersion !== APPROVED_LABEL_LAYOUT.version && <span className={archive.slabNfc} aria-hidden="true"><img src={`${STAFF_BASE_PATH}/brand/archive/nfc-tag-reference-384.webp`} alt="" loading="lazy"/></span>}
     {artwork?.url && <img className={archive.slabLabel} src={artwork.url} onError={() => onImageError(side === 'BACK' ? 'LABEL_BACK' : 'LABEL', artwork.url)} alt="" aria-hidden="true"/>}
   </span> : <img className={`${archive.photo}${actualSlab ? ` ${archive.slabPhoto}` : ''}`} src={photo.url}
     onError={() => onImageError(actualSlab ? 'SLAB' : side, photo.url)} alt={`${name} · ${actualSlab ? 'recorded slab photograph' : `approved ${side.toLowerCase()} photograph`}`} decoding="async"/>;
