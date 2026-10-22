@@ -37,7 +37,7 @@ function fixture({ failStart = false } = {}) {
     if (name.endsWith('/approved-card-media.mjs')) return { APPROVED_MEDIA_ACCESS_ENDED };
     if (name.endsWith('/slab-3d-scene.mjs')) return { createSlabScene(host, options) {
       if (failStart) throw Object.assign(new Error('WebGL unavailable'), { code: 'SLAB_RENDER_UNAVAILABLE' });
-      const scene = { host, options, disposals: 0, rotations: [], resets: 0, dispose() { this.disposals++; }, rotateBy(delta) { this.rotations.push(delta); }, reset() { this.resets++; } };
+      const scene = { host, options, disposals: 0, rotations: [], resets: 0, updates: [], assetRetries: [], retryAssets(slots) { this.assetRetries.push(slots); }, updateAssets(assets) { this.updates.push(assets); }, dispose() { this.disposals++; }, rotateBy(delta) { this.rotations.push(delta); }, reset() { this.resets++; } };
       scenes.push(scene); return scene;
     } };
     return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
@@ -81,9 +81,32 @@ test('access ended and pagehide immediately hide private fallback and dispose sc
   }
 });
 
-test('changed source owns a fresh scene and stale readiness cannot publish into its successor', () => {
-  const f = fixture(), old = f.scenes[0]; f.update({ frontUrl: 'blob:new-front', backUrl: 'blob:new-back' });
-  assert.equal(f.scenes.length, 2); assert.equal(old.disposals, 1); assert.equal(f.scenes[1].options.frontUrl, 'blob:new-front');
-  old.options.onReady(); f.render(); assert.equal(f.status(), 'loading');
-  f.scenes[1].options.onReady(); f.render(); assert.equal(f.status(), 'ready'); f.close();
+test('progressive photo and late saved-label updates preserve the ready scene and turn position', () => {
+  const f = fixture(), scene = f.scenes[0]; scene.options.onReady(); f.render();
+  f.button('Turn slab right').props.onClick();
+  f.update({ frontUrl: 'blob:full-front', backUrl: 'blob:full-back', labelUrl: 'blob:late-label', backLabelUrl: 'blob:saved-reverse' });
+  assert.equal(f.scenes.length, 1); assert.equal(scene.disposals, 0); assert.equal(f.status(), 'ready');
+  assert.equal(scene.updates.at(-1).frontUrl, 'blob:full-front'); assert.equal(scene.updates.at(-1).backLabelUrl, 'blob:saved-reverse');
+  assert.deepEqual(scene.rotations, [Math.PI / 6]); assert.equal(scene.resets, 0);
+  scene.options.onAssetError({ code: 'SLAB_TEXTURE_LIMIT' }, { slot: 'frontUrl' }); f.render();
+  assert.equal(f.status(), 'ready'); assert.match(f.text(), /Preview quality/); assert.equal(f.button('Turn slab right').props.disabled, false);
+  scene.options.onAssetReady({ slot: 'frontUrl' }); f.render(); assert.match(f.text(), /Drag to turn/);
+  f.close(); assert.equal(scene.disposals, 1);
+});
+
+test('remount and retry can always start from the owned preview before attempting full detail', () => {
+  const f = fixture(); f.update({ initialFrontUrl: 'blob:preview-front', initialBackUrl: 'blob:preview-back', frontUrl: 'blob:full-front', backUrl: 'blob:full-back' });
+  f.scenes[0].options.onError({ code: 'SLAB_CONTEXT_LOST' }); f.render();
+  f.button('Retry 3D').props.onClick(); f.render();
+  assert.equal(f.scenes[1].options.frontUrl, 'blob:preview-front'); assert.equal(f.scenes[1].options.backUrl, 'blob:preview-back');
+  assert.equal(f.scenes[1].updates[0].frontUrl, 'blob:full-front'); assert.equal(f.scenes[1].updates[0].backUrl, 'blob:full-back'); f.close();
+});
+
+test('a late saved-label failure is visible and retry does not reset the usable scene', () => {
+  const f = fixture(), scene = f.scenes[0]; scene.options.onReady(); f.render();
+  scene.options.onAssetError({ code: 'SLAB_IMAGE_DECODE' }, { slot: 'labelUrl' }); f.render();
+  assert.equal(f.status(), 'ready'); assert.match(f.text(), /Saved label display unavailable/);
+  f.button('Retry label').props.onClick(); assert.equal(scene.assetRetries.length, 1); assert.equal(scene.assetRetries[0][0], 'labelUrl');
+  assert.equal(scene.disposals, 0); assert.equal(scene.resets, 0);
+  scene.options.onAssetReady({ slot: 'labelUrl' }); f.render(); assert.doesNotMatch(f.text(), /Saved label display unavailable/); f.close();
 });

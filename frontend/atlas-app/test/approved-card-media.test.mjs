@@ -17,10 +17,17 @@ const fixture = () => {
     media: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { url: `/api/reports/${publicToken}/images/${side}?v=3`, provenance: 'APPROVED_GRADING_PHOTOGRAPH' }])) };
   const grant = side => ({ version: 'atlas-approved-image-access-v1', publicToken, approvalVersion: 3, publicHash: report.publicHash, side,
     image: { url: `${INSPECTION_STORAGE_ORIGIN}/${side}?synthetic=1`, sha256: hash(bytes), byteCount: bytes.length, width: 1350, height: 1858, mime: 'image/webp' } });
+  const previewBytes = Buffer.from('ffd8ff73796e746865746963', 'hex');
+  const previewGrant = side => {
+    const value = grant(side);
+    value.image.preview = { url: `${INSPECTION_STORAGE_ORIGIN}/${side}-preview?synthetic=1`, sha256: hash(previewBytes), byteCount: previewBytes.length,
+      width: 558, height: 768, mime: 'image/jpeg', sourceSha256: value.image.sha256, policyVersion: 'atlas-inspection-preview-v1' };
+    return value;
+  };
   const response = side => new Response(JSON.stringify(grant(side)), { headers: { 'content-type': 'application/json' } });
   const labelId = '33333333-3333-4333-8333-333333333333';
   card.media.LABEL = { itemId: labelId, url: `/admin/api/staff/manual-connected/labels/${labelId}/artwork?mode=preview`, provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
-  return { card, bytes, grant, response, front: approvedMediaSource(card, 'FRONT'), back: approvedMediaSource(card, 'BACK') };
+  return { card, bytes, grant, previewBytes, previewGrant, response, front: approvedMediaSource(card, 'FRONT'), back: approvedMediaSource(card, 'BACK') };
 };
 
 function loader(fetchImpl, options = {}) {
@@ -185,4 +192,175 @@ test('a late verified asset arriving after timeout is revoked instead of publish
   const l = loader(async () => f.response('FRONT'), { timeoutMs: 15, verify: () => gate.promise });
   await assert.rejects(l.load(f.front), /APPROVED_MEDIA_TIMEOUT/);
   gate.resolve({ url: 'blob:late', dispose() { disposed++; } }); await pause(0); assert.equal(disposed, 1);
+});
+
+test('preview delivery verifies only the saved small rendition and exposes its distinct source lineage', async () => {
+  for (const side of ['FRONT', 'BACK']) {
+    const f = fixture(), grant = f.previewGrant(side), source = approvedMediaSource(f.card, side, { delivery: 'preview' }), calls = [];
+    const l = loader(async (url, init) => {
+      calls.push(url); assert.equal(init.cache, 'no-store'); assert.equal(init.credentials, 'omit');
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.preview.url); return new Response(f.previewBytes);
+    });
+    const asset = await l.load(source);
+    assert.equal(calls.length, 2); assert.equal(asset.representation, 'preview');
+    assert.equal(asset.sha256, hash(f.previewBytes)); assert.equal(asset.sourceSha256, hash(f.bytes));
+    assert.equal(asset.width, 558); assert.equal(asset.height, 768); assert.equal(asset.byteCount, f.previewBytes.length);
+    assert.equal(l.created[0].blob.type, 'image/jpeg'); asset.dispose(); assert.deepEqual(l.revoked, [asset.url]);
+    assert.equal(approvedMediaSource(f.card, side).delivery, 'full');
+    assert.equal(approvedMediaSource(f.card, side, { delivery: 'thumbnail' }), null);
+  }
+});
+
+test('explicit full delivery never substitutes a preview, and a missing preview uses the exact full source', async () => {
+  for (const delivery of ['full', 'preview']) {
+    const f = fixture(), grant = delivery === 'full' ? f.previewGrant('FRONT') : f.grant('FRONT'), calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.url); return new Response(f.bytes);
+    });
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery }));
+    assert.equal(calls.length, 2); assert.equal(asset.representation, 'full');
+    assert.equal(asset.sha256, hash(f.bytes)); assert.equal(asset.sourceSha256, hash(f.bytes));
+    assert.equal(asset.width, 1350); assert.equal(asset.height, 1858); asset.dispose();
+  }
+});
+
+test('unavailable preview falls back once to the independently verified full photograph from the same grant', async () => {
+  for (const mode of ['missing', 'network']) {
+    const f = fixture(), grant = f.previewGrant('FRONT'), calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      if (url === grant.image.preview.url) {
+        if (mode === 'network') throw new TypeError('fetch failed');
+        return new Response(null, { status: 404 });
+      }
+      assert.equal(url, grant.image.url); return new Response(f.bytes);
+    });
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }));
+    assert.equal(calls.filter(url => url.includes('delivery=direct')).length, 1);
+    assert.equal(calls.filter(url => url === grant.image.url).length, 1);
+    assert.equal(calls.filter(url => url === grant.image.preview.url).length, mode === 'network' ? 3 : 1);
+    assert.equal(asset.representation, 'full'); assert.equal(asset.sha256, hash(f.bytes)); asset.dispose();
+  }
+});
+
+test('invalid preview lineage and corrupt preview bytes fail closed without fetching another image', async () => {
+  const cases = [
+    ['lineage', g => { g.image.preview.sourceSha256 = 'e'.repeat(64); }, undefined, 1],
+    ['side', g => { g.side = 'BACK'; }, undefined, 1],
+    ['version', g => { g.approvalVersion++; }, undefined, 1],
+    ['hash', g => { g.image.preview.sha256 = 'd'.repeat(64); }, undefined, 2],
+    ['length', g => { g.image.preview.byteCount++; }, undefined, 2],
+    ['format', g => { g.image.preview.sha256 = hash(Buffer.alloc(11)); }, Buffer.alloc(11), 2],
+  ];
+  for (const [name, mutate, bytes, expectedCalls] of cases) {
+    const f = fixture(), grant = f.previewGrant('FRONT'); mutate(grant); const calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.preview.url, name); return new Response(bytes ?? f.previewBytes);
+    });
+    await assert.rejects(l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' })), undefined, name);
+    assert.equal(calls.length, expectedCalls, name); assert.equal(l.created.length, 0, name);
+  }
+});
+
+test('preview cancellation and the original deadline cannot trigger a full fallback or publish late bytes', async () => {
+  for (const mode of ['abort', 'timeout']) {
+    const f = fixture(), gate = deferred(), controller = new AbortController(), calls = []; let released = 0;
+    const l = loader(async url => { calls.push(url); return new Response(JSON.stringify(f.previewGrant('FRONT'))); },
+      { timeoutMs: mode === 'timeout' ? 15 : 1000, verify: () => gate.promise });
+    const pending = l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), { signal: controller.signal });
+    const rejected = assert.rejects(pending); await pause(0);
+    if (mode === 'abort') controller.abort();
+    await rejected; gate.resolve({ url: 'blob:late-preview', dispose() { released++; } }); await pause(0);
+    assert.equal(calls.length, 1); assert.equal(released, 1);
+  }
+});
+
+test('small photographs and saved labels share prompt FIFO admission ahead of optional full media', async () => {
+  const f = fixture(), calls = [], gate = deferred();
+  const l = loader(async url => {
+    calls.push(url);
+    if (url.includes('/labels/')) return new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } });
+    return new Response(JSON.stringify(f.previewGrant(url.includes('BACK') ? 'BACK' : 'FRONT')));
+  }, { verify: async descriptor => { await gate.promise; return { url: `blob:${descriptor.url}`, dispose() {} }; } });
+  const full = l.load(f.front), label = l.load(approvedMediaSource(f.card, 'LABEL'));
+  const preview = l.load(approvedMediaSource(f.card, 'BACK', { delivery: 'preview' }));
+  await pause(0);
+  assert.equal(calls[0], approvedMediaSource(f.card, 'LABEL').url);
+  assert.equal(calls[1], `${f.back.url}&delivery=direct`);
+  gate.resolve(); (await Promise.all([full, label, preview])).forEach(asset => asset.dispose());
+});
+
+test('independent preview and full slots preserve stills on full failure, retry and decode failure', async () => {
+  const f = fixture(), preview = approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' });
+  const calls = [], views = { preview: [], full: [] }, released = []; let failFull = true;
+  const resource = createApprovedMediaResource({ load: async source => {
+    calls.push(source.delivery);
+    if (source.delivery === 'full' && failFull) throw new Error('full unavailable');
+    return { url: `blob:${source.delivery}`, representation: source.delivery, width: source.delivery === 'full' ? 1350 : 558,
+      dispose() { released.push(source.delivery); } };
+  } });
+  await resource.read(preview, value => views.preview.push(value));
+  await resource.read(f.front, value => views.full.push(value));
+  assert.equal(views.preview.at(-1).url, 'blob:preview'); assert.ok(views.full.at(-1).error);
+  failFull = false; await resource.read(f.front, value => views.full.push(value));
+  assert.equal(views.preview.length, 2); assert.equal(views.full.at(-1).representation, 'full');
+  resource.fail('FRONT', 'blob:full'); assert.deepEqual(released, ['full']); assert.equal(views.preview.length, 2);
+  resource.fail('FRONT', 'blob:stale'); assert.equal(views.preview.length, 2);
+  resource.dispose(); assert.deepEqual(released, ['full', 'preview']); assert.deepEqual(calls, ['preview', 'full', 'full']);
+});
+
+test('re-reading an owned slot publishes pending and ready state to the current callback without another transfer', async () => {
+  const f = fixture(), gate = deferred(), original = [], latest = [], ready = []; let calls = 0;
+  const resource = createApprovedMediaResource({ load: async () => { calls++; return gate.promise; } });
+  const first = resource.read(f.front, value => original.push(value)); await pause(0);
+  const second = resource.read(f.front, value => latest.push(value));
+  assert.equal(first, second); assert.equal(latest.at(-1).loading, true);
+  gate.resolve({ url: 'blob:full', representation: 'full', sourceSha256: hash(f.bytes), dispose() {} }); await first;
+  assert.equal(original.length, 1); assert.equal(latest.at(-1).url, 'blob:full');
+  await resource.read(f.front, value => ready.push(value));
+  assert.equal(calls, 1); assert.deepEqual(ready, [latest.at(-1)]); resource.dispose();
+});
+
+test('failed full delivery never fetches an available preview as replacement evidence', async () => {
+  const f = fixture(), grant = f.previewGrant('FRONT'), calls = [];
+  const l = loader(async url => {
+    calls.push(url);
+    if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+    assert.equal(url, grant.image.url); return new Response(null, { status: 404 });
+  });
+  await assert.rejects(l.load(f.front), /VERIFIED_IMAGE_UNAVAILABLE/);
+  assert.deepEqual(calls, [`${f.front.url}&delivery=direct`, grant.image.url]); assert.equal(l.created.length, 0);
+});
+
+test('leaving 3D cancels only pending full reads, preserves completed media and discards late full results', async () => {
+  const f = fixture(), preview = approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' });
+  const gates = [], views = [], released = [], calls = [];
+  const resource = createApprovedMediaResource({ load: async (source, { signal }) => {
+    calls.push(`${source.kind}:${source.delivery}`);
+    if (source.kind === 'FRONT' && source.delivery === 'full') {
+      const gate = deferred(); gates.push({ ...gate, signal }); return gate.promise;
+    }
+    return { url: `blob:${source.kind}:${source.delivery}`, dispose() { released.push(`${source.kind}:${source.delivery}`); } };
+  } });
+  await resource.read(preview, () => {}); await resource.read(f.back, () => {});
+  const pending = resource.read(f.front, value => views.push(value)); await pause(0);
+  resource.cancel('FRONT'); resource.cancel('BACK');
+  assert.equal(gates[0].signal.aborted, true); assert.deepEqual(released, []);
+  assert.deepEqual(views.at(-1), { loading: false, url: null, error: null, cancelled: true });
+  const count = views.length;
+  gates[0].resolve({ url: 'blob:late-full', dispose() { released.push('late-full'); } }); await pending;
+  assert.equal(views.length, count); assert.deepEqual(released, ['late-full']);
+  const resumed = resource.read(f.front, value => views.push(value)); await pause(0);
+  assert.equal(gates[1].signal.aborted, false); assert.equal(views.at(-1).loading, true);
+  gates[1].resolve({ url: 'blob:resumed-full', dispose() { released.push('resumed-full'); } }); await resumed;
+  resource.cancel('FRONT'); assert.equal(views.at(-1).url, 'blob:resumed-full');
+  resource.dispose();
+  assert.deepEqual(calls, ['FRONT:preview', 'BACK:full', 'FRONT:full', 'FRONT:full']);
+  assert.deepEqual(released, ['late-full', 'FRONT:preview', 'BACK:full', 'resumed-full']);
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Box3, Texture, Vector3, SRGBColorSpace, NoToneMapping } from 'three';
 import { SLAB_MODEL, INITIAL_SLAB_ANGLE, createSlabModel, disposeSlabModel, fitSlabPhoto, assertSlabTextureSize,
-  createSlabScene, slabFacing } from '../lib/slab-3d-scene.mjs';
+  createSlabScene, slabFacing, createSlabStudioEnvironment, SLAB_STUDIO } from '../lib/slab-3d-scene.mjs';
 
 const texture = (width = 1350, height = 1858) => new Texture({ width, height, naturalWidth: width, naturalHeight: height });
 
@@ -70,12 +70,12 @@ class Element extends EventTarget {
   focus() { this.focused = true; }
 }
 function fixture(extra = {}) {
-  const host = new Element(), win = new EventTarget(), doc = new EventTarget(), pending = [], frames = new Map(), errors = [], ready = [], facing = [], canvases = [];
+  const host = new Element(), win = new EventTarget(), doc = new EventTarget(), pending = [], frames = new Map(), errors = [], assetErrors = [], ready = [], facing = [], canvases = [];
   let serial = 0;
   win.devicePixelRatio = 3; win.requestAnimationFrame = callback => { frames.set(++serial, callback); return serial; };
   win.cancelAnimationFrame = key => frames.delete(key); doc.hidden = false;
   doc.createElement = name => {
-    assert.equal(name, 'canvas'); const canvas = { width: 0, height: 0, draws: [], getContext: () => ({ drawImage: (...args) => canvas.draws.push(args) }) }; canvases.push(canvas); return canvas;
+    assert.equal(name, 'canvas'); const canvas = { width: 0, height: 0, draws: [], getContext: () => extra.failCanvas ? null : ({ drawImage: (...args) => canvas.draws.push(args) }) }; canvases.push(canvas); return canvas;
   };
   class ImageFixture {
     constructor() { this.naturalWidth = 0; this.naturalHeight = 0; }
@@ -91,11 +91,11 @@ function fixture(extra = {}) {
     setPixelRatio(value) { this.pixelRatio = value; }, setSize(width, height) { this.size = [width, height]; },
     dispose() { this.disposed++; }, forceContextLoss() { this.contextLosses++; } };
   const scene = createSlabScene(host, { frontUrl: 'blob:front', backUrl: 'blob:back', ...extra.sources,
-    onReady: value => ready.push(value), onError: value => errors.push(value), onFacing: value => facing.push(value) },
+    onAssetError: (failure, metadata) => assetErrors.push({ failure, ...metadata }), onReady: value => ready.push(value), onError: value => errors.push(value), onFacing: value => facing.push(value) },
   { window: win, document: doc, renderer, ImageClass: ImageFixture });
   const flush = () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback()); };
   const emit = (target, type, props = {}) => { const event = new Event(type, { cancelable: true }); Object.assign(event, props); target.dispatchEvent(event); return event; };
-  return { host, win, doc, pending, frames, renderer, ready, errors, facing, canvases, scene, flush, emit,
+  return { host, win, doc, pending, frames, renderer, ready, errors, assetErrors, facing, canvases, scene, flush, emit,
     async load() { pending.forEach(image => image.resolve()); await scene.started; flush(); } };
 }
 
@@ -104,11 +104,12 @@ test('scene keeps native photographs, renders on demand at bounded DPR and relea
   assert.equal(f.ready.length, 1); assert.deepEqual(f.ready[0].photos, [{ width: 1350, height: 1858 }, { width: 1350, height: 1858 }]);
   assert.equal(f.renderer.pixelRatio, 2); assert.equal(f.renderer.outputColorSpace, SRGBColorSpace); assert.equal(f.renderer.toneMapping, NoToneMapping);
   assert.equal(f.renderer.renders, 1); assert.equal(f.frames.size, 0); f.flush(); assert.equal(f.renderer.renders, 1);
+  const environment = f.renderer.scene.environment; let environmentReleases = 0; environment.addEventListener('dispose', () => environmentReleases++);
   const maps = new Set(); f.renderer.scene.traverse(item => { if (item.material?.map) maps.add(item.material.map); });
-  let releases = 0; maps.forEach(map => { assert.equal(map.colorSpace, SRGBColorSpace); assert.equal(map.anisotropy, 8); map.addEventListener('dispose', () => releases++); });
+  let releases = 0; maps.forEach(map => { if (map.image.naturalWidth) { assert.equal(map.colorSpace, SRGBColorSpace); assert.equal(map.anisotropy, 8); } map.addEventListener('dispose', () => releases++); });
   f.scene.rotateBy(Math.PI / 6); f.scene.rotateBy(Math.PI / 6); assert.equal(f.frames.size, 1);
   f.flush(); assert.equal(f.renderer.renders, 2); assert.equal(f.frames.size, 0);
-  f.scene.dispose(); f.scene.dispose(); assert.equal(releases, 2); assert.equal(f.renderer.disposed, 1); assert.equal(f.renderer.contextLosses, 1);
+  f.scene.dispose(); f.scene.dispose(); assert.equal(releases, 3); assert.equal(f.renderer.disposed, 1); assert.equal(f.renderer.contextLosses, 1); assert.equal(environmentReleases, 1); assert.equal(f.renderer.scene.environment, null);
   assert.equal(f.host.children.length, 0); assert.ok(f.pending.every(image => image.cleared));
   f.scene.rotateBy(1); f.emit(f.win, 'resize'); assert.equal(f.frames.size, 0);
 });
@@ -167,22 +168,105 @@ test('unsupported photo resolution returns fallback instead of a silently reduce
 
 test('saved SVG and decorative NFC have separate bounded rasters while card images remain native', async () => {
   const f = fixture({ sources: { labelUrl: 'blob:label', nfcUrl: '/admin/brand/archive/nfc-tag-reference.jpg' } });
-  f.pending[0].resolve(); f.pending[1].resolve(); f.pending[2].resolve(258, 76); f.pending[3].resolve(3024, 4032); await f.scene.started; f.flush();
+  f.pending[0].resolve(); f.pending[1].resolve(); await f.scene.started; f.flush();
+  f.pending[2].resolve(258, 76); await Promise.resolve(); await Promise.resolve();
+  f.pending[3].resolve(384, 512); await Promise.resolve(); await Promise.resolve(); f.flush();
   assert.equal(f.errors.length, 0); assert.deepEqual(f.canvases.map(canvas => [canvas.width, canvas.height]), [[2048, 602], [512, 512]]);
   assert.deepEqual(f.pending.slice(0, 2).map(image => [image.naturalWidth, image.naturalHeight]), [[1350, 1858], [1350, 1858]]);
   const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version);
   assert.ok(model.getObjectByName('front-saved-label-artwork')); assert.equal(model.getObjectByName('back-saved-label-artwork'), undefined);
-  assert.ok(f.ready[0].estimatedTextureBytes < 40 * 1024 * 1024); f.scene.dispose(); assert.ok(f.canvases.every(canvas => canvas.width === 0 && canvas.height === 0));
+  assert.ok(Number(f.renderer.domElement.dataset.slabSourceTextureBytes) < 40 * 1024 * 1024); f.scene.dispose(); assert.ok(f.canvases.every(canvas => canvas.width === 0 && canvas.height === 0));
 });
 
 test('unverified remote photograph URLs never construct a renderer or load an image', () => {
   assert.throws(() => createSlabScene(null, { frontUrl: 'https://example.com/front.jpg', backUrl: 'blob:back' }), { code: 'SLAB_APPROVED_SOURCE_REQUIRED' });
 });
 
-test('a slow decorative NFC reference cannot delay the interactive photographs and late completion is disposable', async () => {
-  const f = fixture({ sources: { labelUrl: 'blob:label', nfcUrl: '/admin/brand/archive/nfc-tag-reference.jpg' } });
-  f.pending.slice(0, 3).forEach(image => image.resolve()); await f.scene.started; f.flush();
-  assert.equal(f.ready.length, 1); assert.equal(f.renderer.scene.getObjectByName('illustrative-front-nfc-reference'), undefined);
-  f.scene.dispose(); const pending = f.pending[3]; assert.ok(pending.cleared); pending.resolve(3024, 4032);
-  await Promise.resolve(); await Promise.resolve(); f.flush(); assert.equal(f.renderer.renders, 1); assert.equal(f.errors.length, 0);
+test('slow label and decorative NFC cannot delay the photographs; late completion is disposable', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:label', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
+  f.pending.slice(0, 2).forEach(image => image.resolve()); await f.scene.started; f.flush();
+  assert.equal(f.ready.length, 1); assert.equal(f.renderer.scene.getObjectByName('front-saved-label-artwork'), undefined);
+  f.pending[2].resolve(258, 76); await Promise.resolve(); await Promise.resolve(); f.flush();
+  assert.equal(f.renderer.scene.getObjectByName('illustrative-front-nfc-reference'), undefined);
+  const pending = f.pending[3]; f.scene.dispose(); assert.ok(pending.cleared); pending.resolve(384, 512);
+  await Promise.resolve(); await Promise.resolve(); f.flush(); assert.equal(f.renderer.renders, 2); assert.equal(f.errors.length, 0);
+});
+
+const settle = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+
+test('progressive photo replacement preserves the model, camera angle, single renderer and exact new pixels', async () => {
+  const f = fixture(); f.pending.forEach(image => image.resolve(558, 768)); await f.scene.started; f.flush();
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), face = model.getObjectByName('front-approved-photograph'), old = face.material.map;
+  let disposed = 0; old.addEventListener('dispose', () => disposed++);
+  f.scene.rotateBy(.7); f.flush(); const angle = f.renderer.domElement.dataset.slabAngle;
+  f.scene.updateAssets({ frontUrl: 'blob:full-front', backUrl: 'blob:full-back' });
+  f.pending[2].resolve(1350, 1858); await settle(); f.flush();
+  assert.equal(face.material.map.image.naturalWidth, 1350); assert.equal(disposed, 1); assert.ok(f.pending[0].cleared);
+  assert.equal(model.getObjectByName('back-approved-photograph').material.map.image.naturalWidth, 558);
+  f.pending[3].resolve(1350, 1858); await settle(); f.flush();
+  assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(f.renderer.domElement.dataset.slabAngle, angle);
+  assert.equal(f.renderer.disposed, 0); assert.equal(f.ready.length, 1); assert.equal(f.frames.size, 0); f.scene.dispose();
+});
+
+test('oversized or failed full-photo updates retain an interactive preview on a 1024 texture-limit GPU', async () => {
+  const f = fixture({ maxTextureSize: 1024 }); f.pending.forEach(image => image.resolve(558, 768)); await f.scene.started; f.flush();
+  const face = f.renderer.scene.getObjectByName('front-approved-photograph'), original = face.material.map;
+  f.scene.updateAssets({ frontUrl: 'blob:too-large', backUrl: 'blob:failed' });
+  f.pending[2].resolve(1350, 1858); f.pending[3].reject(); await settle(); f.flush();
+  assert.equal(face.material.map, original); assert.equal(f.renderer.disposed, 0); assert.equal(f.errors.length, 0);
+  assert.deepEqual(f.assetErrors.map(value => value.failure.code).sort(), ['SLAB_IMAGE_DECODE', 'SLAB_TEXTURE_LIMIT']);
+  f.scene.rotateBy(.5); f.flush(); assert.equal(f.renderer.renders, 2); f.scene.dispose();
+});
+
+test('superseded updates and late callbacks after disposal cannot install pixels or leak requests', async () => {
+  const f = fixture(); await f.load();
+  f.scene.updateAssets({ frontUrl: 'blob:obsolete' }); const stale = f.pending[2], callback = stale.onload;
+  f.scene.updateAssets({ frontUrl: 'blob:current' }); assert.ok(stale.cleared);
+  stale.naturalWidth = 10; stale.naturalHeight = 20; callback();
+  f.pending[3].resolve(); await settle(); f.flush();
+  assert.equal(f.renderer.scene.getObjectByName('front-approved-photograph').material.map.image, f.pending[3]);
+  f.scene.updateAssets({ backLabelUrl: 'blob:late-reverse' }); const late = f.pending[4], onload = late.onload;
+  f.scene.dispose(); late.naturalWidth = 258; late.naturalHeight = 76; onload(); await settle();
+  assert.ok(late.cleared); assert.equal(f.host.children.length, 0); assert.equal(f.errors.length, 0); assert.equal(f.assetErrors.length, 0);
+});
+
+test('saved reverse artwork is optional, unlit, outward-facing and replaceable without inventing a reverse label', async () => {
+  const f = fixture(); await f.load(); assert.equal(f.renderer.scene.getObjectByName('back-saved-label-artwork'), undefined);
+  f.scene.updateAssets({ backLabelUrl: 'blob:saved-reverse' }); f.pending[2].resolve(258, 76); await settle(); f.flush();
+  const reverse = f.renderer.scene.getObjectByName('back-saved-label-artwork'); reverse.updateMatrixWorld(true);
+  assert.equal(reverse.material.type, 'MeshBasicMaterial'); assert.equal(reverse.material.toneMapped, false);
+  assert.ok(new Vector3(0, 0, 1).transformDirection(reverse.matrixWorld).z < -.9);
+  f.scene.updateAssets({ backLabelUrl: null }); assert.equal(f.renderer.scene.getObjectByName('back-saved-label-artwork'), undefined); f.scene.dispose();
+});
+
+test('studio is neutral, bounded and caller-owned; optical plastic is nonmetallic and reflection mode has no transmission pass', () => {
+  const studio = createSlabStudioEnvironment(); assert.equal(studio.name, SLAB_STUDIO.version);
+  assert.equal(studio.image.data.byteLength, 256 * 128 * 4 * 4);
+  const levels = new Set(); for (let i = 0; i < studio.image.data.length; i += 4) {
+    const d = studio.image.data; assert.equal(d[i], d[i + 1]); assert.equal(d[i], d[i + 2]); levels.add(d[i]);
+  }
+  assert.ok(levels.size > 50);
+  const model = createSlabModel({ front: texture(), back: texture() });
+  model.getObjectByName('clear-two-piece-shell').traverse(part => { if (part.material) {
+    assert.equal(part.material.metalness, 0); assert.equal(part.material.transmission, 0); assert.equal(part.material.ior, 1.49);
+  } });
+  const transmission = createSlabModel({ front: texture(), back: texture(), materialMode: 'transmission' });
+  assert.equal(transmission.getObjectByName('front-beveled-shell').material.transmission, .96);
+  disposeSlabModel(model); disposeSlabModel(transmission); studio.dispose();
+});
+
+test('late saved-label decode or raster failure stays isolated and a deliberate slot retry restores the exact artwork', async () => {
+  for (const rasterFailure of [false, true]) {
+    const options = { sources: { labelUrl: 'blob:saved-label' }, failCanvas: rasterFailure }, f = fixture(options);
+    await f.load(); const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), face = model.getObjectByName('front-approved-photograph');
+    const original = face.material.map;
+    if (rasterFailure) f.pending[2].resolve(258, 76); else f.pending[2].reject();
+    await settle(); f.flush();
+    assert.equal(f.assetErrors.length, 1); assert.equal(f.assetErrors[0].slot, 'labelUrl');
+    assert.equal(f.assetErrors[0].failure.code, rasterFailure ? 'SLAB_TEXTURE_UNAVAILABLE' : 'SLAB_IMAGE_DECODE');
+    assert.equal(f.errors.length, 0); assert.equal(face.material.map, original); assert.equal(f.renderer.disposed, 0);
+    options.failCanvas = false; f.scene.retryAssets(['labelUrl']); f.pending[3].resolve(258, 76); await settle(); f.flush();
+    assert.ok(model.getObjectByName('front-saved-label-artwork')); assert.equal(face.material.map, original);
+    assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); f.scene.dispose();
+  }
 });
