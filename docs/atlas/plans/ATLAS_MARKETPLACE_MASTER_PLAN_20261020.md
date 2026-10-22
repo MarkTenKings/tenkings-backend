@@ -163,7 +163,8 @@ Local tests, disposable database qualification, browser acceptance, released cod
 - [x] Local preference backend/adapters5050ca38 and UI5581a703: exact request recovery and stale-change handling,33 backend/38 UI checks, eight actual PostgreSQL groups, desktop/mobile browser and customer build.
 - [x] Local approved evidence transportbd17f01e: exact-version public packet and bounded fixed-host customer reader, eight focused checks and public build/boundary.
 - [x] Optional display/preferences runtime and actual account composition525cc79f:370 customer tests, scoped routing/lint, production build/boundary and actual full-account1440/320 browser acceptance pass; independent reviews complete.
-- [ ] Register and qualify the additive collection schema, real restricted roles/routes and signed-in collection acceptance. SQL010 is being prepared locally; production remains SQL009.
+- [x] Register additive collection SQL010 locally:13 targeted tests and six owned PostgreSQL groups pass, preserving114 prior tables/746 catalog entries and existing rights; real restricted preference save/recovery tested. Independent review and exact cleanup pass.
+- [ ] Provision live restricted collection roles/routes and complete signed-in acceptance. Production remains SQL009; SQL010 is not applied there.
 - [x] Default-off staff Card History/web proxy integration:961 staff tests, clean scoped lint and production build/static boundary; independent reviews pass. Private aliases cannot bypass the dedicated proxy. Native registration and operational activation remain separate.
 - [ ] Operational curation activation and pricing method/rights/recency choices; complete the combined R1 journey before R2/R3. All30 requirement IDs above remain in scope.
 

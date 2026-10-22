@@ -1,3 +1,4 @@
+import { assertRegisteredOwnershipFoundation, captureOwnershipFoundation } from '../../../atlas-standalone-database/test/ownership-foundation-fixture.mjs';
 // Explicit root-logged disposable PostgreSQL17 only; never imported at runtime.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -23,9 +24,10 @@ const readerSql=await readFile(new URL('../../sql/card-ownership-workflow-reader
 const readerService=await readFile(new URL('../../src/card-ownership-workflow-read-service.mjs',import.meta.url),'utf8');
 const readerContract=await readFile(new URL('../../src/card-ownership-workflow-contract.mjs',import.meta.url),'utf8'),fixtureSource=await readFile(new URL(import.meta.url),'utf8');
 await writeFile(resolve(output,'fixture-used.mjs'),fixtureSource,{mode:0o600,flag:'wx'});
+await captureOwnershipFoundation(output);
 const fixture=await createOwnedManualFixture(process.argv.slice(2)),clients=[],checks=[],waitProofs=[],preservationProofs=[];let result;
 try{
- await fixture.cluster.sql(writer,[],fixture.database.name);await fixture.cluster.sql(sql,[],fixture.database.name);await fixture.cluster.sql(readerSql,[],fixture.database.name);
+ await assertRegisteredOwnershipFoundation(sql => fixture.cluster.sql(sql, [], fixture.database.name));await fixture.cluster.sql(sql,[],fixture.database.name);await fixture.cluster.sql(readerSql,[],fixture.database.name);
  const admin=fixture.admin,connection=fixture.connect(),staffAuth=connection.auth;
  async function staffLogin(phone){const boot=await staffAuth.bootstrap(''),initial=`${fixture.config.cookies.browser}=${boot.browserToken}`;
   const challenge=await staffAuth.send(initial,boot.csrf,{phone,requestId:randomUUID()},'evidence-fixture');const signed=await staffAuth.verify(initial,boot.csrf,{challengeId:challenge.challengeId,code:'424242'},'evidence-fixture');

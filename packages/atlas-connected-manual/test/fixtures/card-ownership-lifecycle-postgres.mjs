@@ -1,3 +1,4 @@
+import { assertRegisteredOwnershipFoundation, captureOwnershipFoundation } from '../../../atlas-standalone-database/test/ownership-foundation-fixture.mjs';
 // Explicit root-logged disposable PostgreSQL17 only; never imported at runtime.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -27,9 +28,10 @@ const readerContract=await readFile(new URL('../../src/card-ownership-workflow-c
 await writeFile(resolve(output,'fixture-used.mjs'),fixtureSource,{mode:0o600,flag:'wx'});
 const objectsSql=await readFile(new URL('../../sql/card-ownership-proof-objects-proposal.sql',import.meta.url),'utf8'),lifecycleSql=await readFile(new URL('../../sql/card-ownership-lifecycle-successor-proposal.sql',import.meta.url),'utf8');
 const lifecycleSource=await readFile(new URL('../../src/card-ownership-lifecycle-service.mjs',import.meta.url),'utf8'),proofContract=await readFile(new URL('../../src/card-ownership-proof-contract.mjs',import.meta.url),'utf8');
+await captureOwnershipFoundation(output);
 const fixture=await createOwnedManualFixture(process.argv.slice(2)),clients=[],checks=[],waitProofs=[],preservationProofs=[];let result;
 try{
- await fixture.cluster.sql(writer,[],fixture.database.name);await fixture.cluster.sql(sql,[],fixture.database.name);await fixture.cluster.sql(readerSql,[],fixture.database.name);
+ await assertRegisteredOwnershipFoundation(sql => fixture.cluster.sql(sql, [], fixture.database.name));await fixture.cluster.sql(sql,[],fixture.database.name);await fixture.cluster.sql(readerSql,[],fixture.database.name);
  const admin=fixture.admin,connection=fixture.connect(),staffAuth=connection.auth;
  async function staffLogin(phone){const boot=await staffAuth.bootstrap(''),initial=`${fixture.config.cookies.browser}=${boot.browserToken}`;
   const challenge=await staffAuth.send(initial,boot.csrf,{phone,requestId:randomUUID()},'evidence-fixture');const signed=await staffAuth.verify(initial,boot.csrf,{challengeId:challenge.challengeId,code:'424242'},'evidence-fixture');

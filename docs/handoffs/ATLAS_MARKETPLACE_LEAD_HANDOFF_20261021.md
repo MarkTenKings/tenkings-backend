@@ -1,6 +1,6 @@
 # ATLAS marketplace — successor lead handoff, October 21, 2026
 
-Latest local staff milestone: optional Card History/web comp integration passes961 staff tests, scoped lint and production build/static boundary (root9659dd72). Native restricted factory and SQL010 rehearsal are in progress; no production activation. Production remainsf0fd4f15/customer c68e9ea7/SQL009 as pinned below.
+Latest local staff milestone: optional Card History/web comp integration passes961 staff tests, scoped lint and production build/static boundary (root9659dd72). SQL010 local six-group PostgreSQL rehearsal now passes (fd359467), including preservation and cleanup; optional private dispatcher0797c6f3 passes44tests. Native restricted factory remains in progress; no production activation. Production remainsf0fd4f15/customer c68e9ea7/SQL009 as pinned below.
 
 > Latest local collection integration:525cc79f joins the default-off restricted photo/preferences runtimes with actual AccountWorkspace.370 customer tests, five routed/boundary checks, clean scoped integration lint, customer build and synthetic actual-component1440/320 browser acceptance pass. Root receipt52055875; independent reviews complete; tab20/server58651 cleaned. Production is stillf0fd over713, customer c68e9ea7, SQL009. MinimalSQL010 source registration/disposable qualification is in progress, not applied live. Payments are not complete; see October22 R2 Stripe/balance/payout proposal.8% remains proposed, and no money moved.
 

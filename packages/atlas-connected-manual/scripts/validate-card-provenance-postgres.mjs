@@ -295,13 +295,14 @@ try {
   await assert.rejects(read(first), { code: 'SIGN_IN_REQUIRED' });
   checks.push('integrated authenticated HTTP handler returns exact source-bound projection with zero protected-row changes and fails immediately after session revocation');
 
-  const manifest = await registeredMigrations(), current = manifest.at(-1); assert.equal(current.version, 'atlas-standalone-009-card-provenance');
+  const manifest = await registeredMigrations(), index = manifest.findIndex(m => m.version === 'atlas-standalone-009-card-provenance');
+  assert.equal(index, 7); const current = manifest[index];
   const { Client } = createRequire(import.meta.url)(process.argv[process.argv.indexOf('--pg-module') + 1]);
   const upgradeName = 'atlas_provenance_upgrade'; await fixture.cluster.sql(`CREATE DATABASE ${upgradeName}`);
   const upgrade = new Client({ connectionString: fixture.cluster.url(upgradeName) }); await upgrade.connect();
   try {
     await applyStandaloneBaseline(upgrade);
-    for (const migration of manifest.slice(0, -1)) {
+    for (const migration of manifest.slice(0, index)) {
       await upgrade.query('BEGIN'); await upgrade.query(migration.sql);
       await upgrade.query('INSERT INTO atlas_staff._standalone_migrations(version,checksum) VALUES($1,$2)', [migration.version, migration.sqlSha256]); await upgrade.query('COMMIT');
     }
@@ -320,12 +321,21 @@ try {
       return result;
     };
     const beforeUpgrade = await upgradeCensus(), ledger = (await upgrade.query('SELECT version,checksum,applied_at FROM atlas_staff._standalone_migrations ORDER BY version')).rows;
-    const applied = await applyStandaloneMigrations(upgrade); assert.deepEqual(applied.applied, [{ version: current.version, checksum: current.sqlSha256 }]);
+    // Keep the historical008→009 proof independent of later registered suffixes.
+    await upgrade.query('BEGIN');
+    try {
+      await upgrade.query(current.sql);
+      await upgrade.query('INSERT INTO atlas_staff._standalone_migrations(version,checksum) VALUES($1,$2)', [current.version,current.sqlSha256]);
+      await upgrade.query('COMMIT');
+    } catch (error) { await upgrade.query('ROLLBACK'); throw error; }
     assert.deepEqual(await upgradeCensus(), beforeUpgrade);
     assert.deepEqual((await upgrade.query('SELECT version,checksum,applied_at FROM atlas_staff._standalone_migrations ORDER BY version')).rows.filter(row => row.version !== current.version), ledger);
+    const suffix = await applyStandaloneMigrations(upgrade);
+    assert.deepEqual(suffix.applied, manifest.slice(index + 1).map(m => ({ version: m.version, checksum: m.sqlSha256 })));
+    assert.deepEqual(await upgradeCensus(), beforeUpgrade);
     assert.equal((await applyStandaloneMigrations(upgrade)).status, 'NO_OP'); assert.deepEqual(await upgradeCensus(), beforeUpgrade);
   } finally { await upgrade.end(); }
-  checks.push('actual registered009 upgrades exact prefix008 with prior approval/card/report/staff rows and ledger unchanged; clean baseline002–009 and repeated release no-op pass');
+  checks.push('exact registered009 SQL upgrades prefix008 with prior approval/card/report/staff rows and ledger unchanged; later registered suffix and repeated migrator no-op preserve those rows');
   receipt = { status: 'CARD_PROVENANCE_POSTGRES_PASS', migration: { version: current.version, checksum: current.sqlSha256 }, checks, groups: checks.length,
     productionQueries: 0, providerCalls: 0, ownershipWrites: 0, directory: fixture.cluster.directory };
 } finally { await connection.close(); await fixture.stop(); }

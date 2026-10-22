@@ -1,3 +1,4 @@
+import { assertRegisteredOwnershipFoundation, captureOwnershipFoundation } from '../../atlas-standalone-database/test/ownership-foundation-fixture.mjs';
 // Explicitly owned, synthetic PostgreSQL17 qualification. Never ambient DB URLs.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -14,11 +15,13 @@ import { cardOwnershipGrantSQL, createCardOwnershipCustomerService, createCardOw
 const output = process.env.ATLAS_CARD_OWNERSHIP_EVIDENCE;
 assert(output && resolve(output) === output, 'Absolute evidence directory required');
 await mkdir(output, { recursive: true, mode: 0o700 });
+await captureOwnershipFoundation(output);
 const fixture = await createOwnedManualFixture(process.argv.slice(2)), checks = [], clients = [];
 let result;
 try {
   const proposal = await readFile(new URL('../sql/card-ownership-proposal.sql', import.meta.url), 'utf8');
-  await fixture.cluster.sql(proposal, [], fixture.database.name);
+  assert.equal(digest(proposal), '00720728d42a1276d50c70998d22e9e309cec2b1bb5cdd9ba8c7126e16fc36a2');
+  await assertRegisteredOwnershipFoundation(sql => fixture.cluster.sql(sql, [], fixture.database.name));
   const admin = fixture.admin, connection = fixture.connect(), { auth: staffAuth, boundary } = connection;
   await fixture.cluster.sql(cardOwnershipGrantSQL('atlas_fixture_manual', 'STAFF'), [], fixture.database.name);
   const review = createCardOwnershipReviewService({ auth: staffAuth, boundary });

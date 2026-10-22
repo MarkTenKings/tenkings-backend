@@ -48,11 +48,11 @@ const paths = [ownPath, 'frontend/atlas-app/test/staff-comp-curation-journey.tes
  'packages/atlas-manual-intake/src/repository.mjs','packages/atlas-site-router/routes.mjs','packages/atlas-site-router/server.mjs','packages/atlas-site-router/report-entry.mjs',
  'packages/atlas-manual-workspace/src/sold-reference-ui.mjs','packages/atlas-grading-core/dist/identity.js','packages/atlas-grading-core/src/identity.ts',
  'frontend/atlas-app/lib/graded-cards-client.mjs','frontend/atlas-app/lib/order-desk-client.mjs','frontend/atlas-app/lib/routes.mjs',
- ...['staff-comp-curation-native-composition','staff-comp-curation-proxy-composition','staff-comp-curation-http','http','policy','access/auth','access/database','access/config','access/fixture','access/privileges'].map(n=>`frontend/atlas-app/lib/server/${n}.mjs`),
+ ...['staff-comp-curation-native-composition','staff-comp-curation-proxy-composition','staff-comp-curation-frontend-proxy','staff-comp-curation-frontend-runtime','staff-comp-curation-private-adapter','staff-comp-curation-transport-boundary','staff-comp-curation-http','http','policy','access/auth','access/database','access/config','access/fixture','access/privileges'].map(n=>`frontend/atlas-app/lib/server/${n}.mjs`),
  ...['staff-comp-curation-response-transport','staff-comp-curation-transport-contract','staff-comp-curation-client','staff-comp-curation-controller','staff-comp-curation-entry','card-history-client'].map(n=>`frontend/atlas-app/lib/${n}.mjs`),
  ...['CardHistory.jsx','StaffCompCuration.jsx','StaffCompCuration.module.css'].map(n=>`frontend/atlas-app/components/${n}`),
  'packages/atlas-standalone-database/sql/baseline.sql','packages/atlas-standalone-database/baseline.manifest.json','packages/atlas-standalone-database/migrations.manifest.json',
- ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance'].map(n=>`packages/atlas-standalone-database/sql/${n}.sql`)];
+ ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance','010-collection-foundation'].map(n=>`packages/atlas-standalone-database/sql/${n}.sql`)];
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2)+'\n', {flag:'wx',mode:0o600});
 const pin = async path => ({path,sha256:digest(await readFile(path))});
 function noInheritedDatabase() { assert(!Object.keys(process.env).some(k=>/^(DATABASE_URL|DIRECT_URL|ATLAS_DATABASE_URL|PGHOST|PGPORT|PGUSER|PGPASSWORD|PGDATA|PGSERVICE|PGSERVICEFILE)$/.test(k))); }

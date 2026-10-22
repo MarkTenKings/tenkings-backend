@@ -1,3 +1,4 @@
+import { assertRegisteredOwnershipFoundation, captureOwnershipFoundation } from '../../../atlas-standalone-database/test/ownership-foundation-fixture.mjs';
 // Explicitly owned PostgreSQL17 only. Not a serving dependency or automatic test.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -17,11 +18,11 @@ await mkdir(output, { mode: 0o700 });
 const writer = await readFile(new URL('../../sql/card-ownership-proposal.sql', import.meta.url), 'utf8');
 assert.equal(digest(writer), '00720728d42a1276d50c70998d22e9e309cec2b1bb5cdd9ba8c7126e16fc36a2');
 const reader = await readFile(new URL('../../sql/card-ownership-reader-proposal.sql', import.meta.url), 'utf8');
+await captureOwnershipFoundation(output);
 const fixture = await createOwnedManualFixture(process.argv.slice(2)), clients = [], checks = [];
 let result;
 try {
-  await fixture.cluster.sql(writer, [], fixture.database.name);
-  await fixture.cluster.sql(reader, [], fixture.database.name);
+  await assertRegisteredOwnershipFoundation(sql => fixture.cluster.sql(sql, [], fixture.database.name));
   const admin = fixture.admin, staffId = (await admin.$queryRawUnsafe('SELECT id FROM atlas_staff."StaffIdentity" ORDER BY id LIMIT 1'))[0].id;
   const customerClient = new PrismaClient({ datasources: { db: { url: fixture.database.customerUrl } } }); clients.push(customerClient);
   const config = localConfig({ databaseUrl: fixture.database.customerUrl, sessionKey: randomBytes(32), phoneKey: randomBytes(32) });

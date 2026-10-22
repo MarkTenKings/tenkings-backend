@@ -134,5 +134,7 @@ test('reader grant is narrow and source has no executable mutator or writer regi
   assert.match(executable, /REVOKE ALL ON FUNCTION atlas_ownership.customer_read\(text,text,jsonb,text,jsonb\) FROM PUBLIC/);
   assert.equal((executable.match(/atlas_customer.current_account\(/g) ?? []).length, 2);
   const manifest = await readFile(new URL('../../atlas-standalone-database/migrations.manifest.json', import.meta.url), 'utf8');
-  assert.doesNotMatch(manifest, /card-ownership-reader|card-ownership-proposal/);
+  assert.match(manifest, /atlas-standalone-010-collection-foundation/);
+  const grants = await readFile(new URL('../../atlas-standalone-database/grants.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(grants, /cardOwnership|atlas_ownership/);
 });

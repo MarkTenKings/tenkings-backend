@@ -1,3 +1,4 @@
+import { assertRegisteredOwnershipFoundation } from '../../../atlas-standalone-database/test/ownership-foundation-fixture.mjs';
 // Dedicated owned PG17 only. --prepare writes a finite source/path/port/nonce
 // plan; --execute is a SEPARATE root-approved operation. No existing DB reuse.
 import assert from 'node:assert/strict';
@@ -32,9 +33,9 @@ const sourcePaths = ['packages/atlas-connected-manual/sql/card-ownership-prefere
   'packages/atlas-connected-manual/sql/card-ownership-proposal.sql', 'packages/atlas-connected-manual/src/card-ownership-contract.mjs',
   'frontend/atlas-customer/lib/server/auth.mjs', 'frontend/atlas-customer/lib/server/database.mjs', 'frontend/atlas-customer/lib/server/fixture.mjs',
   'frontend/atlas-customer/lib/server/config.mjs', 'frontend/atlas-customer/lib/server/policy.mjs', 'frontend/atlas-app/lib/server/access/fixture.mjs',
-  'packages/atlas-standalone-database/migrate.mjs', 'packages/atlas-standalone-database/initialize.mjs',
+  'packages/atlas-standalone-database/migrate.mjs', 'packages/atlas-standalone-database/registered-migrations.mjs', 'packages/atlas-standalone-database/test/ownership-foundation-fixture.mjs', 'packages/atlas-connected-manual/sql/card-ownership-reader-proposal.sql', 'packages/atlas-standalone-database/initialize.mjs',
   'packages/atlas-standalone-database/sql/baseline.sql', 'packages/atlas-standalone-database/baseline.manifest.json', 'packages/atlas-standalone-database/migrations.manifest.json',
-  ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance'].map(n => `packages/atlas-standalone-database/sql/${n}.sql`)];
+  ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance','010-collection-foundation'].map(n => `packages/atlas-standalone-database/sql/${n}.sql`)];
 const pin = async path => ({ path, sha256: hash(await readFile(resolve(root, path))) });
 if (mode === '--prepare') {
   await mkdir(output, { mode: 0o700 }); await mkdir(resolve(output, 'cluster'), { mode: 0o700 }); await mkdir(resolve(output, 'source-used'), { mode: 0o700 });
@@ -77,8 +78,7 @@ if (mode === '--prepare') {
     assert.deepEqual((await control.query("SELECT current_setting('data_directory') data,current_setting('listen_addresses') host,current_setting('unix_socket_directories') sockets")).rows[0], { data: plan.data, host: '127.0.0.1', sockets: '' });
     await control.query(`CREATE DATABASE ${dbName}`); setup = await socket();
     await applyStandaloneBaseline(setup); await applyStandaloneMigrations(setup); await initializeStandaloneCoordination(setup, { geometryConcurrency: 2 });
-    await setup.query(await readFile(resolve(root, 'packages/atlas-connected-manual/sql/card-ownership-proposal.sql'), 'utf8'));
-    await setup.query(await readFile(resolve(root, 'packages/atlas-connected-manual/sql/card-ownership-preferences-proposal.sql'), 'utf8'));
+    await assertRegisteredOwnershipFoundation(sql => setup.query(sql));
     await setup.query(`REVOKE TEMPORARY ON DATABASE ${dbName} FROM PUBLIC`); // Only this owned DB; no production authority.
     for (const [i, who] of [[1,customerRole],[2,servingRole]]) await control.query(`CREATE ROLE ${who} LOGIN PASSWORD '${passwords[i]}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`);
     await setup.query(customerGrantSQL(customerRole)); await setup.query(cardOwnershipPreferencesGrantSQL(servingRole));
@@ -330,8 +330,8 @@ if (mode === '--prepare') {
     const sessionDelta=whole['atlas_customer.CustomerSession']; assert.deepEqual(sessionDelta.added[0],{...sessionDelta.removed[0],expiresAt:sessionDelta.added[0].expiresAt});
     const events=whole['atlas_ownership.event'].added; assert.equal(events.filter(e=>e.kind==='CLAIM_VERIFIED').length,3);
     await assertRows(whole);
-    assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_staff._standalone_migrations')).rows[0].n,9);
-    result={pass:true,checks,phases,waitProofs,tableCount:tables.length,wholeJourney:{changes:counts(whole),exactDelta:whole,unchangedTables:tables.length-Object.keys(whole).length},ledgerRows:9,
+    assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_staff._standalone_migrations')).rows[0].n,10);
+    result={pass:true,checks,phases,waitProofs,tableCount:tables.length,wholeJourney:{changes:counts(whole),exactDelta:whole,unchangedTables:tables.length-Object.keys(whole).length},ledgerRows:10,
       policyRequired:false,offerDelivery:false,timezoneQualification:'Pacific/Honolulu session; canonical UTC raw gateway and SET LOCAL UTC service',servingRole,schemaOwner:ownerRole};
     service.close();
   } catch(error) {failure=error;result={pass:false,checks,phases,waitProofs,error:{name:error.name,code:error.code,message:safe(error.message),stack:safe(error.stack)}};}

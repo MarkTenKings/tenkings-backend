@@ -55,7 +55,7 @@ const planPath = resolve(output, 'launch-plan.json'), sourcePaths = [
   'packages/atlas-standalone-database/sql/baseline.sql',
   'packages/atlas-standalone-database/baseline.manifest.json',
   'packages/atlas-standalone-database/migrations.manifest.json',
-  ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance'].map(n => `packages/atlas-standalone-database/sql/${n}.sql`),
+  ...['002-variant-label-retry','003-report-image-retry','004-label-sheets','005-photoroom-removal','006-variant-shared-label-retry','007-label-layout-retry','008-graded-cards-archive','009-card-provenance','010-collection-foundation'].map(n => `packages/atlas-standalone-database/sql/${n}.sql`),
 ];
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
 const pin = async path => ({ path, sha256: digest(await readFile(resolve(root, path))) });
@@ -342,10 +342,10 @@ if (mode === '--prepare') {
     assert.equal(receiptRow.actor_id, owner.principal.id); assert.equal(receiptRow.request_id, first.requestId); assert.equal(receiptRow.revision, 1);
     assert.equal(JSON.parse(receiptRow.receipt).guidance, null); assert.equal(JSON.parse(receiptRow.receipt).policy, null);
     assert.equal(wholeDelta['atlas_manual.publication'].added[0].state, 'PENDING');
-    assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_staff._standalone_migrations')).rows[0].n, 9);
+    assert.equal((await setup.query('SELECT count(*)::int n FROM atlas_staff._standalone_migrations')).rows[0].n, 10);
     assert.deepEqual(await files(), initialArtifacts);
     result = { pass: true, checks, phases, waitProofs, exchanges, schemaSha256: schemaPin.sha256, tableCount: tables.length,
-      wholeJourney: { changes: counts(wholeDelta), exactDelta: wholeDelta, unchangedTables: tables.length - Object.keys(wholeDelta).length }, artifactsPreserved: initialArtifacts, ledgerRows: 9,
+      wholeJourney: { changes: counts(wholeDelta), exactDelta: wholeDelta, unchangedTables: tables.length - Object.keys(wholeDelta).length }, artifactsPreserved: initialArtifacts, ledgerRows: 10,
       rowLockGrant: 'UPDATE(id) only; real changes and no-op writes refused', schemaOwner: ownerRole, servingRole: role,
       directTableRoleTrust: 'native service owns session/ACL/artifact authority; not per-user database RLS', policy: null };
     native.close(); db.close();
