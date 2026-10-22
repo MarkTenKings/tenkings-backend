@@ -9,6 +9,7 @@ import { fixtureVerifyProvider } from './access/fixture-verify.mjs';
 import { twilioVerifyTransport } from './access/twilio.mjs';
 import { createFrontendManualRuntime } from './manual-frontend-runtime.mjs';
 import { createPageAccess } from './page-access.mjs';
+import { createStaffCompCurationFrontendRuntime } from './staff-comp-curation-frontend-runtime.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_CONNECTED_LOCAL_FIXTURE === '1') {
@@ -41,7 +42,10 @@ export function runtime(req, env = process.env) {
     if (env.ATLAS_MANUAL_ENABLED === 'true' && !state.connectedManual) state.connectedManual = createFrontendManualRuntime({env,auth:state.auth,staffConfig:config,assertRequest});
     Object.setPrototypeOf(state.auth, DurableStaffAuth.prototype);
     Object.setPrototypeOf(state.auth.database, StaffDatabase.prototype);
-    return { ...state, mode: config.mode, origin: config.origin, cookies: config.cookies,
+    // Optional web-only proxy; construction owns no client and starts no work.
+    // Keep this request's configuration separate from the cached grading proxy.
+    const compCuration = createStaffCompCurationFrontendRuntime({ env, auth: state.auth, staffConfig: config, assertRequest });
+    return { ...state, compCuration, mode: config.mode, origin: config.origin, cookies: config.cookies,
         cookie: local ? undefined : secureStaffCookie, assertRequest,
         // Global/phone budgets remain effective even if the platform cannot
         // provide a trusted per-client address. No arbitrary forwarding header

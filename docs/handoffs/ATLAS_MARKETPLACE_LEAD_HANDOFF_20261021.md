@@ -1,5 +1,9 @@
 # ATLAS marketplace — successor lead handoff, October 21, 2026
 
+Latest local staff milestone: optional Card History/web comp integration passes961 staff tests, scoped lint and production build/static boundary (root9659dd72). Native restricted factory and SQL010 rehearsal are in progress; no production activation. Production remainsf0fd4f15/customer c68e9ea7/SQL009 as pinned below.
+
+> Latest local collection integration:525cc79f joins the default-off restricted photo/preferences runtimes with actual AccountWorkspace.370 customer tests, five routed/boundary checks, clean scoped integration lint, customer build and synthetic actual-component1440/320 browser acceptance pass. Root receipt52055875; independent reviews complete; tab20/server58651 cleaned. Production is stillf0fd over713, customer c68e9ea7, SQL009. MinimalSQL010 source registration/disposable qualification is in progress, not applied live. Payments are not complete; see October22 R2 Stripe/balance/payout proposal.8% remains proposed, and no money moved.
+
 ## Coordinated production checkpoint — 2026-10-22 08:01 UTC
 
 Current serving source is **f0fd4f15cefa59d0b57ebdd5deee7fedc170f61e**, the photo-only direct child of the separately authorized713573fc corner release. It changes two photo serving files and preserves all other713 serving bytes. Staff **dpl_BuJUQjbxL54NZeL3QhDpDz7ijv7k** (`atlas-grading-staff-payvajcob-ten-kings.vercel.app`); public **dpl_EQtu3jE4kmtnmVwXJkRaRwZPg6rM** (`atlas-grading-public-19lexsby8-ten-kings.vercel.app`). Native image **045ed35c9225f2a13c167fc485050e73049b806656779b3940fafb8a7a18422b**, main **cefc6d815eaf04e2d734b1dd7a6ef2081c056b0b6935514a01bcbadd6d90e0fb**, worker **16a855f2c37c786e1cfc92751a36f328e7453655e54ae3a145c0a792cd76ddf4**. Controls **141/103/109**; customer **83/35**, sourcec68e9ea7 and deployment2aW7K6CT retained. SQL009/ledger9 unchanged.
