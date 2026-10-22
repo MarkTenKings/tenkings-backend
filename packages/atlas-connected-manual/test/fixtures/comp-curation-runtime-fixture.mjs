@@ -17,7 +17,7 @@ async function catalog(role, owner) {
   const functions = ['atlas_manual.authenticate', 'atlas_manual.card_revision', 'atlas_manual.immutable', 'atlas_manual_intake.card_guard']
     .map(name => ({ name, owner, source: baseline.match(new RegExp(`CREATE OR REPLACE FUNCTION ${name.replaceAll('.', '\\.')}\\(.*?AS \\$function\\$(.*?)\\$function\\$;`, 's'))[1] }));
   functions.push({ name: 'atlas_manual.comp_curation_guard', owner, source: proposal.match(/AS \$\$(.*?)\$\$;/s)[1] });
-  return { role: [{ name: role, session_name: role, unsafe: false }],
+  return { role: [{ name: role, session_name: role, unsafe: false, memberships: [] }],
     schemas: [{ name: 'atlas_manual', usage: true, create: false }, { name: 'atlas_manual_intake', usage: true, create: false }, { name: 'public', usage: true, create: false }],
     columns: COMP_CURATION_TABLES.flatMap(name => ['id', 'content', 'revision'].map(column => ({ name, column, sel: true,
       ins: name === 'atlas_manual.comp_curation', upd: ['atlas_manual.card', 'atlas_manual_intake.card'].includes(name) && column === 'id', refs: false, extra: false }))),

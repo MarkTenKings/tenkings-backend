@@ -99,8 +99,11 @@ const response = ok => requireThat(ok, 503, 'OWNERSHIP_PREFERENCES_RESPONSE_INVA
 
 async function assertRole(tx, servingRole, schemaOwner) {
   const rows = await tx.$queryRawUnsafe(`SELECT current_user AS name,session_user AS session,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('role',pg_get_userbyid(m.roleid),'member',pg_get_userbyid(m.member),
+      'admin',m.admin_option,'inherit',m.inherit_option,'set',m.set_option,'grantorSuperuser',g.rolsuper))
+      FROM pg_auth_members m LEFT JOIN pg_roles g ON g.oid=m.grantor
+      WHERE m.member=r.oid OR m.roleid=r.oid),'[]'::jsonb) AS memberships,
     r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls
-    OR EXISTS(SELECT 1 FROM pg_auth_members WHERE member=r.oid OR roleid=r.oid)
     OR NOT EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_class c ON c.oid=t.tgrelid
       JOIN pg_namespace cn ON cn.oid=c.relnamespace JOIN pg_namespace pn ON pn.oid=p.pronamespace
       WHERE cn.nspname='atlas_ownership' AND c.relname='event' AND c.relkind='r' AND t.tgname='immutable' AND NOT t.tgisinternal AND t.tgenabled='O'
@@ -110,21 +113,25 @@ async function assertRole(tx, servingRole, schemaOwner) {
       AND NOT p.prosecdef AND p.proconfig IS NULL AND encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='a06ecb8c212cb9ac364b78217a68733d4cfb4a4e12db96e2eeb2c63f19cbaa6b')
     OR has_database_privilege(current_user,current_database(),'CREATE,TEMPORARY')
     OR EXISTS(SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid)
-    OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+    OR EXISTS(SELECT 1 FROM pg_namespace n WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
       AND (n.nspowner=r.oid OR has_schema_privilege(current_user,n.oid,'CREATE') OR
        (n.nspname NOT IN ('public','atlas_ownership_preferences') AND has_schema_privilege(current_user,n.oid,'USAGE'))))
-    OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+    OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
       AND (c.relowner=r.oid OR (c.relkind IN ('r','p','v','m','f') AND (
        has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') OR EXISTS(
         SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
         AND has_column_privilege(current_user,c.oid,a.attnum,'SELECT,INSERT,UPDATE,REFERENCES'))))
        OR (c.relkind='S' AND has_sequence_privilege(current_user,c.oid,'USAGE,SELECT,UPDATE'))))
-    OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT LIKE 'pg_%'
+    OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE left(n.nspname,3)<>'pg_'
       AND n.nspname<>'information_schema' AND p.proowner=r.oid) AS unsafe
     FROM pg_roles r WHERE r.rolname=current_user`, schemaOwner);
   role(rows.length === 1 && rows[0].name === servingRole && rows[0].session === servingRole && rows[0].unsafe === false);
+  // Permit only PostgreSQL's incoming admin-only grant to the reviewed owner.
+  // The serving role must never inherit or SET ROLE through any membership.
+  role(Array.isArray(rows[0].memberships) && rows[0].memberships.every(m => m && m.role === servingRole && m.member === schemaOwner
+    && m.admin === true && m.inherit === false && m.set === false && m.grantorSuperuser === true));
   const executable = await tx.$queryRawUnsafe(`SELECT n.nspname AS schema,p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name
-    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
     AND NOT (NOT p.prosecdef AND p.probin='$libdir/uuid-ossp' AND EXISTS(SELECT 1 FROM pg_depend d JOIN pg_extension e ON e.oid=d.refobjid
       WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.refclassid='pg_extension'::regclass AND d.deptype='e' AND e.extname='uuid-ossp'))
     AND (p.prorettype<>'trigger'::regtype OR n.nspname LIKE 'atlas_ownership%') AND has_function_privilege(current_user,p.oid,'EXECUTE')`);
@@ -140,6 +147,9 @@ async function assertRole(tx, servingRole, schemaOwner) {
       && JSON.stringify(found[0].config) === JSON.stringify(expected.config) && found[0].bodySha256 === expected.bodySha256);
   }
 }
+
+// Read-only qualification entry point; no application action or client creation.
+export { assertRole as assertCardOwnershipPreferencesRole };
 
 /** Text only. Does not create a role, subtract inherited rights, or execute. */
 export function cardOwnershipPreferencesGrantSQL(servingRole) {

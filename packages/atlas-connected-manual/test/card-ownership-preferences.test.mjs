@@ -23,14 +23,16 @@ function fixture({ answer = current(), unsafe = false, onQuery, onCommit } = {})
   const auth = new CustomerAuth({ config, database: { call() { assert.fail('No auth writer'); } }, provider: {} });
   const browserToken = Buffer.alloc(32, 2).toString('base64url'), sessionToken = Buffer.alloc(32, 3).toString('base64url');
   const cookie = `${config.cookies.browser}=${browserToken}; ${config.cookies.session}=${sessionToken}`;
-  const csrf = auth.digest(`session:${sessionToken}`), actions = [], settings = [];
+  const csrf = auth.digest(`session:${sessionToken}`), actions = [], settings = [], queries = [];
+  const roleRow = { name: 'atlas_fixture_prefs', session: 'atlas_fixture_prefs', unsafe, memberships: [] };
   const defs = OWNERSHIP_PREFERENCES_ROUTINE_PINS.map(r => ({ ...r, config: [...r.config], owner: 'atlas_fixture_owner' }));
   const stats = { begins: 0, commits: 0, rollbacks: 0, roleChecks: 0 }; let executable = [{ schema: defs[0].schema, name: defs[0].name }];
   const client = { async $transaction(work, options) {
     stats.begins++; assert.deepEqual(options, { maxWait: 3000, timeout: 8000 });
     try {
       const result = await work({ async $executeRawUnsafe(q) { settings.push(q); }, async $queryRawUnsafe(q, ...args) {
-        if (q.startsWith('SELECT current_user')) { stats.roleChecks++; return [{ name: 'atlas_fixture_prefs', session: 'atlas_fixture_prefs', unsafe }]; }
+        queries.push(q);
+        if (q.startsWith('SELECT current_user')) { stats.roleChecks++; return [structuredClone(roleRow)]; }
         if (q.startsWith('SELECT n.nspname') && !q.includes('bodySha256')) return executable;
         if (q.includes('bodySha256')) return defs;
         actions.push(args[3]); if (onQuery) { const override = await onQuery(args, f); if (override) return [{ result: override }]; }
@@ -40,9 +42,10 @@ function fixture({ answer = current(), unsafe = false, onQuery, onCommit } = {})
     } catch (error) { if (!stats.commits) stats.rollbacks++; throw error; }
   } };
   const options = { customerAuth: auth, client, servingRole: 'atlas_fixture_prefs', schemaOwner: 'atlas_fixture_owner' };
-  const f = { config, auth, cookie, csrf, client, options, actions, settings, defs, stats, setExecutable(v) { executable = v; } };
+  const f = { config, auth, cookie, csrf, client, options, actions, settings, queries, roleRow, defs, stats, setExecutable(v) { executable = v; } };
   f.service = createCardOwnershipPreferencesService(options); return f;
 }
+const administratorMembership = ({ servingRole, schemaOwner }) => ({ role: servingRole, member: schemaOwner, admin: true, inherit: false, set: false, grantorSuperuser: true });
 
 test('closed preference inputs reject claims, authority, getters and unrelated actions', () => {
   for (const action of ['submit_claim','propose_transfer','accept_transfer','read_collection','review_claim'])
@@ -104,6 +107,44 @@ test('direct old gateway, helper and raw-table role drift fail closed', async ()
   const unsafe = fixture({ unsafe: true }); await assert.rejects(unsafe.service.readPreferences(unsafe.cookie), { code: 'OWNERSHIP_PREFERENCES_DATABASE_ROLE_INVALID' });
   const f = fixture(); f.setExecutable([{ schema: 'atlas_ownership', name: 'customer_call(text, text, jsonb, text, jsonb)' }]);
   await assert.rejects(f.service.readPreferences(f.cookie), { code: 'OWNERSHIP_PREFERENCES_DATABASE_ROLE_INVALID' }); assert.equal(f.actions.length, 0);
+});
+test('reviewed owner incoming superuser-granted admin-only membership permits preference reads', async () => {
+  const f = fixture(); f.roleRow.memberships = [administratorMembership(f.options)];
+  await f.service.readPreferences(f.cookie);
+  assert.equal(f.stats.roleChecks, 2); assert.equal(f.stats.commits, 1);
+});
+test('preference roles reject outgoing and non-exact incoming administrator memberships before reads', async () => {
+  for (const patch of [{ role: 'another_role' }, { member: 'another_owner' },
+    { role: 'another_role', member: 'atlas_fixture_prefs' }, { member: 'atlas_fixture_prefs' },
+    { admin: false }, { admin: null }, { admin: 'true' }, { inherit: true }, { inherit: null }, { inherit: 0 },
+    { set: true }, { set: null }, { set: 0 }, { grantorSuperuser: false }, { grantorSuperuser: null }, { grantorSuperuser: 'true' }]) {
+    const f = fixture(); f.roleRow.memberships = [administratorMembership(f.options), { ...administratorMembership(f.options), ...patch }];
+    await assert.rejects(f.service.readPreferences(f.cookie), { code: 'OWNERSHIP_PREFERENCES_DATABASE_ROLE_INVALID' }, JSON.stringify(patch));
+    assert.equal(f.actions.length, 0); assert.equal(f.stats.commits, 0);
+  }
+  for (const memberships of [undefined, null, {}, [null], [{}]]) {
+    const f = fixture(); f.roleRow.memberships = memberships;
+    await assert.rejects(f.service.readPreferences(f.cookie), { code: 'OWNERSHIP_PREFERENCES_DATABASE_ROLE_INVALID' });
+    assert.equal(f.actions.length, 0);
+  }
+});
+test('post-write administrator membership drift rejects the receipt inside the transaction', async () => {
+  const input = request(), f = fixture({ answer: receipt('set_collection_preferences', input), onQuery(args, f) {
+    if (args[3] === 'set_collection_preferences') f.roleRow.memberships[0].inherit = true;
+  } });
+  f.roleRow.memberships = [administratorMembership(f.options)];
+  await assert.rejects(f.service.setCollectionPreferences(f.cookie, f.csrf, input), { code: 'OWNERSHIP_PREFERENCES_DATABASE_ROLE_INVALID' });
+  assert.equal(f.stats.commits, 0); assert.equal(f.stats.rollbacks, 1);
+});
+test('preference catalog queries inspect both membership directions and literal pg_ schemas', async () => {
+  const f = fixture(); await f.service.readPreferences(f.cookie);
+  const query = f.queries.find(sql => sql.startsWith('SELECT current_user'));
+  assert.match(query, /WHERE m\.member=r\.oid OR m\.roleid=r\.oid/);
+  assert.match(query, /LEFT JOIN pg_roles g ON g\.oid=m\.grantor/);
+  assert.match(query, /'grantorSuperuser',g\.rolsuper/);
+  const catalog = [...new Set(f.queries)].join('\n');
+  assert.doesNotMatch(catalog, /LIKE 'pg_%'/);
+  assert.equal([...catalog.matchAll(/left\(n\.nspname,3\)<>'pg_'/g)].length, 4);
 });
 test('definition, owner, definer and configuration source drift are refused before reads', async () => {
   for (const patch of [{ owner: 'foreign_owner' }, { definer: false }, { bodySha256: 'f'.repeat(64) }, { config: ['search_path=public'] }]) {

@@ -66,8 +66,11 @@ export async function inspectCompCurationSchema(tx) {
 export async function assertCompCurationDatabase(tx, { role, schemaOwner, schemaSha256 }) {
   deny(validName(role) && validName(schemaOwner) && role !== schemaOwner && /^[a-f0-9]{64}$/.test(schemaSha256));
   const roles = await tx.$queryRawUnsafe(`/* comp-db:role */ SELECT current_user AS name,session_user AS session_name,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('role',pg_get_userbyid(m.roleid),'member',pg_get_userbyid(m.member),
+      'admin',m.admin_option,'inherit',m.inherit_option,'set',m.set_option,'grantorSuperuser',g.rolsuper))
+      FROM pg_auth_members m LEFT JOIN pg_roles g ON g.oid=m.grantor
+      WHERE m.member=r.oid OR m.roleid=r.oid),'[]'::jsonb) AS memberships,
     r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls
-    OR EXISTS(SELECT 1 FROM pg_auth_members WHERE member=r.oid OR roleid=r.oid)
     OR has_database_privilege(current_user,current_database(),'CREATE,TEMPORARY')
     OR EXISTS(SELECT 1 FROM pg_database WHERE datdba=r.oid)
     OR EXISTS(SELECT 1 FROM pg_namespace WHERE nspowner=r.oid)
@@ -75,9 +78,14 @@ export async function assertCompCurationDatabase(tx, { role, schemaOwner, schema
     OR EXISTS(SELECT 1 FROM pg_proc WHERE proowner=r.oid) AS unsafe
     FROM pg_roles r WHERE r.rolname=current_user`);
   deny(roles.length === 1 && roles[0].name === role && roles[0].session_name === role && roles[0].unsafe === false);
+  // PostgreSQL grants a CREATEROLE creator an incoming admin-only membership.
+  // It gives the serving role no inherited rights; every outgoing grant and
+  // every other incoming member, option or grantor remains forbidden.
+  deny(Array.isArray(roles[0].memberships) && roles[0].memberships.every(m => m && m.role === role && m.member === schemaOwner
+    && m.admin === true && m.inherit === false && m.set === false && m.grantorSuperuser === true));
   const schemas = await tx.$queryRawUnsafe(`/* comp-db:schemas */ SELECT nspname AS name,
     has_schema_privilege(current_user,oid,'USAGE') AS usage,has_schema_privilege(current_user,oid,'CREATE') AS create
-    FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' ORDER BY nspname`);
+    FROM pg_namespace WHERE left(nspname,3)<>'pg_' AND nspname<>'information_schema' ORDER BY nspname`);
   deny(schemas.filter(row => schemaSet.has(row.name)).length === 2);
   for (const row of schemas) deny(!row.create && row.usage === (schemaSet.has(row.name) || row.name === 'public'));
   const columns = await tx.$queryRawUnsafe(`/* comp-db:columns */ SELECT n.nspname||'.'||c.relname AS name,a.attname AS column,
@@ -88,7 +96,7 @@ export async function assertCompCurationDatabase(tx, { role, schemaOwner, schema
     has_table_privilege(current_user,c.oid,'DELETE,TRUNCATE,TRIGGER,MAINTAIN') AS extra
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
     WHERE c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped
-    AND n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' ORDER BY n.nspname,c.relname,a.attnum`);
+    AND left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' ORDER BY n.nspname,c.relname,a.attnum`);
   const seen = new Set();
   for (const row of columns) {
     const allowed = tableSet.has(row.name), insert = row.name === 'atlas_manual.comp_curation';
@@ -99,12 +107,12 @@ export async function assertCompCurationDatabase(tx, { role, schemaOwner, schema
   deny(seen.size === 9);
   const sequences = await tx.$queryRawUnsafe(`/* comp-db:sequences */ WITH seq AS MATERIALIZED(
     SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='S'
-    AND n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema')
+    AND left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema')
     SELECT oid FROM seq WHERE has_sequence_privilege(current_user,oid,'USAGE,SELECT,UPDATE')`);
   deny(sequences.length === 0);
   const routines = await tx.$queryRawUnsafe(`/* comp-db:routines */ SELECT n.nspname||'.'||p.proname AS name,
     oidvectortypes(p.proargtypes) AS arguments FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-    WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND has_function_privilege(current_user,p.oid,'EXECUTE')
+    WHERE left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema' AND has_function_privilege(current_user,p.oid,'EXECUTE')
     AND NOT (NOT p.prosecdef AND p.probin='$libdir/uuid-ossp' AND EXISTS(SELECT 1 FROM pg_depend d JOIN pg_extension e ON e.oid=d.refobjid
       WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.refclassid='pg_extension'::regclass AND d.deptype='e' AND e.extname='uuid-ossp'))`);
   deny(routines.length === 1 && routines[0].name === 'atlas_manual.authenticate' && routines[0].arguments === 'text, text, jsonb, text[]');

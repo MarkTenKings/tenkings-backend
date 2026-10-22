@@ -53,7 +53,7 @@ export function createPreferenceFixture() {
     stats.begins++; const before = structuredClone(current), old = structuredClone(records); let committed = false;
     try {
       const value = await work({ async $executeRawUnsafe() {}, async $queryRawUnsafe(sql, ...args) {
-        if (sql.startsWith('SELECT current_user')) return [{ name: 'atlas_fixture_preferences', session: 'atlas_fixture_preferences', unsafe: f.unsafe }];
+        if (sql.startsWith('SELECT current_user')) return [{ name: 'atlas_fixture_preferences', session: 'atlas_fixture_preferences', unsafe: f.unsafe, memberships: [] }];
         if (sql.startsWith('SELECT n.nspname') && !sql.includes('bodySha256')) return [{ schema: defs[0].schema, name: defs[0].name }];
         if (sql.includes('bodySha256')) return defs;
         assert.match(sql, /^SELECT atlas_ownership_preferences\.customer_call\(/); assert.deepEqual(JSON.parse(args[2]), config.binding);
