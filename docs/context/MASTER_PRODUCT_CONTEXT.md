@@ -1,8 +1,8 @@
 # Ten Kings Master Product Context
 
-> Latest ATLAS production checkpoint (2026-10-22 06:58 UTC): separately authorized corner-policy713573fc is live; controls140/102/108, native image79ae19e3, customerc68e9ea7 retained. Exact release/hold-absence evidence and successor state are in `docs/handoffs/ATLAS_MARKETPLACE_LEAD_HANDOFF_20261021.md`. Prior f974/c181 references are historical. Photo-only childf0fd is building in isolation and is not live. No ownership/collection/curation activation.
+> Latest ATLAS production checkpoint (2026-10-22 08:01 UTC): photo successor `f0fd4f15` is live on native/staff/public and preserves the separately authorized `713573fc` corner policy. Controls141/103/109, native image045ed35c, unchanged customer sourcec68e9ea7/controls83/35 and SQL009. The release holder explicitly released08:01:12.847Z and absence is proved. Exact deployment/source/closure pins are in `docs/handoffs/ATLAS_MARKETPLACE_LEAD_HANDOFF_20261021.md`. Fresh signed-in Njoku Front/Back/revisit/Reload images reads pass with exact card/job/action/approval preservation; live failure-branch retry remains unobserved. All earlier release sections below are historical checkpoints; ownership/collection/curation remain disabled.
 
-## Current ATLAS Workspace review-entry release — October 21, 2026 Pacific
+## Historical ATLAS Workspace review-entry release — October 21, 2026 Pacific
 
 Native, staff and public now serve isolated source `f9742346410324293a679e115ef04fe5deaf0016`. Workspace entry now supplies the same exact saved batch context to the existing human-review startup used by Review Queue. This corrects missing findings adoption before review begins. Four serving files change entry/context/error recovery; three change suggestion counts, wording and layout. Six other files provide qualification. Defect detection, AI prompts/provider configuration, measurement and grading math, review-step ordering, suggestion action handlers and human approval authority are unchanged. The owner explicitly reinforced this boundary.
 
@@ -1246,3 +1246,8 @@ Supersedes earlier in-flight 4ebe/fe64 notes: fe64 staff/public workflow repair 
 ## 2026-10-22 — Coordinated ATLAS photo successor technical release
 
 Current isolated native/staff/public sourcef0fd4f15 preserves the separately authorized713 corner release and adds only two photo serving-file corrections. StaffBuJUQjbx/publicEQtu3jE4, nativeimage045ed35c/maincefc6d81/worker16a855f2; controls141/103/109, customer83/35/sourcec68e9ea7 unchanged. Exact full pins and retained evidence are in `docs/handoffs/ATLAS_MARKETPLACE_LEAD_HANDOFF_20261021.md`.35canonical checks/fourhistoricalreports/eightphotos/final37table preservation pass. Holder explicitly released08:01:12.847Z with absence proved; proofe3bc15a8/released712a81da/absenceee8cca4d. No migration or grading/business action. Signed-in photo acceptance is pending; local collection/curation work remains disabled and is not part of servingf0fd. Never overwrite with helde38 or prior713; use fresh exact-source qualification for a future successor.
+
+
+### 2026-10-22 — Signed-in photo read acceptance
+
+Fresh owner sign-in and live Workspace → existing David Njoku read acceptance pass at08:14–08:19UTC: Front/Back marked and clean photographs decode1350×1858, Front revisit and explicit existing Reload images complete. Read-only before/after snapshots preserve entire card/job/action/approval rows, revision4 and zero approvals. No grading command, initialization, reset or human decision was invoked; user Review Queue tab untouched and agent-only tab closed. This session did not reproduce the transient failure or exercise the failed-image Retry branch; controlled retry tests remain separate, and the original HTTP failure cause remains unknown. Evidence `~/.codex/atlas-handoffs/atlas-photo-after-corners-20261021/signed-in-01/acceptance.json` SHA256 `806da8a8ad60faa3278b443be90457d70a22a804c6936af0ed3f07f1bb41796f`.

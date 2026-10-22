@@ -62,3 +62,8 @@ The f0fd successor was activated on native maincefc6d81/worker16a855f2, image045
 Canonical35 checks PASSaabecfb3; four historical reports and eight approved photos PASSa4ddf490; nativepostflight93fa19c8 and finalpreservation61a9c700 PASS. Releaseproofe3bc15a8 binds the actual native/data/web/canonical evidence. The original admission holder explicitly released08:01:12.847Z, released712a81da; absenceee8cca4d proves original transaction/locks/replacement holder absent. Packet: `~/.codex/atlas-handoffs/atlas-photo-after-corners-20261021/`.
 
 This is technical release completion. A fresh signed-in real Njoku photo/recovery check is pending; user sign-in was requested after release closure. The original failed HTTP response remains uncaptured; no production root-cause or staff grading decision is invented. Future release source must retain both713 corner policy andf0fd photo correction.
+
+
+## Fresh signed-in production read acceptance
+
+Fresh owner sign-in and live Workspace → existing David Njoku read acceptance pass at08:14–08:19UTC: Front/Back marked and clean photographs decode1350×1858, Front revisit and explicit existing Reload images complete. Read-only before/after snapshots preserve entire card/job/action/approval rows, revision4 and zero approvals. No grading command, initialization, reset or human decision was invoked; user Review Queue tab untouched and agent-only tab closed. This session did not reproduce the transient failure or exercise the failed-image Retry branch; controlled retry tests remain separate, and the original HTTP failure cause remains unknown. Evidence `~/.codex/atlas-handoffs/atlas-photo-after-corners-20261021/signed-in-01/acceptance.json` SHA256 `806da8a8ad60faa3278b443be90457d70a22a804c6936af0ed3f07f1bb41796f`.
