@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import * as contract from '../lib/collection-contract.mjs';
 import * as client from '../lib/collection-client.mjs';
+import * as displayContract from '../lib/collection-display-contract.mjs';
 import { createCollectionPreviewFixture } from './collection-preview-fixture.mjs';
 const require = createRequire(new URL('../package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core');
@@ -26,7 +27,8 @@ function harness() {
   const exports = {}, MyCollection = () => null;
   vm.runInNewContext(code, { exports, AbortController, Promise, window: { addEventListener: (event, fn) => listeners.set(event, fn), removeEventListener: event => listeners.delete(event) },
     require: name => name === 'react' ? react : name.endsWith('MyCollection.jsx') ? { __esModule: true, default: MyCollection }
-      : name.endsWith('/collection-contract.mjs') ? contract : name.endsWith('/collection-client.mjs') ? client : name.endsWith('.css') ? {} : require(name),
+      : name.endsWith('CollectionCardMedia.jsx') ? { __esModule: true, default: () => null }
+      : name.endsWith('/collection-display-contract.mjs') ? displayContract : name.endsWith('/collection-contract.mjs') ? contract : name.endsWith('/collection-client.mjs') ? client : name.endsWith('.css') ? {} : require(name),
   });
   return { render(props) { cursor = 0; const tree = exports.default(props); while (effects.length) effects.shift()(); return tree; },
     pagehide() { listeners.get('pagehide')?.(); }, unmount() { for (const slot of slots) slot?.cleanup?.(); }, MyCollection };

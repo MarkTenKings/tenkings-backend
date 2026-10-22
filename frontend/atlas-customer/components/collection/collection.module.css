@@ -27,6 +27,13 @@
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 36px; }
 .card { padding: 0 0 24px; border-bottom: 1px solid #e1e7e3; min-width: 0; overflow-wrap: anywhere; }
 .media { background: #fff !important; margin-bottom: 18px; }
+.cardPhoto { margin: 0; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #fff; }
+.cardPhoto img { display: block; width: auto; max-width: 100%; height: auto; max-height: 360px; object-fit: contain; }
+.cardPhoto .photoPending { position: absolute; visibility: hidden; pointer-events: none; }
+.cardPhoto .photoVisible { visibility: visible; }
+.cardPhoto figcaption, .cardPhoto p { font-size: .8rem; color: #606c65; text-align: center; }
+.cardPhoto figcaption { margin-top: 12px; }
+.cardPhoto .photoRetry { min-height: 44px; padding: 10px 16px; border: 1px solid #047857; border-radius: 5px; background: #fff; color: #047857; cursor: pointer; }
 .grade { font-weight: 650; }
 .statuses { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .statuses span { border: 1px solid #d7e2db; border-radius: 4px; padding: 5px 9px; font-size: .75rem; }
