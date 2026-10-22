@@ -394,7 +394,82 @@ test('background navigation refresh cannot replace a new save or active editor a
   assert.equal(f.button('Findings').props.disabled,true);assert.doesNotMatch(f.text(),/MANUAL_REVISION_CONFLICT/);
   f.geometry().onEditingChange(false);f.render();f.respond=async()=>{throw {code:'IMAGE_ACCESS_UNAVAILABLE'};};
   f.openFindings();f.render();assert.ok(f.defects());await flush();f.render();
-  assert.ok(f.defects());assert.match(f.text(),/IMAGE_ACCESS_UNAVAILABLE/);assert.equal(f.actions.length,0);f.dispose();
+  assert.ok(f.defects());assert.match(f.text(),/Could not refresh the saved photographs/);assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('explicit and periodic photo GET failures identify the read without changing saved work or exposing command recovery',async()=>{
+  for(const trigger of ['reload','timer']){
+    const f=harness();await flush();f.render();const before=structuredClone(f.current),recoveries=f.recoveries;
+    f.respond=async()=>{throw new TypeError('Synthetic failed photo-view read');};
+    if(trigger==='reload'){f.button('Reload images').props.onClick();await flush();f.render();}
+    else await f.tick(240000);
+    assert.match(f.text(),/Could not refresh the saved photographs/);
+    assert.match(f.text(),/Use Reload images to try the photo read again/);
+    assert.doesNotMatch(f.text(),/Retry the saved request|last edit has not been confirmed/);
+    assert.equal(f.button('Check last save'),undefined);assert.equal(f.button('Refresh saved review'),undefined);
+    assert.equal(f.pending,false);assert.equal(f.recoveries,recoveries);assert.deepEqual(f.actions,[]);
+    assert.deepEqual(f.current,before);assert.deepEqual(f.defects().images,before.images);
+    assert.equal(f.calls.filter(call=>call.path.endsWith('/view')).length,1);
+    assert.equal(f.calls.every(call=>!call.options?.method||call.options.method==='GET'),true);
+    f.respond=async()=>f.current;f.button('Reload images').props.onClick();await flush();f.render();
+    assert.doesNotMatch(f.text(),/Could not refresh the saved photographs/);
+    assert.deepEqual(f.current,before);assert.deepEqual(f.actions,[]);f.dispose();
+  }
+});
+
+test('the Findings footer keeps the actual photograph state while approval remains blocked',async()=>{
+  const f=harness();await flush();f.render();
+  for(const message of ['Photograph unavailable.','Inspection photograph unavailable.','Refreshing photograph…','Verifying photograph…']){
+    const dock=f.defects().renderReviewActions({message,disabled:true});
+    assert.ok(text(dock).includes(message));
+    const approve=all(dock,node=>node.type==='button'&&node.props['aria-label']==='Approve front findings')[0];
+    assert.equal(approve.props.disabled,true);
+  }
+  assert.deepEqual(f.actions,[]);f.dispose();
+});
+
+test('photo refresh wording retains access and source-change refusals without enabling a saved command',async()=>{
+  for(const failure of [{status:401,code:'SIGN_IN_REQUIRED'},{status:403,code:'MANUAL_EDIT_FORBIDDEN'},{code:'MANUAL_REVISION_CONFLICT'}]){
+    const f=harness();await flush();f.render();const before=structuredClone(f.current);
+    f.respond=async()=>{throw failure;};f.button('Reload images').props.onClick();await flush();f.render();
+    assert.match(f.text(),failure.status===403?/Access to the saved photographs could not be confirmed/:new RegExp(failure.code));
+    assert.doesNotMatch(f.text(),/Use Reload images to try the photo read again/);
+    assert.deepEqual(f.current,before);assert.deepEqual(f.actions,[]);assert.equal(f.button('Check last save'),undefined);f.dispose();
+  }
+});
+
+test('Findings photo retry returns only current fenced GET descriptors and preserves command recovery',async()=>{
+  for(const condition of ['current','pending-before','refresh-before','pending-after','changed','stale','denied','unmount']){
+    const f=harness();await flush();f.render();const before=structuredClone(f.current),retry=f.defects().onRefreshImages;
+    let finish;
+    const fresh={...before,images:{marker:'renewed-photo-grants'}};
+    f.respond=()=>new Promise(resolve=>{finish=resolve;});
+    if(condition==='pending-before')f.pending=true;
+    if(condition==='refresh-before')f.refreshNeeded=true;
+    const pending=retry();await flush();
+    if(condition==='pending-before'||condition==='refresh-before'){
+      assert.equal(await pending,undefined);assert.equal(f.calls.filter(call=>call.path.endsWith('/view')).length,0);
+    }else{
+      if(condition==='pending-after')f.pending=true;
+      if(condition==='changed')f.publish({...before,card:{revision:2,contentHash:'new-human-save'},images:{marker:'current-human-save'}});
+      if(condition==='stale')fresh.card={revision:2,contentHash:'different-source'};
+      if(condition==='unmount')f.dispose();
+      if(condition==='denied'){
+        // Resolve the deferred request with an authentication refusal through
+        // the same request promise, without replacing it with another read.
+        finish(Promise.reject({status:401,code:'SIGN_IN_REQUIRED'}));
+      }else finish(fresh);
+      const result=await pending;f.render();
+      assert.deepEqual(result,condition==='current'?fresh.images:undefined);
+      if(condition==='current')assert.deepEqual(f.defects().images,fresh.images);
+      if(condition==='pending-after'||condition==='stale'||condition==='denied')assert.deepEqual(f.defects().images,before.images);
+      if(condition==='changed')assert.deepEqual(f.defects().images,{marker:'current-human-save'});
+      assert.equal(f.calls.filter(call=>call.path.endsWith('/view')).length,1);
+    }
+    assert.deepEqual(f.actions,[]);assert.equal(f.recoveries,1);assert.equal(f.popups.length,0);
+    if(condition!=='changed')assert.deepEqual(f.current,before);
+    f.dispose();
+  }
 });
 
 const preparedReview = current => {

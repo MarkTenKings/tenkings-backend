@@ -6,7 +6,7 @@ import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevisi
   rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
 import { findingImpact, traceAreaPreview } from './finding-impact.mjs';
 import { defectBase } from './defect-actions.mjs';
-import { useVerifiedImage } from './verified-image.mjs';
+import { useVerifiedImage, verifiedImageContentKey } from './verified-image.mjs';
 import { astraReviewState, proposalFrameMatches, validProposalContour } from './astra-review-ui.mjs';
 import { INSPECTION_SIZE, MAX_INSPECTION_ZOOM, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
   resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
@@ -72,11 +72,50 @@ function exactTraceShape(finding, trace) {
 }
 /** One side, one camera. Markings come directly from the saved canonical masks. */
 function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit, onRetry, onDiscardPending,
-  onReadyChange, onEditingChange, onInspectionChange, readOnly, disabled, astra, onReviewProposal, renderEditActions, renderReviewActions }) {
+  onReadyChange, onEditingChange, onInspectionChange, onRefreshImages, readOnly, disabled, astra, onReviewProposal, renderEditActions, renderReviewActions }) {
   const slot = workspace.sides[side], base = defectBase(workspace, side), baseKey = key(base);
   const descriptor = image?.inspection, binding = inspectionImageBinding(workspace, side, image);
   const supplied = Boolean(descriptor?.url && descriptor.sha256 === slot.frame.inspectionImageSha256);
   const verified = useVerifiedImage(supplied ? descriptor : null);
+  const retryVerifiedImage = verified.retry;
+  const photoPlaceholder = !supplied ? 'Inspection photograph unavailable.' : verified.error ? 'Photograph unavailable.' : 'Verifying photograph…';
+  const [refreshingPhoto, setRefreshingPhoto] = useState(false), [photoRefreshError, setPhotoRefreshError] = useState('');
+  const [retryDescriptor, setRetryDescriptor] = useState(null);
+  const photoOwner = useRef({ active: true, busy: false }), photoScope = useRef(null);
+  const photoContentKey = verifiedImageContentKey(descriptor);
+  photoScope.current = { binding, disabled, contentKey: photoContentKey };
+  useEffect(() => { const owner = photoOwner.current; owner.active = true; return () => { owner.active = false; }; }, []);
+  useEffect(() => {
+    if (!retryDescriptor) return;
+    const owner = photoOwner.current;
+    if (disabled || binding !== retryDescriptor.binding || photoScope.current.contentKey !== retryDescriptor.contentKey) {
+      owner.busy = false; setRefreshingPhoto(false); setRetryDescriptor(null); return;
+    }
+    // Wait for the parent's fenced read to publish its descriptor. Never retry
+    // a captured old grant merely because the refresh promise has settled.
+    if (descriptor?.url !== retryDescriptor.url) return;
+    owner.busy = false; setRefreshingPhoto(false); setRetryDescriptor(null); retryVerifiedImage();
+  }, [retryDescriptor, binding, descriptor?.url, disabled, photoContentKey, retryVerifiedImage]);
+  async function retryPhotograph() {
+    const owner = photoOwner.current, scope = photoScope.current;
+    if (!owner.active || owner.busy || scope.disabled) return;
+    if (!onRefreshImages) { retryVerifiedImage(); return; }
+    owner.busy = true; setRefreshingPhoto(true); setPhotoRefreshError('');
+    let waiting = false;
+    try {
+      const images = await onRefreshImages(), fresh = images?.[side]?.inspection;
+      if (!owner.active || photoScope.current.disabled || photoScope.current.binding !== scope.binding
+        || photoScope.current.contentKey !== scope.contentKey) return;
+      if (!fresh?.url || !scope.contentKey || verifiedImageContentKey(fresh) !== scope.contentKey) {
+        setPhotoRefreshError('The saved photograph could not be refreshed. Reload the card before continuing.'); return;
+      }
+      waiting = true; setRetryDescriptor({ binding: scope.binding, contentKey: scope.contentKey, url: fresh.url });
+    } catch {
+      if (owner.active && photoScope.current.binding === scope.binding) setPhotoRefreshError('The saved photograph could not be refreshed. Reload the card before continuing.');
+    } finally {
+      if (!waiting) { owner.busy = false; if (owner.active) setRefreshingPhoto(false); }
+    }
+  }
   const [loaded, setLoaded] = useState({}), [comparison, setComparison] = useState(true);
   const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
   const [size, setSize] = useState({ width: 400, height: 560 }), sizeRef = useRef(size);
@@ -87,6 +126,7 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
   const [panMode, setPanMode] = useState(false), [spacePan, setSpacePan] = useState(false), [peek, setPeek] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), busyRef = useRef(false);
   const ready = Boolean(supplied && verified.url && loaded.marked === binding && (!comparison || loaded.clean === binding));
+  useEffect(() => { if (ready) setPhotoRefreshError(''); }, [ready]);
   const pending = Boolean(slot.pending), stale = Boolean(editor && editor.baseKey !== baseKey);
   const locked = Boolean(disabled || readOnly), editDisabled = locked || busy || pending || !ready;
   const findings = slot.findings.filter(entry => entry.reviewResult !== 'REMOVED' && !entry.geometryExclusion);
@@ -322,15 +362,16 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
                 </svg>}
                 {stroke.length > 0 && <svg className="ad-stroke" viewBox="0 0 1269 1777" aria-hidden="true"><polyline points={stroke.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={tool === 'ERASER' ? '#fff' : '#df2344'} strokeWidth={strokeRef.current?.brush ?? brush} strokeLinecap="round" strokeLinejoin="round"/></svg>}
               </div>
-            </div> : <div className="ad-photo-empty">{verified.error ? 'Photograph unavailable.' : supplied ? 'Verifying photograph…' : 'Inspection photograph unavailable.'}</div>}
+            </div> : <div className="ad-photo-empty">{photoPlaceholder}</div>}
           </div>
           {comparison && <div ref={cleanViewport} className="ad-viewport ad-clean-viewport" tabIndex={0} role="region" aria-label={`${name(side)} clean comparison`} {...pointerProps(true)}>
             <span className="ad-pane-label">{name(side)} · Clean</span>
-            {verified.url ? <div className="ad-plane ad-clean-plane" style={planeStyle}><img key={`${binding}:clean`} src={verified.url} alt={`${name(side)} clean inspection image`} draggable="false" onLoad={imageLoaded('clean')} onError={() => setLoaded(previous => ({ ...previous, clean: null }))}/></div> : <div className="ad-photo-empty">Verifying photograph…</div>}
+            {verified.url ? <div className="ad-plane ad-clean-plane" style={planeStyle}><img key={`${binding}:clean`} src={verified.url} alt={`${name(side)} clean inspection image`} draggable="false" onLoad={imageLoaded('clean')} onError={() => setLoaded(previous => ({ ...previous, clean: null }))}/></div> : <div className="ad-photo-empty">{photoPlaceholder}</div>}
           </div>}
         </div>
         <div className="ad-view-help"><span>Scroll or pinch to zoom · drag either photo to pan</span><div aria-label={`Pan ${name(side)} photograph`}>{[['←',80,0,'left'],['↑',0,80,'up'],['↓',0,-80,'down'],['→',-80,0,'right']].map(([label,x,y,direction]) => <button key={direction} type="button" disabled={viewingDisabled || view.zoom <= 1} aria-label={`Pan ${name(side)} ${direction}`} onClick={() => move({ x, y })}>{label}</button>)}</div></div>
-        {!ready && <p className="ad-status" role={verified.error ? 'alert' : 'status'}>{verified.error ? 'The saved photograph could not be verified.' : 'Verifying the current photograph.'}{verified.error && <button type="button" onClick={verified.retry}>Retry photograph</button>}</p>}
+        {!ready && <p className="ad-status" role={verified.error ? 'alert' : 'status'}>{!supplied ? 'Inspection photograph unavailable.' : verified.error ? 'The saved photograph could not be verified.' : 'Verifying the current photograph.'}{verified.error && <button type="button" disabled={Boolean(disabled) || refreshingPhoto} onClick={retryPhotograph}>{refreshingPhoto ? 'Refreshing photograph…' : 'Retry photograph'}</button>}</p>}
+        {photoRefreshError && <p className="ad-status" role="alert">{photoRefreshError}</p>}
       </div>
       <aside className="ad-review-panel" aria-label={`${name(side)} findings and corrections`}>
         <div className="ad-list-heading"><strong>Saved {name(side).toLowerCase()} findings</strong><button type="button" disabled={editDisabled || Boolean(editor) || !onEdit} onClick={() => start(null)}>Add finding</button></div>
@@ -357,13 +398,13 @@ function SideReview({ workspace, side, image, findingId, onSelectFinding, onEdit
         {error && <p role="alert">{error}</p>}
       </aside>
     </div>
-    {renderReviewActions?.({ disabled: actionsDisabled, busy, message: busy ? 'Saving and measuring…' : editor ? 'Save or cancel the trace.' : pending ? 'Finish the pending measurement.' : !ready ? 'Verifying the photograph…' : `${name(side)} · ${findingSummary}` })}
+    {renderReviewActions?.({ disabled: actionsDisabled, busy, message: busy ? 'Saving and measuring…' : editor ? 'Save or cancel the trace.' : pending ? 'Finish the pending measurement.' : !ready ? refreshingPhoto ? 'Refreshing photograph…' : photoPlaceholder : `${name(side)} · ${findingSummary}` })}
   </section>;
 }
 
 /** The host owns front/back progression and the deliberate durable approval. */
 export function DefectReviewWorkspace({ workspace, images, side = 'FRONT', onSideChange, findingId = null, onSelectFinding,
-  onEdit, onRetry, onDiscardPending, onEditingChange, onReadyChange, onInspectionChange, renderEditActions, renderReviewActions,
+  onEdit, onRetry, onDiscardPending, onEditingChange, onReadyChange, onInspectionChange, onRefreshImages, renderEditActions, renderReviewActions,
   readOnly = false, disabled = false, astra, onReviewProposal, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis }) {
   const [analysisBusy, setAnalysisBusy] = useState(false), [analysisError, setAnalysisError] = useState('');
   const analysisInFlight = useRef(false);
@@ -390,7 +431,7 @@ export function DefectReviewWorkspace({ workspace, images, side = 'FRONT', onSid
     <nav className="ad-side-navigation" aria-label="Findings side">{SIDES.map(value => <button type="button" key={value} aria-pressed={side === value} disabled={editing || disabled} onClick={() => { if (side !== value) { onReadyChange?.(false); onSideChange?.(value); } }}>{name(value)}</button>)}</nav>
     <SideReview key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]} findingId={findingId} onSelectFinding={onSelectFinding}
       onEdit={onEdit} onRetry={onRetry} onDiscardPending={onDiscardPending} onReadyChange={onReadyChange} onEditingChange={activityChanged}
-      onInspectionChange={onInspectionChange} readOnly={readOnly} disabled={disabled} astra={astra} onReviewProposal={onReviewProposal}
+      onInspectionChange={onInspectionChange} onRefreshImages={onRefreshImages} readOnly={readOnly} disabled={disabled} astra={astra} onReviewProposal={onReviewProposal}
       renderEditActions={renderEditActions} renderReviewActions={renderReviewActions}/>
   </div>;
 }
