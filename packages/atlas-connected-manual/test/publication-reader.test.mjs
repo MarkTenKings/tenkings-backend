@@ -8,7 +8,7 @@ import { publicationFixture } from './publication-fixture.mjs';
 const config={manualKey:Buffer.alloc(32,7),manualOrigin:MANUAL_PUBLIC_ORIGIN,deploymentId:'approved-fixture.vercel.app',releaseSha:'a'.repeat(40),configHash:'b'.repeat(64)};
 async function setup(options){const f=await publicationFixture(options);await f.publication.publish({},f.cardId,f.actionId);let reads=0,disabled=false;
  const client={$transaction:async fn=>fn({$queryRawUnsafe:async(sql,...args)=>{reads++;assert.equal(sql,'SELECT * FROM atlas_manual.read_publication($1::text,$2::integer,$3::text,$4::text,$5::text)');assert.equal(args[0],f.row.public_token);return disabled?[]:[f.row];}})};
- const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage});const claims=kind=>({request:{kind,token:f.row.public_token,version:1,side:kind==='IMAGE'?'FRONT':null,findingId:kind==='TRACE'?f.full.findings[0].id:null},expiresAt:Date.now()+30000,deploymentId:config.deploymentId,releaseSha:config.releaseSha,configHash:config.configHash});
+ const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage,inspectionAlphaPreviews:options?.inspectionAlphaPreviews});const claims=kind=>({request:{kind,token:f.row.public_token,version:1,side:kind==='IMAGE'?'FRONT':null,findingId:kind==='TRACE'?f.full.findings[0].id:null},expiresAt:Date.now()+30000,deploymentId:config.deploymentId,releaseSha:config.releaseSha,configHash:config.configHash});
  return {...f,reader,claims,disable(){disabled=true;},get reads(){return reads;}};
 }
 test('native reader returns only approved packet/media/trace and rechecks control after every successful read',async()=>{
@@ -30,7 +30,7 @@ test('direct access grants only the exact approved image and rechecks revocation
  const claims=f.claims('IMAGE');claims.request.kind='IMAGE_ACCESS';
  const result=JSON.parse((await f.reader.read(claims)).bytes);
  assert.equal(result.image.sha256,f.geometry.sides.FRONT.prepared.frame.inspection.sha256);
- assert.equal(result.publicHash,f.row.public_hash);assert.equal(result.side,'FRONT');assert.equal(calls,1);
+ assert.equal(result.publicHash,f.row.public_hash);assert.equal(result.side,'FRONT');assert.equal(calls,1);assert.equal(result.image.alphaPreviewPending,undefined);
  const original=f.storage.createDerivativeRead;
  f.storage.createDerivativeRead=async input=>{const value=await original(input);f.disable();return value;};
  await assert.rejects(f.reader.read(claims),{code:'MANUAL_PUBLICATION_CHANGED'});
@@ -117,4 +117,59 @@ test('Photoroom access follows current approval authority and remains JSON-only 
  const result=await reader.read(claims);assert.equal(result.contentType,'application/json');assert.deepEqual(JSON.parse(result.bytes),value);assert.ok(result.bytes.length<16384);
  reportImages.imageAccess=async()=>{enabled=false;return value;};
  await assert.rejects(reader.read(claims),{code:'MANUAL_PUBLICATION_CHANGED'});assert.equal(calls,1);
+});
+
+const alphaGrant = saved => ({ policyVersion: 'atlas-inspection-alpha-preview-v1', sourceSha256: saved.descriptor.raster.content.sha256,
+  mime: 'image/webp', width: 558, height: 768, byteCount: 1234, sha256: 'e'.repeat(64),
+  url: 'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/alpha?grant=fixture' });
+function approvedReadGrants(f) {
+  f.storage.createDerivativeRead = async ({ descriptor }) => ({
+    url: 'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/' + descriptor.purpose,
+    ...descriptor.raster.content,
+  });
+  const claims = f.claims('IMAGE'); claims.request.kind = 'IMAGE_ACCESS'; return claims;
+}
+
+test('alpha access is additive for historical and new approvals and retains the exact saved JPEG', async () => {
+  for (const withPreview of [false, true]) {
+    let calls = 0;
+    const f = await setup({ withPreview, inspectionAlphaPreviews: { async resolve({ saved, signal }) {
+      calls++; assert.equal(signal.aborted, false); return alphaGrant(saved);
+    } } });
+    const manifest = f.row.manifest, hash = f.row.public_hash, claims = approvedReadGrants(f);
+    const value = JSON.parse((await f.reader.read(claims)).bytes);
+    assert.equal(value.image.alphaPreview.sourceSha256, value.image.sha256);
+    assert.equal(value.image.alphaPreview.mime, 'image/webp'); assert.equal(value.image.alphaPreviewPending, undefined); assert.equal(calls, 1);
+    assert.equal(Boolean(value.image.preview), withPreview);
+    if (withPreview) assert.equal(value.image.preview.mime, 'image/jpeg');
+    assert.equal(f.row.manifest, manifest); assert.equal(value.publicHash, hash); assert.equal(f.reads, 2);
+  }
+});
+
+test('optional invalid alpha descriptors and cache failures preserve the independent JPEG and full grants', async () => {
+  for (const broken of [() => { throw Error('cache unavailable'); }, saved => ({ ...alphaGrant(saved), sourceSha256: 'f'.repeat(64) }),
+    saved => ({ ...alphaGrant(saved), mime: 'image/jpeg' }), saved => ({ ...alphaGrant(saved), byteCount: 2 * 1024 * 1024 })]) {
+    const f = await setup({ withPreview: true, inspectionAlphaPreviews: { async resolve({ saved }) { return broken(saved); } } });
+    const value = JSON.parse((await f.reader.read(approvedReadGrants(f))).bytes);
+    assert.equal(value.image.alphaPreview, undefined); assert.equal(value.image.alphaPreviewPending, true); assert.equal(value.image.preview.mime, 'image/jpeg');
+    assert.equal(value.image.sha256, f.geometry.sides.FRONT.prepared.frame.inspection.sha256); assert.equal(f.reads, 2);
+  }
+});
+
+test('authority revocation during alpha preparation refuses every image grant', async () => {
+  let f;
+  f = await setup({ withPreview: true, inspectionAlphaPreviews: { async resolve({ saved }) { f.disable(); return alphaGrant(saved); } } });
+  await assert.rejects(f.reader.read(approvedReadGrants(f)), { code: 'MANUAL_PUBLICATION_CHANGED' });
+});
+
+test('cold or hung alpha preparation adds at most the short optional wait and observes late rejection', async () => {
+  let optionalSignal, rejectLate;
+  const f = await setup({ withPreview: true, inspectionAlphaPreviews: { resolve({ signal }) {
+    optionalSignal = signal; return new Promise((_, reject) => { rejectLate = reject; });
+  } } });
+  const start = performance.now(), value = JSON.parse((await f.reader.read(approvedReadGrants(f))).bytes);
+  assert.ok(performance.now() - start < 750, 'alpha generation must not hold the primary image response for seconds');
+  assert.equal(optionalSignal.aborted, true); assert.equal(value.image.alphaPreview, undefined); assert.equal(value.image.alphaPreviewPending, true);
+  assert.equal(value.image.preview.mime, 'image/jpeg'); assert.equal(f.reads, 2);
+  rejectLate(Error('late optional failure')); await new Promise(resolve => setImmediate(resolve));
 });

@@ -1,11 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Box3, Texture, Vector3, SRGBColorSpace, NoToneMapping } from 'three';
+import { readFile } from 'node:fs/promises';
+import { Box3, Raycaster, Texture, Vector3, SRGBColorSpace, NoToneMapping } from 'three';
 import { SLAB_MODEL, INITIAL_SLAB_ANGLE, createSlabModel, disposeSlabModel, fitSlabPhoto, assertSlabTextureSize,
   createSlabScene, slabFacing, createSlabStudioEnvironment, SLAB_STUDIO } from '../lib/slab-3d-scene.mjs';
 import { INSPECTION_SLAB_FRAME } from '../lib/slab-photo-frame.mjs';
 
 const texture = (width = 1350, height = 1858) => new Texture({ width, height, naturalWidth: width, naturalHeight: height });
+
+test('still and 3D card placement have equal top/bottom and left/right clear spacing', async () => {
+  const css = await readFile(new URL('../components/GradedCards.module.css', import.meta.url), 'utf8');
+  const rule = /\.slabCard\{left:([\d.]+)%;top:([\d.]+)%;width:([\d.]+)%;height:([\d.]+)%;/.exec(css);
+  assert.ok(rule);
+  const [left, top, width, height] = rule.slice(1).map(Number).map((n, i) => n / 100 * (i % 2 ? SLAB_MODEL.height : SLAB_MODEL.width));
+  // The SVG label bay ends at y279; its clear inner frame ends at y1324.82.
+  const labelBottom = 27.9, innerBottom = 132.482, innerLeft = 2.9;
+  assert.ok(Math.abs((top - labelBottom) - (innerBottom - top - height)) < 1e-5);
+  assert.ok(Math.abs((left - innerLeft) - (SLAB_MODEL.width - innerLeft - left - width)) < 1e-5);
+  assert.ok(Math.abs(SLAB_MODEL.height / 2 - top - height / 2 - SLAB_MODEL.cardY) < 1e-5);
+  assert.ok(Math.abs(width - SLAB_MODEL.cardWidth) < 1e-5);
+  assert.ok(Math.abs(height - SLAB_MODEL.cardHeight) < 1e-5);
+  assert.ok(Math.abs(top - labelBottom - 7.841) < 1e-5);
+  assert.ok(Math.abs(left - innerLeft - 5.482) < 1e-5);
+});
 
 test('procedural slab has the owner exterior, actual rounded bevel depth and bounded reusable geometry', () => {
   const model = createSlabModel({ front: texture(), back: texture(), label: texture(2048, 602), nfc: texture(512, 512) });
@@ -66,6 +83,50 @@ test('verified inspection framing maps only its canonical card bounds for previe
   const unknown = createSlabModel({ front: texture(), back: texture(), frontPhotoFrame: 'unknown-frame' });
   assert.deepEqual(Array.from(unknown.getObjectByName('front-approved-photograph').geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
   disposeSlabModel(unknown);
+});
+
+test('continuous clear interior stays behind both photo faces without a white opening gap or opaque carrier caps', () => {
+  const model = createSlabModel({ front: texture(), back: texture(), frontPhotoFrame: INSPECTION_SLAB_FRAME.version, backPhotoFrame: INSPECTION_SLAB_FRAME.version });
+  model.updateMatrixWorld(true);
+  const sheet = model.getObjectByName('clear-inner-sheet'), carrier = model.getObjectByName('generic-card-carrier');
+  for (const sign of [1, -1]) {
+    for (const [x, y] of [[0, SLAB_MODEL.cardY], [31.7, SLAB_MODEL.cardY], [32.2, SLAB_MODEL.cardY], [0, SLAB_MODEL.cardY - 45.2]]) {
+      const ray = new Raycaster(new Vector3(x, y, sign * 100), new Vector3(0, 0, -sign));
+      const innerHits = ray.intersectObject(sheet); assert.ok(innerHits.length > 0, 'the former white opening gap has a continuous clear field');
+      assert.ok(innerHits.every(hit => Math.abs(hit.point.z) < 1e-9));
+      assert.equal(ray.intersectObject(carrier).length, 0, 'no opaque cap can show through source alpha');
+      if (Math.abs(x) < SLAB_MODEL.cardWidth / 2 && Math.abs(y - SLAB_MODEL.cardY) < SLAB_MODEL.cardHeight / 2) {
+        const face = model.getObjectByName(`${sign > 0 ? 'front' : 'back'}-approved-photograph`);
+        assert.ok(ray.intersectObject(face)[0].distance < innerHits[0].distance, 'clear interior cannot overlay evidence');
+      }
+    }
+  }
+  const edgeHit = new Raycaster(new Vector3(100, SLAB_MODEL.cardY, 0), new Vector3(-1, 0, 0)).intersectObject(carrier);
+  assert.ok(edgeHit.length > 0, 'physical side edge remains');
+  const size = new Box3().setFromObject(carrier).getSize(new Vector3());
+  assert.ok(Math.abs(size.z - .34) < 1e-7); assert.equal(sheet.material.transparent, true); assert.equal(sheet.material.depthWrite, false);
+  disposeSlabModel(model);
+});
+
+test('oblique perspective rays reach both saved photo faces before the inner sheet and card edges', () => {
+  const model = createSlabModel({ front: texture(), back: texture(), frontPhotoFrame: INSPECTION_SLAB_FRAME.version, backPhotoFrame: INSPECTION_SLAB_FRAME.version });
+  const camera = new Vector3(0, 0, 400);
+  const sheet = model.getObjectByName('clear-inner-sheet'), carrier = model.getObjectByName('generic-card-carrier');
+  for (const degrees of [0, 15, 45, 75, 85, 89, 91, 95, 105, 135, 180, 225, 255, 269, 271, 285, 315, 345]) {
+    model.rotation.y = degrees * Math.PI / 180; model.updateMatrixWorld(true);
+    const sign = Math.cos(model.rotation.y) > 0 ? 1 : -1;
+    const face = model.getObjectByName(`${sign > 0 ? 'front' : 'back'}-approved-photograph`);
+    for (const x of [-31.7, 0, 31.7]) for (const y of [-44.4, 0, 44.4]) {
+      const target = new Vector3(x, SLAB_MODEL.cardY + y, sign * .181).applyMatrix4(model.matrixWorld);
+      const ray = new Raycaster(camera, target.sub(camera).normalize());
+      const photoHits = ray.intersectObject(face);
+      assert.ok(photoHits.length > 0, `saved ${sign > 0 ? 'Front' : 'Back'} remains outward-facing at ${degrees}°`);
+      for (const hit of ray.intersectObjects([sheet, carrier])) {
+        assert.ok(hit.distance > photoHits[0].distance, `${hit.object.name} cannot cover saved photo pixels at ${degrees}°`);
+      }
+    }
+  }
+  disposeSlabModel(model);
 });
 
 test('saved back label faces outward and the separate NFC overlays the approved-B circle without changing saved art', () => {
@@ -189,7 +250,7 @@ test('perspective camera contains every holder vertex throughout a full turn at 
   f.scene.dispose();
 });
 
-test('perspective depth precision separates saved photo and label planes from their opaque carriers', async () => {
+test('perspective depth precision separates saved photos from the inner sheet and labels from their carrier', async () => {
   const f = fixture({ sources: { labelUrl: 'blob:label', labelLayoutVersion: 'atlas-approved-b-v1', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
   await f.load(); f.pending[2].resolve(68342, 20082); await settle(); f.pending[3].resolve(384, 512); await settle(); f.flush();
   const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version);
@@ -199,7 +260,7 @@ test('perspective depth precision separates saved photo and label planes from th
       f.scene.reset(); f.scene.rotateBy(degrees * Math.PI / 180 - INITIAL_SLAB_ANGLE); f.flush();
       model.updateMatrixWorld(true); f.renderer.camera.updateMatrixWorld(true);
       const sign = Math.cos(degrees * Math.PI / 180) > 0 ? 1 : -1;
-      for (const [name, y, faceZ, carrierZ] of [['photo', SLAB_MODEL.cardY, .181, .17], ['label', SLAB_MODEL.labelY, .22, .19]]) {
+      for (const [name, y, faceZ, carrierZ] of [['photo', SLAB_MODEL.cardY, .181, 0], ['label', SLAB_MODEL.labelY, .22, .19]]) {
         for (const x of [-30, 0, 30]) {
           const projectedDepth = z => (new Vector3(x, y, sign * z).applyMatrix4(model.matrixWorld).project(f.renderer.camera).z + 1) / 2;
           const separation = projectedDepth(carrierZ) - projectedDepth(faceZ);

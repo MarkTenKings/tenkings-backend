@@ -1,7 +1,7 @@
 import {
   BoxGeometry, CircleGeometry, Color, DataTexture, DirectionalLight, DoubleSide, EquirectangularReflectionMapping, ExtrudeGeometry, FloatType, LinearSRGBColorSpace, RGBAFormat,
   Group, HemisphereLight, Mesh, MeshBasicMaterial, MeshPhysicalMaterial,
-  NoToneMapping, PerspectiveCamera, Path, PlaneGeometry, Scene, Shape, SRGBColorSpace, Texture,
+  NoToneMapping, PerspectiveCamera, Path, PlaneGeometry, Scene, Shape, ShapeGeometry, SRGBColorSpace, Texture,
   WebGLRenderer,
 } from 'three';
 import { APPROVED_LABEL_LAYOUT } from './approved-card-media.mjs';
@@ -11,7 +11,9 @@ import { INSPECTION_SLAB_FRAME } from './slab-photo-frame.mjs';
  * Internal profiles, card thickness and NFC placement are presentation geometry,
  * not measured manufacturing CAD or damage inferred from the photographs. */
 export const SLAB_MODEL = Object.freeze({ version: 'atlas-illustrative-slab-v2', width: 80.264, height: 135.382, depth: 6.096,
-  cardWidth: 63.5, cardHeight: 88.9, cardY: -10.109, labelWidth: 68.342, labelHeight: 20.082, labelY: 51.048 });
+  // Center the card between the label bay's lower edge (39.791) and
+  // the clear interior's lower edge (-64.791): 7.841 mm of space at each end.
+  cardWidth: 63.5, cardHeight: 88.9, cardY: -12.5, labelWidth: 68.342, labelHeight: 20.082, labelY: 51.048 });
 export const INITIAL_SLAB_ANGLE = -Math.PI / 12;
 export const SLAB_STUDIO = Object.freeze({ version: 'atlas-neutral-studio-v2', width: 256, height: 128, material: 'reflection' });
 const TAU = Math.PI * 2;
@@ -62,17 +64,13 @@ export function createSlabStudioEnvironment() {
   texture.mapping = EquirectangularReflectionMapping; texture.colorSpace = LinearSRGBColorSpace; texture.needsUpdate = true;
   return texture;
 }
-function shoulder() {
-  const shape = rounded(74.464, 129.582, 1.8);
-  // These windows stay physically open in the presentation model: decorative
-  // plastic cannot tint, blur or refract an approved photograph or saved label.
-  for (const [width, height, radius, y] of [[70.75, 23.0, 1.15, SLAB_MODEL.labelY], [65.5, 91.4, 1.2, SLAB_MODEL.cardY]]) {
-    const points = rounded(width, height, radius).getPoints(12).map(point => { point.y += y; return point; });
-    shape.holes.push(new Path(points.reverse()));
-  }
-  const geometry = new ExtrudeGeometry(shape, { depth: .18, bevelEnabled: true, bevelSize: .12,
-    bevelThickness: .12, bevelSegments: 3, curveSegments: 12, steps: 1 });
-  geometry.translate(0, 0, -.09); return geometry;
+function cardEdges() {
+  const geometry = new BoxGeometry(SLAB_MODEL.cardWidth, SLAB_MODEL.cardHeight, .34);
+  // BoxGeometry's first four groups are the side edges. Omit the two broad
+  // white face caps so actual photo alpha meets the clear interior, not a mat.
+  const sideIndices = geometry.groups.slice(0, 4).flatMap(group =>
+    Array.from(geometry.index.array.slice(group.start, group.start + group.count)));
+  geometry.setIndex(sideIndices); geometry.clearGroups(); return geometry;
 }
 function plastic(parameters, materialMode) {
   const { reflectionDensity = .12, ...surface } = parameters;
@@ -149,7 +147,7 @@ export function createSlabModel({ front, back, frontPhotoFrame, backPhotoFrame, 
   const shell = new Group(), card = new Group(), labels = new Group();
   shell.name = 'clear-two-piece-shell'; card.name = 'approved-card-photographs'; labels.name = 'saved-label'; model.add(shell, card, labels);
   const clear = plastic({ opacity: .76, roughness: .085, reflectionDensity: .13 }, materialMode);
-  const shoulderMaterial = plastic({ opacity: .22, roughness: .12, clearcoat: .25, reflectionDensity: .025 }, materialMode);
+  const interior = plastic({ opacity: .22, roughness: .12, clearcoat: .25, reflectionDensity: .025 }, materialMode);
   const polished = plastic({ opacity: .86, roughness: .055, clearcoat: 1, envMapIntensity: 1.2, reflectionDensity: .22 }, materialMode);
   const rail = plastic({ opacity: .62, roughness: .11, clearcoat: .6, reflectionDensity: .16 }, materialMode);
   const seal = new MeshPhysicalMaterial({ color: 0x7f7f7f, metalness: 0, ior: 1.49, opacity: .34, transparent: true,
@@ -157,20 +155,22 @@ export function createSlabModel({ front, back, frontPhotoFrame, backPhotoFrame, 
   const weld = new MeshPhysicalMaterial({ color: 0xbdbdbd, metalness: 0, ior: 1.49, opacity: .22, transparent: true,
     depthWrite: false, roughness: .20, envMapIntensity: .5 });
   for (const [side, sign] of [['front', 1], ['back', -1]]) {
-    // A thick curved wall, a rolled outer lip and a lower internal shoulder give
-    // the two shell halves distinct depth cues at every angle.
+    // Curved walls and rolled outer lips give the two shell halves depth cues.
     mesh(shell, `${side}-beveled-shell`, ring(SLAB_MODEL.width, SLAB_MODEL.height, 2.7, 2.55, SLAB_MODEL.depth / 2, .50), clear, 0, 0, sign * SLAB_MODEL.depth / 4);
     mesh(shell, `${side}-polished-lip`, ring(79.10, 134.218, 2.35, .86, .28, .105), polished, 0, 0, sign * 2.87);
-    mesh(shell, `${side}-window-shoulder`, shoulder(), shoulderMaterial, 0, 0, sign * 2.31);
     mesh(shell, `${side}-recessed-weld-channel`, ring(75.36, 130.478, 1.95, .32, .24, .06), weld, 0, 0, sign * 2.13);
     mesh(shell, `${side}-label-bay`, ring(70.464, 22.5, 1.1, .75, .90, .16), rail, 0, 51.041, sign * 1.15);
   }
+  // One continuous field sits strictly between the unlit evidence faces at
+  // ±.181 mm. No cutout margin or raised inner border exposes a white scene rim,
+  // and no clear surface lies over the photograph pixels on either side.
+  mesh(shell, 'clear-inner-sheet', new ShapeGeometry(rounded(74.464, 129.582, 1.8), 12), interior);
   // An inset physical joining band, rather than a screen-space outline, remains
   // readable in edge view. It is illustrative mould anatomy, not measured CAD.
   mesh(shell, 'two-piece-midline-seam', ring(80.10, 135.218, 2.62, .38, .20, .045), seal);
   // No broad glass cover is layered over the evidence windows.
   const backing = new MeshBasicMaterial({ color: 0xfafafa, toneMapped: false });
-  mesh(card, 'generic-card-carrier', new BoxGeometry(SLAB_MODEL.cardWidth, SLAB_MODEL.cardHeight, .34), backing, 0, SLAB_MODEL.cardY);
+  mesh(card, 'generic-card-carrier', cardEdges(), backing, 0, SLAB_MODEL.cardY);
   for (const [side, texture, sign, photoFrame] of [['front', front, 1, frontPhotoFrame], ['back', back, -1, backPhotoFrame]]) {
     const face = mesh(card, `${side}-approved-photograph`, photoGeometry(texture.image, photoFrame),
       new MeshBasicMaterial({ map: texture, toneMapped: false, transparent: true }), 0, SLAB_MODEL.cardY, sign * .181);
@@ -306,8 +306,8 @@ export function createSlabScene(host, { frontUrl, backUrl, frontPhotoFrame, back
     // perspective camera. Keep distance fixed while turning, with 3% headroom.
     camera.position.z = Math.max(SLAB_MODEL.height / 2 * margin / tangentY + turnRadius,
       turnRadius * Math.hypot(1, margin / tangentX));
-    // The evidence planes sit 0.011 mm above their carriers. A generic .1–1000
-    // frustum quantizes that gap away at this distance, causing white stripes.
+    // The saved label planes sit only 0.03 mm above their carrier. A generic
+    // .1–1000 frustum can quantize that gap away here, causing white stripes.
     // Bound depth to the same turn envelope so those separate surfaces remain
     // resolved without moving, cropping or relighting the saved artwork.
     camera.near = Math.max(1, camera.position.z - turnRadius - 10);

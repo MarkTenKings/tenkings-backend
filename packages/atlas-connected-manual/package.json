@@ -15,6 +15,7 @@
     "./publication": "./src/publication.mjs",
     "./publication-repository": "./src/publication-repository.mjs",
     "./publication-reader": "./src/publication-reader.mjs",
+    "./inspection-alpha-preview": "./src/inspection-alpha-preview.mjs",
     "./finishing": "./src/finishing.mjs",
     "./label-export-storage": "./src/label-export-storage.mjs",
     "./presentation-market": "./src/presentation-market.mjs",

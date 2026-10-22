@@ -15,6 +15,7 @@ import { createAstraDefectProvider } from '@atlas/defect-analysis/provider';
 import { requireThat } from '@atlas/manual-service/contract';
 import { descriptorSha256 } from '@atlas/photo-core';
 import { createApprovedManualReader } from '@atlas/connected-manual/publication-reader';
+import { createInspectionAlphaPreviewResolver } from '@atlas/connected-manual/inspection-alpha-preview';
 import { createSoldReferenceProvider } from '@atlas/connected-manual/presentation-market-provider';
 import { createStationSigner } from '@atlas/connected-manual/finishing-station-protocol';
 import { manualResearchSettings, manualDealerConfigurationLoader } from './market-runtime-settings.mjs';
@@ -238,7 +239,8 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     pending:input=>connected.assistance.executor.pending(input),
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
-  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers});
+  const inspectionAlphaPreviews=createInspectionAlphaPreviewResolver({storage,client,bucket:settings.bucket,keyPrefix:`${settings.keyPrefix}/inspection-alpha-previews`});
+  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers,inspectionAlphaPreviews});
   const validateConfiguration=async()=>{
     if(gradedCards)await validateGradedCardsConfiguration({client:manualClient});
     if(cardProvenance)await validateCardProvenanceConfiguration({client:manualClient});

@@ -20,7 +20,22 @@ async function optionalReportImages(reportImages, row, packet) {
   } finally { clearTimeout(timer); }
 }
 
-export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null, reportImages = null }) {
+// Warm cache reads should finish inside this small optional budget. A cold
+// shared cache job may continue within its own eight-second background limit;
+// this request immediately retains the saved JPEG/full source on timeout.
+async function optionalInspectionAlphaPreview(resolver, saved, signal) {
+  if (!resolver) return null;
+  const controller = new AbortController(); let timer;
+  const optionalSignal = AbortSignal.any([signal, controller.signal]);
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => resolver.resolve({ saved, signal: optionalSignal })).catch(() => null),
+      new Promise(resolve => { timer = setTimeout(() => { controller.abort(); resolve(null); }, 250); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null, reportImages = null, inspectionAlphaPreviews = null }) {
   async function presentation(row, token) {
     if (!presentationEnabled) return null;
     const rows = await client.$transaction(tx => tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY revision DESC LIMIT 1', row.card_id, row.action_id), { maxWait: 1500, timeout: 3000 });
@@ -100,6 +115,10 @@ export function createApprovedManualReader({ client, artifacts, storage, present
     else if (claims.request.kind === 'IMAGE_ACCESS') {
       const media = await readArtifact(manifest.media, row, 'APPROVED_MEDIA', signal), side = claims.request.side;
       const saved = media[side], descriptor = packet.images[side], expiresIn = 120;
+      const source = saved?.descriptor?.raster;
+      requireThat(source?.content?.sha256 === descriptor.sha256 && source.content.byteCount === descriptor.byteCount
+        && source.content.mime === descriptor.contentType && source.dimensions?.width === descriptor.width
+        && source.dimensions.height === descriptor.height, 503, 'MANUAL_PUBLICATION_IMAGE_MISMATCH');
       const grant = await (storage.createImmutableDerivativeRead??storage.createDerivativeRead)({ ...saved, expiresIn, signal });
       requireThat(grant.sha256 === descriptor.sha256 && grant.byteCount === descriptor.byteCount
         && grant.mime === descriptor.contentType, 503, 'MANUAL_PUBLICATION_IMAGE_MISMATCH');
@@ -114,6 +133,14 @@ export function createApprovedManualReader({ client, artifacts, storage, present
         const preview=persisted?inspectionPreviewGrant(persisted,await (storage.createImmutableDerivativeRead??storage.createDerivativeRead)({...saved,descriptor:persisted.descriptor,expiresIn,signal})):null;
         if(preview)access=parseInspectionAccess({...baseAccess,image:{...image,preview}});
       }catch{/* Keep independently verified full access; never emit an invalid preview. */}
+      try {
+        const alphaPreview = await optionalInspectionAlphaPreview(inspectionAlphaPreviews, saved, signal);
+        if (alphaPreview) access = parseInspectionAccess({ ...access, image: { ...access.image, alphaPreview } });
+      } catch { /* An optional cache failure keeps the saved JPEG/full image usable. */ }
+      // A bounded client recheck may adopt the same-source alpha result after
+      // a cold/background job finishes. Historical clients ignore this hint.
+      if (inspectionAlphaPreviews && !access.image.alphaPreview)
+        access = { ...access, image: { ...access.image, alphaPreviewPending: true } };
       result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify(access)) };
     }
     else if (claims.request.kind === 'IMAGE') {

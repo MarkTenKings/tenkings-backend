@@ -50,7 +50,9 @@
 .slab{display:block;width:100%;position:relative;aspect-ratio:80.264/135.382;isolation:isolate;line-height:0}
 .slabShell,.slabCard,.slabCardImage,.slabLabel{position:absolute;display:block;object-fit:contain;pointer-events:none;filter:none;border:0;box-shadow:none;padding:0;margin:0;background:transparent}
 .slabShell{inset:0;width:100%;height:100%;z-index:0;filter:drop-shadow(0 3px 3px #0f172a1a)}
-.slabCard{left:10.4426%;top:24.634%;width:79.1144%;height:65.6661%;z-index:1}
+/* Same 63.5×88.9 mm viewport as SLAB_MODEL: centered horizontally and between
+   the label bay bottom (27.9 mm) and inner bottom edge (132.482 mm). */
+.slabCard{left:10.443038%;top:26.400112%;width:79.113924%;height:65.666041%;z-index:1}
 .slabCardWindow{overflow:hidden}
 .slabCardImage{max-width:none;object-fit:fill}
 .slabLabel{left:7.4267%;top:4.8766%;width:85.1466%;height:14.8336%;z-index:2}

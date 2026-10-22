@@ -46757,3 +46757,24 @@ Read-only production census identified six current, non-discarded, unprinted Spo
 
 - Task-owned fixture restart completed as detached PID26016 on58625, with original approved-image hashes verified and the same review URL retained. Fresh in-app Front/Back/3D captures confirm both marked bars and hard white mat overhang removed. NFC, original card crop, photo bytes and labels remain intact. Current3D is19draws/20,058triangles with unchanged42,025,088byte source texture accounting.
 - All56 focused checks, scoped scene ESLint and final production build/boundary pass. Independent Astra xHigh review confirmed the backing-plate cause and bounded removal; source-edge antialiasing was retained to preserve card pixels. Evidence uses ridge- prefix under ~/.codex/atlas-handoffs/atlas-slab-quality-20261022. Preview refreshed; no production deployment, data mutation or original-image edit.
+
+### Owner close-ups: remove remaining alpha fringe and 3D aperture gap
+
+- Computer restart interrupted this local task; source edits survived and the recorded task-owned fixture process stopped. Continuing only in the isolated quality worktree.
+- Confirmed two additional causes: white JPEG flattening bakes a pale fringe into source alpha edges; the 3D shoulder openings exceed the card dimensions, exposing the white scene around it. Candidate preserves transparent small WebP edges, replaces cutout shoulders with one continuous inner sheet behind the evidence, and retains card thickness as side edges without white caps.
+- Planned local fixture startup on port58625 with the same first-card review URL. No production restart/deployment/data or print changes.
+
+- Local startup observed successful as detached PID3986 on58625 after the computer restart. Same review URL restored in the in-app browser. Candidate reports18draws/15,104triangles and unchanged42,025,088byte full-source texture estimate. Current Front/Back plus3D front/back/45° captures show the continuous field; backend derivative caching and final qualification remain in progress.
+
+- Planned final local fixture rebuild/restart to use the exact shared bounded alpha encoder and final scene comments/tests. Stop only the verified task-owned PID3986 and preserve port58625/shared card URL. No production effect.
+
+- Additional owner placement request: moved card presentation down2.391mm in both stills and3D, centering between the label bay lower edge and clear inner bottom. Computed top/bottom7.841mm each and left/right5.482mm each; shared cross-render numeric check passes. No card crop/source/label changes. Current source is awaiting the final fixture rebuild with bounded cold-cache preview upgrades.
+
+- Added source/recipe/encoder-bound immutable private alpha-preview cache for historical and future saved inspection images, with unchanged JPEG fallback and final publication recheck. One active/eight admitted jobs,8s shared deadline,50MiB source/1MiB output limits, credential-free killable Sharp child; Node22 cache/reader34checks and independent native packaging/runtime16checks pass. Optional250ms reader budget avoids delaying primary images; bounded same-source background preview upgrade is being qualified for cold caches. Existing full staff suite passed927/927 before this final upgrade/placement increment.
+
+- Planned final local fixture restart from centered-card and cold-cache-upgrade source; verifies/stops only recorded PID5569, preserving port58625/shared card URL. No production change.
+
+- Final local restart observed successful as detached PID6668 on58625, preserving shared review URL and using the exact bounded Sharp alpha encoder. In-app browser Front/Back/3D front/45°/back confirm centered placement and no isolated white rim; independent Astra xHigh review passed. Cold-cache fixture retained oneJPEG per side while3bounded grant checks waited foralpha, then downloaded onealpha per side automatically; zero full originals fetched in that test. Evidence alpha-cold-cache-browser.json and alpha-centered-*.png.
+- Final Node22 focused checks99/99 and backend cache/reader34/34 pass; native packaging/runtime16checks independently pass; prior full staff suite927/927 passed before the final background-upgrade/placement increment. Scoped lint/diff checks pass. Alpha previews total128,958bytes vs155,004JPEG (16.8%smaller), preserving all originalphoto/labelbytes. Final build in progress; no production deployment/migration/data mutation.
+
+- Final production build and staff boundary check passed after source freeze (35browser chunks/15server traces/2,031traced files); local source is ready for continued owner review. No release action performed.

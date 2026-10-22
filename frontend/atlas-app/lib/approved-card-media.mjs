@@ -114,12 +114,15 @@ export function createApprovedMediaLoader({ fetchImpl = (...args) => fetch(...ar
     }
   }
 
-  return async function load(source, { signal = new AbortController().signal } = {}) {
+  return async function load(source, { signal = new AbortController().signal, alphaOnly = false, expectedSourceSha256 } = {}) {
     check(source && ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK', 'SLAB'].includes(source.kind));
     const photograph = source.kind === 'FRONT' || source.kind === 'BACK';
     check(!photograph || ['preview', 'full'].includes(source.delivery ?? 'full'));
-    const controller = new AbortController(), deadlineAt = Date.now() + timeoutMs;
-    const timer = setTimeout(() => controller.abort(failure('APPROVED_MEDIA_TIMEOUT')), timeoutMs);
+    check(!alphaOnly || photograph && source.delivery === 'preview');
+    check(expectedSourceSha256 === undefined || alphaOnly && hash(expectedSourceSha256));
+    const budgetMs = alphaOnly ? Math.min(timeoutMs, 8000) : timeoutMs;
+    const controller = new AbortController(), deadlineAt = Date.now() + budgetMs;
+    const timer = setTimeout(() => controller.abort(failure('APPROVED_MEDIA_TIMEOUT')), budgetMs);
     const bounded = AbortSignal.any([signal, controller.signal]);
     const retryFetch = (url, options) => request(url, options, bounded, deadlineAt);
     try {
@@ -131,24 +134,32 @@ export function createApprovedMediaLoader({ fetchImpl = (...args) => fetch(...ar
           check(response.ok && !response.redirected, 'APPROVED_MEDIA_UNAVAILABLE');
           const grant = parseInspectionAccess(await waitFor(() => response.json(), bounded), source.binding);
           bounded.throwIfAborted(); full = grant.image;
-          descriptor = source.delivery === 'preview' && full.preview ? full.preview : full;
+          check(expectedSourceSha256 === undefined || full.sha256 === expectedSourceSha256, 'APPROVED_MEDIA_SOURCE_CHANGED');
+          if (alphaOnly && !full.alphaPreview) return null;
+          descriptor = alphaOnly ? full.alphaPreview : source.delivery === 'preview' ? full.alphaPreview || full.preview || full : full;
         }
         if (descriptor) {
           const verified = async selected => {
-            const asset = await verify(selected, { signal: bounded, fetchImpl: retryFetch, urlImpl, origin: origin(), timeoutMs });
+            const asset = await verify(selected, { signal: bounded, fetchImpl: retryFetch, urlImpl, origin: origin(), timeoutMs: budgetMs });
             if (bounded.aborted) { asset.dispose(); throw bounded.reason; }
             return { ...asset, width: selected.width, height: selected.height,
               sha256: selected.sha256, byteCount: selected.byteCount,
-              ...(full ? { representation: selected === full ? 'full' : 'preview', sourceSha256: full.sha256 } : {}) };
+              ...(full ? { representation: selected === full ? 'full' : 'preview', sourceSha256: full.sha256 } : {}),
+              ...(full?.alphaPreviewPending && selected === full.preview ? { alphaPreviewPending: true } : {}) };
           };
-          try { return await verified(descriptor); }
-          catch (error) {
-            // A missing/unavailable small rendition may use the independently
-            // verified full image from this same exact grant. Corrupt bytes,
-            // bad lineage, cancellation and deadlines never downgrade checks.
-            if (!full || descriptor === full || bounded.aborted
-              || !(error?.code === 'VERIFIED_IMAGE_UNAVAILABLE' || error?.name === 'TypeError')) throw error;
-            return verified(full);
+          const candidates = !alphaOnly && full && source.delivery === 'preview'
+            ? [full.alphaPreview, full.preview, full].filter(Boolean) : [descriptor];
+          for (const [index, candidate] of candidates.entries()) {
+            try { return await verified(candidate); }
+            catch (error) {
+              // Only unavailable transport may try another independently
+              // verified rendition from this grant. Corrupt bytes/lineage,
+              // cancellation and deadlines never downgrade verification.
+              if (bounded.aborted
+                || !(error?.code === 'VERIFIED_IMAGE_UNAVAILABLE' || error?.name === 'TypeError')) throw error;
+              if (alphaOnly) return null;
+              if (index === candidates.length - 1) throw error;
+            }
           }
         }
         // Saved label preview bytes have no image hash in the current contract;
@@ -171,7 +182,7 @@ export function createApprovedMediaLoader({ fetchImpl = (...args) => fetch(...ar
         } finally { try { Promise.resolve(reader.cancel()).catch(() => {}); } catch {} }
       // A complete still needs its saved label as promptly as its small photo.
       // Optional large media never jumps ahead of either in the shared queue.
-      }, bounded, ['LABEL', 'LABEL_BACK'].includes(source.kind) || source.delivery === 'preview' ? 0 : 1);
+      }, bounded, !alphaOnly && (['LABEL', 'LABEL_BACK'].includes(source.kind) || source.delivery === 'preview') ? 0 : 1);
     } finally { clearTimeout(timer); }
   };
 }
@@ -182,11 +193,43 @@ export const loadApprovedMedia = createApprovedMediaLoader();
  * photo slots. Full detail cannot evict a still or silently substitute a small
  * rendition. The caller remounts on approvedMediaIdentity changes; nothing is
  * retained across that boundary. Disposed/late loads cannot publish. */
-export function createApprovedMediaResource({ load = loadApprovedMedia } = {}) {
+export function createApprovedMediaResource({ load = loadApprovedMedia, alphaRetryDelays = [2000, 3000, 4000] } = {}) {
+  check(Array.isArray(alphaRetryDelays) && alphaRetryDelays.length <= 3
+    && alphaRetryDelays.every(delay => Number.isSafeInteger(delay) && delay >= 0 && delay <= 8000));
   const entries = new Map(); let disposed = false;
-  const release = entry => { entry?.controller.abort(); entry?.asset?.dispose(); };
+  const release = entry => { clearTimeout(entry?.alphaTimer); entry?.controller.abort(); entry?.asset?.dispose(); };
   const slot = source => ['FRONT', 'BACK'].includes(source.kind) ? `${source.kind}:${source.delivery ?? 'full'}` : source.kind;
   const publishState = (entry, state) => { entry.state = state; entry.publish(state); };
+  const publishAsset = entry => {
+    const { url, representation, width, height, sourceSha256, sha256, byteCount } = entry.asset;
+    publishState(entry, { loading: false, url, error: null, representation, width, height, sourceSha256, sha256, byteCount });
+  };
+  function upgradeAlpha(entry, current) {
+    if (entry.source.delivery !== 'preview' || !entry.asset.alphaPreviewPending || !hash(entry.asset.sourceSha256)) return;
+    const sourceSha256 = entry.asset.sourceSha256; let attempt = 0;
+    const schedule = () => {
+      if (!current() || attempt >= alphaRetryDelays.length) return;
+      entry.alphaTimer = setTimeout(() => {
+        entry.alphaTimer = null;
+        if (!current()) return;
+        Promise.resolve().then(() => {
+          entry.controller.signal.throwIfAborted();
+          return load(entry.source, { signal: entry.controller.signal, alphaOnly: true, expectedSourceSha256: sourceSha256 });
+        }).then(asset => {
+          if (!asset) { schedule(); return; }
+          if (!current()) { asset.dispose(); return; }
+          if (asset.sourceSha256 !== sourceSha256 || asset.representation !== 'preview') { asset.dispose(); return; }
+          const previous = entry.asset; entry.asset = asset;
+          try { publishAsset(entry); } finally { previous.dispose(); }
+        }).catch(error => {
+          // Transient access failure can use the next bounded check. A changed
+          // binding or corrupt image stops upgrades while retaining the still.
+          if (['APPROVED_MEDIA_UNAVAILABLE', 'APPROVED_MEDIA_TIMEOUT'].includes(error?.code) || error?.name === 'TypeError') schedule();
+        });
+      }, alphaRetryDelays[attempt++]);
+    };
+    schedule();
+  }
   return {
     read(source, publish) {
       if (disposed || !source) return Promise.resolve();
@@ -203,8 +246,7 @@ export function createApprovedMediaResource({ load = loadApprovedMedia } = {}) {
         .then(asset => {
           if (!current()) { asset.dispose(); return; }
           entry.asset = asset; entry.pending = false;
-          const { representation, width, height, sourceSha256, sha256, byteCount } = asset;
-          publishState(entry, { loading: false, url: asset.url, error: null, representation, width, height, sourceSha256, sha256, byteCount });
+          publishAsset(entry); upgradeAlpha(entry, current);
         }, error => { if (current()) { entry.pending = false; publishState(entry, { loading: false, url: null, error }); } });
       return entry.promise;
     },

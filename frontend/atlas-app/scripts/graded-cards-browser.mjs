@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { renderLabelV4 } from '../../../packages/atlas-finishing/src/label-v4.mjs';
 import { renderApprovedBLabel } from '../../../packages/atlas-finishing/src/label-approved-b.mjs';
+import { encodeInspectionAlphaPreview } from '../../../packages/atlas-connected-manual/src/inspection-alpha-preview-encoder.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..'), app = resolve(root, 'frontend/atlas-app');
 const require = createRequire(resolve(root, 'packages/atlas-manual-workspace/package.json'));
 const { build } = require('esbuild');
@@ -33,15 +34,19 @@ const samples = await Promise.all(manifest.records.map(async record => {
     if (descriptor.mime !== 'image/webp' || descriptor.width !== 1350 || descriptor.height !== 1858
       || descriptor.byteCount !== bytes.length || descriptor.sha256 !== createHash('sha256').update(bytes).digest('hex')) throw Error('Reference photo changed.');
     // Display-only local rendition, bound to the exact public source bytes.
-    // Production uses the already saved OpenCV preview; this fixture exercises
-    // that same transport and verification contract without writing any record.
+    // Retain the legacy JPEG alongside the shared transparent display encoder;
+    // this exercises both transport paths without writing any saved record.
     // Match production preparation_encoding.py: transparent inspection padding
     // is composited on white before JPEG encoding, never implicit black.
     const previewBytes = await sharp(bytes).flatten({ background: '#ffffff' }).resize(558, 768).jpeg({ quality: 78 }).toBuffer();
     const preview = { bytes: previewBytes, descriptor: { sha256: createHash('sha256').update(previewBytes).digest('hex'),
       byteCount: previewBytes.length, mime: 'image/jpeg', width: 558, height: 768,
       sourceSha256: descriptor.sha256, policyVersion: 'atlas-inspection-preview-v1' } };
-    images[side] = { descriptor, bytes, preview };
+    const alphaBytes = await encodeInspectionAlphaPreview(bytes, { signal: AbortSignal.timeout(8000) });
+    const alphaPreview = { bytes: alphaBytes, descriptor: { sha256: createHash('sha256').update(alphaBytes).digest('hex'),
+      byteCount: alphaBytes.length, mime: 'image/webp', width: 558, height: 768,
+      sourceSha256: descriptor.sha256, policyVersion: 'atlas-inspection-alpha-preview-v1' } };
+    images[side] = { descriptor, bytes, preview, alphaPreview };
   }
   const content = reportContent?.records?.find(value => value.publicToken === record.binding.publicToken);
   if (reportContent && (!content || content.publicHash !== record.binding.publicHash
@@ -126,7 +131,7 @@ const bundle = await build({ logLevel: 'error', stdin: { contents: source, resol
 const js = bundle.outputFiles.find(file => file.path.endsWith('/entry.js')).text, css = bundle.outputFiles.find(file => file.path.endsWith('/entry.css')).text;
 const bundleFiles = new Map(bundle.outputFiles.map(file => [file.path.replace('/fixture', ''), file]));
 let failure = null, hold = false, held = [], denySession = false, brokenPhoto = false, brokenBack = false, corruptBack = false, transientPhotos = 0, failSlabChunk = false;
-let fullDelayMs = 0, brokenPreview = false;
+let fullDelayMs = 0, brokenPreview = false, alphaAvailableAt = 0;
 const requests = [];
 const server = createServer(async (req, res) => {
   res.setHeader('cache-control', 'no-store');
@@ -155,13 +160,14 @@ const server = createServer(async (req, res) => {
     if (action === 'restore-full') fullDelayMs = 0;
     if (action === 'break-preview') brokenPreview = true;
     if (action === 'restore-preview') brokenPreview = false;
+    if (action === 'cold-alpha-cache') alphaAvailableAt = Date.now() + 6000;
     json({ failure, hold, held: held.length, denySession, brokenPhoto, brokenBack, corruptBack, transientPhotos, reads: requests.length, writes: requests.filter(request => request.method !== 'GET').length }); return;
   }
   const localReportToken = /^\/reports\/(ar_[A-Za-z0-9_-]{24})$/.exec(url.pathname)?.[1];
   if (req.url === '/' || /^\/admin\/graded-cards(?:\/[a-f0-9-]+)?$/.test(url.pathname)
     || localReportToken && fixtureReports[localReportToken] && url.searchParams.get('v') === String(fixtureReports[localReportToken].packet.approvalVersion)) {
     res.setHeader('content-type', 'text/html; charset=utf-8');
-    const controls = ['fail-read', 'hold-reads', 'release-reads', 'deny-session', 'allow-session', 'break-photos', 'fail-next-photo', 'break-back', 'corrupt-back', 'restore-photos', 'fail-next-slab-chunk'];
+    const controls = ['fail-read', 'hold-reads', 'release-reads', 'deny-session', 'allow-session', 'break-photos', 'fail-next-photo', 'break-back', 'corrupt-back', 'restore-photos', 'fail-next-slab-chunk', 'cold-alpha-cache'];
     res.end('<!doctype html><meta charset="utf-8"><title>ATLAS graded cards · synthetic qualification</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><div id="fixture-controls" style="background:#fff;color:#334155;padding:8px 4%;font:11px system-ui;border-bottom:1px solid #ddd"><details><summary>Local qualification · synthetic records, copies of approved public photos</summary><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+controls.map(action=>'<button type="button" data-fixture-action="'+action+'" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">'+action+'</button>').join('')+'<button type="button" id="lose-3d-context" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">lose-3d-context</button><button type="button" id="revoke-access" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">revoke-access</button></div><pre id="fixture-status" style="white-space:pre-wrap"></pre></details></div><div id="app"></div><script type="module" src="/bundle.js"></script><script>document.querySelectorAll("[data-fixture-action]").forEach(button=>button.addEventListener("click",async()=>{document.getElementById("fixture-status").textContent=JSON.stringify(await(await fetch("/fixture-controls?action="+button.dataset.fixtureAction)).json())}));document.getElementById("lose-3d-context").addEventListener("click",()=>document.querySelector("canvas")?.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext());document.getElementById("revoke-access").addEventListener("click",()=>window.dispatchEvent(new Event("atlas:verified-image-access-ended")));</script>'); return;
   }
   if (req.url === '/bundle.js' || req.url === '/style.css') { res.setHeader('content-type', req.url.endsWith('.js') ? 'text/javascript' : 'text/css'); res.end(req.url.endsWith('.js') ? js : css); return; }
@@ -217,11 +223,13 @@ const server = createServer(async (req, res) => {
     const card = cards.find(card => card.report.publicToken === photo[1]), side = photo[2];
     if (transientPhotos > 0) { transientPhotos--; json({ error: 'TEMPORARILY_UNAVAILABLE' }, 503); return; }
     if (!card?.media[side] || brokenPhoto || brokenBack && side === 'BACK') { json({ error: 'PHOTO_UNAVAILABLE' }, 404); return; }
-    const { descriptor, bytes, preview } = samples[card.sample].images[side];
+    const { descriptor, bytes, preview, alphaPreview } = samples[card.sample].images[side];
     if (url.searchParams.get('delivery') === 'direct') {
       json({ version: 'atlas-approved-image-access-v1', publicToken: card.report.publicToken, approvalVersion: card.report.version, publicHash: card.report.publicHash, side,
         image: { url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}`, sha256: descriptor.sha256, byteCount: bytes.length, mime: descriptor.mime, width: descriptor.width, height: descriptor.height,
-          preview: { ...preview.descriptor, url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}?preview=1` } } }); return;
+          preview: { ...preview.descriptor, url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}?preview=1` },
+          ...(Date.now() < alphaAvailableAt ? { alphaPreviewPending: true } : {
+            alphaPreview: { ...alphaPreview.descriptor, url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}?preview=alpha` } }) } }); return;
     }
     res.setHeader('content-type', descriptor.mime); res.end(bytes); return;
   }
@@ -229,10 +237,11 @@ const server = createServer(async (req, res) => {
   if (storage) {
     const card = cards.find(card => card.cardId === storage[1]);
     if (!card?.media[storage[2]]) { json({ error: 'PHOTO_UNAVAILABLE' }, 404); return; }
-    const source = samples[card.sample].images[storage[2]], small = url.searchParams.get('preview') === '1';
+    const source = samples[card.sample].images[storage[2]], rendition = url.searchParams.get('preview');
+    const small = rendition === '1' || rendition === 'alpha';
     if (small && brokenPreview) { json({ error: 'PREVIEW_UNAVAILABLE' }, 404); return; }
     if (!small && fullDelayMs) await new Promise(done => setTimeout(done, fullDelayMs));
-    const { bytes, descriptor } = small ? source.preview : source;
+    const { bytes, descriptor } = rendition === 'alpha' ? source.alphaPreview : small ? source.preview : source;
     res.setHeader('content-type', descriptor.mime);
     res.end(corruptBack && storage[2] === 'BACK' ? Buffer.alloc(bytes.length) : bytes); return;
   }
