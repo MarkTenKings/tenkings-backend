@@ -22,3 +22,11 @@
 .actions button:focus-visible { outline: 3px solid #047857; outline-offset: 4px; }
 .empty { padding: 24px 0; }
 @media (max-width: 480px) { .workspace { padding: 24px 16px 40px; }.facts { grid-template-columns: 1fr; gap: 14px; }.claimHeading { flex-wrap: wrap; }.actions button { width: 100%; } }
+
+.history { margin-top: 20px; padding: 20px; background: #f5f7fa; border: 1px solid #d9e0e8; border-radius: 12px; min-width: 0; }
+.history h3 { margin: 0 0 12px; font-size: 18px; }
+.transitions { padding-left: 22px; margin: 20px 0; }
+.transitions li { padding: 0 0 16px 4px; }
+.transitions h4 { margin: 0; font-size: 15px; }
+.transitions p { margin: 6px 0; }
+@media (max-width: 480px) { .history { padding: 14px; } }

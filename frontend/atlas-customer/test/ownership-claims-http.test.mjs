@@ -5,6 +5,8 @@ import { CustomerAuth } from '../lib/server/auth.mjs';
 import { createOwnershipClaimsHandler } from '../lib/server/ownership-claims-http.mjs';
 import { createClaimSubmissionFixture, claimFixtureId, CLAIM_SUBMISSION_CARD, pendingClaim } from './ownership-claim-submission-fixture.mjs';
 
+import { createOwnershipClaimsFixture, createOwnershipClaimHistoryFixture } from './ownership-claims-fixture.mjs';
+
 function setup() {
   const fixture = createClaimSubmissionFixture({ claim: pendingClaim() }), calls = [];
   const config = { origin: 'https://atlas.example.invalid', cookies: { browser: 'customer_browser', session: 'customer_session' }, sessionKey: Buffer.alloc(32, 7) };
@@ -15,6 +17,7 @@ function setup() {
   const decode = async response => { if (!response.ok) throw { status: response.status, code: 'PRIVATE_INTERNAL_DETAILS' }; return response.json(); };
   const capabilities = { readAccess: async () => ({ schema: 'atlas-ownership-customer-access-v1', accountId: fixture.accountId }), configuration: async () => fixture.config,
     resolveTarget: async (header, input) => { calls.push(['target', header, input]); return decode(await fixture.transport.resolve(input, {})); },
+    readClaim: async (header, input) => { calls.push(['readClaim', header, input]); return decode(await fixture.transport.lifecycle('read_claim', input, {})); },
     lifecycle: { async call(...args) { calls.push(args); return decode(await fixture.transport.lifecycle(args[2], args[3], {})); } } };
   const state = { auth, config, assertRequest() {}, ownershipClaims: capabilities }, handler = createOwnershipClaimsHandler(state);
   async function run({ method = 'GET', path = 'claim?claimId=' + fixture.claim.claimId, body = '', headers = {}, ...extra } = {}) {
@@ -48,12 +51,12 @@ test('actual CustomerAuth and exact v2 read/withdraw dispatch preserve blocked m
   const recovered = await f.run({ path: 'request?requestId='+input.requestId }); assert.equal(recovered.body.receipt.action, 'withdraw_claim');
 });
 
-test('fixed route grammar rejects actions, foreign identity, aliases, duplicate selectors, reviewer and history dispatch', async () => {
+test('fixed route grammar rejects actions, foreign identity, aliases, duplicate selectors, reviewer dispatch', async () => {
   const f = setup();
   for (const path of ['claim?claimId='+f.fixture.claim.claimId+'&accountId='+f.fixture.accountId,
     'claim?claimId='+f.fixture.claim.claimId+'&claimId='+f.fixture.claim.claimId, 'claim?', 'claim?%63laimId='+f.fixture.claim.claimId,
     'claim?claimId='+f.fixture.claim.claimId+'#fragment', 'target?certificateNumber=atlas-123456ABCDEF']) assert.equal((await f.run({ path })).statusCode, 400, path);
-  for (const path of ['review', 'claims', 'queue', 'read_plan', 'retain_object', 'claim/extra']) assert.equal((await f.run({ path })).statusCode, 404, path);
+  for (const path of ['review', 'queue', 'read_plan', 'retain_object', 'claim/extra']) assert.equal((await f.run({ path })).statusCode, 404, path);
   assert.equal((await f.run({ method: 'POST', body: {}, path: 'claim?claimId='+f.fixture.claim.claimId })).statusCode, 405);
   const base = { requestId: claimFixtureId(400), claimId: f.fixture.claim.claimId, expectedClaimRevision: 1 };
   for (const key of ['accountId', 'action', 'binding', 'observation', 'key']) assert.equal((await f.run({ method: 'POST', path: 'withdraw', body: { ...base, [key]: 'forged' } })).statusCode, 400);
@@ -75,7 +78,7 @@ test('cookie, actual CSRF, origin, bearer, framing and metadata size refusals di
 test('empty framework GET bodies work; accountless, malformed or private extra results never cross boundary', async () => {
   const f = setup(); for (const body of [undefined, null, '', {}]) assert.equal((await f.run({ body })).statusCode, 200);
   for (const mutate of [v => { delete v.accountId; }, v => { v.accountId = 'invalid'; }, v => { v.privateKey = 'secret'; }, v => { v.claim.claimRevision = 0; }]) {
-    f.capabilities.lifecycle.call = async () => { const v = f.fixture.project('read_claim', { claimId: f.fixture.claim.claimId }, { claim: f.fixture.claim }); mutate(v); return v; };
+    f.capabilities.readClaim = async () => { const v = f.fixture.project('read_claim', { claimId: f.fixture.claim.claimId }, { claim: f.fixture.claim }); mutate(v); return v; };
     const r = await f.run(); assert.equal(r.statusCode, 503); assert.deepEqual(r.body, { error: 'OWNERSHIP_CLAIMS_UNAVAILABLE' });
   }
 });
@@ -83,7 +86,7 @@ test('empty framework GET bodies work; accountless, malformed or private extra r
 test('service errors remain sanitized and cannot masquerade as confirmed refusal', async () => {
   const f = setup();
   for (const status of [401, 403, 404, 409, 429, 500]) {
-    f.capabilities.lifecycle.call = async () => { throw Object.assign(Error('PRIVATE COOKIE/SQL'), { status, code: 'PRIVATE_DETAILS' }); };
+    f.capabilities.readClaim = async () => { throw Object.assign(Error('PRIVATE COOKIE/SQL'), { status, code: 'PRIVATE_DETAILS' }); };
     const r = await f.run(); assert.equal(r.statusCode, status === 500 ? 503 : status);
     assert.deepEqual(Object.keys(r.body), ['error']); assert.doesNotMatch(JSON.stringify(r.body), /PRIVATE|CONFIRMED_REFUSAL/);
   }
@@ -91,7 +94,7 @@ test('service errors remain sanitized and cannot masquerade as confirmed refusal
 
 test('independent live account binding rejects foreign capability responses and post-dispatch account loss', async () => {
   const f = setup();
-  f.capabilities.lifecycle.call = async () => ({ ...f.fixture.project('read_claim', { claimId: f.fixture.claim.claimId }, { claim: f.fixture.claim }), accountId: claimFixtureId(999) });
+  f.capabilities.readClaim = async () => ({ ...f.fixture.project('read_claim', { claimId: f.fixture.claim.claimId }, { claim: f.fixture.claim }), accountId: claimFixtureId(999) });
   assert.deepEqual((await f.run()).body, { error: 'OWNERSHIP_CLAIMS_UNAVAILABLE' });
   f.capabilities.resolveTarget = async () => ({ schema: 'atlas-ownership-claim-target-v1', accountId: claimFixtureId(999), observedAt: '2026-10-21T12:00:00Z', card: CLAIM_SUBMISSION_CARD, canSubmit: false, expectedOwnershipRevision: null });
   assert.deepEqual((await f.run({ path: 'target?certificateNumber='+CLAIM_SUBMISSION_CARD.certificateNumber })).body, { error: 'OWNERSHIP_CLAIMS_UNAVAILABLE' });
@@ -115,4 +118,32 @@ test('proof methods receive only closed IDs and no default storage or ingestor a
   assert.equal((await f.run({ method: 'POST', path: 'complete', body })).statusCode, 200);
   assert.deepEqual(call.slice(0, 3), [f.cookie, f.csrf, body]); assert(call[3].signal instanceof AbortSignal);
   assert.equal((await f.run({ method: 'POST', path: 'complete', body: { ...body, observation: {} } })).statusCode, 400);
+});
+
+
+test('restricted list/history/current reads need dedicated capabilities, never a lifecycle or v1 fallback', async () => {
+  const f = setup(), page = createOwnershipClaimsFixture({ accountId: f.fixture.accountId, count: 1 }), history = createOwnershipClaimHistoryFixture({ accountId: f.fixture.accountId });
+  const paths = ['claims?limit=25', `history?claimId=${history.request.claimId}&afterRevision=0&limit=25`, 'claim?claimId='+f.fixture.claim.claimId];
+  delete f.capabilities.readClaim; f.capabilities.lifecycle.call = async () => assert.fail('No writer call for restricted reads');
+  for (const path of paths) assert.equal((await f.run({ path })).statusCode, 503);
+  f.capabilities.listClaims = async (cookie, input) => { assert.equal(cookie, f.cookie); assert.deepEqual(input, { afterClaimId: null, limit: 25 }); return page.page; };
+  f.capabilities.listHistory = async (cookie, input) => { assert.equal(cookie, f.cookie); assert.deepEqual(input, history.request); return history.history; };
+  assert.deepEqual((await f.run({ path: paths[0] })).body, page.page); assert.deepEqual((await f.run({ path: paths[1] })).body, history.history);
+  f.capabilities.listClaims = async () => ({ ...page.page, schema: 'atlas-ownership-claims-v1' }); assert.equal((await f.run({ path: paths[0] })).statusCode, 503);
+  f.capabilities.listHistory = async () => ({ ...history.history, accountId: claimFixtureId(999) }); assert.equal((await f.run({ path: paths[1] })).statusCode, 503);
+  f.capabilities.listHistory = async () => history.history; let checks = 0;
+  f.capabilities.readAccess = async () => { if (++checks > 1) throw { status: 401 }; return { schema: 'atlas-ownership-customer-access-v1', accountId: f.fixture.accountId }; };
+  assert.equal((await f.run({ path: paths[1] })).statusCode, 401);
+});
+
+test('new GET selectors are bounded, closed, canonical and cannot invoke reviewer or writer actions', async () => {
+  const f = setup(), id = f.fixture.claim.claimId;
+  for (const path of ['claims', 'claims?limit=0', 'claims?limit=51', 'claims?limit=025', 'claims?limit=25&limit=25', 'claims?limit=25&afterClaimId=',
+    'claims?limit=25&accountId='+f.fixture.accountId, `history?claimId=${id}&afterRevision=-1&limit=25`, `history?claimId=${id}&afterRevision=01&limit=25`,
+    `history?claimId=${id}&afterRevision=2147483647&limit=25`, `history?claimId=${id}&afterRevision=0&limit=25&action=review_claim`]) {
+    assert.equal((await f.run({ path })).statusCode, 400, path);
+  }
+  assert.equal((await f.run({ path: 'claims?limit=25', method: 'POST', body: {} })).statusCode, 405);
+  assert.equal((await f.run({ path: 'claims?limit=25', headers: { 'sec-fetch-site': 'cross-site' } })).statusCode, 403);
+  assert.equal(f.calls.length, 0);
 });

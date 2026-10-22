@@ -1,6 +1,7 @@
 // Inert browser adapter: no default fetch, endpoints registered, credentials,
 // policy, account assertions, automatic retries or persistent private data.
 import { claimIdValid, claimCertificateValid, claimLifecycleInput } from './ownership-claim-submission-client.mjs';
+import { ownershipClaimsRequest, ownershipClaimHistoryRequest } from './ownership-claims-client.mjs';
 const BASE = '/account/api/customer/ownership/';
 const reads = { read_claim: ['claim', 'claimId'], read_bundle: ['bundle', 'bundleId'], recover_request: ['request', 'requestId'] };
 const writes = { reserve_bundle: 'reserve', submit_claim: 'submit', withdraw_claim: 'withdraw', replace_evidence: 'replace' };
@@ -21,6 +22,14 @@ export function createOwnershipClaimsTransport({ fetchImpl, csrf, storageOrigin 
       ...(input === undefined ? {} : { body: JSON.stringify(input) }), signal });
   }
   return Object.freeze({
+    listClaims({ signal, ...raw } = {}) {
+      const input = ownershipClaimsRequest({ afterClaimId: null, limit: 25, ...raw });
+      return request('claims?limit=' + input.limit + (input.afterClaimId === null ? '' : '&afterClaimId=' + input.afterClaimId), undefined, signal);
+    },
+    listHistory({ signal, ...raw } = {}) {
+      const input = ownershipClaimHistoryRequest({ afterRevision: 0, limit: 25, ...raw });
+      return request(`history?claimId=${input.claimId}&afterRevision=${input.afterRevision}&limit=${input.limit}`, undefined, signal);
+    },
     configuration({ signal } = {}) { return request('configuration', undefined, signal); },
     resolve(input, { signal } = {}) {
       need(input && Object.keys(input).length === 1 && claimCertificateValid(input.certificateNumber));

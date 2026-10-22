@@ -2,6 +2,8 @@
 import { deny, privateHeaders, UUID } from './policy.mjs';
 import { claimLifecycleInput, parseClaimConfiguration, parseClaimLifecycle, parseClaimTarget } from '../ownership-claim-submission-client.mjs';
 
+import { ownershipClaimsRequest, ownershipClaimHistoryRequest, parseOwnershipClaimsPage, parseOwnershipClaimHistory, parseOwnershipClaimCurrent } from '../ownership-claims-client.mjs';
+
 const PREFIX = '/api/customer/ownership/';
 const READS = { claim: ['read_claim', 'claimId'], bundle: ['read_bundle', 'bundleId'], request: ['recover_request', 'requestId'] };
 const WRITES = { reserve: 'reserve_bundle', submit: 'submit_claim', withdraw: 'withdraw_claim', replace: 'replace_evidence' };
@@ -17,7 +19,7 @@ export function parseOwnershipClaimRoute(method, rawUrl, body) {
   const [path, query, extra] = rawUrl.split('?');
   if (!path.startsWith(PREFIX) || path.slice(PREFIX.length).includes('/')) deny(404, 'NOT_FOUND');
   const name = path.slice(PREFIX.length);
-  const verb = ['target', 'configuration', ...Object.keys(READS)].includes(name) ? 'GET'
+  const verb = ['target', 'configuration', 'claims', 'history', ...Object.keys(READS)].includes(name) ? 'GET'
     : Object.hasOwn(WRITES, name) || ['sign', 'complete'].includes(name) ? 'POST' : null;
   if (!verb) deny(404, 'NOT_FOUND');
   if (method !== verb) deny(405, 'METHOD_NOT_ALLOWED');
@@ -25,6 +27,17 @@ export function parseOwnershipClaimRoute(method, rawUrl, body) {
   if (verb === 'GET') {
     const params = new URLSearchParams(query);
     if (query !== undefined && params.toString() !== query) invalid();
+    if (name === 'claims' || name === 'history') {
+      const keys = name === 'claims' ? ['limit', 'afterClaimId'] : ['claimId', 'afterRevision', 'limit'];
+      if ([...params.keys()].some(key => !keys.includes(key) || params.getAll(key).length !== 1)
+        || !/^[1-9][0-9]?$/.test(params.get('limit') ?? '')
+        || name === 'history' && !/^(0|[1-9][0-9]{0,9})$/.test(params.get('afterRevision') ?? '')) invalid();
+      try {
+        const input = name === 'claims' ? ownershipClaimsRequest({ afterClaimId: params.get('afterClaimId'), limit: Number(params.get('limit')) })
+          : ownershipClaimHistoryRequest({ claimId: params.get('claimId'), afterRevision: Number(params.get('afterRevision')), limit: Number(params.get('limit')) });
+        return { name, input, writing: false };
+      } catch { invalid(); }
+    }
     const key = name === 'target' ? 'certificateNumber' : READS[name]?.[1];
     if (key ? [...params.keys()].length !== 1 || params.getAll(key).length !== 1 : params.size !== 0) invalid();
     const input = key ? { [key]: params.get(key) } : {};
@@ -67,7 +80,8 @@ function proofResponse(value, route, boundary) {
  * readAccess(cookie) is a separately restricted LIVE SQL session reader, not
  * cookie parsing, bootstrap, a browser account or a cached policy snapshot.
  * resolveTarget/configuration must be live account-bound readers; the old v1
- * workflow reader is NOT a v2 lifecycle resolver. No history/queue is exposed.
+ * workflow reader is NOT a v2 lifecycle resolver. listClaims/readClaim/listHistory
+ * use only the restricted v2 reader. No reviewer queue is exposed.
  * SQL/services retain live authorization and policy authority. Cookie parsing
  * alone neither identifies the account nor enables ownership operations.
  */
@@ -116,6 +130,11 @@ export function createOwnershipClaimsHandler(resolveState) {
         if (typeof capabilities?.resolveTarget !== 'function') unavailable();
         value = await capabilities.resolveTarget(cookie, route.input);
         value = parseClaimTarget(value, accountId, route.input.certificateNumber);
+      } else if (['claims', 'history', 'claim'].includes(route.name)) {
+        const method = { claims: 'listClaims', history: 'listHistory', claim: 'readClaim' }[route.name];
+        if (typeof capabilities[method] !== 'function') unavailable();
+        value = await capabilities[method](cookie, route.input);
+        value = { claims: parseOwnershipClaimsPage, history: parseOwnershipClaimHistory, claim: parseOwnershipClaimCurrent }[route.name](value, accountId, route.input);
       } else if (route.action) {
         if (typeof capabilities?.lifecycle?.call !== 'function') unavailable();
         value = await capabilities.lifecycle.call(cookie, csrf, route.action, route.input);

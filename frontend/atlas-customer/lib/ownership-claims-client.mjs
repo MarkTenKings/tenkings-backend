@@ -1,4 +1,4 @@
-// Browser-only consumer of the CUSTOMER list_claims projection. The qualified
+// Browser-only consumer of the restricted lifecycle v2 read projections. The qualified
 // server projector remains server-only (its dependency imports node:crypto).
 // Differential tests bind this parser to that projector; this is no authority.
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -11,7 +11,8 @@ const shape = (value, keys) => record(value) && Reflect.ownKeys(value).length ==
   && keys.every(key => Object.hasOwn(value, key) && Object.hasOwn(Object.getOwnPropertyDescriptor(value, key), 'value'));
 const date = value => typeof value === 'string' && value.length <= 80 && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
 const hash = value => typeof value === 'string' && HASH.test(value);
-const availability = ['AVAILABLE', 'EXPIRED', 'POLICY_CHANGED', 'POLICY_UNAVAILABLE', 'UNAVAILABLE'];
+const revision = value => Number.isSafeInteger(value) && value >= 0 && value < 2147483647;
+const blockedReasons = ['EVIDENCE_UNAVAILABLE', 'EVIDENCE_EXPIRED', 'POLICY_CHANGED', 'POLICY_UNAVAILABLE', 'CARD_UNAVAILABLE', 'OWNERSHIP_CHANGED'];
 
 // A fixture or future transport can ignore AbortSignal. Still settle this
 // reader promptly, and dispose a response that arrives after cancellation.
@@ -52,32 +53,63 @@ function card(value, cardId) {
 }
 
 function claim(value) {
-  check(shape(value, ['claimId', 'cardId', 'requestId', 'submittedAt', 'card', 'decision', 'evidence', 'reviewStatus', 'actions', 'currentlyOwnedByYou'])
-    && ownershipClaimsAccount(value.claimId) && ownershipClaimsAccount(value.cardId) && ownershipClaimsAccount(value.requestId) && date(value.submittedAt)
-    && shape(value.decision, ['state', 'decidedAt']) && ['PENDING', 'VERIFIED', 'REJECTED'].includes(value.decision.state)
-    && (value.decision.state === 'PENDING' ? value.decision.decidedAt === null : date(value.decision.decidedAt))
-    && shape(value.evidence, ['referenceId', 'availability', 'usableUntil', 'proofKind']) && availability.includes(value.evidence.availability)
-    && (value.evidence.referenceId === null || ownershipClaimsAccount(value.evidence.referenceId))
-    && (value.evidence.usableUntil === null || date(value.evidence.usableUntil))
-    && (value.evidence.proofKind === null || typeof value.evidence.proofKind === 'string' && /^[A-Z][A-Z0-9_]{0,39}$/.test(value.evidence.proofKind))
+  check(shape(value, ['claimId', 'cardId', 'card', 'claimRevision', 'state', 'bundleId', 'blockedReasons', 'currentlyOwnedByYou'])
+    && ownershipClaimsAccount(value.claimId) && ownershipClaimsAccount(value.cardId)
+    && revision(value.claimRevision) && value.claimRevision > 0 && ['PENDING', 'WITHDRAWN', 'VERIFIED', 'REJECTED'].includes(value.state)
+    && (value.bundleId === null || ownershipClaimsAccount(value.bundleId)) && Array.isArray(value.blockedReasons)
+    && value.blockedReasons.every(reason => blockedReasons.includes(reason)) && new Set(value.blockedReasons).size === value.blockedReasons.length
     && typeof value.currentlyOwnedByYou === 'boolean');
-  const boundCard = card(value.card, value.cardId), present = value.evidence.referenceId !== null;
-  check(present === (value.evidence.usableUntil !== null) && present === (value.evidence.proofKind !== null)
-    && (value.evidence.availability === 'UNAVAILABLE' || present));
-  const ready = boundCard !== null && value.evidence.availability === 'AVAILABLE';
-  const status = value.decision.state !== 'PENDING' ? 'DECIDED' : ready ? 'PENDING' : 'BLOCKED';
-  check(value.reviewStatus === status && shape(value.actions, ['downloadEvidence']) && value.actions.downloadEvidence === ready);
-  return { claimId: value.claimId, cardId: value.cardId, requestId: value.requestId, submittedAt: value.submittedAt, card: boundCard,
-    decision: { ...value.decision }, evidence: { ...value.evidence }, reviewStatus: status,
-    actions: { downloadEvidence: ready }, currentlyOwnedByYou: value.currentlyOwnedByYou };
+  return { claimId: value.claimId, cardId: value.cardId, card: card(value.card, value.cardId), claimRevision: value.claimRevision,
+    state: value.state, bundleId: value.bundleId, blockedReasons: [...value.blockedReasons], currentlyOwnedByYou: value.currentlyOwnedByYou };
+}
+function account(value, accountId) {
+  if (!ownershipClaimsAccount(accountId) || !record(value) || value.accountId !== accountId) throw failure('OWNERSHIP_CLAIMS_ACCESS_ENDED');
+}
+export function ownershipClaimHistoryRequest(value) {
+  if (!shape(value, ['claimId', 'afterRevision', 'limit']) || !ownershipClaimsAccount(value.claimId) || !revision(value.afterRevision)
+    || !Number.isInteger(value.limit) || value.limit < 1 || value.limit > 50) throw failure('OWNERSHIP_CLAIMS_REQUEST_INVALID');
+  return { claimId: value.claimId, afterRevision: value.afterRevision, limit: value.limit };
+}
+export function parseOwnershipClaimCurrent(value, accountId, { claimId }) {
+  account(value, accountId);
+  check(ownershipClaimsAccount(claimId) && shape(value, ['schema', 'accountId', 'observedAt', 'claim'])
+    && value.schema === 'atlas-ownership-claim-state-v2' && date(value.observedAt));
+  const current = claim(value.claim); check(current.claimId === claimId);
+  return { schema: value.schema, accountId, observedAt: value.observedAt, claim: current };
+}
+export function parseOwnershipClaimHistory(value, accountId, request) {
+  const input = ownershipClaimHistoryRequest(request); account(value, accountId);
+  check(shape(value, ['schema', 'accountId', 'observedAt', 'claim', 'submittedAt', 'origin', 'transitions', 'nextRevision'])
+    && value.schema === 'atlas-ownership-claim-history-v2' && date(value.observedAt) && date(value.submittedAt)
+    && ['PROOF_V2', 'LEGACY_V1'].includes(value.origin) && Array.isArray(value.transitions) && value.transitions.length <= input.limit);
+  const current = claim(value.claim); check(current.claimId === input.claimId);
+  let prior = input.afterRevision;
+  const transitions = value.transitions.map(entry => {
+    check(shape(entry, ['claimRevision', 'action', 'state', 'bundleId', 'occurredAt']));
+    const states = { submit_claim: ['PENDING'], withdraw_claim: ['WITHDRAWN'], replace_evidence: ['PENDING'], review_claim: ['VERIFIED', 'REJECTED'] };
+    const expected = prior === 0 && value.origin === 'LEGACY_V1' ? 2 : prior + 1;
+    check(revision(entry.claimRevision) && entry.claimRevision === expected && entry.claimRevision <= current.claimRevision
+      && date(entry.occurredAt) && Date.parse(entry.occurredAt) >= Date.parse(value.submittedAt)
+      && (entry.bundleId === null || ownershipClaimsAccount(entry.bundleId)) && Object.hasOwn(states, entry.action) && states[entry.action].includes(entry.state)
+      && (!['submit_claim', 'replace_evidence'].includes(entry.action) || ownershipClaimsAccount(entry.bundleId))
+      && (entry.claimRevision === 1 ? entry.action === 'submit_claim' && value.origin === 'PROOF_V2' : entry.action !== 'submit_claim'));
+    prior = entry.claimRevision; return { ...entry };
+  });
+  check(value.nextRevision === null || transitions.length === input.limit && value.nextRevision === prior && prior < current.claimRevision);
+  if (input.afterRevision < current.claimRevision && (value.origin === 'PROOF_V2' || current.claimRevision > 1)) check(transitions.length > 0);
+  if (transitions.length && value.nextRevision === null) {
+    const tail = transitions.at(-1); check(tail.claimRevision === current.claimRevision && tail.state === current.state && tail.bundleId === current.bundleId);
+  }
+  return { schema: value.schema, accountId, observedAt: value.observedAt, claim: current, submittedAt: value.submittedAt,
+    origin: value.origin, transitions, nextRevision: value.nextRevision };
 }
 
 /** Only own history. A verified historical claim does not establish title. */
 export function parseOwnershipClaimsPage(value, accountId, request = { afterClaimId: null, limit: 25 }) {
   const input = ownershipClaimsRequest(request);
-  if (!ownershipClaimsAccount(accountId) || !record(value) || value.accountId !== accountId) throw failure('OWNERSHIP_CLAIMS_ACCESS_ENDED');
+  account(value, accountId);
   check(shape(value, ['schema', 'accountId', 'observedAt', 'claims', 'nextClaimId'])
-    && value.schema === 'atlas-ownership-claims-v1' && date(value.observedAt) && Array.isArray(value.claims) && value.claims.length <= input.limit
+    && value.schema === 'atlas-ownership-claims-page-v2' && date(value.observedAt) && Array.isArray(value.claims) && value.claims.length <= input.limit
     && (value.nextClaimId === null || ownershipClaimsAccount(value.nextClaimId)));
   const claims = value.claims.map(claim);
   check(claims.every((entry, index) => (input.afterClaimId === null || entry.claimId > input.afterClaimId)
@@ -92,11 +124,11 @@ export function parseOwnershipClaimsPage(value, accountId, request = { afterClai
  * bootstrap, storage or writer. Future route wiring supplies a same-origin GET
  * that returns a Response. accountId stays local and is never transport input.
  * The component independently validates injected fixture readers as well. */
-export function createOwnershipClaimsReader(requestPage) {
+function createReader(requestPage, validateInput, parse) {
   if (typeof requestPage !== 'function') throw failure('OWNERSHIP_CLAIMS_ADAPTER_INVALID');
-  return async ({ accountId, afterClaimId = null, limit = 25, signal } = {}) => {
+  return async ({ accountId, signal, ...raw } = {}) => {
     if (!ownershipClaimsAccount(accountId)) throw failure('OWNERSHIP_CLAIMS_ACCESS_ENDED');
-    const input = ownershipClaimsRequest({ afterClaimId, limit }), controller = new AbortController();
+    const input = validateInput(raw), controller = new AbortController();
     if (signal?.aborted) throw failure('OWNERSHIP_CLAIMS_CANCELLED');
     const cancel = () => controller.abort(); signal?.addEventListener('abort', cancel, { once: true });
     const timer = setTimeout(cancel, 25000);
@@ -126,11 +158,18 @@ export function createOwnershipClaimsReader(requestPage) {
       }
       const bytes = new Uint8Array(length); let offset = 0;
       for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
-      return parseOwnershipClaimsPage(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), accountId, input);
+      return parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), accountId, input);
     } catch (error) {
       if (controller.signal.aborted) throw failure(signal?.aborted ? 'OWNERSHIP_CLAIMS_CANCELLED' : 'OWNERSHIP_CLAIMS_UNAVAILABLE');
       if (error.code === 'OWNERSHIP_CLAIMS_ACCESS_ENDED') throw error;
       throw failure('OWNERSHIP_CLAIMS_UNAVAILABLE');
     } finally { discardBody(received); clearTimeout(timer); signal?.removeEventListener('abort', cancel); }
   };
+}
+
+export function createOwnershipClaimsReader(requestPage) {
+  return createReader(requestPage, input => ownershipClaimsRequest({ afterClaimId: null, limit: 25, ...input }), parseOwnershipClaimsPage);
+}
+export function createOwnershipClaimHistoryReader(requestHistory) {
+  return createReader(requestHistory, input => ownershipClaimHistoryRequest({ afterRevision: 0, limit: 25, ...input }), parseOwnershipClaimHistory);
 }

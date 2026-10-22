@@ -1,22 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOwnershipClaimsReader, parseOwnershipClaimsPage, ownershipClaimsRequest } from '../lib/ownership-claims-client.mjs';
-import { projectOwnershipWorkflow } from '../../../packages/atlas-connected-manual/src/card-ownership-workflow-contract.mjs';
-import { CLAIM_ACCOUNT, CLAIM_OTHER_ACCOUNT, claimFixtureId, claimFixtureRow, createOwnershipClaimsFixture } from './ownership-claims-fixture.mjs';
+import { createOwnershipClaimsReader, parseOwnershipClaimsPage, ownershipClaimsRequest, createOwnershipClaimHistoryReader, parseOwnershipClaimCurrent, parseOwnershipClaimHistory } from '../lib/ownership-claims-client.mjs';
+import { projectOwnershipLifecycleRead } from '../../../packages/atlas-connected-manual/src/card-ownership-lifecycle-read-contract.mjs';
+import { CLAIM_ACCOUNT, CLAIM_OTHER_ACCOUNT, claimFixtureId, claimFixtureRow, createOwnershipClaimsFixture, createOwnershipClaimHistoryFixture } from './ownership-claims-fixture.mjs';
 const headers = { 'content-type': 'application/json', 'cache-control': 'private, no-store, max-age=0' };
 const response = (value, options = {}) => new Response(JSON.stringify(value), { headers, ...options });
 
-test('browser parser consumes actual customer projector across independent decisions, ownership and evidence states', () => {
-  for (const decision of ['PENDING', 'VERIFIED', 'REJECTED']) for (const availability of ['AVAILABLE', 'EXPIRED', 'POLICY_CHANGED', 'POLICY_UNAVAILABLE', 'UNAVAILABLE'])
+test('browser parser consumes the qualified v2 projector across current states, independent title and blocked reasons', () => {
+  for (const state of ['PENDING', 'WITHDRAWN', 'VERIFIED', 'REJECTED']) for (const blocked of [[], ['EVIDENCE_EXPIRED'], ['POLICY_CHANGED'], ['POLICY_UNAVAILABLE'], ['EVIDENCE_UNAVAILABLE', 'CARD_UNAVAILABLE'], ['OWNERSHIP_CHANGED']])
     for (const owned of [false, true]) for (const cardMissing of [false, true]) {
-      const raw = { actorId: CLAIM_ACCOUNT, observedAt: '2026-10-21T12:00:00.000Z', claims: [claimFixtureRow(1, { decision, availability, owned, cardMissing })], nextClaimId: null };
-      const input = { afterClaimId: null, limit: 25 }, projected = projectOwnershipWorkflow('CUSTOMER', 'list_claims', raw, input);
+      const raw = { actorId: CLAIM_ACCOUNT, observedAt: '2026-10-21T12:00:00.000Z', claims: [claimFixtureRow(1, { state, blocked, owned, cardMissing })], nextClaimId: null };
+      const input = { afterClaimId: null, limit: 25 }, projected = projectOwnershipLifecycleRead('list_claims', raw, input);
       assert.deepEqual(parseOwnershipClaimsPage(projected, CLAIM_ACCOUNT), projected);
+      const current = projectOwnershipLifecycleRead('read_claim', { actorId: raw.actorId, observedAt: raw.observedAt, claim: raw.claims[0] }, { claimId: raw.claims[0].claimId });
+      assert.deepEqual(parseOwnershipClaimCurrent(current, CLAIM_ACCOUNT, { claimId: raw.claims[0].claimId }), current);
     }
-  const f = createOwnershipClaimsFixture({ count: 8 }), parsed = parseOwnershipClaimsPage(f.page, f.accountId);
-  assert.equal(parsed.claims[1].decision.state, 'VERIFIED'); assert.equal(parsed.claims[1].currentlyOwnedByYou, false);
-  assert.equal(parsed.claims[7].card, null); assert.equal(parsed.claims[7].reviewStatus, 'BLOCKED');
+  const f = createOwnershipClaimsFixture(), parsed = parseOwnershipClaimsPage(f.page, f.accountId);
+  assert.equal(parsed.claims[1].state, 'VERIFIED'); assert.equal(parsed.claims[1].currentlyOwnedByYou, false);
+  assert.equal(parsed.claims[7].card, null); assert.equal(parsed.claims[7].state, 'WITHDRAWN');
   assert.equal(parsed.total, undefined); assert.notEqual(parsed.claims, f.page.claims);
+});
+
+test('actual history projector keeps replacement/withdrawal and legacy origin distinct, with bounded exact cursors', async () => {
+  for (const legacy of [false, true]) for (const state of ['PENDING', 'WITHDRAWN', 'VERIFIED', 'REJECTED']) {
+    for (const [afterRevision, limit] of [[0, 25], [0, 1], [1, 1], [2, 1], [3, 25]]) {
+      const f = createOwnershipClaimHistoryFixture({ legacy, state, afterRevision, limit });
+      assert.deepEqual(parseOwnershipClaimHistory(f.history, CLAIM_ACCOUNT, f.request), f.history);
+    }
+  }
+  const legacy = createOwnershipClaimHistoryFixture({ legacy: true, revision: 1, state: 'PENDING' });
+  assert.deepEqual(parseOwnershipClaimHistory(legacy.history, CLAIM_ACCOUNT, legacy.request).transitions, []);
+  const f = createOwnershipClaimHistoryFixture(); let seen;
+  const read = createOwnershipClaimHistoryReader(async input => { seen = input; return response(f.history); });
+  assert.deepEqual(await read({ accountId: CLAIM_ACCOUNT, ...f.request }), f.history);
+  assert.deepEqual(Object.keys(seen).sort(), ['afterRevision', 'claimId', 'limit', 'signal']);
+  for (const mutate of [v => { v.schema = 'atlas-ownership-claims-v1'; }, v => { v.transitions[1].claimRevision = 3; },
+    v => { v.transitions[2].bundleId = claimFixtureId(42); }, v => { v.transitions[2].state = 'PENDING'; },
+    v => { v.transitions[0].reviewerId = claimFixtureId(99); }, v => { v.transitions = []; }, v => { v.nextRevision = 3; },
+    v => { v.origin = 'LEGACY_V1'; }, v => { v.claim.claimId = claimFixtureId(9); }]) {
+    const changed = structuredClone(f.history); mutate(changed); assert.throws(() => parseOwnershipClaimHistory(changed, CLAIM_ACCOUNT, f.request));
+  }
+  await assert.rejects(read({ accountId: CLAIM_OTHER_ACCOUNT, ...f.request }), { code: 'OWNERSHIP_CLAIMS_ACCESS_ENDED' });
 });
 
 test('customer cursor is scoped to account, request and exact full last-returned page', () => {
@@ -32,13 +56,13 @@ test('customer cursor is scoped to account, request and exact full last-returned
     { afterClaimId: null, limit: 25, accountId: CLAIM_ACCOUNT }, { limit: 25 }]) assert.throws(() => ownershipClaimsRequest(request));
 });
 
-test('refuses private extras, unbound approved card data and inconsistent review decisions', () => {
+test('refuses v1 payloads, private extras, unbound approved card data and invented state', () => {
   const f = createOwnershipClaimsFixture({ count: 1 });
-  for (const mutate of [v => { v.actorId = CLAIM_ACCOUNT; }, v => { v.claims[0].ownerAccountId = CLAIM_OTHER_ACCOUNT; },
+  for (const mutate of [v => { v.schema = 'atlas-ownership-claims-v1'; }, v => { v.actorId = CLAIM_ACCOUNT; }, v => { v.claims[0].ownerAccountId = CLAIM_OTHER_ACCOUNT; },
     v => { v.claims[0].card.cardId = claimFixtureId(99); }, v => { v.claims[0].card.report.publicHash = 'broken'; },
-    v => { v.claims[0].decision.decidedAt = '2026-10-21T12:00:00Z'; }, v => { v.claims[0].reviewStatus = 'DECIDED'; },
-    v => { v.claims[0].actions.downloadEvidence = false; }, v => { v.claims[0].actions.verify = true; },
-    v => { v.claims[0].evidence.referenceId = null; }, v => { v.claims[0].currentlyOwnedByYou = 'true'; }]) {
+    v => { v.claims[0].claimRevision = 0; }, v => { v.claims[0].state = 'DECIDED'; }, v => { v.claims[0].requestId = claimFixtureId(99); },
+    v => { v.claims[0].blockedReasons = ['DELETED']; }, v => { v.claims[0].blockedReasons = ['POLICY_CHANGED', 'POLICY_CHANGED']; },
+    v => { v.claims[0].currentlyOwnedByYou = 'true'; }]) {
     const changed = structuredClone(f.page); mutate(changed); assert.throws(() => parseOwnershipClaimsPage(changed, CLAIM_ACCOUNT));
   }
 });
