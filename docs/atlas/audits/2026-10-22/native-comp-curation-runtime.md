@@ -1,0 +1,19 @@
+# Native comp curation runtime — local qualification
+
+The new `packages/atlas-connected-manual/src/comp-curation-runtime.mjs` is an inert, default-off factory. This change does not register a route, create a database/storage client on construction, install SQL, grant a role, start a worker, or alter grading. Host wiring is separate.
+
+`createNativeCompCurationRuntime({enabled, environment, auth, staffConfig, settings, createClient, artifactReader, nonceStore})` accepts an actual `DurableStaffAuth`, a separate same-database role URL, explicit owner/reviewed schema hash, exact staff origin, independent transport key, read-only artifact capability and shared nonce store. It composes the existing restricted database wrapper, durable staff boundary, intake guard, approved publication reader and signed native comp service. The policy remains null: saved-pool reads, Skip and No suitable comps remain available; selected pricing guidance is unavailable.
+
+The private signature/nonce and current staff checks precede lazy client creation. Authority, configuration, key bytes and capabilities are checked around asynchronous database and artifact work. Exact publication/intake/source and artifact hash checks remain in their existing services. A frozen `settings.origin` accessor may additionally enforce the host's captured environment at every fence; an observed database/artifact wait regression proves refusal after that guard changes.
+
+At most two requests are admitted. Initialization is single-flight and a failure is retained rather than automatically retried. Invalid owned candidates with a disconnect method are retained for cleanup, including asynchronous construction; the shared staff client is never owned. `close()` refuses new work, drains accepted work and initialization, then disconnects the owned client once. This is not cancellation or rollback of a committed decision. Artifact reads carry a 20-second abort signal; injected readers must honor it.
+
+## Evidence
+
+The final Node 22.16.0 run passed **35 groups, zero failures/skips** under OS network denial: 11 new runtime groups, 16 retained restricted-database groups and eight retained native-composition groups. Tests use actual auth, signer, nonce, restricted wrapper, publication/intake and curation service with synthetic transactions/catalog/artifacts. They cover saved read/Skip/No suitable/exact replay; invalid signature/session/role/schema/source; observed asynchronous authority/capability drift; cleanup and admission limits. They do not replace real PostgreSQL role qualification or storage-provider acceptance.
+
+The reusable `test/fixtures/comp-curation-runtime-fixture.mjs` exports `nativeCompRuntimeFixture({runtimeFactory})`, `deferred` and `response` for separate host tests. It performs no network/database work; synthetic source reads occur only when invoked. Scoped Next lint and `git diff --check` passed.
+
+Immutable envelope: `/Users/markthomas/.codex/atlas-handoffs/atlas-staff-comp-curation-20261021/native-runtime-qualification-01/qualification.json`, SHA256 `57d24e7b2a7ad72d905a27b1c8bb4d1003436d1f86d36faef7dc9022961d9bd6`. It pins 25 current/saved source files and nine evidence files, an explicit set rather than complete vendor/transitive closure. Earlier seven-pass and 34-pass logs remain; the intervening two failures were fixture assertions expecting rejection where the proxy intentionally returns HTTP 503. Parser/configuration lint failures also remain; `lint-04.log` is the final successful scoped run.
+
+Independent collection-lane source review passed on runtime `b27f5d98`, test `5f25a738` and fixture `903ec770`, closing the invalid-owned-client cleanup finding. No build, PostgreSQL cluster, listener, provider call, browser, deployment or production action occurred in this lane. Root-owned host/storage/dispatcher integration and operational activation remain separate.

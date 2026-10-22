@@ -1,0 +1,11 @@
+# Native comp host integration
+
+The host now accepts the optional restricted comp handler. Clients remain lazy and separate from grading. Invalid optional configuration logs COMP_CURATION_UNAVAILABLE without preventing existing grading startup; cleanup failures are observed and logged while other cleanup continues. Grading workers, rules and approvals are unchanged. The shared nonce store admits each request once; comp shutdown drains before shared authentication disposal.
+
+The owned database pool has two connections, three-second pool wait and five-second connection timeout. Separate storage credentials issue GET commands only for PUBLIC_REPORT/MARKET_PREVIEW; existing path/card/lineage/SHA256/byte/JSON verification remains. Two concurrent requests and20-second artifact abort bound the work. Abort destroys stalled response bodies. Private responses stay buffered until the final captured-environment check. Unknown decisions are never automatically replayed.
+
+Host settings: ATLAS_STAFF_COMP_CURATION=1; ATLAS_COMP_DATABASE_URL, ATLAS_COMP_DATABASE_ROLE, ATLAS_COMP_SCHEMA_OWNER, ATLAS_COMP_SCHEMA_SHA256; ATLAS_COMP_STORAGE_ENDPOINT/REGION/BUCKET/PREFIX/ACCESS_KEY/SECRET_KEY. Existing manual transport key is reused. Grading/customer storage credentials are refused. Distinct credentials and GET-only code do not prove provider permissions: actual GET-only IAM qualification remains required. None were provisioned here.
+
+Root54/54 network-denied tests pass, zero skips, including actual signed auth, restricted wrapper, verified artifact bytes, private receipt, dispatcher and container source closure. Scoped lint has no findings and one React autodetection warning. Independent factory and host reviews pass; a stalled-stream issue was corrected and tested. Root verified59 previous evidence references. No database, provider, listener or production action occurred.
+
+Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-staff-comp-curation-20261021/native-host-integration-01/qualification.json`, SHA256 `9bdd51341a4e4c6dbb60217ef930c18f047d9f7a994871e1df9395bec975782d`; nine current source copies, two logs and earlier factory qualification. SQL011 actual PostgreSQL compatibility, live roles/storage/configuration and signed-in acceptance remain separate. Policy stays null: no selected pricing guidance, public listing or money movement.
