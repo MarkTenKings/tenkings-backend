@@ -1,0 +1,43 @@
+[Unit]
+Description=ATLAS R2 isolated decoder guard (unqualified)
+Requires=atlasdecoder.slice
+After=atlasdecoder.slice
+Before=atlas-r2-decoder-broker.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=root
+Group=root
+UMask=0077
+RuntimeDirectory=atlas-r2-decoder-guard
+RuntimeDirectoryMode=0700
+StateDirectory=atlas-r2-decoder-guard
+StateDirectoryMode=0700
+ExecStart=/usr/local/lib/atlas-r2-node-22.16.0/bin/node /opt/atlas-r2-qualification/runtime-01/scripts/proof-decoder-kernel-guard-service.mjs start
+ExecStopPost=/usr/local/lib/atlas-r2-node-22.16.0/bin/node /opt/atlas-r2-qualification/runtime-01/scripts/proof-decoder-kernel-guard-service.mjs quarantine
+WatchdogSec=500ms
+WatchdogSignal=SIGKILL
+TimeoutStartSec=5s
+TimeoutStopSec=1s
+TimeoutAbortSec=1s
+Restart=no
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=no
+ReadWritePaths=/sys/fs/cgroup/atlasdecoder.slice /run/atlas-r2-decoder-guard /var/lib/atlas-r2-decoder-guard
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=128M
+TasksMax=16
+CPUWeight=10000
+OOMScoreAdjust=-900
+StandardOutput=null
+StandardError=journal

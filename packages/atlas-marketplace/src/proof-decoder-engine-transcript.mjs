@@ -7,6 +7,7 @@ import {encodeProofDecoderWorkerRequestHeader,createProofDecoderWorkerResultRead
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {PROOF_DECODER_ENGINE_API,compileProofDecoderEngineRequest} from './proof-decoder-engine-request.mjs';
 import {projectProofDecoderEngineResponse,createProofDecoderEngineMultiplexReader} from './proof-decoder-engine-response.mjs';
+import {assertProofDecoderFixedParentBinding,assertProofDecoderFixedParentReport} from './proof-decoder-engine-target-binding.mjs';
 
 const check=(value,code='ENGINE_TRANSCRIPT_SEQUENCE')=>requireValue(value,code);
 const eventFields={
@@ -22,14 +23,15 @@ const reasons=new Set(['ENGINE_TRANSCRIPT_SEQUENCE','ENGINE_TRANSCRIPT_DEADLINE'
  * capacity and requires real independent ownership/cleanup/admission evidence.
  */
 export function reviewProofDecoderEngineTranscript(options) {
-  const input=engineDataOptions(options,['plan','job','original','seccompBytes','events']);
+  const input=engineDataOptions(options,['plan','job','original','seccompBytes','events'],['targetBinding']);
   const plan=assertProofDecoderLaunchPlan(input.plan),initialJob=proofDecoderOwnedIdentity(input.job,plan);
+  const target=input.targetBinding===undefined?{}:{targetBinding:assertProofDecoderFixedParentBinding(input.targetBinding,{plan})};
   check(initialJob.containerId===null);
   const original=decoderContractData(input.original);assertProofDecoderPlan(original);
   check(original.byteCount<=plan.profile.limits.maxObjectBytes,'ENGINE_TRANSCRIPT_INPUT');
   check(Buffer.isBuffer(input.seccompBytes)&&input.seccompBytes.length<=65536);
   // Validate the fixed create artifact before processing any purported effects.
-  const createRequest=compileProofDecoderEngineRequest({apiVersion:PROOF_DECODER_ENGINE_API,plan,job:initialJob,operation:'CREATE',seccompBytes:input.seccompBytes});
+  const createRequest=compileProofDecoderEngineRequest({apiVersion:PROOF_DECODER_ENGINE_API,plan,job:initialJob,operation:'CREATE',seccompBytes:input.seccompBytes,...target});
   const events=input.events;
   check(Array.isArray(events)&&Object.getPrototypeOf(events)===Array.prototype&&events.length<=512);
   const descriptors=Object.getOwnPropertyDescriptors(events);
@@ -90,7 +92,7 @@ export function reviewProofDecoderEngineTranscript(options) {
           // It must not make unsafe cleanup requests appear executable.
           check(false,'ENGINE_TRANSCRIPT_CLEANUP_UNVERIFIED');
         }
-        if(op!=='CREATE')compileProofDecoderEngineRequest({apiVersion:PROOF_DECODER_ENGINE_API,plan,job,operation:op});
+        if(op!=='CREATE')compileProofDecoderEngineRequest({apiVersion:PROOF_DECODER_ENGINE_API,plan,job,operation:op,...target});
         pending.add(op);continue;
       }
       if(type==='RESPONSE'){
@@ -105,6 +107,7 @@ export function reviewProofDecoderEngineTranscript(options) {
           check(report.kind==='CREATE_REPORTED'&&report.data.warningCount===0);
           job=proofDecoderOwnedIdentity({...job,containerId:report.data.containerId},plan);
         }else if(op==='LOOKUP'||op==='INSPECT'){
+          if(input.targetBinding!==undefined)assertProofDecoderFixedParentReport({body:event.body,targetBinding:input.targetBinding,plan});
           check(report.kind==='CONTAINER_REPORTED'&&report.data.imageId===imageId);
           const state=report.data.state;
           check(!state.oomKilled&&!state.paused&&!state.restarting&&!state.dead,'ENGINE_TRANSCRIPT_OUTCOME');

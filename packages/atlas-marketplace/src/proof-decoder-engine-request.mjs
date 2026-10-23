@@ -2,6 +2,7 @@ import {canonicalJSON,requireValue} from './contract.mjs';
 import {assertProofDecoderLaunchPlan,decoderFreeze,PROOF_DECODER_IMAGE_LAYOUT,PROOF_DECODER_RUNTIME_ENVIRONMENT} from './proof-decoder-profile.mjs';
 import {proofDecoderOwnedIdentity} from './proof-decoder-owned-operations.mjs';
 import {engineBytesHash,engineDataOptions,compactProofDecoderEngineJSON} from './proof-decoder-engine-json.mjs';
+import {assertProofDecoderFixedParentBinding} from './proof-decoder-engine-target-binding.mjs';
 
 export const PROOF_DECODER_ENGINE_API='1.47';
 export const PROOF_DECODER_ENGINE_OPERATIONS=Object.freeze(['IMAGE_INSPECT','CREATE','LOOKUP','INSPECT','ATTACH','START','WAIT','KILL','REMOVE']);
@@ -19,8 +20,9 @@ export function proofDecoderEngineLabels(job) {
 
 /** Pure reference-contract compiler, not a target adapter or execution permit. */
 export function compileProofDecoderEngineRequest(options) {
-  const input=engineDataOptions(options,['apiVersion','plan','job','operation'],['seccompBytes']);
+  const input=engineDataOptions(options,['apiVersion','plan','job','operation'],['seccompBytes','targetBinding']);
   const {apiVersion,operation}=input,{plan,job}=proofDecoderEngineContext(input),p=plan.profile,r=p.resources;
+  const target=input.targetBinding===undefined?null:assertProofDecoderFixedParentBinding(input.targetBinding,{plan});
   const prefix=`/v${apiVersion}`,id=job.containerId;
   let method='POST',path,body=null,seccompArtifactSha256=null,headers={};
   if(operation==='CREATE'){
@@ -35,6 +37,7 @@ export function compileProofDecoderEngineRequest(options) {
       Entrypoint:[PROOF_DECODER_IMAGE_LAYOUT.node],Cmd:['--max-old-space-size=128',PROOF_DECODER_IMAGE_LAYOUT.worker],
       WorkingDir:'/',Volumes:{},Labels:proofDecoderEngineLabels(job),Healthcheck:{Test:['NONE']},
       HostConfig:{
+        ...(target?{CgroupParent:target.cgroupParent}:{}),
         ReadonlyRootfs:true,Privileged:false,NetworkMode:'none',IpcMode:'private',CgroupnsMode:'private',
         CapDrop:['ALL'],CapAdd:[],SecurityOpt:['no-new-privileges=true',`seccomp=${seccomp}`,p.mac.kind==='apparmor'?`apparmor=${p.mac.name}`:`label=type:${p.mac.name}`],
         Memory:r.memoryBytes,MemorySwap:r.memoryBytes,CpuQuota:r.cpuQuotaMicros,CpuPeriod:r.cpuPeriodMicros,PidsLimit:r.pidsLimit,

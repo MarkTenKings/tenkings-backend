@@ -1,6 +1,6 @@
 # Linux peer and clock observations
 
-This new primitive is **UNQUALIFIED and unwired**. It does not enable admission,
+This peer wrapper is **UNQUALIFIED** and is not wired into application admission. It does not enable admission,
 authenticate a service epoch, prove its executable, qualify a decoder or supervise
 a cgroup. It supplies actual Linux observations needed by that later integration.
 
@@ -20,8 +20,13 @@ idempotent; process-wide native capacity is128 handles, and each JavaScript
 observer permits32. `CLOCK_BOOTTIME` provides a monotonic nanosecond value that
 includes Linux suspend time; the clock does not itself schedule or enforce a
 deadline. Consumers must compare it at every effect boundary and use independently
-surviving watchdog enforcement. No environment, process command line or credential
-file is read.
+surviving watchdog enforcement. Peer and clock functions read no environment,
+process command line or credential file. The same native artifact now also
+contains the separately documented fixed-parent controller and closed systemd
+notification primitive. Only the latter reads the named non-secret
+`NOTIFY_SOCKET` and `WATCHDOG_USEC` protocol variables; it accepts no arbitrary
+destination or notification body. See `PROOF_DECODER_LINUX_CGROUP.md` and
+`PROOF_DECODER_KERNEL_GUARD.md` for their separate effects/evidence.
 
 `src/proof-decoder-linux-observer.mjs` defaults off. Explicit enablement requires
 Linux x64, Node22.16.0, an absolute addon path and its exact SHA256. All artifact
