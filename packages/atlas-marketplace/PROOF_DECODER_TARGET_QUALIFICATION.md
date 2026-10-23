@@ -27,10 +27,16 @@ retained. Runtime05's six genuine native cache checks passed in
 `ops/functional-corpus-03`, including changed bytes, identities, revisions and
 invalid extra rows. The 10 MiB upload then reached known CREATE/START, but the
 subsequent worker-input transfer failed with a 250,638,952 ns stale guard pulse.
-The job remains held at RUNNING revision4; the guard stopped and the parent is
-empty/frozen, with one exited owned container awaiting separate reconciliation.
-The Engine transfer loop now has an explicit poll opportunity before each bounded
-write and FIN; its target verification is pending. Successful observations retain their
+That RUNNING revision4 job remains held; its exited container was removed by a
+separate exact-owner operation without changing the original ledger. Runtime06's
+explicit poll boundaries let the next 10 MiB original reach worker SUCCESS, but
+`ops/functional-corpus-04` failed during cleanup with a 267,486,195 ns stale pulse.
+This new job remains held at CLEANUP revision5 with no persisted exit/REMOVE or
+finalized cleanup. The stopped guard and empty/frozen parent contain it; its
+exited container remains pending separate reconciliation. The cleanup handoff
+now has explicit poll boundaries followed by the same lease/ownership/original
+and cleanup deadline checks, plus bounded phase timing diagnostics. This repair's
+target verification is pending. Successful observations retain their
 original source/profile scope; they do not qualify the changed runtime wholesale.
 The remaining broker corpus/fault variants and hostile probes below remain open.
 These partial observations do not constitute qualification or publication
@@ -156,7 +162,7 @@ outside this lane and disabled pending Fingerprint PLUS genuine ownership author
 | --- | --- | --- |
 | `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: small/alpha/16M genuine broker submissions completed under their original pins; byte-boundary and final-runtime qualification pending |
 | `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | INCOMPLETE: three genuine broker submissions completed in corpus02; full variant/evidence binding to final runtime pending |
-| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE: 16M accepted; latest 10 MiB attempt reached worker creation but failed during input transfer; remaining bounds not yet completed |
+| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE: 16M accepted; latest 10 MiB decoded successfully but cleanup failed; remaining bounds not yet completed |
 | `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: prior invalid-CRC diagnostic retained; remaining prepared-client corpus not yet completed |
 | `FORGED_DUPLICATE_OR_TRAILING_OUTPUT` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Distinct malicious-output probe emits wrong request/hash, early one-byte stdout prefix, duplicate/trailing/oversize/partial PDW1 and stderr flood. Actual broker refusal/hold; never claim this is normal worker output. | NOT_RUN |
 | `EXTERNAL_NETWORK_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: AF_INET/INET6, raw, AF_PACKET, AF_ALG, VSOCK and AF_UNIX socket attempts; seccomp/AA denial and net namespace lo-only/no ports. No external packets need be transmitted. | NOT_RUN |

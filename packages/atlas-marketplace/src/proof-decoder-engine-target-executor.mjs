@@ -1,4 +1,5 @@
 import {canonicalJSON,requireValue} from './contract.mjs';
+import {setImmediate as yieldToIO} from 'node:timers/promises';
 import {assertProofDecoderLaunchPlan,decoderFreeze} from './proof-decoder-profile.mjs';
 import {engineDataOptions,engineBytesHash} from './proof-decoder-engine-json.mjs';
 import {assertProofDecoderFixedParentBinding} from './proof-decoder-engine-target-binding.mjs';
@@ -74,7 +75,8 @@ export function createProofDecoderTargetEngineExecutor(options={}) {
           const completed=await session.complete();live();workerReport=completed.workerReport;review=completed.review;
           session.close();session=null;
           const result=await cleanup.finishSettledJob(run.jobId);
-          check(result.record.phase==='FINALIZED','ENGINE_TARGET_CLEANUP_UNCERTAIN');live();
+          check(result.record.phase==='FINALIZED','ENGINE_TARGET_CLEANUP_UNCERTAIN');
+          await yieldToIO();live();
           await guard.settle(lease);lease=null;live();
           finalized=true;
         }catch(error){
@@ -90,7 +92,7 @@ export function createProofDecoderTargetEngineExecutor(options={}) {
             }catch{} // A diagnostic failure must not replace the original hold.
           }
           lastFailure=decoderFreeze({classification:'UNQUALIFIED',jobId:run.jobId,requestId:initialRow.identity.requestId,
-            code:failure,workerOutcome:workerReport?.outcome??null,guard:guard.status().failure,transfer});
+            code:failure,workerOutcome:workerReport?.outcome??null,guard:guard.status().failure,transfer,cleanup:cleanup.status()});
           poison(run.jobId);
         }finally{
           session?.close();original.fill(0);seccomp.fill(0);run.signal?.removeEventListener('abort',abort);
