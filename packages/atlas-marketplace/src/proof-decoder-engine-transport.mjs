@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {setImmediate as yieldToIO} from 'node:timers/promises';
 import net from 'node:net';
 import {performance} from 'node:perf_hooks';
 import {createHash} from 'node:crypto';
@@ -227,8 +228,13 @@ export function createProofDecoderEngineTransport(options={}) {
           live();inputControls=inputBarrier.assertLive();
         }
         for(const chunk of [header,...Array.from({length:Math.ceil(bytes.length/65536)},(_,i)=>bytes.subarray(i*65536,Math.min(bytes.length,(i+1)*65536)))]){
+          // Socket write/drain callbacks can resolve through nextTick without
+          // polling the independent guard channel. Yield for every bounded
+          // write; writeChunk then rechecks the same lease, barrier and peer.
+          await yieldToIO();
           await writeChunk(chunk);live();append('INPUT',{bytes:chunk});inputBytesWritten+=chunk.length;
         }
+        await yieldToIO();
         await new Promise((resolve,reject)=>{
           const socket=attachment;
           const cleanup=()=>{socket.off('error',failed);socket.off('close',failed);};

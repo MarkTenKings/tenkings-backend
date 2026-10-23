@@ -14,8 +14,26 @@ pre-input barrier and successful4000×4000RGBA PNG decode with genuine finalized
 cleanup. A separate pidfd-owned stopped observation after input hashed all11
 mapped native files, including sharp/libvips, against the inventory; tasks and
 mappings were stable. The failed preceding guard/addon mismatch remains retained.
-The complete broker corpus/fault cases and hostile probes below remain open;
-these partial observations do not constitute qualification or publication
+The genuine prepared-client broker runs subsequently completed small and alpha
+PNGs (`ops/functional-corpus-01`) and the 16-million-pixel PNG plus baseline,
+progressive and orientation-bearing JPEGs (`ops/functional-corpus-02`). Each of
+these six successful submissions has original-bound completion and finalized
+cleanup. Both batches nevertheless failed: the first retained an unknown REMOVE
+outcome, and the second stopped before worker creation during a 10 MiB upload
+when a guard pulse was 322,425,232 ns old against its 250 ms limit. The first
+exited container was separately removed through a reviewed exact-owner operation;
+its original failed ledger was not repaired or finalized. All failed evidence is
+retained. Runtime05's six genuine native cache checks passed in
+`ops/functional-corpus-03`, including changed bytes, identities, revisions and
+invalid extra rows. The 10 MiB upload then reached known CREATE/START, but the
+subsequent worker-input transfer failed with a 250,638,952 ns stale guard pulse.
+The job remains held at RUNNING revision4; the guard stopped and the parent is
+empty/frozen, with one exited owned container awaiting separate reconciliation.
+The Engine transfer loop now has an explicit poll opportunity before each bounded
+write and FIN; its target verification is pending. Successful observations retain their
+original source/profile scope; they do not qualify the changed runtime wholesale.
+The remaining broker corpus/fault variants and hostile probes below remain open.
+These partial observations do not constitute qualification or publication
 permission. The separately pinned probe image is cached but has not executed.
 
 The candidate binds the imported linux/amd64 image
@@ -136,10 +154,10 @@ outside this lane and disabled pending Fingerprint PLUS genuine ownership author
 
 | Case ID | Evidence lane and required variants | Status |
 | --- | --- | --- |
-| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: direct diagnostic evidence only |
-| `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | NOT_RUN |
-| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE: direct diagnostic evidence only |
-| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: direct diagnostic evidence only |
+| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: small/alpha/16M genuine broker submissions completed under their original pins; byte-boundary and final-runtime qualification pending |
+| `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | INCOMPLETE: three genuine broker submissions completed in corpus02; full variant/evidence binding to final runtime pending |
+| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE: 16M accepted; latest 10 MiB attempt reached worker creation but failed during input transfer; remaining bounds not yet completed |
+| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: prior invalid-CRC diagnostic retained; remaining prepared-client corpus not yet completed |
 | `FORGED_DUPLICATE_OR_TRAILING_OUTPUT` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Distinct malicious-output probe emits wrong request/hash, early one-byte stdout prefix, duplicate/trailing/oversize/partial PDW1 and stderr flood. Actual broker refusal/hold; never claim this is normal worker output. | NOT_RUN |
 | `EXTERNAL_NETWORK_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: AF_INET/INET6, raw, AF_PACKET, AF_ALG, VSOCK and AF_UNIX socket attempts; seccomp/AA denial and net namespace lo-only/no ports. No external packets need be transmitted. | NOT_RUN |
 | `HOST_SECRET_PROOF_DOCKER_ACCESS_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Dedicated nonsecret absent/unmounted canaries and exact Docker/guard/broker path open attempts; kernel mount/namespace evidence. No real secrets enumerated/read; distinguish ENOENT absence from policy EACCES/EPERM. | NOT_RUN |

@@ -118,9 +118,15 @@ empty state before writing, and preserves its synthetic records afterward.
 It contains no credential/environment discovery, DDL, destructive reset or
 runtime fault hook. Direct CLI execution refuses. Its four cases cover actual
 transaction idempotency, late cancellation refusal, concurrent commit/barrier
-serialization and absent HOLD. **Actual PostgreSQL execution is NOT_RUN** until
-root stages that isolated database. Lost-COMMIT transport faults, actual C0
-revocation and publisher/decoder joins are separate tests, not claimed here.
+serialization and absent HOLD. **These four storage cases passed on actual
+PostgreSQL 17.11** in the fresh local `retention-postgres-fixture-01` under the
+R2 target-evidence packet. The actual restricted writer passed its role/grant
+audit; the race committed once, and the final state had four commits and three
+immutable events. The owned server exited0 and its private socket disappeared;
+the synthetic database and evidence remain retained. Receipt SHA256:
+`c87db76ef336fdde9b21aca411ede81f6b4791c0781bcbb5cc42f375b214da7e`.
+No shared database or credential was used. Lost-COMMIT transport faults, actual
+C0 revocation and publisher/decoder joins remain separate, uncompleted tests.
 
 The existing publisher's 128-operation lifetime, permanent REVOKED read-only
 reopen and storage limits remain unchanged. This journal's separate capacity is

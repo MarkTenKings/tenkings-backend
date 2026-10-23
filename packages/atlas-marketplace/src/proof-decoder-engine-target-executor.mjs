@@ -79,8 +79,18 @@ export function createProofDecoderTargetEngineExecutor(options={}) {
           finalized=true;
         }catch(error){
           failure=typeof error?.code==='string'&&/^(ENGINE_|DECODER_)[A-Z0-9_]+$/.test(error.code)?error.code:'ENGINE_TARGET_UNCERTAIN';
+          let transfer=null;
+          if(session){
+            try{
+              const state=session.status();
+              transfer={failure:state.failure,requestCount:state.requestCount,pendingRequests:state.pendingRequests,
+                activeWrites:state.activeWrites,backpressureEvents:state.backpressureEvents,inputBytesWritten:state.inputBytesWritten,
+                inputClosed:state.inputClosed,outputClosed:state.outputClosed,outputBytes:state.outputBytes,
+                inputBarrierObserved:state.inputControls!==null};
+            }catch{} // A diagnostic failure must not replace the original hold.
+          }
           lastFailure=decoderFreeze({classification:'UNQUALIFIED',jobId:run.jobId,requestId:initialRow.identity.requestId,
-            code:failure,workerOutcome:workerReport?.outcome??null,guard:guard.status().failure});
+            code:failure,workerOutcome:workerReport?.outcome??null,guard:guard.status().failure,transfer});
           poison(run.jobId);
         }finally{
           session?.close();original.fill(0);seccomp.fill(0);run.signal?.removeEventListener('abort',abort);
