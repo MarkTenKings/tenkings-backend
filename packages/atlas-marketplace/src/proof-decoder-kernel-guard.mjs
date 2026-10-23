@@ -43,7 +43,7 @@ function frames(socket,receive,abort){
       let end;
       while((end=pending.indexOf(10))!==-1){check(end>0&&end<MAX_MESSAGE);const frame=pending.subarray(0,end);pending=pending.subarray(end+1);receive(parseProofDecoderEngineJSON(frame,{maxBytes:MAX_MESSAGE}));}
       check(pending.length<MAX_MESSAGE);
-    }catch{abort('PROTOCOL');}
+    }catch(error){abort('PROTOCOL',error?.code);}
   });
   socket.on('error',()=>abort('TRANSPORT'));socket.on('end',()=>abort('DISCONNECT'));socket.on('close',()=>{pending=Buffer.alloc(0);abort('DISCONNECT');});
 }
@@ -127,11 +127,19 @@ export async function createProofDecoderKernelGuardClient(options={}){
   const registryState=registry.status(),bound=binding(plan,controller,registryState.epoch);
   check(!registryState.closed&&!registryState.poisoned&&registryState.bindingHash===bound.bindingHash&&registryState.parentBindingHash===bound.parentBindingHash);
   const directoryStamp=protectedDirectory(),before=socketStamp();
-  let peer,hello=null,lastPulse=0n,lastSequence=0,request=0,pending=null,active=null,closed=false,poisoned=false,settling=false;
+  let peer,hello=null,lastPulse=0n,lastSequence=0,request=0,pending=null,active=null,closed=false,poisoned=false,settling=false,firstFailure=null;
   let readyResolve,readyReject;const ready=new Promise((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});
   const socket=createConnection(SOCKET);let timer;
-  const abort=reason=>{
+  const abort=(reason,causeCode=null)=>{
     if(poisoned)return;poisoned=true;
+    // Capture bounded timing before quarantine's synchronous durable writes.
+    // This diagnostic cannot establish liveness, release a hold, or renew it.
+    let at=null;try{at=controller.boottimeNanoseconds();}catch{}
+    firstFailure=decoderFreeze({schema:'atlas-proof-decoder-guard-failure-v1',classification:'UNQUALIFIED',
+      reason,code:typeof causeCode==='string'&&/^DECODER_[A-Z0-9_]{1,100}$/.test(causeCode)?causeCode:null,
+      atBootNs:at===null?null:String(at),lastPulseBootNs:lastPulse>0n?String(lastPulse):null,
+      pulseAgeNs:at!==null&&at>=lastPulse&&lastPulse>0n?String(at-lastPulse):null,
+      deadlineBootNs:active?.deadlineBootNs??null,lastSequence});
     try{registry.quarantineEpoch({reason:'GUARD_'+reason});}catch{}
     try{controller.freezeAndKill();}catch{}
     socket.destroy();peer?.close();clearInterval(timer);
@@ -150,7 +158,7 @@ export async function createProofDecoderKernelGuardClient(options={}){
   };
   socket.once('connect',()=>{
     try{check(protectedDirectory()===directoryStamp&&socketStamp()===before);peer=observer.capture(socket,{uid:0,gid:0});check(peer.assertAlive().pid!==process.pid,'DECODER_GUARD_INDEPENDENCE');}
-    catch{abort('PEER');}
+    catch(error){abort('PEER',error?.code);}
   });
   frames(socket,message=>{
     peer?.assertAlive();
@@ -167,8 +175,8 @@ export async function createProofDecoderKernelGuardClient(options={}){
     }else check(false);
   },abort);
   const timeout=setTimeout(()=>abort('CONNECT_TIMEOUT'),500);
-  try{await ready;live();}catch(error){abort('CONNECT');throw error;}finally{clearTimeout(timeout);}
-  timer=setInterval(()=>{try{live();}catch{abort('LIVENESS');}},50);
+  try{await ready;live();}catch(error){abort('CONNECT',error?.code);throw error;}finally{clearTimeout(timeout);}
+  timer=setInterval(()=>{try{live();}catch(error){abort('LIVENESS',error?.code);}},50);
   const exchange=(kind,payload)=>{
     live();check(!pending&&++request<=256);
     return new Promise((resolve,reject)=>{pending={request,leaseNonce:payload.leaseNonce,resolve,reject,timer:setTimeout(()=>abort('ACK_TIMEOUT'),500)};try{write(socket,{kind,request,serverNonce:hello.serverNonce,bindingHash:bound.bindingHash,payload});}catch{abort('TRANSPORT');}});
@@ -183,15 +191,16 @@ export async function createProofDecoderKernelGuardClient(options={}){
         const state=decoderFreeze({identity,deadlineBootNs,bindingHash:bound.bindingHash}),lease=Object.freeze({classification:'UNQUALIFIED',executionAllowed:false});
         active={...state,leaseNonce:randomBytes(32).toString('hex'),lease};
         await exchange('ADOPT',{identity,deadlineBootNs,leaseNonce:active.leaseNonce});live();leases.set(lease,{client,state});return lease;
-      }catch(error){abort('ADOPT');throw error;}
+      }catch(error){abort('ADOPT',error?.code);throw error;}
     },
-    assertLive(lease){try{const known=leases.get(lease);check(known?.client===client&&active?.lease===lease&&!settling,'DECODER_GUARD_LEASE');live();return known.state;}catch(error){abort('LEASE');throw error;}},
+    assertLive(lease){try{const known=leases.get(lease);check(known?.client===client&&active?.lease===lease&&!settling,'DECODER_GUARD_LEASE');live();return known.state;}catch(error){abort('LEASE',error?.code);throw error;}},
     async settle(lease){
       try{
         client.assertLive(lease);const row=registry.get(active.identity.jobId);check(row?.phase==='FINALIZED'&&row.cleanup!==null&&row.bindingHash===bound.bindingHash,'DECODER_GUARD_NOT_FINALIZED');
         controller.observeEmpty();settling=true;await exchange('SETTLE',{leaseNonce:active.leaseNonce});active=null;settling=false;
-      }catch(error){abort('SETTLE');throw error;}
+      }catch(error){abort('SETTLE',error?.code);throw error;}
     },
+    status(){return decoderFreeze({classification:'UNQUALIFIED',executionAllowed:false,closed,poisoned,failure:firstFailure});},
     close(){if(closed)return;closed=true;abort('SHUTDOWN');}
   });clients.set(client,{controller,bindingHash:bound.bindingHash});return client;
 }

@@ -24,7 +24,7 @@ export function createProofDecoderTargetEngineExecutor(options={}) {
   check(!registryOwners.has(registry),'ENGINE_TARGET_EXECUTOR_REPLACEMENT');
   const shared={enabled:true,plan,targetRegistry:registry,parentController:controller,targetBinding,socketPath:input.socketPath,apiVersion:input.apiVersion,linuxObserver:input.linuxObserver};
   const cleanup=createProofDecoderOwnedEngineCleanup(shared);
-  const seen=new Set();let active=null,closed=false,poisoned=false;
+  const seen=new Set();let active=null,closed=false,poisoned=false,lastFailure=null;
   function poison(jobId){
     poisoned=true;
     try{registry.quarantineEpoch({reason:'ENGINE_TARGET_UNCERTAIN',...(jobId?{jobId}:{})});}catch{}
@@ -79,6 +79,8 @@ export function createProofDecoderTargetEngineExecutor(options={}) {
           finalized=true;
         }catch(error){
           failure=typeof error?.code==='string'&&/^(ENGINE_|DECODER_)[A-Z0-9_]+$/.test(error.code)?error.code:'ENGINE_TARGET_UNCERTAIN';
+          lastFailure=decoderFreeze({classification:'UNQUALIFIED',jobId:run.jobId,requestId:initialRow.identity.requestId,
+            code:failure,workerOutcome:workerReport?.outcome??null,guard:guard.status().failure});
           poison(run.jobId);
         }finally{
           session?.close();original.fill(0);seccomp.fill(0);run.signal?.removeEventListener('abort',abort);
@@ -90,7 +92,7 @@ export function createProofDecoderTargetEngineExecutor(options={}) {
           epochPoisoned:poisoned||state.poisoned,disposition:finalized?'TARGET_CLEANUP_OBSERVED_UNQUALIFIED':'EPOCH_QUARANTINED'});
       })();return item.promise;
     },
-    status(){const state=registry.status();return decoderFreeze({...MARKERS,closed,poisoned:poisoned||state.poisoned,activeJobs:active?1:0,seenJobs:seen.size,occupiedSlots:state.occupiedSlots});},
+    status(){const state=registry.status();return decoderFreeze({...MARKERS,closed,poisoned:poisoned||state.poisoned,activeJobs:active?1:0,seenJobs:seen.size,occupiedSlots:state.occupiedSlots,lastFailure});},
     async close(){
       if(!closed){closed=true;if(active){active.aborter.abort();poison(active.jobId);}}
       if(active)await active.promise;cleanup.close();return this.status();
