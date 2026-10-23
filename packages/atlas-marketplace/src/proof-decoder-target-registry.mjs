@@ -47,6 +47,10 @@ export function openProofDecoderTargetRegistry(options={}){
   const directoryStat=lstatSync(directory);check(directoryStat.isDirectory()&&!directoryStat.isSymbolicLink()&&directoryStat.uid===process.getuid()&&(directoryStat.mode&0o7777)===0o700,'DECODER_TARGET_FOREIGN_FILE');
   const dbPath=join(directory,DB),manifestPath=join(directory,MANIFEST),lockPath=join(directory,LOCK);
   let manifest,manifestBytes,receipt,lockBytes,lockStamp,db,closed=false,poisoned=false,lastNs=0n,cachedStatus=null;
+  // Memoize only fully validated immutable JSON rows. Every caller still reads
+  // SQLite; any changed identity, revision or exact record bytes revalidates.
+  // This cache contains no Engine/kernel receipt brands or capacity decisions.
+  const decodedRows=new Map();
   function inspectDirectory(locked=false){
     const st=lstatSync(directory);check(st.isDirectory()&&!st.isSymbolicLink()&&canonicalJSON(stamp(st))===canonicalJSON(stamp(directoryStat))&&st.uid===process.getuid()&&(st.mode&0o7777)===0o700,'DECODER_TARGET_FOREIGN_FILE');
     const names=readdirSync(directory);check(!names.some(name=>name.startsWith(DB+'-')),'DECODER_TARGET_RECOVERY_REQUIRED');
@@ -110,7 +114,16 @@ export function openProofDecoderTargetRegistry(options={}){
       check(['CREATE','START','REMOVE'].every(operation=>effect(operation)?.receipt)&&!row.effects.some(item=>item.receipt===null)&&engine.schema===cleanupSchema(row)&&engine.classification==='UNQUALIFIED'&&canonicalJSON(engine.identity)===canonicalJSON(row.identity)&&engine.barrierId===row.barrierId&&engine.bindingHash===bindingHash&&engine.createOperationId===create.operationId&&engine.startOperationId===start.operationId&&engine.removeOperationId===effect('REMOVE').operationId&&engine.lastRemoveAtNs===effect('REMOVE').receipt.observedAtNs&&engine.settled===true&&engine.absentAfterRemove===true&&Number.isSafeInteger(engine.waitExitCode)&&engine.waitExitCode>=0&&engine.waitExitCode<=255&&ns(engine.observedAtNs)>=ns(engine.lastRemoveAtNs)&&kernel.schema==='atlas-proof-decoder-kernel-empty-v1'&&kernel.bootId===binding.bootId&&kernel.bindingHash===initial.bindingHash&&kernel.parentName===initial.parentName&&kernel.device===initial.device&&kernel.inode===initial.inode&&kernel.populated===false&&kernel.freezeRequested===false&&kernel.frozen===false&&ns(kernel.observedAtNs)>=ns(engine.observedAtNs)&&ns(kernel.observedAtNs)>=ns(row.barrierAtNs),'DECODER_TARGET_CORRUPT');}
     check(Buffer.byteLength(canonicalJSON(row))<=MAX_RECORD,'DECODER_TARGET_FULL');return row;
   }
-  function decode(stored){if(!stored)return null;check(typeof stored.record==='string'&&Buffer.byteLength(stored.record)<=MAX_RECORD,'DECODER_TARGET_CORRUPT');const row=validateRecord(json(Buffer.from(stored.record)));check(stored.id===row.identity.jobId&&stored.revision===row.revision&&canonicalJSON(row)===stored.record,'DECODER_TARGET_CORRUPT');return row;}
+  function decode(stored){
+    if(!stored)return null;
+    check(typeof stored.record==='string'&&Buffer.byteLength(stored.record)<=MAX_RECORD,'DECODER_TARGET_CORRUPT');
+    const cached=decodedRows.get(stored.id);
+    if(cached&&cached.revision===stored.revision&&cached.record===stored.record)return cached.row;
+    const row=validateRecord(json(Buffer.from(stored.record)));
+    check(stored.id===row.identity.jobId&&stored.revision===row.revision&&canonicalJSON(row)===stored.record,'DECODER_TARGET_CORRUPT');
+    check(decodedRows.has(stored.id)||decodedRows.size<MAX_JOBS,'DECODER_TARGET_FULL');
+    decoderFreeze(row);decodedRows.set(stored.id,{revision:stored.revision,record:stored.record,row});return row;
+  }
   function validateDatabase(handle){
     const tables=handle.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row=>row.name);check(canonicalJSON(tables)===canonicalJSON(['events','jobs','metadata']),'DECODER_TARGET_CORRUPT');
     const meta=handle.prepare('SELECT manifest,state FROM metadata WHERE id=1').get();check(meta?.manifest===canonicalJSON(manifest),'DECODER_TARGET_CORRUPT');validateState(json(Buffer.from(meta.state)));

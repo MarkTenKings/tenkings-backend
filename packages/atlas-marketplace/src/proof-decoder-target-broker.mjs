@@ -2,6 +2,7 @@ import {createServer,createConnection} from 'node:net';
 import {lstatSync,realpathSync,readdirSync,chmodSync,chownSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
+import {setImmediate as yieldToIO} from 'node:timers/promises';
 import {requireValue} from './contract.mjs';
 import {assertProofDecoderLaunchPlan,decoderContractData,decoderFreeze} from './proof-decoder-profile.mjs';
 import {assertProofDecoderPlan} from './proof-decoder-protocol.mjs';
@@ -107,7 +108,11 @@ export async function startProofDecoderTargetBroker(options={}){
       }
       check(accepted&&request&&collector&&!inputEnded,'DECODER_BROKER_PROTOCOL');
       if(type==='DATA'){
-        collector.feed(value);return;
+        collector.feed(value);
+        // Buffered socket reads and resolved promises can otherwise monopolize
+        // microtasks. Give the independent guard channel a poll opportunity
+        // after each bounded frame; recheck the same original deadline/peer.
+        await yieldToIO();live();return;
       }
       check(type==='INPUT_END'&&value.requestId===request.requestId&&value.nonce===nonce,'DECODER_BROKER_SOURCE');
       original=collector.end();inputEnded=true;runPromise=completeExecution();
