@@ -13,7 +13,7 @@ test('one finding spanning all categories uses each category factor and preserve
  const before=structuredClone(findings);
  assert.deepEqual(findingImpact(findings,'multi'),[
   {zone:'CORNERS',damageMultiplier:.25,score:10,withoutScore:10,scoringPercent:.0075},
-  {zone:'EDGES',damageMultiplier:1,score:9,withoutScore:10,scoringPercent:.03},
+  {zone:'EDGES',damageMultiplier:.25,score:10,withoutScore:10,scoringPercent:.0075},
   {zone:'SURFACE',damageMultiplier:2,score:6,withoutScore:10,scoringPercent:.06},
  ]);
  assert.deepEqual(findings,before);

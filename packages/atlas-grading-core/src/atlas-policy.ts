@@ -10,8 +10,8 @@ import {
 } from './scoring';
 
 /** New ATLAS awards use this version; historical Speedster/ATLAS reports keep their original rule. */
-export const ATLAS_RULE_VERSION = 'ATLAS_2026_10_21_CATEGORY_DAMAGE_V1' as const;
-export const ATLAS_CATEGORY_DAMAGE_MULTIPLIERS = Object.freeze({ CORNERS: 0.25, EDGES: 1, SURFACE: 2 } as const);
+export const ATLAS_RULE_VERSION = 'ATLAS_2026_10_23_CATEGORY_DAMAGE_V1' as const;
+export const ATLAS_CATEGORY_DAMAGE_MULTIPLIERS = Object.freeze({ CORNERS: 0.25, EDGES: 0.25, SURFACE: 2 } as const);
 
 /** Percentages are scoring percentages, after the category damage multiplier. */
 export const ATLAS_CONDITION_BANDS = [
