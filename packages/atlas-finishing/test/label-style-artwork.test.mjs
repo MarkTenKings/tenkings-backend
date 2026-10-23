@@ -65,7 +65,7 @@ test('active markup, unsafe attributes, external references and unbounded filter
     s => s.replace('<title>', '<!DOCTYPE svg><title>'),
     s => s.replace(/<use href="#[^"]+"/, '<use href="https://example.com/a.svg"'),
     s => s.replace(/<use href="#[^"]+"/, '<use href="#missing"'),
-    s => s.replace('radius="1"', 'radius="9"'),
+    s => s.replace('radius="1"', 'radius="20.001"'),
     s => s.replace('operator="dilate"', 'operator="erode"'),
     s => s.replace('<feMorphology', '<feGaussianBlur'),
     s => s.replace(/data-label-wordmark="[a-f0-9]+"/, `data-label-wordmark="${'0'.repeat(64)}"`),

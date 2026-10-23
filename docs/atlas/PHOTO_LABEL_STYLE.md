@@ -1,6 +1,6 @@
 # Photo-informed label styling
 
-Status: implemented and qualified locally on six retained approval/photo fixtures. Production deployment and live qualification remain pending release-owner confirmation. This document describes the implemented contract, not a promise of exact font identification or exclusive rights in generated lettering.
+Status: implemented and qualified locally on six retained approval/photo fixtures. Production deployment and live qualification remain pending the coordinated technical release checks; the owner has authorized integration and production testing. This document describes the implemented contract, not a promise of exact font identification or exclusive rights in generated lettering.
 
 ## Source and identity contract
 
@@ -39,3 +39,5 @@ Malformed or unsupported style observations produce an explicitly marked determi
 `ATLAS_LABEL_PHOTO_STYLE_ENABLED=true` enables the path only where label storage/jobs are available. With the flag absent the credential path stays cold. `ATLAS_MANUAL_OPENAI_KEY` supplies style analysis and blind verification; `ATLAS_LABEL_WORDMARK_OPENAI_KEY` supplies only image generation. Enabled runtime configuration requires both. Generation never falls back to the manual key, and the dedicated image key belongs only to the private main runtime, not the variant worker or public browser.
 
 Source approval is rechecked after style work before committing label artwork. Serving pages and historical copies cannot initiate model calls. Release qualification must retain raw provider evidence, source/proposal separation, reviewed-preference receipts, deterministic texture receipts, original spelling verification, whole-grade/physical-fit checks and the actual renderer profile. Local preview serials or CASE HIT proposals are not production identity updates.
+
+Automatic label discovery, layout recovery, render claims and export claims honor the existing release admission locks inside their transactions. A held release admits no new label work; completion stays available so already admitted work can drain before the held baseline is captured. Generated-letter outlines use their actual fitted scale to preserve the requested physical edge thickness, including nonnormalized and width-constrained assets. Historical renderer profiles remain recognized for immutable COPY exports.

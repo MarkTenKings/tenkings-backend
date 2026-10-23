@@ -111,13 +111,13 @@ function validateDynamicSvg(source, fail) {
       catch { fail(); }
       if (wordmark && (Number(a.width) !== bytes.readUInt32BE(16) || Number(a.height) !== bytes.readUInt32BE(20))) fail();
     } else if (tag === 'use') { if (!a.href) fail(); reference(node, a.href, 'image', true); }
-    else if (tag === 'feMorphology') { if (a.operator !== 'dilate' || !numeric(a.radius) || Number(a.radius) <= 0 || Number(a.radius) > 8) fail(); }
+    else if (tag === 'feMorphology') { if (a.operator !== 'dilate' || !numeric(a.radius) || Number(a.radius) <= 0 || Number(a.radius) > 20) fail(); }
     if (!match[3]) stack.push(node);
     else if (children[tag] && tag === 'svg') fail();
   }
   if (!rootSeen || stack.length) fail();
   for (const n of nodes) if (n.tag === 'filter' && (n.childCount !== 1 || !n.a.id || n.a.filterUnits !== 'userSpaceOnUse'
-    || !['x','y','width','height'].every(k => numeric(n.a[k])) || Number(n.a.width) > 4112 || Number(n.a.height) > 528)) fail();
+    || !['x','y','width','height'].every(k => numeric(n.a[k])) || Number(n.a.width) > 4136 || Number(n.a.height) > 552)) fail();
   const graph = new Map([...ids.keys()].map(id => [id, []]));
   for (const ref of refs) {
     const target = ids.get(ref.target), expected = { paint: ['pattern','linearGradient'], mask: ['mask'], filter: ['filter'], 'clip-path': ['clipPath'], image: ['image'] }[ref.kind];

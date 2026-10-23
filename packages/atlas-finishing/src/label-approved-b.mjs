@@ -43,6 +43,7 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE = Object.freeze({
   colors: approvedBColors, grade: 'retained-grade10-uniform-roboto-other-grades-v1', backQr: 'https://atlasgrading.com/',
   photoStyle: {version: LABEL_STYLE_PAINT_VERSION, wordmark:LABEL_STYLE_WORDMARK_VERSION, contrastVersion:LABEL_STYLE_CONTRAST_VERSION,
     sourceTexturePolicy:'atlas-label-source-texture-v2', originalRasterPolicy:'atlas-label-wordmark-near-monochrome-v1',
+    wordmarkEdge:'actual-fitted-physical-radius-v1',
     reviewedPreferences:{version:LABEL_STYLE_PREFERENCES_VERSION,sha256:LABEL_STYLE_PREFERENCES_SHA256},
     fonts:LABEL_STYLE_FONT_CATALOG, artwork:LABEL_STYLE_ARTWORK,
     wholeNumberGrades:true, contrast:'shared-below-10-black-exact10-exposed-foil-v1', variantTargetCapMm:2.5,
@@ -53,7 +54,8 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE_HASH = approvedBHash(stable(LABEL
 // Recognizing it never rerenders or replaces its saved front bytes.
 export const LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH = 'a0491ff4f0a86166371f950c658c3e08397e688fe13f9e60f28abbda88b764ab';
 export const LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES = Object.freeze([
-  LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH, 'b8bb56e7e816b1324b6ba3a1b5d9b683e761fc084ae986f253ae113e88ea6a0a', LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
+  LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH, 'b8bb56e7e816b1324b6ba3a1b5d9b683e761fc084ae986f253ae113e88ea6a0a',
+  'df5054cb6e777409dcef8b5938c87df3ec76e980c8553c6edb77567c2f9defbe', LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
 ]);
 export const isApprovedBRendererProfile = hash => LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES.includes(hash);
 const round = value => Number(value.toFixed(6));
@@ -235,11 +237,12 @@ function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks) 
   const slotHeight=lines.length?(box.bottom-box.top-box.lineGap*(lines.length-1))/lines.length:0;
   const recipes=lines.map(line=>styledRow(line,semantic,styleSpec,textures));
   const contrast=recipes.map(({recipe})=>labelStyleContrast({recipe,inverted}));
-  const shapes=lines.map((line,index)=>{
-    const options={text:line.text,...recipes[index],spanColors:contrast[index].spanColors,defaultColor:inverted?'#090a0b':'#ffffff'};
+  const shapeOptions=lines.map((line,index)=>({text:line.text,...recipes[index],spanColors:contrast[index].spanColors,defaultColor:inverted?'#090a0b':'#ffffff'}));
+  const wordmarkOptions=index=>({...shapeOptions[index],wordmark:wordmarks?.[lines[index].role],expectedSourceHash:styleSpec.specHash,
+    outlineColor:contrast[index].outlineColor});
+  const shapes=shapeOptions.map((options,index)=>{
     return options.recipe.letteringMode==='ORIGINAL_WORDMARK'
-      ? shapeLabelStyleWordmark({...options,wordmark:wordmarks?.[line.role],expectedSourceHash:styleSpec.specHash,
-        outlineColor:contrast[index].outlineColor,outlineRadiusUnits:contrast[index].outlineMm/2.5*256})
+      ? shapeLabelStyleWordmark(wordmarkOptions(index))
       : shapeLabelStyleText(options);
   });
   const placements=shapes.map((value,index)=>{
@@ -247,6 +250,33 @@ function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks) 
     const reviewedCap=recipes[index].recipe.reviewedCapMm;
     if(reviewedCap!==undefined&&(!Number.isFinite(reviewedCap)||reviewedCap<1.3||reviewedCap>2.5))throw Error('LABEL_STYLE_REVIEWED_CAP_INVALID');
     const target=reviewedCap??(variant?2.5:styled&&value.emphasis==='LARGE'?2.3:box.targetCapHeight);
+    if(value.representation==='ALPHA_MASK') {
+      // Fit the real ink plus a fixed physical edge. Original assets may have
+      // any measured cap height; neither 256 units nor a 2.5mm final fit is assured.
+      const edge=contrast[index].outlineMm,centerY=box.top+index*(slotHeight+box.lineGap)+slotHeight/2;
+      const circle=LABEL_APPROVED_B_RENDERER_PROFILE.nfcClearance,radius=circle.radius+circle.padding;
+      const fits=scale=>{
+        const height=value.height*scale+2*edge,width=value.width*scale+2*edge;
+        const distanceY=Math.max(0,Math.abs(centerY-circle.y)-height/2);
+        const right=distanceY>=radius?box.x+box.width:Math.min(box.x+box.width,circle.x-Math.sqrt(radius*radius-distanceY*distanceY));
+        return box.x+width<=right;
+      };
+      let scale=Math.min(target/value.capHeight,(box.width-2*edge)/value.width,(slotHeight-2*edge)/value.height);
+      if(!fits(scale)) {
+        let low=0,high=scale;
+        for(let step=0;step<48;step++){const middle=(low+high)/2;if(fits(middle))low=middle;else high=middle;}
+        scale=low;
+      }
+      // An unreadable fit is rejected by fitMetadata, before generating an
+      // oversized dilation. Accepted caps >=1.3mm and assets <=512px require
+      // at most .045*512/1.3 = 17.724 units, within the strict 20-unit bound.
+      if(edge&&scale*value.capHeight>=box.minimumCapHeight)
+        value=shapes[index]=shapeLabelStyleWordmark({...wordmarkOptions(index),outlineRadiusUnits:edge/scale});
+      const height=value.height*scale,width=value.width*scale;
+      const outer={x:box.x,y:centerY-height/2,width,height,scale};
+      return {...outer,outerBounds:outer,pad:0,outlineColor:contrast[index].outlineColor,
+        capHeight:scale*value.capHeight,fontSizePt:scale*value.unitsPerEm/25.4*72,font:value.fontFamily};
+    }
     const pad=value.representation!=='ALPHA_MASK' ? contrast[index].outlineMm : 0;
     const scale=Math.min(target/value.capHeight,(box.width-2*pad)/value.width,(slotHeight-2*pad)/value.height);
     const outer=fitClearLine({...value,width:value.width+2*pad/scale,height:value.height+2*pad/scale},

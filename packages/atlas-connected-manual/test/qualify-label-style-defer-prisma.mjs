@@ -10,7 +10,9 @@ import { applyStandaloneBaseline, applyStandaloneMigrations } from '../../atlas-
 import { standaloneRoleSQL } from '../../atlas-standalone-database/grants.mjs';
 import { canonical, digest, requireThat } from '../../atlas-manual-service/src/contract.mjs';
 import { createIntakeRepository } from '../../atlas-manual-intake/src/repository.mjs';
-import { createLabelRepository } from '../src/label-sheet-repository.mjs';
+import { createLabelRepository, labelFailureHash } from '../src/label-sheet-repository.mjs';
+import { createLabelService } from '../src/label-sheet-service.mjs';
+import { createLabelWorker } from '../src/label-worker.mjs';
 import { LABEL_JIG_V1 } from '../../atlas-finishing/src/label-sheet-geometry.mjs';
 import { renderApprovedBLabel, approvedBStyleInputLines } from '../../atlas-finishing/src/label-approved-b.mjs';
 import { renderLabelV4Png, renderLabelBlackInkSvg, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1 } from '../../atlas-finishing/src/label-sheet.mjs';
@@ -28,9 +30,9 @@ const args = process.argv.slice(2), require = createRequire(import.meta.url);
 const { Client } = require(args[args.indexOf('--pg-module') + 1]);
 const { PrismaClient, Prisma } = require(resolve(root, 'frontend/atlas-app/.generated/staff-database'));
 const cluster = await disposablePostgres(args), checks = [], errors = [], packets = new Map();
-const sourceFiles = Object.fromEntries(['src/label-sheet-repository.mjs','test/qualify-label-style-defer-prisma.mjs'].map(name => [name,
+const sourceFiles = Object.fromEntries(['src/label-sheet-repository.mjs','src/label-sheet-service.mjs','src/label-worker.mjs','test/qualify-label-style-defer-prisma.mjs'].map(name => [name,
   createHash('sha256').update(readFileSync(resolve(root, 'packages/atlas-connected-manual', name))).digest('hex')]));
-let admin, prisma, result;
+let admin, holder, prisma, result;
 try {
   await cluster.sql('CREATE DATABASE atlas_style_defer');
   admin = new Client({ connectionString: cluster.url('atlas_style_defer') }); await admin.connect();
@@ -135,8 +137,77 @@ try {
   const exported=await renderLabelV4Png(exportInput,{exportProfileId:LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id});assert.equal(digest(exported.bytes),exported.sha256);assert.equal((await sharp(exported.bytes).metadata()).format,'png');assert.equal(exported.manifest.byteCount,exported.bytes.length);
   const black=renderLabelBlackInkSvg(exportInput);assert.match(black,/data-label-wordmark=/);await sharp(Buffer.from(black)).png().toBuffer();
   checks.push(`synthetic original-wordmark alpha fixture persists grade10 READY through the real renderer, existing restricted Prisma grants and immutable schema guards, ${snapshotBytes}-byte binary-free snapshot, and real color/black-ink PNG export`);
+  // Actual independent PG sessions exercise the installed admission contract,
+  // including the discovery-to-claim race. Only this nonce-owned DB is used.
+  holder = new Client({ connectionString: cluster.url('atlas_style_defer') }); await holder.connect();
+  const admissionPending = await seed({ pending: true });
+  const recovery = await seed({ profile: digest('prior renderer') });
+  const recoveryRow = await readItem(recovery.id);
+  const target = { rendererProfileHash: rendered.rendererProfileHash, materialProfileId: 'atlas-v4-holo-v1', jigHash: LABEL_JIG_V1.jigHash };
+  const retryInput = { requestId: randomUUID(), expectedFailureHash: labelFailureHash(recoveryRow), expectedRendererProfileHash: target.rendererProfileHash };
+  const preparedExport = await repo.prepareExport(staff, { kind: 'SINGLE', id: original.id,
+    input: { requestId: randomUUID(), expectedLabelHash: saved.artwork_hash, exportProfileId: LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id } });
+  const wanted = new Set([admissionPending.id, recovery.id, preparedExport.exportId]);
+  const staleDiscovery = (await repo.pendingCandidates(16, { rendererProfileHash: target.rendererProfileHash })).filter(row => wanted.has(row.id));
+  assert.deepEqual(new Set(staleDiscovery.map(row => row.kind)), new Set(['ITEM', 'EXPORT', 'LAYOUT_RECOVERY']));
+  let providerCalls = 0, packetReads = 0;
+  const labelState = async () => {
+    const state = {};
+    for (const table of ['label_item', 'label_sheet', 'label_export', 'label_print_event'])
+      state[table] = (await admin.query(`SELECT to_jsonb(t) value FROM atlas_manual_connected.${table} t ORDER BY id`)).rows;
+    state.approval = await approveRows(); return state;
+  };
+  const serviceOptions = { boundary, finishing: { async loadPacket(_staff, _cardId, actionId) {
+    packetReads++; return { ...packets.get(actionId), publicHash: packets.get(actionId).row.public_hash };
+  } }, storage: { write() { assert.fail('No remote storage in admission fixture'); }, download() { assert.fail('No downloads'); } },
+  styler: { async resolve() { providerCalls++; return { state: 'PENDING' }; } } };
+  for (const locks of [[76], [77], [76, 77]]) {
+    await holder.query('BEGIN');
+    for (const key of locks) await holder.query('SELECT pg_advisory_xact_lock(721930,$1)', [key]);
+    const before = await labelState();
+    assert.deepEqual(await repo.pendingCandidates(16, { rendererProfileHash: target.rendererProfileHash }), []);
+    assert.equal(await repo.claimItem(staff, admissionPending.id), null);
+    assert.equal(await repo.claimExport(staff, preparedExport.exportId), null);
+    await assert.rejects(repo.retryLayout(staff, recovery.id, retryInput, target, { automatic: true }), { code: 'LABEL_RELEASE_HELD' });
+    const startedWorker = createLabelWorker({ service: createLabelService({ ...serviceOptions, repository: repo }) });
+    startedWorker.start(); await startedWorker.wake(); await startedWorker.stop();
+    const staleService = createLabelService({ ...serviceOptions, repository: { ...repo, pendingCandidates: async () => staleDiscovery } });
+    assert.equal(await staleService.runPending(), 0);
+    assert.equal(providerCalls, 0); assert.equal(packetReads, 0); assert.deepEqual(await labelState(), before);
+    await holder.query('ROLLBACK');
+  }
+  checks.push('actual release locks76 and77, separately and together, block discovery, successor creation and item/export claims; startup and stale-discovery worker passes preserve every label/approval row and dispatch no provider/storage work');
+  const retried = await repo.retryLayout(staff, recovery.id, retryInput, target, { automatic: true });
+  assert.equal((await children(recovery.id)).length, 1); assert.equal((await readItem(recovery.id)).state, 'SUPERSEDED');
+  const exportClaim = await repo.claimExport(staff, preparedExport.exportId); assert(exportClaim.row.claim_id);
+  const resumedRepository = makeRepository(); // Fresh worker starts at the beginning of fair discovery.
+  const resumedService = createLabelService({ ...serviceOptions, repository: { ...resumedRepository,
+    async pendingCandidates() { return (await resumedRepository.pendingCandidates(16)).filter(row => row.id === admissionPending.id); } } });
+  assert.equal(await resumedService.runPending(), 0); assert.equal(providerCalls, 1); assert.equal(packetReads, 1);
+  assert.equal((await readItem(admissionPending.id)).code, 'LABEL_STYLE_PROVIDER_PENDING');
+  assert.equal((await readItem(retried.itemId)).state, 'PENDING_RENDER');
+  checks.push('release rollback permits exactly one recovery successor, an export claim, and a normal item claim/provider dispatch with durable PENDING deferral');
+  const racing = await seed({ pending: true }); let claimEntered, releaseClaim;
+  const entered = new Promise(resolve => { claimEntered = resolve; });
+  const commit = new Promise(resolve => { releaseClaim = resolve; });
+  const racingRepo = createLabelRepository({ boundary: { ...boundary, transaction(principal, work) {
+    return boundary.transaction(principal, async context => { const value = await work(context); claimEntered(); await commit; return value; });
+  } } });
+  const claimPromise = racingRepo.claimItem(staff, racing.id); await entered;
+  try {
+    await holder.query('BEGIN');
+    for (const key of [76, 77]) assert.equal((await holder.query('SELECT pg_try_advisory_xact_lock(721930,$1) locked', [key])).rows[0].locked, false);
+    await holder.query('ROLLBACK');
+  } finally { releaseClaim(); }
+  const raceClaim = await claimPromise; assert(raceClaim.claim_id);
+  await holder.query('BEGIN');
+  for (const key of [76, 77]) assert.equal((await holder.query('SELECT pg_try_advisory_xact_lock(721930,$1) locked', [key])).rows[0].locked, true);
+  await repo.deferItem(staff, raceClaim); await repo.failExport(staff, exportClaim);
+  assert.equal((await readItem(racing.id)).code, 'LABEL_STYLE_PROVIDER_PENDING');
+  await holder.query('ROLLBACK');
+  checks.push('release admission cannot acquire either exclusive lock before the claim transaction commits; work already admitted can complete/defer while held for operational draining');
   result={status:'ATLAS_LABEL_STYLE_DEFER_PRISMA_PASS',prismaVersion:Prisma.prismaVersion,sourceFiles,checks,providerCalls:0,productionConnections:0,remoteStorageCalls:0,deletionEffects:'OWNED_DISPOSABLE_FIXTURE_ONLY',observedTransactionErrors:errors};
 } catch(error){result={status:'ATLAS_LABEL_STYLE_DEFER_PRISMA_FAILED',sourceFiles,checks,error:{name:error.name,code:error.code,meta:error.meta,message:error.message,stack:error.stack},productionConnections:0};process.exitCode=1;}
-finally{await prisma?.$disconnect();await admin?.end();await cluster.stop();}
+finally{await holder?.end();await prisma?.$disconnect();await admin?.end();await cluster.stop();}
 result.cleanup=JSON.parse(readFileSync(resolve(cluster.directory,'cleanup.json')));assert.equal(result.cleanup.stoppedVerified,true);
 writeFileSync(resolve(output,'result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx',mode:0o600});console.log(JSON.stringify(result,null,2));

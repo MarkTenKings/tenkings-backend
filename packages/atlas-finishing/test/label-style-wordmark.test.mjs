@@ -99,7 +99,7 @@ test('binding, spelling, ordering, descriptor bytes, protected serials and parti
     { wordmark: changedDescriptor(d => { d.mask.sha256 = '0'.repeat(64); }) },
     { recipe: { ...recipe, protectedSpans: [{ start: 12, end: 15 }] } },
     { recipe: { ...recipe, spans: [{ ...recipe.spans[0], start: 1 }] } },
-    { outlineRadiusUnits: 9 }, { outlineColor: 'url(#unsafe)' }, { idPrefix: 'x"><script>' },
+    { outlineRadiusUnits: 20.001 }, { outlineColor: 'url(#unsafe)' }, { idPrefix: 'x"><script>' },
   ]) assert.throws(() => shapeLabelStyleWordmark({ ...inputs, ...change }), /LABEL_STYLE_/);
   const modified = structuredClone(wordmark); modified.descriptor.role = 'identity';
   assert.throws(() => shapeLabelStyleWordmark({ ...inputs, wordmark: modified }), /BINDING_INVALID/);

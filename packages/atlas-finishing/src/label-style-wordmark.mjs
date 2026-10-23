@@ -131,7 +131,7 @@ export function shapeLabelStyleWordmark({ text, recipe, wordmark, expectedSource
   const maskBytes = Buffer.from(wordmark.maskBase64, 'base64');
   check(d.mask.byteCount === maskBytes.length && d.byteCount === Buffer.from(wordmark.pngBase64, 'base64').length, 'LABEL_STYLE_WORDMARK_PNG_INVALID');
   const inkBounds = readMaskBounds(maskBytes, d.width, d.height, words), primary = color(defaultColor), edgeColor = color(outlineColor);
-  check(Number.isFinite(outlineRadiusUnits) && outlineRadiusUnits >= 0 && outlineRadiusUnits <= 8, 'LABEL_STYLE_WORDMARK_OUTLINE_INVALID');
+  check(Number.isFinite(outlineRadiusUnits) && outlineRadiusUnits >= 0 && outlineRadiusUnits <= 20, 'LABEL_STYLE_WORDMARK_OUTLINE_INVALID');
   const radius = Number(outlineRadiusUnits.toFixed(4));
   const b = { minX: inkBounds.minX - radius, minY: inkBounds.minY - radius, maxX: inkBounds.maxX + radius, maxY: inkBounds.maxY + radius };
   const spans = ranges(recipe.spans ?? [], text), protectedSpans = ranges(recipe.protectedSpans ?? [], text);

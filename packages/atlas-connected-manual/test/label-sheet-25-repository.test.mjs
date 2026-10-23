@@ -25,6 +25,9 @@ function fixture(slots = Array.from({ length: 50 }, (_, index) => index + 1)) {
   const tx = {
     async $executeRawUnsafe(sql) { assert.match(sql, /SELECT pg_advisory_xact_lock/); return 1; },
     async $queryRawUnsafe(sql, ...args) {
+      if (sql === 'SELECT pg_try_advisory_xact_lock(721930,$1::integer) AS locked') {
+        assert([76, 77].includes(args[0])); return [{ locked: true }];
+      }
       if (sql.startsWith('SELECT * FROM atlas_manual_connected.label_export')) {
         const rows = [...exports.values()];
         if (sql.includes('retry_requests @>')) return clone(rows.filter(row => row.actor_id === args[0]

@@ -59,6 +59,17 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
   requireThat(boundary?.transaction, 500, 'LABEL_CONFIGURATION_INVALID');
   const discovery = { ITEM: null, EXPORT: null, LAYOUT_RECOVERY: null };
   const lock = (tx, id) => tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(721941,hashtext($1))', id);
+  // Release admission holds the exclusive 721930/76 and /77 locks. Take those
+  // transaction-scoped locks in the same order before a reservation or claim;
+  // discovery alone cannot protect against a hold acquired before the claim.
+  // Completion remains ungated so work admitted before a hold can drain.
+  const admitted = async tx => {
+    for (const key of [76, 77]) {
+      const [row] = await tx.$queryRawUnsafe('SELECT pg_try_advisory_xact_lock(721930,$1::integer) AS locked', key);
+      if (row?.locked !== true) return false;
+    }
+    return true;
+  };
   async function access(tx, principal, cardId) {
     reviewer(principal);
     const [card] = await tx.$queryRawUnsafe(`SELECT owner_id,approvers FROM atlas_manual.card WHERE id=$1::uuid FOR SHARE`, cardId);
@@ -210,6 +221,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       requireThat(Number.isInteger(limit) && limit > 0 && limit <= 16);
       requireThat(rendererProfileHash === null || /^[a-f0-9]{64}$/.test(rendererProfileHash), 500, 'LABEL_CONFIGURATION_INVALID');
       return boundary.machineTransaction(null, async ({ tx }) => {
+        if (!await admitted(tx)) return [];
         const discover = async kind => {
           const table = kind === 'ITEM' ? 'label_item' : 'label_export', state = kind === 'ITEM' ? 'PENDING_RENDER' : 'PREPARING';
           const query = cursor => tx.$queryRawUnsafe(`SELECT id,actor_id,access_version,created_at::text AS cursor_time FROM ${S}.${table}
@@ -241,6 +253,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       });
     },
     claimItem(staff, id, attemptedProfile = null) { return boundary.transaction(staff, async ({ tx, principal }) => {
+      if (!await admitted(tx)) return null;
       await lock(tx, principal.id); const item = await scopedItem(tx, principal, id);
       if (item.state !== 'PENDING_RENDER' || (item.lease_until && new Date(item.lease_until) > new Date())) return null;
       if (item.purpose === 'REPRINT') labelReplacementIntent(item, await scopedItem(tx, principal, item.original_item_id));
@@ -353,6 +366,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       const result = await scopedExport(tx, principal, id, latest); return { ...result, view: exportView(result.row) };
     }); },
     claimExport(staff, id) { return boundary.transaction(staff, async ({ tx, principal }) => {
+      if (!await admitted(tx)) return null;
       await lock(tx, principal.id); const result = await scopedExport(tx, principal, id);
       if (result.row.state !== 'PREPARING' || (result.row.lease_until && new Date(result.row.lease_until) > new Date())) return null;
       if (result.row.attempts >= result.row.attempt_base + 3) { await tx.$executeRawUnsafe(`UPDATE ${S}.label_export SET state='FAILED',code='LABEL_EXPORT_FAILED',claim_id=NULL,lease_until=NULL WHERE id=$1::uuid`, id); return null; }
@@ -383,6 +397,7 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
         VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8::integer[],$9::integer[]) RETURNING *`, randomUUID(), principal.id, input.requestId, requestHash, row.id, row.sha256, row.manifest_hash, input.successfulSlots, input.failedSlots ?? []); return eventView(event);
     }); },
     retryLayout(staff, id, input, target, { automatic = false } = {}) { return boundary.transaction(staff, async ({ tx, principal }) => {
+      if (automatic) requireThat(await admitted(tx), 409, 'LABEL_RELEASE_HELD');
       reviewer(principal); await lock(tx, principal.id); const original = await scopedItem(tx, principal, id);
       const requestHash = digest(canonical({ operation:'layout-retry/v1', itemId:id, ...input }));
       const [prior] = await tx.$queryRawUnsafe(`SELECT * FROM ${S}.label_item WHERE actor_id=$1::uuid AND request_id=$2::uuid`, principal.id, input.requestId);
