@@ -1,0 +1,123 @@
+{
+  "schema": "atlas-proof-decoder-image-closure-v1",
+  "classification": "UNQUALIFIED_SOURCE_RECIPE",
+  "sourceCommit": "16351962d0b57316a8618e0263182f06f4e37435",
+  "platform": "linux/amd64",
+  "nodeVersion": "22.16.0",
+  "sharpVersion": "0.33.5",
+  "libvipsVersion": "8.15.3",
+  "lock": {
+    "path": "pnpm-lock.yaml",
+    "sha256": "bfb080b494ad7291b667b878270e9a8de39fa10e3544b1c6f914aa160c0f14d1"
+  },
+  "node": {
+    "archive": "node-v22.16.0-linux-x64.tar.xz",
+    "sha256": "f4cb75bb036f0d0eddf6b79d9596df1aaab9ddccd6a20bf489be5abe9467e84e",
+    "checksumSource": "https://nodejs.org/download/release/v22.16.0/SHASUMS256.txt",
+    "members": [
+      {
+        "member": "node-v22.16.0-linux-x64/bin/node",
+        "path": "opt/atlas-proof-decoder/bin/node"
+      },
+      {
+        "member": "node-v22.16.0-linux-x64/LICENSE",
+        "path": "opt/atlas-proof-decoder/licenses/node-LICENSE"
+      }
+    ]
+  },
+  "sources": [
+    {
+      "source": "packages/atlas-marketplace/src/proof-decoder-worker.mjs",
+      "path": "opt/atlas-proof-decoder/worker.mjs",
+      "sha256": "8336cda545a25030d512c36219236b96800eebab841488de0e30bc9e5f5dc2a3"
+    },
+    {
+      "source": "packages/atlas-marketplace/src/proof-image-decode.mjs",
+      "path": "opt/atlas-proof-decoder/proof-image-decode.mjs",
+      "sha256": "1484930c83857051653071cae5a383ecb71fdc1b67f186230081f9923ac1bd33"
+    },
+    {
+      "source": "packages/atlas-marketplace/src/proof-decoder-worker-protocol.mjs",
+      "path": "opt/atlas-proof-decoder/proof-decoder-worker-protocol.mjs",
+      "sha256": "940274a00feb0f74326e55a2d7f6fa123b9b46a0649246121cf6b57d35edf812"
+    },
+    {
+      "source": "packages/atlas-marketplace/src/proof-decoder-protocol.mjs",
+      "path": "opt/atlas-proof-decoder/proof-decoder-protocol.mjs",
+      "sha256": "f78f6ed66fc3620ce7519ee5fd920be70ff462d635aef9aae62203143c23e7ab"
+    },
+    {
+      "source": "packages/atlas-marketplace/src/contract.mjs",
+      "path": "opt/atlas-proof-decoder/contract.mjs",
+      "sha256": "34ed4fd985071376cc68fe57f3ca578ad2f9158d86e82e4f3ff96340c8889d12"
+    }
+  ],
+  "packages": [
+    {
+      "name": "sharp",
+      "version": "0.33.5",
+      "archive": "sharp-0.33.5.tgz",
+      "integrity": "sha512-haPVm1EkS9pgvHrQ/F3Xy+hgcuMV0Wm9vfIBSiwZ05k+xgb0PkBQpGsAA/oWdDobNaZTH5ppvHtzCFbnSEwHVw=="
+    },
+    {
+      "name": "@img/sharp-linux-x64",
+      "version": "0.33.5",
+      "archive": "img-sharp-linux-x64-0.33.5.tgz",
+      "integrity": "sha512-opC+Ok5pRNAzuvq1AG0ar+1owsu842/Ab+4qvU879ippJBHvyY5n2mxF1izXqkPYlGuP/M556uh53jRLJmzTWA=="
+    },
+    {
+      "name": "@img/sharp-libvips-linux-x64",
+      "version": "1.0.4",
+      "archive": "img-sharp-libvips-linux-x64-1.0.4.tgz",
+      "integrity": "sha512-MmWmQ3iPFZr0Iev+BAgVMb3ZyC4KeFc3jFxnNbEPas60e1cIfevbtuyf9nDGIzOaW9PdnDciJm+wFFaTlj5xYw=="
+    },
+    {
+      "name": "color",
+      "version": "4.2.3",
+      "archive": "color-4.2.3.tgz",
+      "integrity": "sha512-1rXeuUUiGGrykh+CeBdu5Ie7OJwinCgQY0bc7GCRxy5xVHy+moaqkpL/jqQq0MtQOeYcrqEz4abc5f0KtU7W4A=="
+    },
+    {
+      "name": "color-convert",
+      "version": "2.0.1",
+      "archive": "color-convert-2.0.1.tgz",
+      "integrity": "sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ=="
+    },
+    {
+      "name": "color-string",
+      "version": "1.9.1",
+      "archive": "color-string-1.9.1.tgz",
+      "integrity": "sha512-shrVawQFojnZv6xM40anx4CkoDP+fZsw/ZerEMsW/pyzsRbElpsL/DBVW7q3ExxwusdNXI3lXpuhEZkzs8p5Eg=="
+    },
+    {
+      "name": "color-name",
+      "version": "1.1.4",
+      "archive": "color-name-1.1.4.tgz",
+      "integrity": "sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA=="
+    },
+    {
+      "name": "simple-swizzle",
+      "version": "0.2.4",
+      "archive": "simple-swizzle-0.2.4.tgz",
+      "integrity": "sha512-nAu1WFPQSMNr2Zn9PGSZK9AGn4t/y97lEm+MXTtUDwfP0ksAIX4nO+6ruD9Jwut4C49SB1Ws+fbXsm/yScWOHw=="
+    },
+    {
+      "name": "is-arrayish",
+      "version": "0.3.4",
+      "archive": "is-arrayish-0.3.4.tgz",
+      "integrity": "sha512-m6UrgzFVUYawGBh1dUsWR5M2Clqic9RVXC/9f8ceNlv2IcO9j9J/z8UoCLPqtsPBFNzEpfR3xftohbfqDx8EQA=="
+    },
+    {
+      "name": "detect-libc",
+      "version": "2.1.2",
+      "archive": "detect-libc-2.1.2.tgz",
+      "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="
+    },
+    {
+      "name": "semver",
+      "version": "7.7.2",
+      "archive": "semver-7.7.2.tgz",
+      "integrity": "sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA=="
+    }
+  ]
+}
