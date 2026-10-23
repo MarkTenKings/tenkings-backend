@@ -1,5 +1,13 @@
 # Set Ops Handoff (Living)
 
+## ATLAS edge scoring and geometry handoff — October 23, 2026
+
+**Live and verified at23:45UTC on October23.** Both native roles and staff/public production targets serve the combined release; the deployment hold is released. Fresh staff sign-in is required. Existing approved reports remain unchanged. See the Deploy Runbook and Session Log for evidence and unsaved-editor guidance.
+
+Combined source `6f3c6d1495a61f1b61058f0ac4044ee03e993726` contains the authorized Edges 1× → 0.25× change and the independently reviewed LeRoy contour-clipping repair. New rule `ATLAS_2026_10_23_CATEGORY_DAMAGE_V1` is Corners 0.25× / Edges 0.25× / Surface 2×; thresholds, category geometry and final rounding are retained. Explicit historical rules preserve saved report calculations, approvals, photographs, labels and NFC versions. Pending Grade previews can now use saved evidence without paid reanalysis; final approval remains a separate human action.
+
+The canonical `6fe0e462` authentication behavior and existing customer deployment are retained; staged `9b403a15` credential remediation is excluded. The qualified staff/public builds are promoted, both native services are running the combined source, and preservation plus explicit admission release have passed. Evidence is recorded in [Deploy Runbook](runbooks/DEPLOY_RUNBOOK.md) and the latest [Session Log](handoffs/SESSION_LOG.md), rather than inferred from a READY candidate or Vercel's `latestDeployment`. Set Ops behavior is unchanged. Earlier dated “current” headings below are historical checkpoints.
+
 ## Current ATLAS archive release — October 21, 2026 UTC
 
 The completed archive release supersedes the older deployment identities below. Staff/public web source is `c4b7cc85f01754eb5776042147e6c0fdf50f845a`; native source is `31c6685e8ae49e05c8f78b748a6233d143776131` and image is `sha256:f64dfc31485603df756ec9cd64976fda8cc5effe8b0155fa727a45fb82b4fa52`. Registered SQL008 is installed with manual-only access; customer deployment and Set Ops behavior are unchanged. The release hold was explicitly released at 2026-10-21T06:42:09.621Z and absence independently verified. The owner approved the live Graded Cards gallery in signed-in Chrome. Dedicated card-detail, SQL009 history, and reviewed Sports identity enhancements remain local next-release work.

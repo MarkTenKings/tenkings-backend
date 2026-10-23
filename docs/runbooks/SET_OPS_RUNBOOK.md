@@ -1,5 +1,11 @@
 # Set Ops Runbook
 
+## ATLAS grading policy reference — October 23, 2026
+
+**Live and verified at23:45UTC on October23.** Both native roles and staff/public production targets serve the combined release; the deployment hold is released. Fresh staff sign-in is required. Existing approved reports remain unchanged. See the Deploy Runbook and Session Log for evidence and unsaved-editor guidance.
+
+The owner-approved ATLAS edge calibration uses `ATLAS_2026_10_23_CATEGORY_DAMAGE_V1` with Corners 0.25×, Edges 0.25× and Surface 2×. New pending-review calculations now use this active policy. Saved reports retain their recorded rules and approved grades; no bulk regrade, reapproval, label/NFC rewrite or set operation follows from this change. Combined source `6f3c6d1495a61f1b61058f0ac4044ee03e993726` also preserves the LeRoy contour-clipping repair. Set Ops workflows and destructive-operation confirmations are unchanged. Use [Deploy Runbook](DEPLOY_RUNBOOK.md) and [Session Log](../handoffs/SESSION_LOG.md) for actual serving status; older dated deployment identities below are historical.
+
 ## Current ATLAS archive release — October 21, 2026 UTC
 
 The completed archive release supersedes the older deployment identities below. Staff/public web source is `c4b7cc85f01754eb5776042147e6c0fdf50f845a`; native source is `31c6685e8ae49e05c8f78b748a6233d143776131` and image is `sha256:f64dfc31485603df756ec9cd64976fda8cc5effe8b0155fa727a45fb82b4fa52`. Registered SQL008 is installed with manual-only access; customer deployment and Set Ops behavior are unchanged. The release hold was explicitly released at 2026-10-21T06:42:09.621Z and absence independently verified. The owner approved the live Graded Cards gallery in signed-in Chrome. Dedicated card-detail, SQL009 history, and reviewed Sports identity enhancements remain local next-release work.

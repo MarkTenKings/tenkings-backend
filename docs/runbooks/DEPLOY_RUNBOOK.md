@@ -1,5 +1,44 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## ATLAS quarter-edge release record — October 23, 2026 Pacific
+
+Frozen combined source is `6f3c6d1495a61f1b61058f0ac4044ee03e993726`, branch `codex/atlas-edges-quarter`. It combines scoring commit `61e6454a` with geometry commit `dbcd3c38` over the actual canonical `6fe0e462` baseline. The LeRoy repair clips transformed contours using rectangle-segment intersections instead of independently clamping vertices; the topology validator and saved source photographs remain intact. The unactivated `9b403a15` authentication replacement is excluded. No database migration or credential rotation belongs to this release.
+
+The new scorer is `ATLAS_2026_10_23_CATEGORY_DAMAGE_V1`: **Corners 0.25× / Edges 0.25× / Surface 2×**. Thresholds, measurement geometry, defect-type factors, side/category averaging and whole-number final rounding are unchanged. Historical October 21, October 13 and September 30 readers retain their original factors and saved report versions. There is no bulk regrade, automatic reapproval, label refresh or NFC rewrite. An unapproved review can now refresh its Grade preview from saved evidence without rerunning paid analysis.
+
+Qualified deployments now serving production; they were built without assigning canonical domains, then promoted after native verification:
+
+| Surface | Deployment | Host |
+| --- | --- | --- |
+| Staff | `dpl_C3HUcvJXcw4AxRHVXuwcqbgEbvQd` | `atlas-grading-staff-2gbgobkue-ten-kings.vercel.app` |
+| Public | `dpl_2KgjhxNUSo5Xi2fyDTpvr6pVxNf2` | `atlas-grading-public-c2rfpcygi-ten-kings.vercel.app` |
+| Retained customer | `dpl_6RFr24d3KbnvTu8bhMubXBhkpY7n` | `atlas-grading-customer-jnt3d0t0g-ten-kings.vercel.app` |
+
+Customer remains source `a537f922`. Source/build/served qualification is under `~/.codex/atlas-handoffs/atlas-edges-quarter-20261023/web-prep/`; coordinated native, control and preservation receipts share the parent evidence directory. The Session Log records actual installation, promotion, admission release and final results. A Vercel `latestDeployment` or generated project alias is not canonical release evidence: verify `targets.production` and the complete alias set. Staff's configuration hash changes with its deployment hostname/release; the unchanged public configuration hash does not include those fields.
+
+Postpromotion acceptance requires canonical `/`, `/admin` and `/account` **HTTP 200**, healthy signed-out shells without `unavailable`/`accessFailure`, expected build/chunk identities, no application cookie creation, retained direct-deployment protection and unchanged encrypted project environment. Staff HTML checks the active database control and configuration binding; customer HTML verifies the retained router/runtime, not a fresh SMS login. A direct staged-origin 503 can be an expected boundary denial and must not be reported as working canonical access. Normal promotion may retarget empty cron metadata to the new deployment and advance its timestamp; definitions, enable/disable state and unrelated project configuration must remain unchanged. Final activation is not established until the native, control, public-report, preservation and explicit admission-release evidence also passes.
+
+
+### Production verification completed — October 23, 2026, 23:45 UTC
+
+The combined release is live in production. Both native services run source `6f3c6d1495a61f1b61058f0ac4044ee03e993726` and qualified image `sha256:d6e94d46e1993c9b8c585a490fb2c9bfc64e9190913e3144cc1eae91c19ab0de`. Staff and public canonical targets are the exact deployments listed above. Customer remains unchanged. The final preservation check passed, the admission holder was explicitly released, and independent database observation verified its transaction and both locks absent. Uploads may resume.
+
+Live checks on both native roles confirm Edges0.25 with Corners0.25/Surface2 and unchanged thresholds. The retained Cam fixture computes Edges9.3, raw9.825 and final10; its historical report and explanation remain byte-identical at final8. No saved card/report was regraded or approved. Exactly three deployment-control rows changed; all other business rows, customer controls, schema and ledger remained unchanged. The LeRoy agent independently verified both fixed preparation modules in the serving main container and the original card's unchanged revision4/content hash.
+
+Canonical `/`, `/admin` and `/account` returned HTTP200, expected deployment/build identities and healthy signed-out shells. All public/staff aliases and encrypted project configuration passed verification. This checks routing and runtime bindings; a fresh human SMS sign-in was not performed. The StaffControl revision change invalidates older staff sessions, so users must sign in again. Preserve any original editor tab containing unsaved adjustments: a fresh sign-in in another tab does not refresh its captured CSRF token, and reloading it can discard an unsaved outline. Use a fresh editor and explicitly preserve/re-enter the unsaved adjustment before closing the original tab.
+
+Evidence under `~/.codex/atlas-handoffs/atlas-edges-quarter-20261023/`:
+
+- Native qualification: `build-01/qualified/result.json`, SHA `95e9e846d8204e2b1b9b1a9d4b068aa1e94c98e2ec0d7219c83aaf1859ae5d90`;162tests passed, zero failures/skips.
+- Live scoring: `acceptance/live-scoring-20261023T234259.710244Z.json`; both services passed, zero database/provider/report writes.
+- Canonical web: `web-prep/postpromotion-01.json`, SHA `65664a3b3d5c5220dda239c670e5593f1f709d74860ab6b33c61f30ac0ad1f72`.
+- Final preservation: `release-01/gates/technical-release-ready.json`, SHA `24e4910d96da764c219d642c2909f133a4f85df2119f3ec3d7a4bf4f6059412d`.
+- Explicit successful release and absence: `release-01/admission/release-absence.json`, SHA `27c610398edf00356fcdaf39343f27e25da6f88513eedb8838196fd85e11ff0c`.
+
+No further production effects are required for this release. Retained predecessor containers remain stopped and available for reviewed recovery.
+
+Earlier dated deployment checkpoints below remain historical; do not replay their consumed release intents.
+
 ## Observed production baseline for photo/font work — October 22, 2026 Pacific
 
 Read-only evidence at 2026-10-23 06:26 UTC supersedes the older release headings below: native source is `8070c5f22a843b6d9a8ba8347f5235754cc1daa5`, image `sha256:c2a274de50803b232a71042bb87876c849666d50264d9d076610081f5e03bca8`, main `atlas-r1-main-8070c5f2-02`, worker `atlas-r1-worker-8070c5f2-01`. The completed optional-comp release and effective native recovery are retained at `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/release-01/`. Installed schema012 and the retained customer successor must be preserved; old schema011→012 migration and admission plans must not be replayed.

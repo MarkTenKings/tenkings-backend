@@ -1,5 +1,15 @@
 # Ten Kings Master Product Context
 
+## ATLAS edge calibration and retained report history — October 23, 2026
+
+**Live and verified at23:45UTC on October23.** Both native roles and staff/public production targets serve the combined release; the deployment hold is released. Fresh staff sign-in is required. Existing approved reports remain unchanged. See the Deploy Runbook and Session Log for evidence and unsaved-editor guidance.
+
+Owner-approved rule `ATLAS_2026_10_23_CATEGORY_DAMAGE_V1` uses category damage multipliers **Corners 0.25×, Edges 0.25×, Surface 2×**. The edge factor changes from 1× to 0.25× and is applied once after defect-type weighting. Measured masks, areas, category membership and denominators, damage bands, centering, Front 70% / Back 30%, equal category averaging and direct raw-to-whole-number final rounding are retained. A superficial mark remains assigned by the existing category geometry; this release does not redefine the edge zone.
+
+Saved reports continue to use their explicit recorded rules: October 21 remains 0.25/1/2, October 13 remains 0.5/1/2, and September 30 retains its uniform 1.5 factor. Historical rounding, grades, approvals, photographs and report/label/NFC versions are preserved. Pending review previews can compute the new policy from saved evidence without another paid analysis; final human approval remains separate. Cam Skattebo's retained measurements replay prospectively to Edges 9.3, raw overall 9.825 and final 10, without rewriting its existing approved report.
+
+Combined release source `6f3c6d1495a61f1b61058f0ac4044ee03e993726` includes the independently reviewed LeRoy contour-clipping repair and retains the canonical `6fe0e462` authentication behavior. The staged `9b403a15` credential replacement is excluded. Exact serving status, release completion and remaining acceptance are recorded in the latest [Deploy Runbook](../runbooks/DEPLOY_RUNBOOK.md) and [Session Log](../handoffs/SESSION_LOG.md); qualified candidates alone do not establish production activation. Earlier dated deployment identities below are historical checkpoints.
+
 ## Current Atlas slab and card presentation — October 22, 2026
 
 Application source `20b747badb8ad34c510673c446cf326396bdeeac` is deployed on native, staff and public. Existing and future eligible approved cards use the shared staff archive/detail renderer with the improved slab, equal card spacing, Front/Back views, front NFC reference and optional higher-resolution 3D. Exact approved inspection photographs and matching saved labels remain the source; recorded physical slab photos keep precedence. Small source-bound transparent previews are cached privately and verified on delivery; full-detail 3D is loaded on selection, with verified media fallbacks.
