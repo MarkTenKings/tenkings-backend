@@ -1,15 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { LABEL_25_PROFILE_DEFINITIONS } from '../../../packages/atlas-finishing/src/label-sheet-25.mjs';
+import { LABEL_25_PROFILE_DEFINITIONS, LABEL_25_CURRENT_PROFILE_DEFINITIONS, LABEL_25_SUPPORTED_PROFILE_DEFINITIONS, getLabel25Profile } from '../../../packages/atlas-finishing/src/label-sheet-25.mjs';
 import { LABEL_JIG_V1 } from '../../../packages/atlas-finishing/src/label-sheet-geometry.mjs';
 import { LABEL_EXPORT_PROFILE_V1, LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES } from '../../../packages/atlas-finishing/src/label-sheet.mjs';
 import { createLabelSheetsClient, labelArtworkHref, labelSupportsPrintFormat, labelSheetProfile, labelPrintFormatForProfile, LABEL_SHEETS_PATH, LABEL_EXPORT_PROFILE, LABEL_PRINT_FORMATS } from '../lib/label-sheets-client.mjs';
 const sheetId = randomUUID(), itemId = randomUUID(), exportId = randomUUID(), staffId = randomUUID();
 const hash = 'a'.repeat(64), sheet = { sheetId, revision: 8, jigHash: LABEL_JIG_V1.jigHash, items: [{ itemId, slot: 1 }] }, output = { exportId, sheetId, exportProfileId: LABEL_EXPORT_PROFILE, state: 'READY', sha256: hash, manifestHash: 'b'.repeat(64) };
 const item = { itemId, state: 'READY', labelHash: hash };
+const legacyFrontProfiles = [
+  ['atlas-v4-sheet-800ppi-diagnostic-v2', 'original'],
+  ['atlas-v4-sheet-800ppi-black-ink-transparent-v1', 'foil'],
+  ['atlas-approved-b-sheet-800ppi-color-front-v1', 'color'],
+  ...LABEL_25_PROFILE_DEFINITIONS.filter(profile => profile.side === 'FRONT').map(profile => [profile.id,
+    profile.mode === 'black-ink-transparent' ? 'foil' : profile.mode === 'color' ? 'color' : 'original']),
+];
 test('every client print format maps to the registered sheet and individual export profiles', () => {
-  assert.deepEqual([...Object.values(LABEL_PRINT_FORMATS).map(format => format.sheet), ...LABEL_25_PROFILE_DEFINITIONS.map(profile => profile.id)].sort(), LABEL_SHEET_EXPORT_PROFILES.map(profile => profile.id).sort());
+  assert.deepEqual([...Object.values(LABEL_PRINT_FORMATS).map(format => format.sheet), ...legacyFrontProfiles.slice(0, 3).map(([id]) => id),
+    ...LABEL_25_SUPPORTED_PROFILE_DEFINITIONS.map(profile => profile.id)].sort(), LABEL_SHEET_EXPORT_PROFILES.map(profile => profile.id).sort());
   assert.deepEqual(Object.values(LABEL_PRINT_FORMATS).map(format => format.individual).sort(), LABEL_SINGLE_EXPORT_PROFILES.map(profile => profile.id).sort());
 });
 function fixture(request, shared = new Map()) {
@@ -21,8 +29,10 @@ test('partial export binds current sheet revision and preserves the same request
   const f = fixture(async () => { throw Object.assign(Error('lost'), { status: 503 }); });
   await assert.rejects(f.client.exportSheet(sheet));
   const original = f.client.pending(); assert.equal(original.kind, 'export'); assert.equal(original.body.expectedSheetRevision, 8);
-  assert.equal(LABEL_EXPORT_PROFILE, LABEL_EXPORT_PROFILE_V1.id);
-  assert.equal(original.body.exportProfileId, LABEL_EXPORT_PROFILE_V1.id);
+  assert.equal(LABEL_EXPORT_PROFILE, 'atlas-v4-sheet-800ppi-diagnostic-v3');
+  assert.equal(LABEL_EXPORT_PROFILE_V1.id, 'atlas-v4-sheet-800ppi-diagnostic-v2');
+  assert.notEqual(LABEL_EXPORT_PROFILE, LABEL_EXPORT_PROFILE_V1.id);
+  assert.equal(original.body.exportProfileId, LABEL_EXPORT_PROFILE);
   assert.equal(f.calls[0].csrf, 'actual-csrf');
   await assert.rejects(f.client.recordPrint(sheet, output, [1]), { code: 'LABEL_REQUEST_PENDING' });
   const next = createLabelSheetsClient({ ...f.options, request: async (path, options) => { assert.equal(path, f.calls[0].path); assert.deepEqual(options.body, original.body); return { ...output, exportProfileId: original.body.exportProfileId }; } });
@@ -226,15 +236,69 @@ test('a saved legacy download identifies its original ink format and wrong-kind 
   await assert.rejects(wrong.client.downloadSheet(sheet, output), { code: 'LABEL_DOWNLOAD_INVALID' }); assert.ok(wrong.client.pending());
 });
 
-test('all twelve 25-position page profiles map to their exact side and ink treatment', () => {
+test('current 25-position profiles replace only front defaults and retain every historical profile', () => {
   const ids = [1, 2].flatMap(page => Object.keys(LABEL_PRINT_FORMATS).map(format => {
     const id = labelSheetProfile(format, '25', page);
     assert.equal(labelPrintFormatForProfile(id), LABEL_PRINT_FORMATS[format]); return id;
   }));
-  assert.deepEqual(ids.sort(), LABEL_25_PROFILE_DEFINITIONS.map(profile => profile.id).sort());
+  assert.deepEqual(ids.sort(), LABEL_25_CURRENT_PROFILE_DEFINITIONS.map(profile => profile.id).sort());
+  assert.equal(LABEL_25_SUPPORTED_PROFILE_DEFINITIONS.length, 18);
+  for (const historical of LABEL_25_PROFILE_DEFINITIONS) {
+    assert.match(historical.id, /-v1$/); assert.equal(historical.compositor, undefined);
+    assert.equal(getLabel25Profile(historical.id), historical);
+    const current = LABEL_25_CURRENT_PROFILE_DEFINITIONS.find(profile => profile.page === historical.page
+      && profile.mode === historical.mode && profile.side === historical.side);
+    if (historical.side === 'BACK') assert.equal(current, historical);
+    else {
+      assert.equal(current.id, historical.id.replace(/-v1$/, '-v2'));
+      assert.equal(current.compositor, 'slot-fragment-references-v2');
+      const { id, compositor, ...geometry } = current;
+      const { id: oldId, ...oldGeometry } = historical;
+      assert.deepEqual(geometry, oldGeometry);
+    }
+    assert.equal(labelPrintFormatForProfile(historical.id), labelPrintFormatForProfile(current.id));
+  }
   assert.equal(labelSheetProfile('foil', '25', 3), null);
   assert.equal(labelSheetProfile('unknown'), null);
   assert.equal(labelSheetProfile('foil', 'unknown'), null);
+});
+
+test('legacy sheet downloads keep their exact profile and reject a substituted current export', async () => {
+  for (const [profile, format] of legacyFrontProfiles) {
+    assert.equal(labelPrintFormatForProfile(profile), LABEL_PRINT_FORMATS[format]);
+    const pageProfile = getLabel25Profile(profile), current = labelSheetProfile(format, pageProfile ? '25' : '50', pageProfile?.page ?? 1);
+    assert.notEqual(current, profile);
+    const expected = { ...output, exportProfileId: profile };
+    const response = { url: 'https://objects.example/retained.png', expiresAt: new Date(Date.now() + 60000).toISOString() };
+    const f = fixture(async () => ({ ...response, exportProfileId: current }));
+    await assert.rejects(f.client.downloadSheet(sheet, expected), { code: 'LABEL_DOWNLOAD_INVALID' });
+    const saved = f.client.pending();
+    assert.equal(saved.expectedExportProfileId, profile);
+    const next = createLabelSheetsClient({ ...f.options, request: async (path, options) => {
+      assert.equal(path, saved.path); assert.deepEqual(options.body, saved.body);
+      return { ...response, exportProfileId: profile };
+    } });
+    assert.equal((await next.resume()).result.exportProfileId, profile);
+    assert.equal(next.pending(), null);
+  }
+});
+
+test('legacy export journals replay their exact body across the current-profile upgrade', async () => {
+  for (const [profile] of legacyFrontProfiles) {
+    const sourceSlot = getLabel25Profile(profile)?.firstSourceSlot ?? 1;
+    const source = { ...sheet, items: [{ ...item, slot: sourceSlot, snapshot: { layoutVersion: 'atlas-approved-b-v1' } }] };
+    const f = fixture(async () => { throw { status: 503, code: 'LOST' }; });
+    await assert.rejects(f.client.exportSheet(source, profile));
+    const key = `atlas-label-sheets:${staffId}:pending`, raw = f.shared.get(key), saved = JSON.parse(raw);
+    assert.equal(saved.body.exportProfileId, profile);
+    const next = createLabelSheetsClient({ ...f.options, request: async (path, options) => {
+      assert.equal(f.shared.get(key), raw);
+      assert.equal(path, saved.path); assert.deepEqual(options.body, saved.body);
+      return { ...output, exportProfileId: profile };
+    } });
+    assert.deepEqual(next.pending(), saved); assert.equal(f.shared.get(key), raw);
+    await next.resume(); assert.equal(next.pending(), null);
+  }
 });
 test('25-position export validates only its page artwork, preserves source revision, and replays the exact profile after reload', async () => {
   const approved = { ...item, slot: 26, snapshot: { layoutVersion: 'atlas-approved-b-v1' } };

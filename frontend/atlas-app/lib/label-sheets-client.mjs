@@ -1,19 +1,19 @@
 /** Browser-only label sheet API. No allocation, artwork rendering or hardware effects. */
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
-import { LABEL_25_PROFILE_DEFINITIONS, getLabel25Profile, selectLabel25Items } from '@atlas/finishing/label-sheet-25';
+import { LABEL_25_CURRENT_PROFILE_DEFINITIONS, getLabel25Profile, selectLabel25Items } from '@atlas/finishing/label-sheet-25';
 export const LABEL_SHEETS_PATH = '/api/staff/manual-connected/label-sheets';
 export const LABEL_ITEMS_PATH = '/api/staff/manual-connected/labels';
 export const LABEL_INDIVIDUAL_PROFILE = 'atlas-v4-individual-2400ppi-v1';
-export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v2';
+export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v3';
 export const LABEL_PRINT_FORMATS = Object.freeze({
   foil: Object.freeze({ label: 'Black ink + transparent foil', side: 'Front', previewMode: 'preview-foil', printMode: 'print-foil',
-    sheet: 'atlas-v4-sheet-800ppi-black-ink-transparent-v1', individual: 'atlas-v4-individual-2400ppi-black-ink-transparent-v1',
+    sheet: 'atlas-v4-sheet-800ppi-black-ink-transparent-v2', individual: 'atlas-v4-individual-2400ppi-black-ink-transparent-v1',
     description: 'Only black ink prints. Lettering and fine details are transparent, revealing your gold or holographic foil.', printCaption: 'Black ink only · transparent foil' }),
   original: Object.freeze({ label: 'Original black, gray + white', side: 'Front', previewMode: 'preview', printMode: 'print',
     sheet: LABEL_EXPORT_PROFILE, individual: LABEL_INDIVIDUAL_PROFILE,
     description: 'Includes opaque white lettering and gray details. Use this format only when printing those inks.', printCaption: 'Original black, gray + white ink' }),
   color: Object.freeze({ label: 'Color front', side: 'Front', previewMode: 'preview', printMode: 'print-color', requiresApprovedB: true,
-    sheet: 'atlas-approved-b-sheet-800ppi-color-front-v1', individual: 'atlas-approved-b-individual-2400ppi-color-front-v1',
+    sheet: 'atlas-approved-b-sheet-800ppi-color-front-v2', individual: 'atlas-approved-b-individual-2400ppi-color-front-v1',
     description: 'Prints the approved front in color, including its gold or silver appearance.', printCaption: 'Color front artwork' }),
   foilBack: Object.freeze({ label: 'Back · black ink + transparent foil', side: 'Back', previewMode: 'preview-back-foil', printMode: 'print-back-foil', requiresApprovedB: true,
     sheet: 'atlas-approved-b-sheet-800ppi-black-ink-transparent-back-v1', individual: 'atlas-approved-b-individual-2400ppi-black-ink-transparent-back-v1',
@@ -25,6 +25,12 @@ export const LABEL_PRINT_FORMATS = Object.freeze({
     sheet: 'atlas-approved-b-sheet-800ppi-color-back-v1', individual: 'atlas-approved-b-individual-2400ppi-color-back-v1',
     description: 'Prints the approved shared back in color. The logo, QR code and spacing stay as approved.', printCaption: 'Color back artwork' }),
 });
+const legacySheetFormats = Object.freeze({
+  'atlas-v4-sheet-800ppi-diagnostic-v2': 'original',
+  'atlas-v4-sheet-800ppi-black-ink-transparent-v1': 'foil',
+  'atlas-approved-b-sheet-800ppi-color-front-v1': 'color',
+});
+const sheetMode = format => format.startsWith('foil') ? 'black-ink-transparent' : format.startsWith('color') ? 'color' : 'original';
 export function labelSupportsPrintFormat(item, format = 'foil') {
   const profile = LABEL_PRINT_FORMATS[format];
   return Boolean(profile && (!profile.requiresApprovedB || item?.snapshot?.layoutVersion === 'atlas-approved-b-v1'));
@@ -34,15 +40,16 @@ export function labelSheetProfile(format = 'foil', template = '50', page = 1) {
   if (!value) return null;
   if (template === '50') return value.sheet;
   if (template !== '25') return null;
-  const mode = format.startsWith('foil') ? 'black-ink-transparent' : format.startsWith('color') ? 'color' : 'original';
-  return LABEL_25_PROFILE_DEFINITIONS.find(profile => profile.page === page && profile.mode === mode && profile.side === value.side.toUpperCase())?.id ?? null;
+  const mode = sheetMode(format);
+  return LABEL_25_CURRENT_PROFILE_DEFINITIONS.find(profile => profile.page === page && profile.mode === mode && profile.side === value.side.toUpperCase())?.id ?? null;
 }
 export function labelPrintFormatForProfile(id) {
   const pageProfile = getLabel25Profile(id);
-  return Object.entries(LABEL_PRINT_FORMATS).find(([key, value]) => value.sheet === id || value.individual === id
-    || pageProfile && labelSheetProfile(key, '25', pageProfile.page) === id)?.[1] ?? null;
+  return LABEL_PRINT_FORMATS[legacySheetFormats[id]] ?? Object.entries(LABEL_PRINT_FORMATS).find(([key, value]) => value.sheet === id || value.individual === id
+    || pageProfile && sheetMode(key) === pageProfile.mode && value.side.toUpperCase() === pageProfile.side)?.[1] ?? null;
 }
-const sheetProfile = id => getLabel25Profile(id) ?? Object.values(LABEL_PRINT_FORMATS).find(format => format.sheet === id);
+const sheetProfile = id => getLabel25Profile(id) ?? Object.values(LABEL_PRINT_FORMATS).find(format => format.sheet === id)
+  ?? LABEL_PRINT_FORMATS[legacySheetFormats[id]];
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const fail = code => Object.assign(new Error(code), { code });

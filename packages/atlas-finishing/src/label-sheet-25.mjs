@@ -9,7 +9,12 @@ export const LABEL_25_PROFILE_DEFINITIONS = freeze([1, 2].flatMap(page =>
     page, firstSourceSlot: (page - 1) * 25 + 1, lastSourceSlot: page * 25,
     mode, side, templateId: LABEL_JIG_25.version, jigHash: LABEL_JIG_25.jigHash,
   })))));
-export const getLabel25Profile = id => LABEL_25_PROFILE_DEFINITIONS.find(value => value.id === id) ?? null;
+// Historical profile values remain immutable for saved exports and requests.
+export const LABEL_25_CURRENT_PROFILE_DEFINITIONS = freeze(LABEL_25_PROFILE_DEFINITIONS.map(profile => profile.side === 'FRONT'
+  ? { ...profile, id: profile.id.replace(/-v1$/, '-v2'), compositor: 'slot-fragment-references-v2' } : profile));
+export const LABEL_25_SUPPORTED_PROFILE_DEFINITIONS = freeze([...LABEL_25_PROFILE_DEFINITIONS,
+  ...LABEL_25_CURRENT_PROFILE_DEFINITIONS.filter(profile => profile.side === 'FRONT')]);
+export const getLabel25Profile = id => LABEL_25_SUPPORTED_PROFILE_DEFINITIONS.find(value => value.id === id) ?? null;
 export function selectLabel25Items(items, profileId) {
   const profile = getLabel25Profile(profileId);
   return profile ? items.filter(item => item.slot >= profile.firstSourceSlot && item.slot <= profile.lastSourceSlot) : items;

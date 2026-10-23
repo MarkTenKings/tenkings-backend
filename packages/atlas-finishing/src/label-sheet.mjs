@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { LABEL_JIG_V1, labelSlotTransform } from './label-sheet-geometry.mjs';
-import { LABEL_JIG_25, LABEL_25_PROFILE_DEFINITIONS, getLabel25Profile, label25PhysicalSlot, label25SlotTransform } from './label-sheet-25.mjs';
+import { LABEL_JIG_25, LABEL_25_SUPPORTED_PROFILE_DEFINITIONS, getLabel25Profile, label25PhysicalSlot, label25SlotTransform } from './label-sheet-25.mjs';
 import { APPROVED_B_MARKER, validateApprovedBArtwork, renderApprovedBBlackInk, renderApprovedBBack, colorApprovedBArtwork, approvedBHash } from './label-approved-b-artwork.mjs';
 export { LABEL_JIG_V1, labelSlotTransform, labelPointOnSheet } from './label-sheet-geometry.mjs';
 
@@ -42,13 +42,24 @@ export const LABEL_BLACK_INK_BACK_EXPORT_PROFILE_V1 = approvedProfile(sheet, 'bl
 export const LABEL_BLACK_INK_BACK_INDIVIDUAL_EXPORT_PROFILE_V1 = approvedProfile(individual, 'black-ink-transparent', 'BACK');
 export const LABEL_COLOR_BACK_EXPORT_PROFILE_V1 = approvedProfile(sheet, 'color', 'BACK');
 export const LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1 = approvedProfile(individual, 'color', 'BACK');
-export const LABEL_25_EXPORT_PROFILES = Object.freeze(LABEL_25_PROFILE_DEFINITIONS.map(definition => {
-  const value = { ...sheet, ...definition, version: 1, rasterizer: 'sharp-0.33.5-jig25-clipped-strip-png-v1', maxTileWidth: 2160,
+// New front exports have distinct identities; existing READY files and retained
+// requests keep their original profiles and exact composition behavior.
+const correctedSheetProfile = (base, id, version) => {
+  const { hash: _hash, ...previous } = base;
+  const value = { ...previous, id, version, compositor: 'slot-fragment-references-v2' };
+  return Object.freeze({ ...value, hash: hash(stable(value)) });
+};
+export const LABEL_EXPORT_PROFILE_V3 = correctedSheetProfile(LABEL_EXPORT_PROFILE_V1, 'atlas-v4-sheet-800ppi-diagnostic-v3', 3);
+export const LABEL_BLACK_INK_EXPORT_PROFILE_V2 = correctedSheetProfile(LABEL_BLACK_INK_EXPORT_PROFILE_V1, 'atlas-v4-sheet-800ppi-black-ink-transparent-v2', 2);
+export const LABEL_COLOR_EXPORT_PROFILE_V2 = correctedSheetProfile(LABEL_COLOR_EXPORT_PROFILE_V1, 'atlas-approved-b-sheet-800ppi-color-front-v2', 2);
+export const LABEL_25_EXPORT_PROFILES = Object.freeze(LABEL_25_SUPPORTED_PROFILE_DEFINITIONS.map(definition => {
+  const value = { ...sheet, ...definition, version: definition.compositor ? 2 : 1, rasterizer: 'sharp-0.33.5-jig25-clipped-strip-png-v1', maxTileWidth: 2160,
     ...(definition.mode === 'black-ink-transparent' ? blackInk : {}),
     ...(definition.mode === 'color' ? { outputMode: 'COLOR_PRINT', materialPolicy: 'approved-label-material-v1' } : {}) };
   return Object.freeze({ ...value, hash: hash(stable(value)) });
 }));
 export const LABEL_SHEET_EXPORT_PROFILES = Object.freeze([LABEL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1,
+  LABEL_EXPORT_PROFILE_V3, LABEL_BLACK_INK_EXPORT_PROFILE_V2, LABEL_COLOR_EXPORT_PROFILE_V2,
   LABEL_COLOR_EXPORT_PROFILE_V1, LABEL_BACK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_BACK_EXPORT_PROFILE_V1, LABEL_COLOR_BACK_EXPORT_PROFILE_V1, ...LABEL_25_EXPORT_PROFILES]);
 export const LABEL_SINGLE_EXPORT_PROFILES = Object.freeze([LABEL_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,
   LABEL_COLOR_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BACK_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_BACK_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1]);
@@ -110,6 +121,7 @@ export function renderLabelBlackInkPreviewSvg(item, { previewMaterial = 'gold' }
 export function renderLabelSheetSvg(items, { blackInkTransparent = false, side = 'FRONT', color = false, exportProfileId = null } = {}) {
   const layout = getLabel25Profile(exportProfileId);
   if (exportProfileId && !LABEL_SHEET_EXPORT_PROFILES.some(value => value.id === exportProfileId)) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
+  const localFragments = !exportProfileId || LABEL_SHEET_EXPORT_PROFILES.find(value => value.id === exportProfileId)?.compositor === 'slot-fragment-references-v2';
   if (!Array.isArray(items) || items.length < 1 || items.length > (layout ? 25 : 50)) throw new Error('LABEL_SHEET_ITEMS_INVALID');
   const seen = new Set();
   const content = [...items].sort((a, b) => a.slot - b.slot).map(item => {
@@ -119,7 +131,10 @@ export function renderLabelSheetSvg(items, { blackInkTransparent = false, side =
     const inner = original.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '').replace(/<title>[^]*?<\/title>/g, '');
     // Each label owns its mask/clip IDs. Prefix both definitions and references;
     // never let one card's dynamic grade mask alter another card's artwork.
-    const renamed = inner.replace(/\bid="([^"]+)"/g, `id="s${item.slot}-$1"`).replace(/url\(#([^)]+)\)/g, `url(#s${item.slot}-$1)`);
+    let renamed = inner.replace(/\bid="([^"]+)"/g, `id="s${item.slot}-$1"`).replace(/url\(#([^)]+)\)/g, `url(#s${item.slot}-$1)`);
+    // Generated alpha masks reference their embedded image with <use href>.
+    // Rename only local fragments; embedded PNG data URLs remain byte-exact.
+    if (localFragments) renamed = renamed.replace(/\bhref="#([^"]+)"/g, `href="#s${item.slot}-$1"`);
     const position = layout ? label25PhysicalSlot(item.slot, exportProfileId) : item.slot;
     return `<g data-slot="${position}" transform="${layout ? label25SlotTransform(position) : labelSlotTransform(position)}">${renamed}</g>`;
   }).join('');
@@ -183,7 +198,7 @@ async function raster(svg, exportProfile) {
   try { return await run; } finally { pending -= 1; }
 }
 
-export async function renderLabelSheetPng(items, { calibrationProfile = null, exportProfileId = LABEL_EXPORT_PROFILE_V1.id } = {}) {
+export async function renderLabelSheetPng(items, { calibrationProfile = null, exportProfileId = LABEL_EXPORT_PROFILE_V3.id } = {}) {
   const exportProfile = LABEL_SHEET_EXPORT_PROFILES.find(value => value.id === exportProfileId);
   if (!exportProfile) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
   const mapping = mappingFor(exportProfile, calibrationProfile);
