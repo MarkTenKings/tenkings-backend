@@ -1,4 +1,5 @@
 import { financeAssert as check, copy, digest, identifier } from './ledger.mjs';
+import {projectTaxReporting} from './tax-obligations.mjs';
 import { canonicalJSON } from './contract.mjs';
 import { createWebhookIngressWorker, webhookIngressHealth } from './ingress.mjs';
 import { createFinanceRecoveryRunner } from './recovery.mjs';
@@ -12,7 +13,7 @@ const exact = (value, keys) => check(value && Object.keys(value).sort().join(','
 const freeze = value => { if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); } return value; };
 function configuration(value) {
   canonicalJSON(value);
-  exact(value, ['environment','platformAccountId','connectedAccountIds','activationRef','operationsRef','qualificationRefs','recovery','schedule','alerts','finalizationBudgetMs', ...(value.ingress === undefined ? [] : ['ingress'])]);
+  exact(value, ['environment','platformAccountId','connectedAccountIds','activationRef','operationsRef','qualificationRefs','recovery','schedule','alerts','finalizationBudgetMs', ...(value.ingress === undefined ? [] : ['ingress']),...(value.taxReporting===undefined?[]:['taxReporting'])]);
   check(Object.hasOwn(environments, value.environment), 'HOST_FINANCE_CONFIG_REQUIRED');
   for (const key of ['platformAccountId','activationRef','operationsRef']) identifier(value[key]);
   if (value.environment === 'SYNTHETIC_LOCAL') check(value.qualificationRefs === null, 'HOST_FINANCE_QUALIFICATION_REQUIRED');
@@ -27,6 +28,7 @@ function configuration(value) {
     for (const [key,min,max] of [['maxItems',1,500],['concurrency',1,8],['maxAttempts',1,100],['retryDelayMs',1000,86400000],['leaseMs',1000,900000],['maxRoutingItems',1,500]]) check(Number.isSafeInteger(value.ingress[key]) && value.ingress[key] >= min && value.ingress[key] <= max, 'WEBHOOK_WORKER_BOUNDS_REQUIRED');
     check(value.ingress.enabled === true && value.ingress.leaseMs >= value.recovery.maxDurationMs + value.finalizationBudgetMs + 1000 && value.ingress.concurrency <= value.recovery.concurrency, 'HOST_FINANCE_INGRESS_CONFIG_REQUIRED');
   }
+  if(value.taxReporting!==undefined){exact(value.taxReporting,['enabled','maxItems','approvalRef']);check(value.taxReporting.enabled===true&&Number.isSafeInteger(value.taxReporting.maxItems)&&value.taxReporting.maxItems>0&&value.taxReporting.maxItems<=50,'HOST_TAX_REPORTING_CONFIG_REQUIRED');identifier(value.taxReporting.approvalRef);}
   exact(value.recovery, ['approvalRef','maxItems','concurrency','maxEvidenceAgeMs','maxDurationMs']);
   exact(value.schedule, ['intervalMs','pollIntervalMs','leaseMs']);
   exact(value.alerts, ['approvalRef','destinationRef','maxItems','leaseMs','staleIntentMs','staleReportMs']);
@@ -50,6 +52,7 @@ export function createHostedFinance({ enabled = false, store, provider, service,
   const { environment, platformAccountId } = config, scope = digest({ environment, platformAccountId });
   check(typeof assertRuntimeReady === 'function' && typeof service?.receiveProviderWebhook === 'function' && typeof service?.settleRecoveredPayments === 'function' && typeof service?.getHostedWebhookBinding === 'function', 'HOST_FINANCE_PORTS_REQUIRED');
   const read = store?.read, transaction = store?.transaction, receive = service.receiveProviderWebhook, retain = service.retainProviderWebhook, settle = service.settleRecoveredPayments;
+  const reportTax=service.runTaxFollowup;if(config.taxReporting)check(typeof reportTax==='function','HOST_FINANCE_PORTS_REQUIRED');
   if (config.ingress) check(typeof retain === 'function', 'HOST_FINANCE_PORTS_REQUIRED');
   const providerMethods = Object.fromEntries(['getIdentity','retrieve','discover','getAccountSnapshot','listBalanceTransactions', ...(config.ingress ? ['getAccount','listRelatedObjects','retrieveDispute'] : [])].map(name => [name, provider?.[name]]));
   const getWebhookBinding = service.getHostedWebhookBinding, webhookBinding = freeze(copy(service.getHostedWebhookBinding()));
@@ -59,6 +62,7 @@ export function createHostedFinance({ enabled = false, store, provider, service,
   const binding = freeze({ environment, platformAccountId, connectedAccountIds: copy(config.connectedAccountIds), configHash, activationRef: config.activationRef, operationsRef: config.operationsRef, qualificationRefs: copy(config.qualificationRefs), webhookBinding });
   function ready() {
     check(store?.read === read && store?.transaction === transaction && service.receiveProviderWebhook === receive && (!config.ingress || service.retainProviderWebhook === retain && provider.acceptsAccount === acceptsAccount) && service.settleRecoveredPayments === settle && service.getHostedWebhookBinding === getWebhookBinding && Object.entries(providerMethods).every(([name, fn]) => provider[name] === fn), 'HOST_FINANCE_PORT_CHANGED');
+    if(config.taxReporting)check(service.runTaxFollowup===reportTax,'HOST_FINANCE_PORT_CHANGED');
     check(digest(service.getHostedWebhookBinding()) === digest(webhookBinding), 'HOST_FINANCE_WEBHOOK_CHANGED');
     requireOperationalReady(assertRuntimeReady, { ...config, webhookBinding });
     assertRecoverySettlementCapability(settlementCapability, { store, environment, platformAccountId });
@@ -86,6 +90,7 @@ export function createHostedFinance({ enabled = false, store, provider, service,
         const row = reports.filter(item => item.accountId === accountId).sort((a,b) => b.sequence - a.sequence)[0];
         if (!row || row.status !== 'RECONCILED' || tx.now - row.observedAt > config.alerts.staleReportMs) add(`account:${accountId}`, 'ACCOUNT_RECONCILIATION_REQUIRED', accountId, row ? { reportId: row.reportId, status: row.status, evidenceHash: row.evidenceHash } : { status: 'MISSING' });
       }
+      for(const row of projectTaxReporting(tx.state).orders){if(row.saleStatus!=='SUCCEEDED')add(`tax-sale:${row.orderId}`,'TAX_SALE_RECORD_REQUIRED',row.orderId,{status:row.saleStatus,operationId:row.operationId});for(const refund of row.refunds)if(refund.status!=='SUCCEEDED')add(`tax-refund:${refund.refundIntentId}`,'TAX_REFUND_RECORD_REQUIRED',refund.refundIntentId,{status:refund.status,operationId:refund.operationId});}
       // Old persistent issues cannot starve newly observed issues in a bounded pass.
       issues.sort((a,b) => (tx.state.financeOperationalAlerts?.[`alert:${digest({ scope, topic: a.topic })}`]?.lastObservedAt ?? 0) - (tx.state.financeOperationalAlerts?.[`alert:${digest({ scope, topic: b.topic })}`]?.lastObservedAt ?? 0) || a.topic.localeCompare(b.topic));
       for (const issue of issues.slice(0, config.alerts.maxItems)) recordOperationalAlert(tx, issue);
@@ -128,9 +133,11 @@ export function createHostedFinance({ enabled = false, store, provider, service,
       catch (error) { const code = operationalCode(error); settlementErrors.push({ code, intentIds }); if (admitted()) await alert(`settlement:${digest(intentIds)}`, code, runId, { intentIds, code }); }
     }
     if (admitted() && ['ERROR','INTERRUPTED','REVIEW_REQUIRED'].includes(receipt.status)) await alert('recovery', receipt.code ?? 'FINANCE_RECOVERY_REVIEW_REQUIRED', runId, { status: receipt.status, results: receipt.results, accountReports: receipt.accountReports });
+    let taxReporting=null;
+    if(config.taxReporting&&admitted()){try{ready();taxReporting=await service.runTaxFollowup(settlementCapability,{limit:config.taxReporting.maxItems,signal});}catch{taxReporting={status:'REVIEW_REQUIRED',results:[]};}}
     const alertScan = admitted() ? await collectAlerts() : { observed: 0, remaining: null };
     const delivery = admitted() ? await outbox.flush({ signal, deadline }) : { status: 'INTERRUPTED' };
-    const result = { runId, ingress: ingressReceipt, status: !admitted() ? 'INTERRUPTED' : settlementErrors.length || delivery.status === 'REVIEW_REQUIRED' || ingressReceipt?.status === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : receipt.status, recoveryStatus: receipt.status, settledIntentIds, settlementErrors, alertScan, deliveryStatus: delivery.status };
+    const result = { runId,...(config.taxReporting?{taxReporting}:{}), ingress: ingressReceipt, status: !admitted() ? 'INTERRUPTED' : settlementErrors.length || taxReporting?.status==='REVIEW_REQUIRED' || delivery.status === 'REVIEW_REQUIRED' || ingressReceipt?.status === 'REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : receipt.status, recoveryStatus: receipt.status, settledIntentIds, settlementErrors, alertScan, deliveryStatus: delivery.status };
     await store.transaction(tx => { (tx.state.financeHostedRuns ??= {})[runId] = { ...copy(result), scope, configHash, completedAt: tx.now }; });
     return result;
     } finally { clearTimeout(timer); clearTimeout(recoveryTimer); signal.removeEventListener('abort', abortRecovery); parentSignal?.removeEventListener('abort', abort); }

@@ -45,6 +45,7 @@ function orderFromListing(reservationId, orderId, buyerId, listing, quote) {
     sellerId: listing.sellerId, buyerId, currency: 'USD', totalCents: quote.totalCents,
     itemCents: listing.askingPriceCents, feeCents: listing.feeCents, sellerNetCents: listing.sellerNetCents,
     taxCents: quote.taxCents, shippingCents: quote.shippingCents,
+    ...(quote.shippingPricing!==undefined?{shippingPricing:clone(quote.shippingPricing)}:{}),
     policyVersion: listing.policy.version, bindingHash: listing.bindingHash,
   };
 }

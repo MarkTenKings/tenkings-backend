@@ -1,4 +1,5 @@
 import { validateInstantPayoutQuote } from './payout-instant.mjs';
+import { assertShippingPricingReceipt, allocateShippingRefund } from './shipping-pricing.mjs';
 import { financeAssert as check, integerCents as cents, safeSum, digest, copy, identifier, postJournal, posting as line, accountBalance, recordProviderTransaction, cashLedgerHash } from './ledger.mjs';
 
 const TERMINAL_FAILURE = new Set(['FAILED', 'CANCELED']);
@@ -88,6 +89,7 @@ export function preparePayment(tx, input) {
   check(safeSum(order.sellerNetCents, order.feeCents) === order.itemCents && safeSum(order.itemCents, order.taxCents, order.shippingCents) === order.totalCents, 'ORDER_TOTAL_MISMATCH');
   identifier(platformAccountId); identifier(connectedAccountId); check(platformAccountId !== connectedAccountId, 'INVALID_ACCOUNT_SCOPE');
   const policy = policyCheck(input.policy); check(order.policyVersion === policy.version, 'POLICY_VERSION_MISMATCH');
+  if(order.shippingPricing!==undefined)assertShippingPricingReceipt(order.shippingPricing,{shippingCents:order.shippingCents,environment:policy.environment==='synthetic'?'SYNTHETIC_LOCAL':policy.environment==='stripe-production'?'PRODUCTION':'PROVIDER_SANDBOX',now:tx.now});
   ensureUniqueScope(tx, 'PAYMENT', 'orderId', order.orderId);
   check(!state(tx).financeOrders[order.orderId], 'FINANCIAL_ORDER_EXISTS');
   const allocation = allocations({ sellerCents: order.sellerNetCents, feeCents: order.feeCents, taxCents: order.taxCents, shippingCents: order.shippingCents }, order.totalCents);
@@ -123,11 +125,12 @@ export function prepareRefund(tx, input) {
   const previous = reservedRefunds(tx, payment);
   check(safeSum(input.amountCents, ...previous.map(i => i.amountCents)) <= payment.amountCents, 'EXCESS_REFUND');
   for (const key of allocationKeys) check(safeSum(allocation[key], ...previous.map(i => i.allocations[key])) <= payment.allocations[key], 'EXCESS_REFUND_ALLOCATION');
+  const shippingRefundAttribution = payment.order.shippingPricing === undefined ? null : allocateShippingRefund(payment.order.shippingPricing, allocation.shippingCents, previous.map(i => i.shippingRefundAttribution));
   const order = getOrder(tx, payment.orderId);
   const transfer = order.transferIntentId ? getIntent(tx, order.transferIntentId, 'TRANSFER') : null;
   check(!transfer || transfer.confirmed, 'TRANSFER_UNRESOLVED');
   order.blocked = true;
-  return save(tx, input, { ...baseFrom(payment), kind: 'REFUND', accountId: payment.platformAccountId, parentObjectId: payment.chargeId, amountCents: input.amountCents, allocations: allocation, recoverSeller: Boolean(transfer), policyEvidence: copy(terms) });
+  return save(tx, input, { ...baseFrom(payment), kind: 'REFUND', accountId: payment.platformAccountId, parentObjectId: payment.chargeId, amountCents: input.amountCents, allocations: allocation, recoverSeller: Boolean(transfer), policyEvidence: copy(terms), ...(shippingRefundAttribution?{shippingRefundAttribution}:{}) });
 }
 export function prepareReversal(tx, input) {
   const prior = existing(tx, input.intentId, input); if (prior) return prior;
@@ -277,7 +280,7 @@ function postPayment(tx, intent, evidence) {
   remember(tx, intent, evidence);
   if (intent.confirmed) { check(intent.chargeId === evidence.chargeId, 'CHARGE_MISMATCH'); return; }
   const a = intent.allocations;
-  journal(tx, intent, 'PAYMENT_SETTLED', evidence, [line(pbook(intent), 'provider_cash', bt.netCents), line(pbook(intent), 'processing_expense', bt.feeCents), line(pbook(intent), account('seller_payable', intent.orderId), -a.sellerCents), line(pbook(intent), 'fee_revenue', -a.feeCents), line(pbook(intent), 'tax_payable', -a.taxCents), line(pbook(intent), 'shipping_payable', -a.shippingCents)]);
+  journal(tx, intent, 'PAYMENT_SETTLED', evidence, [line(pbook(intent), 'provider_cash', bt.netCents), line(pbook(intent), 'processing_expense', bt.feeCents), line(pbook(intent), account('seller_payable', intent.orderId), -a.sellerCents), line(pbook(intent), 'fee_revenue', -a.feeCents), line(pbook(intent), 'tax_payable', -a.taxCents), ...shippingAllocationLines(intent,-1)]);
   intent.chargeId = evidence.chargeId;
   getOrder(tx, intent.orderId).confirmed = true;
 }
@@ -310,9 +313,19 @@ function refundDebit(tx, intent, evidence) {
     intent.cashDebited = true;
   }
 }
+function shippingAllocationLines(intent, sign) {
+  const receipt=intent.order.shippingPricing,shippingCents=intent.allocations.shippingCents;
+  if(receipt===undefined)return [line(pbook(intent),'shipping_payable',sign*shippingCents)];
+  assertShippingPricingReceipt(receipt,{shippingCents:intent.order.shippingCents});
+  const allocation=intent.kind==='REFUND'?intent.shippingRefundAttribution:{carrierCents:receipt.quotedCarrierCostCents,handlingCents:receipt.handlingCents};
+  check(allocation&&safeSum(allocation.carrierCents,allocation.handlingCents)===shippingCents,'SHIPPING_REFUND_ALLOCATION_INVALID');
+  cents(allocation.carrierCents);cents(allocation.handlingCents);
+  check(allocation.carrierCents<=receipt.quotedCarrierCostCents&&allocation.handlingCents<=receipt.handlingCents,'SHIPPING_REFUND_ALLOCATION_INVALID');
+  return [line(pbook(intent),account('shipping_carrier_deferred',intent.orderId),sign*allocation.carrierCents),line(pbook(intent),account('shipping_handling_deferred',intent.orderId),sign*allocation.handlingCents)];
+}
 function refundAllocationLines(intent, sign = 1) {
   const a = intent.allocations;
-  return [line(pbook(intent), intent.recoverSeller ? account('seller_recovery', intent.orderId) : account('seller_payable', intent.orderId), sign * a.sellerCents), line(pbook(intent), 'fee_revenue', sign * a.feeCents), line(pbook(intent), 'tax_payable', sign * a.taxCents), line(pbook(intent), 'shipping_payable', sign * a.shippingCents)];
+  return [line(pbook(intent), intent.recoverSeller ? account('seller_recovery', intent.orderId) : account('seller_payable', intent.orderId), sign * a.sellerCents), line(pbook(intent), 'fee_revenue', sign * a.feeCents), line(pbook(intent), 'tax_payable', sign * a.taxCents), ...shippingAllocationLines(intent,sign)];
 }
 function postRefund(tx, intent, evidence) {
   refundDebit(tx, intent, evidence);

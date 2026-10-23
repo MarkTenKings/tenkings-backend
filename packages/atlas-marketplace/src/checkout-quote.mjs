@@ -2,18 +2,22 @@ import { cents, clone, hash, requireValue, sumCents } from './contract.mjs';
 import { authorityContext, authorityId, domainId } from './authority-context.mjs';
 import { assertListingBinding } from './listing.mjs';
 import { exactKeys, exactTime, requireSyncApproval } from './fee-policy.mjs';
+import { assertShippingPricingPolicy, createShippingPricingReceipt, assertShippingPricingReceipt } from './shipping-pricing.mjs';
 
 export const CHECKOUT_POLICY_SCHEMA='atlas-checkout-policy-v1';
+export const CHECKOUT_PRICED_SHIPPING_POLICY_SCHEMA='atlas-checkout-policy-v2';
 export const CHECKOUT_QUOTE_SCHEMA='atlas-checkout-quote-v1';
 const text=value=>typeof value==='string'&&value.trim()===value&&value.length>0&&value.length<=1000;
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 function policyCheck(policy,context) {
-  exactKeys(policy,['schema','id','version','environment','currency','approvalRef','effectiveAt','expiresAt','maxQuoteAgeMs','shippingPolicyRef','taxPolicyRef','taxResponsibleEntityRef','taxBasis','allowedCountries'],'CHECKOUT_POLICY_INVALID');
-  requireValue(policy.schema===CHECKOUT_POLICY_SCHEMA&&policy.environment===context.environment&&policy.currency==='USD','CHECKOUT_POLICY_INVALID');
+  const priced=policy?.schema===CHECKOUT_PRICED_SHIPPING_POLICY_SCHEMA;
+  exactKeys(policy,['schema','id','version','environment','currency','approvalRef','effectiveAt','expiresAt','maxQuoteAgeMs','shippingPolicyRef','taxPolicyRef','taxResponsibleEntityRef','taxBasis','allowedCountries',...(priced?['shippingPricing']:[])],'CHECKOUT_POLICY_INVALID');
+  requireValue([CHECKOUT_POLICY_SCHEMA,CHECKOUT_PRICED_SHIPPING_POLICY_SCHEMA].includes(policy.schema)&&policy.environment===context.environment&&policy.currency==='USD','CHECKOUT_POLICY_INVALID');
   domainId(policy.id,'checkout policy',context);
   for(const key of ['version','approvalRef','shippingPolicyRef','taxPolicyRef','taxResponsibleEntityRef'])requireValue(text(policy[key]),'CHECKOUT_POLICY_INVALID');
   requireValue(exactTime(policy.expiresAt)>exactTime(policy.effectiveAt)&&Number.isSafeInteger(policy.maxQuoteAgeMs)&&policy.maxQuoteAgeMs>0&&policy.maxQuoteAgeMs<=900000,'CHECKOUT_POLICY_INVALID');
   requireValue(['ITEM_ONLY','ITEM_AND_SHIPPING'].includes(policy.taxBasis),'TAX_BASIS_UNSUPPORTED');
+  if(priced){assertShippingPricingPolicy(policy.shippingPricing,{environment:context.environment});requireValue(policy.taxBasis==='ITEM_AND_SHIPPING','SHIPPING_PRICING_TAX_BASIS_REQUIRED');}
   requireValue(Array.isArray(policy.allowedCountries)&&policy.allowedCountries.length>0&&policy.allowedCountries.length<=250&&new Set(policy.allowedCountries).size===policy.allowedCountries.length&&policy.allowedCountries.every(value=>/^[A-Z]{2}$/.test(value)),'CHECKOUT_POLICY_INVALID');
   return policy;
 }
@@ -24,6 +28,7 @@ export function assertCheckoutQuoteBinding(quote,{listing,buyerId,destinationId}
   requireValue(quote.buyerId===buyerId&&quote.listingHash===listing.bindingHash&&quote.listingVersion===listing.version&&quote.listingId===listing.id&&quote.listingPolicyHash===hash(listing.policy)&&quote.policyId===listing.policy.id&&quote.policyVersion===listing.policy.version,'QUOTE_BINDING_MISMATCH');
   requireValue(quote.destination?.id===destinationId&&quote.destination.buyerId===buyerId&&digest(quote.destination.addressHash),'QUOTE_DESTINATION_MISMATCH');
   requireValue(quote.itemCents===listing.askingPriceCents&&quote.buyerFeeCents===0&&quote.totalCents===sumCents(quote.itemCents,quote.shippingCents,quote.taxCents)&&quote.protectionTerms===listing.policy.protectionTerms,'QUOTE_TOTAL_MISMATCH');
+  if(quote.shippingPricing!==undefined){assertShippingPricingReceipt(quote.shippingPricing,{shippingCents:quote.shippingCents,providerReceipt:quote.shippingReceipt,environment:context.environment,now});requireValue(quote.taxReceipt.basisCents===sumCents(quote.itemCents,quote.shippingCents),'QUOTE_TAX_BASIS_MISMATCH');}
   requireValue(Number.isSafeInteger(now)&&exactTime(quote.issuedAt)<=now&&exactTime(quote.expiresAt)>now&&exactTime(quote.expiresAt)-exactTime(quote.issuedAt)<=900000,'QUOTE_EXPIRED');
   return quote;
 }
@@ -45,7 +50,8 @@ export function createApprovedCheckoutQuoteProvider({enabled=false,context:suppl
     requireValue(hash(policy)===policyHash&&resolveDestination.resolve===pins.resolve&&resolveDestination.list===pins.list&&resolveDestination.assertCurrent===pins.destinationCurrent&&resolveDestination.assertReady===pins.destinationReady&&shipping.quote===pins.shipping&&shipping.assertReady===pins.shippingReady&&tax.quote===pins.tax&&tax.assertReady===pins.taxReady,'CHECKOUT_APPROVAL_REQUIRED');
     requireSyncApproval(assertReady(binding),'CHECKOUT_APPROVAL_REQUIRED');
     for (const port of [resolveDestination,shipping,tax]) requireSyncApproval(port.assertReady(binding),'QUOTE_ADAPTER_UNAVAILABLE');
-    requireValue(exactTime(savedPolicy.effectiveAt)<=now&&exactTime(savedPolicy.expiresAt)>now,'CHECKOUT_POLICY_EXPIRED'); return now;
+    requireValue(exactTime(savedPolicy.effectiveAt)<=now&&exactTime(savedPolicy.expiresAt)>now,'CHECKOUT_POLICY_EXPIRED');
+    if(savedPolicy.shippingPricing)assertShippingPricingPolicy(savedPolicy.shippingPricing,{environment:context.environment,now}); return now;
   }
   function destinationCheck(destination,buyerId,destinationId,now) {
     exactKeys(destination,['id','buyerId','version','addressHash','countryCode','label','evidenceRef','observedAt','expiresAt'],'QUOTE_DESTINATION_INVALID');
@@ -84,13 +90,16 @@ export function createApprovedCheckoutQuoteProvider({enabled=false,context:suppl
     const base={environment:context.environment,listingId:listing.id,listingVersion:listing.version,listingHash:listing.bindingHash,buyerId,destination:clone(destination),currency:'USD',itemCents:listing.askingPriceCents};
     const shippingRequest={...base,policyRef:savedPolicy.shippingPolicyRef};
     const shippingReceipt=providerReceipt(await shipping.quote({...clone(shippingRequest),signal}),shippingRequest,'shipping',current());assertLive();
-    const basisCents=savedPolicy.taxBasis==='ITEM_ONLY'?listing.askingPriceCents:sumCents(listing.askingPriceCents,shippingReceipt.amountCents);
-    const taxRequest={...base,shippingCents:shippingReceipt.amountCents,shippingQuoteRef:shippingReceipt.quoteRef,basisCents,taxBasis:savedPolicy.taxBasis,responsibleEntityRef:savedPolicy.taxResponsibleEntityRef,policyRef:savedPolicy.taxPolicyRef};
+    const pricingNow=current();
+    const shippingPricing=savedPolicy.shippingPricing?createShippingPricingReceipt({policy:savedPolicy.shippingPricing,providerReceipt:shippingReceipt,issuedAt:new Date(pricingNow).toISOString(),expiresAt:new Date(Math.min(started+savedPolicy.maxQuoteAgeMs,exactTime(savedPolicy.expiresAt),exactTime(savedPolicy.shippingPricing.expiresAt),exactTime(destination.expiresAt),exactTime(shippingReceipt.expiresAt))).toISOString()}):null;
+    const shippingCents=shippingPricing?.buyerChargeCents??shippingReceipt.amountCents;
+    const basisCents=savedPolicy.taxBasis==='ITEM_ONLY'?listing.askingPriceCents:sumCents(listing.askingPriceCents,shippingCents);
+    const taxRequest={...base,shippingCents,shippingQuoteRef:shippingReceipt.quoteRef,basisCents,taxBasis:savedPolicy.taxBasis,responsibleEntityRef:savedPolicy.taxResponsibleEntityRef,policyRef:savedPolicy.taxPolicyRef,...(shippingPricing?{shippingPricingReceiptHash:shippingPricing.receiptHash,shippingTaxCode:shippingPricing.policy.shippingTaxCode}:{})};
     const taxReceipt=providerReceipt(await tax.quote({...clone(taxRequest),signal}),taxRequest,'tax',current());assertLive();
     destinationCheck(destination,buyerId,destinationId,current());
     requireValue(hash(listing)===hash(savedListing),'QUOTE_BINDING_MISMATCH');
-    const expiresAt=new Date(Math.min(started+savedPolicy.maxQuoteAgeMs,exactTime(savedPolicy.expiresAt),exactTime(destination.expiresAt),exactTime(shippingReceipt.expiresAt),exactTime(taxReceipt.expiresAt))).toISOString();
-    const content={schema:CHECKOUT_QUOTE_SCHEMA,environment:context.environment,currency:'USD',buyerId,listingId:listing.id,listingVersion:listing.version,listingHash:listing.bindingHash,listingPolicyHash:hash(listing.policy),policyId:listing.policy.id,policyVersion:listing.policy.version,checkoutPolicyHash:policyHash,checkoutPolicyId:savedPolicy.id,checkoutPolicyVersion:savedPolicy.version,destination,itemCents:listing.askingPriceCents,shippingCents:shippingReceipt.amountCents,taxCents:taxReceipt.amountCents,buyerFeeCents:0,totalCents:sumCents(listing.askingPriceCents,shippingReceipt.amountCents,taxReceipt.amountCents),shippingQuoteRef:shippingReceipt.quoteRef,taxQuoteRef:taxReceipt.quoteRef,deliveryEstimate:shippingReceipt.deliveryEstimate,protectionTerms:listing.policy.protectionTerms,shippingReceipt,taxReceipt,issuedAt:new Date(started).toISOString(),expiresAt};
+    const expiresAt=new Date(Math.min(started+savedPolicy.maxQuoteAgeMs,exactTime(savedPolicy.expiresAt),exactTime(destination.expiresAt),exactTime(shippingReceipt.expiresAt),exactTime(taxReceipt.expiresAt),...(shippingPricing?[exactTime(shippingPricing.expiresAt)]:[]))).toISOString();
+    const content={schema:CHECKOUT_QUOTE_SCHEMA,environment:context.environment,currency:'USD',buyerId,listingId:listing.id,listingVersion:listing.version,listingHash:listing.bindingHash,listingPolicyHash:hash(listing.policy),policyId:listing.policy.id,policyVersion:listing.policy.version,checkoutPolicyHash:policyHash,checkoutPolicyId:savedPolicy.id,checkoutPolicyVersion:savedPolicy.version,destination,itemCents:listing.askingPriceCents,shippingCents,taxCents:taxReceipt.amountCents,buyerFeeCents:0,totalCents:sumCents(listing.askingPriceCents,shippingCents,taxReceipt.amountCents),shippingQuoteRef:shippingReceipt.quoteRef,taxQuoteRef:taxReceipt.quoteRef,deliveryEstimate:shippingReceipt.deliveryEstimate,protectionTerms:listing.policy.protectionTerms,shippingReceipt,taxReceipt,...(shippingPricing?{shippingPricing}:{}),issuedAt:new Date(started).toISOString(),expiresAt};
     const result={quoteId:`${context.environment==='SYNTHETIC_LOCAL'?'demo_':'atlas_'}quote_${hash(content).slice(0,32)}`,...content};result.receiptHash=hash(result);
     quote.assertCurrent(result,{listing,buyerId,destinationId},current());return result;
   });
@@ -101,6 +110,7 @@ export function createApprovedCheckoutQuoteProvider({enabled=false,context:suppl
     }); },
     assertCurrent(receipt,{listing,buyerId,destinationId=receipt?.destination?.id},now=clock()) {
       current(now);requireValue(receipt?.checkoutPolicyHash===policyHash,'CHECKOUT_POLICY_MISMATCH');
+      requireValue(savedPolicy.shippingPricing?receipt.shippingPricing?.policyHash===hash(savedPolicy.shippingPricing):receipt.shippingPricing===undefined,'SHIPPING_PRICING_POLICY_MISMATCH');
       assertCheckoutQuoteBinding(receipt,{listing,buyerId,destinationId},now,context);
       destinationCheck(receipt.destination,buyerId,destinationId,now); return receipt;
     },

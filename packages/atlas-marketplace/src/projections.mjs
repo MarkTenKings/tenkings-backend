@@ -6,6 +6,7 @@ const pick = (row, keys) => Object.fromEntries(keys.filter(key => row?.[key] !==
 export function projectBuyerQuote(quote,{includeDestination=true}={}) {
   if(!quote)return null;
   return {...pick(quote,['quoteId','schema','environment','currency','listingId','listingVersion','listingHash','policyId','policyVersion','itemCents','shippingCents','taxCents','buyerFeeCents','totalCents','deliveryEstimate','protectionTerms','issuedAt','expiresAt']),
+    ...(quote.shippingPricing?{shippingCharge:pick(quote.shippingPricing,['label','disclosure'])}:{}),
     ...(quote.destination&&includeDestination?{destination:pick(quote.destination,['id','label','version'])}:{})};
 }
 export function projectMarketplaceWorkspace(state, actor, { now, sellerEligibility = null, environment, platformAccountId, policy, eligibilityCards=[] } = {}) {
@@ -20,7 +21,7 @@ export function projectMarketplaceWorkspace(state, actor, { now, sellerEligibili
   for(const order of orders) {
     const fulfillment=state.fulfillment[order.orderId]; if(!fulfillment) continue;
     cases[order.orderId]=pick(fulfillment,['orderId','cardId','status','dispatchedAt','deliveredAt','releaseNotBefore','releasedAt']);
-    cases[order.orderId].cases=fulfillment.cases.map(item=>pick(item,staff ? ['id','kind','status','openedAt','outcome','refundObligation','history'] : ['id','kind','status','openedAt','outcome']));
+    cases[order.orderId].cases=fulfillment.cases.map(item=>({...pick(item,staff ? ['id','kind','status','openedAt','outcome','returnReason','evidenceRef','initialShippingPayer','finalResponsibility','refundObligation','history'] : ['id','kind','status','openedAt','outcome','returnReason','initialShippingPayer','finalResponsibility']),...(item.returnReview?{returnReview:pick(item.returnReview,staff?['decision','reviewRef','actorId','at']:['decision','at'])}:{})}));
     cases[order.orderId].history=fulfillment.history.map(item=>pick(item,['action','at']));
   }
   return {
@@ -30,7 +31,7 @@ export function projectMarketplaceWorkspace(state, actor, { now, sellerEligibili
     consent:seller?Object.fromEntries(Object.entries(state.consent).filter(([,row])=>row.sellerId===actor.id).map(([id,row])=>[id,pick(row,['cardId','choice','at'])])):{},
     listings:listings.map(row=>({...pick(row,['id','version','bindingHash','status','environment','cardId','askingPriceCents','currency',...(seller||staff?['feeCents','sellerNetCents']:[])]),policy:pick(row.policy,['id','version','feeDisclosure','fulfillmentRoute','protectionTerms','returnsTerms','transferReleaseTerms','payoutTerms','reservationTtlMs']),approvedCard:publicApprovedCard(row.approvedCard)})),
     reservations:reservations.map(row=>({...pick(row,['id','orderId','listingId','cardId','listingHash','status','createdAt','expiresAt','paymentIntentId']),quote:projectBuyerQuote(row.quote)})),
-    orders:orders.map(row=>({...pick(row,['orderId','reservationId','listingId','cardId','status','totalCents','itemCents','taxCents','shippingCents','currency','paidAt',...(seller||staff?['feeCents','sellerNetCents']:[])]),quote:projectBuyerQuote(row.quote,{includeDestination:!seller}),approvedCard:publicApprovedCard(row.approvedCard)})),
+    orders:orders.map(row=>({...pick(row,['orderId','reservationId','listingId','cardId','status','totalCents','itemCents','taxCents','shippingCents','currency','paidAt',...(seller||staff?['feeCents','sellerNetCents']:[])]),quote:projectBuyerQuote(row.quote,{includeDestination:!seller}),...(staff&&row.shippingPricing?{shippingPricing:pick(row.shippingPricing,['quotedCarrierCostCents','handlingCents','buyerChargeCents','costStatus'])}:{}),...(row.policy?.commercialTerms?.returns?{returnPolicy:pick(row.policy.commercialTerms.returns,['returnWindowMs','startsAt','deadlineExclusive','eligibleReasons','requiresBuyerEvidence','requiresStaffReview','returnShippingPayer','finalResponsibility'])}:{}),approvedCard:publicApprovedCard(row.approvedCard)})),
     fulfillment:cases,
     intents:Object.values(state.intents).filter(row=>staff || seller&&row.sellerId===actor.id || !seller&&row.kind==='PAYMENT'&&reservationIds.has(row.order?.reservationId)).map(row=>({ ...pick(row,['id','kind','status','orderId','amountCents','confirmed']), reservationId:row.order?.reservationId??null, caseId:row.policyEvidence?.caseId??null })),
     balance:seller?sellerBalance(state,actor.id):null,

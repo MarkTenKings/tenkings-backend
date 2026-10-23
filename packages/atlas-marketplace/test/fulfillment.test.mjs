@@ -59,3 +59,26 @@ test('returns require exact inspection and a confirmed refund, never a staff ass
     assert.equal(resolve({ ...evidence('return'), refundIntentId: 'demo_refund' }).status, 'CLOSED');
   } finally { store.close(); }
 });
+
+test('return requests and seller release have no overlapping deadline, while an existing case still holds release', () => {
+  let now = 1999;
+  const store = openLocalStore({ filename: ':memory:', environment: 'SYNTHETIC_LOCAL', clock: () => now });
+  try {
+    store.transaction(tx => {
+      tx.state.orders.demo_order = paidOrder(); tx.state.intents.demo_payment = paidIntent();
+      tx.state.financeOrders = { demo_order: { confirmed: true, blocked: false } };
+      tx.state.fulfillment.demo_order = { orderId: 'demo_order', cardId: 'demo_card', status: 'DELIVERED', deliveredAt: 1000, releaseNotBefore: 2000, cases: [], policy, history: [] };
+    });
+    const release = () => store.transaction(tx => recordFulfillment(tx, { requestId: 'demo_release_boundary', orderId: 'demo_order', action: 'RELEASE', actor, evidence: evidence('RELEASE'), policy }));
+    const requestReturn = requestId => store.transaction(tx => openProtectionCase(tx, { requestId, caseId: requestId, orderId: 'demo_order', kind: 'RETURN', actor: { id: 'demo_buyer', role: 'BUYER' }, evidenceRef: 'demo_return_evidence' }));
+    assert.throws(release, { code: 'PROTECTION_HOLD' });
+    requestReturn('demo_before_deadline');
+    now = 2000;
+    assert.throws(() => requestReturn('demo_at_deadline'), { code: 'RETURN_WINDOW_CLOSED' });
+    assert.throws(release, { code: 'PROTECTION_HOLD' });
+    store.transaction(tx => resolveProtectionCase(tx, { requestId: 'demo_review_boundary', orderId: 'demo_order', caseId: 'demo_before_deadline', actor, outcome: 'NO_REFUND_DUE', evidence: evidence('inspected') }));
+    assert.equal(release().status, 'RELEASED');
+    now = 2001;
+    assert.throws(() => requestReturn('demo_after_deadline'), { code: 'RETURN_WINDOW_CLOSED' });
+  } finally { store.close(); }
+});

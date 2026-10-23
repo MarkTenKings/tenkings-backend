@@ -118,3 +118,12 @@ test('whole-run deadline discards a late provider GET without detached reconcili
   assert.equal((await host.snapshot()).providerInFlightCount, 0);
   assert.deepEqual(f.store.read(), before); assert.equal(before.syntheticProvider.calls[paymentId], 1);
 });
+
+
+test('tax reporting requires separate opt-in, runs after original settlement, and a reporting failure never reclassifies payment',async t=>{
+ const f=compose();t.after(()=>f.store.close());const {reservation,paymentId}=await f.reserve();f.provider.resolve(paymentId,{status:'succeeded',processingFeeCents:300});
+ let calls=0;const service={...f.service,async runTaxFollowup(capability,input){calls++;assert.equal(capability,f.capability);assert.equal(input.limit,2);assert.equal(input.signal.aborted,false);assert.equal(f.store.read().orders[reservation.orderId].status,'PAID');return {status:'REVIEW_REQUIRED',results:[{status:'UNKNOWN'}]};}};
+ const inert=createHostedFinance({...f.options,service});await inert.runOnce({runId:'without_tax_optin'});assert.equal(calls,0);
+ const host=createHostedFinance({...f.options,service,config:{...config,taxReporting:{enabled:true,maxItems:2,approvalRef:'fixture_separate_tax_reporting'}}});
+ const result=await host.runOnce({runId:'with_tax_optin'});assert.equal(calls,1);assert.equal(result.status,'REVIEW_REQUIRED');assert.equal(result.taxReporting.status,'REVIEW_REQUIRED');assert.equal(f.store.read().intents[paymentId].status,'SUCCEEDED');assert.equal(f.store.read().orders[reservation.orderId].status,'PAID');assert.equal(f.store.read().syntheticProvider.calls[paymentId],1);
+});

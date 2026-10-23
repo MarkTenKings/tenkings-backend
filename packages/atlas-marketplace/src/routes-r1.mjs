@@ -66,6 +66,8 @@ export function createR1MarketplaceRouteComposition(options={}) {
       };
     },
     status(){return {enabled:enabled&&!closed,initialized:!!host,activeRequests:active,financeConfigured:!!finance,claimsEnabled:false,historyEnabled:false};},
+    async prepare(){await initialize();return this.status();},
+    async financeSnapshot(){await initialize();return finance?finance.snapshot():null;},
     async startFinance(){await initialize();requireValue(finance,'R1_FINANCE_UNAVAILABLE');return finance.start();},
     async stopFinance(){await finance?.stop();},
     close(){

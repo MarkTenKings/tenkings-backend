@@ -9,16 +9,21 @@ if (!/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(apiPath) || !/^\/[A-Za-z0-9_
 const statePath = localDemo ? '/api/demo' : apiPath+'/workspace';
 function endpointPath(path) { return localDemo ? path : apiPath + (path === '/api/reconcile' ? '/payments/reconcile' : path.slice(4)); }
 const authenticatedFields = {
+  '/api/destinations/save':['requestId','destinationId','expectedVersion','label','address'], '/api/destinations/remove':['requestId','destinationId','expectedVersion'],
+  '/api/staff/orders/destination':['requestId','orderId'],
   '/api/consent': ['requestId','cardId','choice','evidenceRef'], '/api/listings': ['requestId','cardId','askingPriceCents','feeQuoteId'],
   '/api/listings/revise': ['requestId','listingId','expectedVersion','expectedBindingHash','askingPriceCents','feeQuoteId'], '/api/listings/withdraw': ['requestId','listingId','expectedVersion','expectedBindingHash'],
   '/api/reservations': ['requestId','listingId','listingVersion','listingHash','quoteId'], '/api/reservations/cancel': ['requestId','reservationId'],
   '/api/payments': ['reservationId'], '/api/reconcile': ['reservationId'], '/api/fulfillment': ['requestId','orderId','action','evidence'],
   '/api/transfers/reconcile': ['orderId'], '/api/withdrawals': ['requestId','amountCents','externalAccountId','method','quoteId'], '/api/withdrawals/reconcile': ['intentId'],
   '/api/withdrawals/cancel': ['intentId'],
-  '/api/cases': ['requestId','caseId','orderId','kind','evidenceRef'], '/api/cases/refund': ['orderId','caseId','amountCents','allocations','reviewRef'],
+  '/api/cases': ['requestId','caseId','orderId','kind','returnReason','evidenceRef'], '/api/cases/refund': ['orderId','caseId','amountCents','allocations','reviewRef'],
+  '/api/cases/return/review': ['requestId','orderId','caseId','decision','reviewRef'],
   '/api/cases/refund/reconcile': ['orderId','caseId'], '/api/cases/resolve': ['requestId','orderId','caseId','outcome','evidence'],
   '/api/staff/incidents': ['requestId','alertId','expectedVersion','action','reviewRef','evidenceHash'],
   '/api/staff/instant-fees/settle': ['settlementId','intentIds','evidenceRef','reviewRef'],
+  '/api/staff/tax/sale': ['orderId'], '/api/staff/tax/refund': ['refundIntentId','itemTaxCents','shippingTaxCents','reviewRef'],
+  '/api/staff/tax/resume': ['operationId'], '/api/staff/tax/reconcile': ['operationId','providerId','reviewRef'],
 };
 let data = null, paymentSurface = null;
 const paymentReturnKey = 'atlas.marketplace.payment-return:'+mountPath;
@@ -52,6 +57,7 @@ function scheduleExpiry() {
   }
 }
 async function readState() {
+  ui.deliveryAddresses={};
   const response = await fetch(statePath, { cache: 'no-store', credentials: 'same-origin' });
   if (!response.ok) { if (!localDemo && [401,403].includes(response.status)) data = null; throw new Error(localDemo ? 'Saved local state is unavailable.' : 'Authenticated workspace unavailable. Sign in with the required account and refresh.'); }
   data = await response.json();
@@ -71,7 +77,7 @@ async function refresh() {
   catch (error) { ui.notice = error.message; }
   finally { ui.busy = false; render(); }
 }
-async function mutate(endpoint, body, success, requestKey) {
+async function mutate(endpoint, body, success, requestKey,applyResult) {
   if (ui.busy || ui.uncertain) return;
   if (!localDemo) {
     const keys = authenticatedFields[endpoint];
@@ -90,8 +96,9 @@ async function mutate(endpoint, body, success, requestKey) {
       throw new Error(result.message ?? result.error?.message ?? result.error ?? 'This action could not be completed.');
     }
     await readState();
+    applyResult?.(result);
     if (requestKey) requests.delete(requestKey);
-    ui.notice = localDemo ? success : 'The action was recorded. Review the saved order, payment or case status before continuing.';
+    ui.notice = localDemo || endpoint.startsWith('/api/destinations/') || endpoint==='/api/staff/orders/destination' ? success : 'The action was recorded. Review the saved order, payment or case status before continuing.';
   } catch (error) {
     ui.notice = String(error.message ?? error);
     ui.uncertain = !terminalRefusal;
@@ -133,7 +140,41 @@ root.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (ui.busy || ui.uncertain) return;
     const values = new FormData(form), orderId = form.dataset.order, caseId = form.dataset.case;
-    if (form.dataset.form === 'instant-fee-settlement') {
+    if (form.dataset.form === 'destination') {
+      if(localDemo||data?.scope?.role!=='BUYER'||!data.destinationsEnabled)return;
+      const address=Object.fromEntries(['name','phone','line1','city','state','postalCode','residential'].map(key=>[key,String(values.get(key)??'').trim()]));address.state=address.state.toUpperCase();address.country='US';address.line2=String(values.get('line2')??'').trim()||null;
+      const label=String(values.get('label')??'').trim(),edit=ui.editDestination,key='destination:'+JSON.stringify({label,address,edit});
+      const destinationId=edit?.id??requestId(key+':id');
+      await mutate('/api/destinations/save',{requestId:requestId(key),destinationId,expectedVersion:edit?Number(edit.version):0,label,address},'Delivery address saved.',key,()=>{ui.editDestination=null;ui.quote=null;ui.destinationId=destinationId;requests.delete(key+':id');});
+    } else if (['tax-sale','tax-refund','tax-resume','tax-reconcile'].includes(form.dataset.form)) {
+      if (localDemo || data?.scope?.role !== 'STAFF' || data.taxReporting?.available !== true) return;
+      const orders = data.taxReporting.orders ?? [], kind = form.dataset.form;
+      if (kind === 'tax-sale') {
+        const order = orders.find(row => row.orderId === orderId && row.saleStatus === 'MISSING'); if (!order) return;
+        await mutate('/api/staff/tax/sale', {orderId}, 'Original sale tax record reviewed.');
+      } else if (kind === 'tax-refund') {
+        const order = orders.find(row => row.refunds?.some(item => item.refundIntentId === form.dataset.refund));
+        const refund = order?.refunds.find(row => row.refundIntentId === form.dataset.refund);
+        if (!refund || refund.status !== 'MISSING' || order.saleStatus !== 'SUCCEEDED') return;
+        const parseCents = key => {const raw=values.get(key);return typeof raw==='string' && /^(0|[1-9]\d*)$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : null;};
+        const itemTaxCents=parseCents('itemTaxCents'), shippingTaxCents=parseCents('shippingTaxCents'), reviewRef=String(values.get('reviewRef')??'').trim();
+        if (itemTaxCents===null || shippingTaxCents===null || !Number.isSafeInteger(itemTaxCents+shippingTaxCents) || itemTaxCents+shippingTaxCents!==refund.taxCents || !reviewRef || reviewRef.length>500 || !values.has('reviewConfirmed')) {ui.notice='Review nonnegative integer-cent item and shipping tax amounts whose exact sum equals the confirmed refund tax, and retain its review reference.';render();return;}
+        await mutate('/api/staff/tax/refund', {refundIntentId:refund.refundIntentId,itemTaxCents,shippingTaxCents,reviewRef}, 'Original refund tax record reviewed.');
+      } else {
+        const operationId=form.dataset.operation;
+        const operation=orders.flatMap(row=>[{operationId:row.operationId,status:row.saleStatus},...(row.refunds??[])]).find(row=>row.operationId && row.operationId===operationId);
+        if (!operation) return;
+        if (kind==='tax-resume') {
+          if(operation.status!=='PREPARED')return;
+          await mutate('/api/staff/tax/resume',{operationId},'Retained approved tax record resumed.');
+        } else {
+          if(!['DISPATCHING','UNKNOWN'].includes(operation.status))return;
+          const providerId=String(values.get('providerId')??'').trim(),reviewRef=String(values.get('reviewRef')??'').trim();
+          if ((providerId && (!/^tax_[A-Za-z0-9]{1,124}$/.test(providerId)||!reviewRef||reviewRef.length>500)) || (!providerId&&reviewRef)) {ui.notice='For a recovered original tax ID, provide both the exact provider ID and an independent review reference. Leave both blank to retrieve the saved original.';render();return;}
+          await mutate('/api/staff/tax/reconcile',{operationId,...(providerId?{providerId,reviewRef}:{})},'Original tax evidence reconciled.');
+        }
+      }
+    } else if (form.dataset.form === 'instant-fee-settlement') {
       if (localDemo || data?.scope?.role !== 'STAFF' || data.operations?.instantFeeSettlementAvailable !== true || !values.has('reviewConfirmed')) return;
       const intentIds = values.getAll('intentIds').sort(), eligible = new Set((data.operations.unsettledInstantFeeIntents ?? []).map(row => row.id));
       if (!intentIds.length || new Set(intentIds).size !== intentIds.length || intentIds.some(id => !eligible.has(id))) { ui.notice = 'Select the exact eligible payout intents you reviewed.'; render(); return; }
@@ -154,11 +195,22 @@ root.addEventListener('submit', async (event) => {
       const order = (Array.isArray(data.orders) ? data.orders : Object.values(data.orders)).find(row => row.orderId === orderId);
       if (!order) return;
       const action = form.dataset.step, evidence = { ...Object.fromEntries(values), environment: data.environment, orderId, cardId: order.cardId };
+      if(values.has('deliveredAt')) {
+        const deliveredAt=new Date(values.get('deliveredAt')).getTime();
+        if(!Number.isSafeInteger(deliveredAt)){ui.notice='Enter the delivery date and time shown by the carrier.';render();return;}
+        evidence.deliveredAt=deliveredAt;
+      }
       const key = `fulfillment:${orderId}:${action}:${JSON.stringify(evidence)}`;
       await mutate('/api/fulfillment', { requestId: requestId(key), orderId, action, evidence }, 'Evidence recorded.', key);
     } else if (form.dataset.form === 'case-open') {
-      const kind = values.get('kind'), key = `case-open:${orderId}:${kind}`, id = requestId(key);
-      await mutate('/api/cases', { requestId: id, caseId: id, orderId, kind, ...(!localDemo ? { evidenceRef: values.get('evidenceRef') } : {}) }, 'The synthetic protection case is open; proceeds are held pending review.', key);
+      const kind = values.get('kind'), returnReason=kind==='RETURN'?values.get('returnReason'):null;
+      if(kind==='RETURN'&&values.has('returnReason')&&!returnReason){ui.notice='Choose severe damage or the wrong product and provide your evidence.';render();return;}
+      const key = `case-open:${orderId}:${kind}:${returnReason??''}:${values.get('evidenceRef')??''}`, id = requestId(key);
+      await mutate('/api/cases', { requestId: id, caseId: id, orderId, kind, ...(returnReason?{returnReason}:{}), ...(!localDemo ? { evidenceRef: values.get('evidenceRef') } : {}) }, 'Your case is recorded; seller proceeds are held pending review.', key);
+    } else if(form.dataset.form==='return-review') {
+      if(localDemo)return;
+      const decision=values.get('decision'),reviewRef=values.get('reviewRef'),key=`return-review:${orderId}:${caseId}:${decision}:${reviewRef}`;
+      await mutate('/api/cases/return/review',{requestId:requestId(key),orderId,caseId,decision,reviewRef},'Return request review recorded.',key);
     } else if (form.dataset.form === 'refund-review') {
       const allocations = {};
       for (const key of ['sellerCents', 'feeCents', 'taxCents', 'shippingCents']) {
@@ -238,6 +290,18 @@ root.addEventListener('click', async (event) => {
     if (match && data && !(Array.isArray(data.listings) ? data.listings : Object.values(data.listings)).some(item => item.id === match.id)) data.listings = [...(Array.isArray(data.listings) ? data.listings : Object.values(data.listings)), match];
     ui.selectedListingId = target.dataset.listing; ui.quote = null; ui.side = 'front'; render(); root.querySelector('#specimen-heading')?.scrollIntoView({ block: 'start' }); return; }
   if (ui.busy || ui.uncertain) return;
+  if(['edit-destination','remove-destination','new-destination'].includes(action)) {
+    if(localDemo||data?.scope?.role!=='BUYER'||!data.destinationsEnabled)return;
+    if(action==='new-destination'){ui.editDestination=null;render();return;}
+    const row=data.quoteDestinations?.find(item=>item.id===target.dataset.destination);if(!row)return;
+    if(action==='edit-destination'){ui.editDestination=row;render();root.querySelector('#delivery-addresses')?.scrollIntoView({block:'start'});return;}
+    const key=`remove-destination:${row.id}:${row.version}`;await mutate('/api/destinations/remove',{requestId:requestId(key),destinationId:row.id,expectedVersion:Number(row.version)},'Saved address removed.',key,()=>{ui.editDestination=null;ui.quote=null;});return;
+  }
+  if(action==='delivery-address') {
+    if(localDemo||data?.scope?.role!=='STAFF'||!data.destinationsEnabled||!data.orders?.some(row=>row.orderId===target.dataset.order))return;
+    const orderId=target.dataset.order,key=`delivery-address:${orderId}`;
+    await mutate('/api/staff/orders/destination',{orderId,requestId:requestId(key)},'Retained delivery address retrieved.',key,result=>{if(result.orderId===orderId)ui.deliveryAddresses={[orderId]:result.address};});return;
+  }
   if (action === 'collect-payment') { await openPaymentCollection(target.dataset.reservation); return; }
   if (action === 'onboard') { await openOnboarding(); return; }
   if (action === 'preview-fee') {

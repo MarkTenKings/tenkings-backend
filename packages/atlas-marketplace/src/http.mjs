@@ -3,6 +3,13 @@ import { createMarketplaceHostCheck } from './host-boundary.mjs';
 import { projectBuyerQuote } from './projections.mjs';
 
 const commands = Object.freeze({
+  '/staff/tax/resume':['STAFF','resumeTax',['operationId']],
+  '/staff/tax/sale':['STAFF','recordTaxSale',['orderId']],
+  '/staff/tax/refund':['STAFF','recordTaxRefund',['refundIntentId','itemTaxCents','shippingTaxCents','reviewRef']],
+  '/staff/tax/reconcile':['STAFF','reconcileTax',['operationId','providerId','reviewRef']],
+  '/destinations/save':['BUYER','saveDestination',['requestId','destinationId','expectedVersion','label','address']],
+  '/destinations/remove':['BUYER','removeDestination',['requestId','destinationId','expectedVersion']],
+  '/staff/orders/destination':['STAFF','deliveryDestination',['requestId','orderId']],
   '/consent':['SELLER','recordConsent',['requestId','cardId','choice','evidenceRef']],
   '/listings/preview':['SELLER','previewListingFee',['cardId','askingPriceCents','listingId']],
   '/listings':['SELLER','publishListing',['requestId','cardId','askingPriceCents','feeQuoteId']],
@@ -21,7 +28,8 @@ const commands = Object.freeze({
   '/withdrawals':['SELLER','withdraw',['requestId','amountCents','externalAccountId','method','quoteId']],
   '/withdrawals/reconcile':['SELLER','reconcileWithdrawal',['intentId']],
   '/withdrawals/cancel':['SELLER','cancelWithdrawal',['intentId']],
-  '/cases':['BUYER,SELLER,STAFF','openCase',['requestId','caseId','orderId','kind','evidenceRef']],
+  '/cases':['BUYER,SELLER,STAFF','openCase',['requestId','caseId','orderId','kind','returnReason','evidenceRef']],
+  '/cases/return/review':['STAFF','reviewReturn',['requestId','orderId','caseId','decision','reviewRef']],
   '/cases/refund':['STAFF','refundCase',['orderId','caseId','amountCents','allocations','reviewRef']],
   '/cases/refund/reconcile':['STAFF','reconcileRefund',['orderId','caseId']],
   '/staff/reconcile':['STAFF','reconcileFinance',['intentIds','limit']],
@@ -79,6 +87,7 @@ export function createMarketplaceHttpHandler({ enabled=false, origin, acceptedHo
       const [roles,name,keys]=command; requireValue(roles.split(',').includes(actor.role),'FORBIDDEN');
       requireValue(input&&Object.getPrototypeOf(input)===Object.prototype&&Object.keys(input).every(key=>keys.includes(key)),'INVALID_REQUEST');
       const output=await service[name](actor,input);
+      if(['saveDestination','removeDestination','deliveryDestination'].includes(name))return result(200,output);
       if(name==='quote')return result(200,projectBuyerQuote(output));
       if(name==='previewListingFee')return result(200,output);
       if(name==='quoteWithdrawal')return result(200,Object.fromEntries(['quoteId','method','currency','externalAccountId','amountCents','sellerFeeCents','totalDebitCents','timingDisclosure','feeDisclosure','expiresAt'].map(key=>[key,output[key]])));

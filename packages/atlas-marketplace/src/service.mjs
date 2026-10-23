@@ -4,7 +4,7 @@ import { createListing, assertListingBinding, reviseListing, withdrawListing } f
 import { assertBuyerQuote, reserveListing, markReservationPaymentPending, settleReservation, releaseReservation, cancelReservation, expireReservations } from './reservation.mjs';
 import { preparePayment, prepareTransfer, preparePayout, prepareRefund, sellerBalance, recordHold, releaseHold, voidPreparedPayment,voidPreparedPayout } from './finance.mjs';
 import { executeFinanceIntent, reconcileFinanceIntent, getPaymentCollection } from './payment.mjs';
-import { assertFulfillmentPolicy, ensureFulfillmentState, recordHoldChoice, recordFulfillment, openProtectionCase, recordRefundObligation, resolveProtectionCase } from './fulfillment.mjs';
+import { assertFulfillmentPolicy, ensureFulfillmentState, recordHoldChoice, recordFulfillment, openProtectionCase, reviewReturnRequest, recordRefundObligation, resolveProtectionCase } from './fulfillment.mjs';
 import { authorityContext, authorityId, domainId } from './authority-context.mjs';
 import { catalogListings } from './catalog.mjs';
 import { reconcileAccount, reconcilePendingFinance } from './reconciliation.mjs';
@@ -15,15 +15,20 @@ import { assertRecoverySettlementCapability } from './recovery-settlement.mjs';
 import { reviewOperationalAlert } from './finance-alerts.mjs';
 import {createInstantPayoutQuote,settleInstantProviderFees} from './payout-instant.mjs';
 import {boundedOperationalCall} from './finance-scheduler.mjs';
+import {assertMarketplaceDestinations} from './destinations.mjs';
+import {assertStripeTaxLifecycle} from './tax-lifecycle.mjs';
+import {retainTaxRequirement,assertOrderTaxComplete,projectTaxReporting} from './tax-obligations.mjs';
 
 export const intentId = (kind, value, context) => `${authorityContext(context).environment === 'SYNTHETIC_LOCAL' ? 'demo_' : 'atlas_'}${kind}_${hash(value).slice(0, 32)}`;
 
 // Trusted composition boundary. No production auth, eligibility or credentials
 // are discovered here. Every runtime must explicitly provide its own ports.
-export function createMarketplacePilot({ enabled = false, environment, store, eligibility = createUnavailableEligibilityAdapter(), quoteProvider, feeCalculator, instantPolicy,assertInstantPayoutReady,quoteInstantPayoutFee,readInstantFeeSettlement, provider, listingPolicy, financePolicy, fulfillmentPolicy, platformAccountId, context: suppliedContext, runtimeApproval, assertRuntimeReady, sellerAccount, onboarding, readEvidence, validateEvidence, webhook, recoverySettlementCapability, clock = Date.now } = {}) {
+export function createMarketplacePilot({ enabled = false, environment, store, eligibility = createUnavailableEligibilityAdapter(), quoteProvider, destinations, taxLifecycle, feeCalculator, instantPolicy,assertInstantPayoutReady,quoteInstantPayoutFee,readInstantFeeSettlement, provider, listingPolicy, financePolicy, fulfillmentPolicy, platformAccountId, context: suppliedContext, runtimeApproval, assertRuntimeReady, sellerAccount, onboarding, readEvidence, validateEvidence, webhook, recoverySettlementCapability, clock = Date.now } = {}) {
   const context = authorityContext(suppliedContext), rawStore = store;
   if (rawStore) store = { read: (...args) => rawStore.read(...args), transaction: fn => rawStore.transaction(tx => fn({ ...tx, context })) };
   const idFor = (kind,value) => intentId(kind,value,context);
+  function destinationReady(){gate();return assertMarketplaceDestinations(destinations,{store:rawStore,context});}
+  function taxReady(){gate();return assertStripeTaxLifecycle(taxLifecycle,{store:rawStore,environment,platformAccountId});}
   const instantPolicyHash=instantPolicy?hash(instantPolicy):null,instantIo=new Set();
   function instantReady(requested) {
     gate();requireValue(instantPolicy?.enabled===true&&hash(instantPolicy)===instantPolicyHash&&instantPolicy.platformAccountId===platformAccountId&&instantPolicy.environment===financePolicy.environment&&typeof assertInstantPayoutReady==='function','INSTANT_PAYOUT_UNAVAILABLE');
@@ -73,6 +78,7 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     if(quote?.schema==='atlas-checkout-quote-v1') {
       requireValue(typeof quoteProvider?.assertCurrent==='function','CHECKOUT_QUOTE_UNAVAILABLE');
       syncReceipt(quoteProvider.assertCurrent(quote,{listing,buyerId},tx.now),quote,'CHECKOUT_QUOTE_UNAVAILABLE');
+      if(destinations)destinationReady().assertInTransaction(tx,quote.destination,{buyerId});
     }
   }
   async function buyerReservation(actor, reservationId) {
@@ -105,7 +111,19 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
   async function dispatchOrReconcile(id) {
     const current = await store.read(state => state.intents[id]);
     return current.status === 'PREPARED'
-      ? executeFinanceIntent({ store, provider, intentId: id, enabled: true,assertInstantPayoutReady:instantReady })
+      ? executeFinanceIntent({ store, provider, intentId: id, enabled: true,
+        assertDispatchReady:(tx,intent)=>{
+          gate();
+          if(intent.kind==='TRANSFER') {
+            assertOrderTaxComplete(tx,intent.orderId);
+            const fulfillment=tx.state.fulfillment[intent.orderId];
+            requireValue(fulfillment?.status==='RELEASED'&&!fulfillment.cases.some(row=>row.status!=='CLOSED')&&hash(fulfillment.releaseEvidence)===hash(intent.releaseEvidence),'PROTECTION_HOLD');
+          }
+          return true;
+        },
+        assertInstantPayoutReady:instantReady,
+        assertPaymentReady:(tx,intent)=>{gate();const reservation=tx.state.reservations[intent.order.reservationId];requireValue(reservation?.paymentIntentId===intent.id,'RESERVATION_NOT_FOUND');currentCheckout(tx,reservation.quote,tx.state.listings[reservation.listingId],reservation.buyerId);return true;}
+      })
       : reconcileOriginal(id);
   }
   async function reconcileBeforePayout(accountId) {
@@ -120,6 +138,7 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     const order=await store.read(state=>state.orders[orderId]); requireValue(order,'ORDER_UNAVAILABLE');
     const account=await provider.getAccount(order.connectedAccountId), transferId=idFor('transfer',orderId);
     await store.transaction(tx=>{
+      assertOrderTaxComplete(tx,orderId);
       const current=tx.state.fulfillment[orderId];
       requireValue(current?.status==='RELEASED'&&!current.cases.some(row=>row.status!=='CLOSED'),'PROTECTION_HOLD');
       if(!tx.state.intents[transferId]) prepareTransfer(tx,{intentId:transferId,paymentIntentId:order.paymentIntentId,releaseEvidence:current.releaseEvidence,accountEvidence:account});
@@ -130,6 +149,9 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     // Runtime qualification never establishes global title/custody authority.
     // Each sale action must independently obtain its exact current assertion.
     status() { let active=false; try { gate(); active=true; } catch {} return { enabled: active, environment: environment ?? null, realAuthorityEnabled: false, authorityStatus: 'PER_ACTION_VERIFICATION_REQUIRED', ownershipClaimsEnabled: false, ownershipHistoryEnabled: false }; },
+    async saveDestination(actor,input){authorize(actor,['BUYER']);destinationReady();return store.transaction(tx=>{authorize(actor,['BUYER']);return destinationReady().save(tx,{...input,buyerId:actor.id});});},
+    async removeDestination(actor,input){authorize(actor,['BUYER']);destinationReady();return store.transaction(tx=>{authorize(actor,['BUYER']);return destinationReady().remove(tx,{...input,buyerId:actor.id});});},
+    async deliveryDestination(actor,input){authorize(actor,['STAFF']);destinationReady();return store.transaction(tx=>{authorize(actor,['STAFF']);return destinationReady().readOrderAddress(tx,{...input,actorId:actor.id});});},
     async recordConsent(actor, input) { authorize(actor, ['SELLER']); await validated('CONSENT',actor,input); return await store.transaction(tx => recordHoldChoice(tx, { ...input, actor })); },
     async previewListingFee(actor,input) {
       authorize(actor,['SELLER']);requireValue(feeCalculator?.enabled===true,'FEE_CALCULATOR_UNAVAILABLE');
@@ -194,7 +216,9 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
         const { buyerId, ...legacyQuote } = record;
         const quote=record.schema==='atlas-checkout-quote-v1'?record:legacyQuote;
         if(!tx.state.receipts[`reservation:${input.requestId}`])currentCheckout(tx,quote,tx.state.listings[listing.id],actor.id);
-        return reserveListing(tx, { requestId: input.requestId, reservationId: idFor('reservation', input.requestId), listingId: listing.id, listingVersion: input.listingVersion, listingHash: input.listingHash, buyerId: actor.id, eligibility: assertion, quote });
+        const result=reserveListing(tx, { requestId: input.requestId, reservationId: idFor('reservation', input.requestId), listingId: listing.id, listingVersion: input.listingVersion, listingHash: input.listingHash, buyerId: actor.id, eligibility: assertion, quote });
+        if(destinations)destinationReady().retainForReservation(tx,{reservationId:result.id,buyerId:actor.id,destination:quote.destination});
+        if(taxLifecycle)retainTaxRequirement(tx,{reservation:result,binding:taxReady()});return result;
       });
     },
     async pay(actor, { reservationId }) {
@@ -243,7 +267,7 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     },
     async fulfill(actor, input) {
       authorize(actor, ['STAFF']); await validated('FULFILLMENT',actor,input);
-      const result = await store.transaction(tx => recordFulfillment(tx, { ...input, actor, policy: fulfillmentPolicy }));
+      const result = await store.transaction(tx => {authorize(actor,['STAFF']);return recordFulfillment(tx, { ...input, actor, policy: fulfillmentPolicy });});
       if (input.action !== 'RELEASE') return result;
       await resumeTransfer(actor,{orderId:input.orderId});
       return await store.read(state => state.fulfillment[input.orderId]);
@@ -295,16 +319,27 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     },
     async openCase(actor, input) {
       authorize(actor, ['BUYER', 'SELLER', 'STAFF']);
+      if(input.kind==='RETURN')await validated('RETURN_REQUEST',actor,input);
       return await store.transaction(tx => {
+        authorize(actor,['BUYER','SELLER','STAFF']);
         const result = openProtectionCase(tx, { ...input, actor });
         const order = tx.state.orders[input.orderId];
         recordHold(tx, { holdId: result.id, orderId: input.orderId, reason: result.kind, evidenceRef: input.evidenceRef, amountCents: order.sellerNetCents });
         return result;
       });
     },
+    async reviewReturn(actor,input) {
+      authorize(actor,['STAFF']);await validated('RETURN_REQUEST_REVIEW',actor,input);
+      return store.transaction(tx=>{
+        authorize(actor,['STAFF']);const result=reviewReturnRequest(tx,{...input,actor});
+        if(result.returnReview.decision==='DENY')releaseHold(tx,{holdId:input.caseId,evidenceRef:input.reviewRef});
+        return result;
+      });
+    },
     async resolveCase(actor, input) {
       authorize(actor, ['STAFF']); await validated('CASE_RESOLUTION',actor,input);
       return await store.transaction(tx => {
+        authorize(actor,['STAFF']);
         const result = resolveProtectionCase(tx, { ...input, actor });
         releaseHold(tx, { holdId: input.caseId, evidenceRef: input.evidence.ref });
         return result;
@@ -314,6 +349,7 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
       authorize(actor, ['STAFF']); await validated('REFUND_REVIEW',actor,input);
       const refundId = idFor('refund', { orderId: input.orderId, caseId: input.caseId });
       await store.transaction(tx => {
+        authorize(actor,['STAFF']);
         const obligation = recordRefundObligation(tx, { ...input, actor });
         const order = tx.state.orders[input.orderId];
         prepareRefund(tx, { intentId: refundId, paymentIntentId: order.paymentIntentId, amountCents: obligation.amountCents, allocations: obligation.allocations,
@@ -390,9 +426,10 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
       authorize(actor,['SELLER','BUYER','STAFF']);
       let instantFeeSettlementAvailable=false;
       if(actor.role==='STAFF'){try{instantReady();instantFeeSettlementAvailable=typeof readInstantFeeSettlement==='function';}catch{}}
+      let taxAvailable=false;if(actor.role==='STAFF'&&taxLifecycle){try{taxReady();taxAvailable=true;}catch{}}
       return store.read(state=>{const projected=projectMarketplaceWorkspace(state,actor,{now:clock(),sellerEligibility,environment,platformAccountId,policy:listingPolicy,eligibilityCards});
         if(projected.operations)projected.operations.instantFeeSettlementAvailable=instantFeeSettlementAvailable;
-        return {...projected,feePreviewRequired:actor.role==='SELLER'&&!!listingPolicy.feeSchedule,quoteDestinationRequired:actor.role==='BUYER'&&quoteProvider?.destinationRequired===true,quoteDestinations};});
+        return {...projected,...(actor.role==='STAFF'?{taxReporting:projectTaxReporting(state,{available:taxAvailable})}:{}),destinationsEnabled:!!destinations&&['BUYER','STAFF'].includes(actor.role),feePreviewRequired:actor.role==='SELLER'&&!!listingPolicy.feeSchedule,quoteDestinationRequired:actor.role==='BUYER'&&quoteProvider?.destinationRequired===true,quoteDestinations};});
     },
     async reviewFinanceIncident(actor,input) {
       authorize(actor,['STAFF']); await validated('FINANCE_INCIDENT_REVIEW',actor,input);
@@ -438,6 +475,33 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
         results.push({ intentId: intent.id, reservationId: intent.order.reservationId, status: result.status, orderId: intent.orderId });
       }
       return results;
+    },
+    async resumeTax(actor,{operationId}) {authorize(actor,['STAFF']);taxReady();return taxLifecycle.resume({operationId});},
+    async recordTaxSale(actor,{orderId}) {authorize(actor,['STAFF']);taxReady();return taxLifecycle.recordSale({orderId});},
+    async recordTaxRefund(actor,input) {
+      authorize(actor,['STAFF']);taxReady();domainId(input.reviewRef,'tax refund review',context);
+      await validated('TAX_REFUND_REVIEW',actor,input);authorize(actor,['STAFF']);taxReady();return taxLifecycle.recordRefund(input);
+    },
+    async reconcileTax(actor,{operationId,providerId,reviewRef}) {
+      authorize(actor,['STAFF']);taxReady();
+      if(providerId!==undefined){domainId(reviewRef,'tax recovery review',context);await validated('TAX_ORIGINAL_RECOVERY_REVIEW',actor,{operationId,providerId,reviewRef});}
+      else requireValue(reviewRef===undefined,'TAX_RECOVERY_REVIEW_REQUIRED');
+      authorize(actor,['STAFF']);taxReady();return taxLifecycle.reconcile({operationId,...(providerId!==undefined?{providerId,recoveryReviewRef:reviewRef}:{})});
+    },
+    // Explicitly approved reporting pass, separate from GET-only money recovery.
+    // A tax failure never changes the original confirmed payment or its ledger.
+    async runTaxFollowup(capability,{limit=10,signal}={}) {
+      const ready=()=>{gate();requireValue(capability===recoverySettlementCapability,'RECOVERY_SETTLEMENT_UNAVAILABLE');assertRecoverySettlementCapability(capability,{store:rawStore,environment,platformAccountId});taxReady();};
+      ready();requireValue(Number.isSafeInteger(limit)&&limit>0&&limit<=50,'TAX_LIST_LIMIT_INVALID');
+      const candidates=await store.read(state=>projectTaxReporting(state).orders.filter(row=>row.saleStatus!=='SUCCEEDED').sort((a,b)=>(state.marketplaceTaxAttempts?.[a.orderId]?.at??0)-(state.marketplaceTaxAttempts?.[b.orderId]?.at??0)||a.orderId.localeCompare(b.orderId)).slice(0,limit));
+      const results=[];
+      for(const row of candidates){if(signal?.aborted)break;ready();let result;
+        try{result=await taxLifecycle.recordSale({orderId:row.orderId,signal});}
+        catch{result={orderId:row.orderId,status:'REVIEW_REQUIRED',errorCode:'TAX_SALE_RECORD_REQUIRED'};}
+        // Keep an attempt receipt even when approval revokes after provider IO.
+        await store.transaction(tx=>{(tx.state.marketplaceTaxAttempts??={})[row.orderId]={at:tx.now,status:result.status};});results.push(result);
+      }
+      return {status:signal?.aborted?'INTERRUPTED':results.some(row=>row.status!=='SUCCEEDED')?'REVIEW_REQUIRED':'COMPLETE',results};
     },
     async metrics(actor) { authorize(actor,['STAFF']); return store.read(state=>marketplaceOperations(state)); },
     async localSnapshot() { gate(); requireValue(environment==='SYNTHETIC_LOCAL','LOCAL_STORE_ONLY'); return await store.read(); },

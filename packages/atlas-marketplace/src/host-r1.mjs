@@ -7,6 +7,7 @@ import { createRecoverySettlementCapability } from './recovery-settlement.mjs';
 import { createR1AuthorityCompatibilityAdapter } from './authority-r1.mjs';
 import { authorityContext } from './authority-context.mjs';
 import { clone, hash, requireValue } from './contract.mjs';
+import {instantiateMarketplaceCommerce} from './commerce-runtime.mjs';
 
 const check = condition => requireValue(condition, 'R1_HOST_UNAVAILABLE');
 const ref = value => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= 500;
@@ -91,7 +92,9 @@ export async function createR1MarketplaceHost(options={}) {
   const r1Ports=[staffState.assertRequest,customerState.assertRequest,staffAuth.database,customerAuth.database,staffAuth.database.client,customerAuth.database.client];
   const configIntegrityPin=hash([configIntegrity(staffConfig),configIntegrity(customerConfig)]);
   const pinnedR1=r1Pin(),pool=database.pool,connect=pool.connect,provider=marketplace.provider,marketReady=marketplace.assertRuntimeReady;
-  const marketPorts=Object.fromEntries(['context','provider','quoteProvider','feeCalculator','instantPolicy','assertInstantPayoutReady','quoteInstantPayoutFee','readInstantFeeSettlement','sellerAccount','onboarding','readEvidence','validateEvidence','webhook','runtimeApproval','assertRuntimeReady'].map(key=>[key,marketplace[key]]));
+  const marketPorts=Object.fromEntries(['context','provider','quoteProvider','destinations','taxLifecycle','createCommercePorts','commerceConfig','feeCalculator','instantPolicy','assertInstantPayoutReady','quoteInstantPayoutFee','readInstantFeeSettlement','sellerAccount','onboarding','readEvidence','validateEvidence','webhook','runtimeApproval','assertRuntimeReady'].map(key=>[key,marketplace[key]]));
+  const commerceHash=marketplace.commerceConfig?hash(marketplace.commerceConfig):null;
+  if(marketplace.createCommercePorts)check(commerceHash&&marketplace.createCommercePorts.binding?.configHash===commerceHash&&!marketplace.quoteProvider&&!marketplace.destinations&&!marketplace.taxLifecycle);
   const webhookPin=()=>marketplace.webhook?hash({secret:marketplace.webhook.secret??null,endpoints:marketplace.webhook.endpoints??null,ingress:marketplace.webhook.ingress??null,allowedConnectedAccountIds:marketplace.webhook.allowedConnectedAccountIds??null}):null;
   const approvalPin=hash(marketplace.runtimeApproval),pinnedWebhook=webhookPin(),disputePolicy=marketplace.webhook?.resolveDisputePolicy;
   const databasePin=()=>hash([database.expectedRole,database.expectedDatabase,database.expectedFunctionOwner]);const pinnedDatabase=databasePin();
@@ -108,7 +111,7 @@ export async function createR1MarketplaceHost(options={}) {
       &&hash([configIntegrity(staffConfig),configIntegrity(customerConfig)])===configIntegrityPin);
     check([staffState.assertRequest,customerState.assertRequest,staffAuth.database,customerAuth.database,staffAuth.database.client,customerAuth.database.client].every((value,index)=>value===r1Ports[index])
       &&[canonical.DurableStaffAuth.prototype.authenticate,canonical.DurableStaffAuth.prototype.withStaff,canonical.DurableStaffAuth.prototype.digest,canonical.CustomerAuth.prototype.authority,canonical.CustomerAuth.prototype.digest,canonical.CustomerDatabase.prototype.call].every((value,index)=>value===canonicalMethods[index]));
-    check(Object.entries(marketPorts).every(([key,value])=>marketplace[key]===value)&&hash(marketplace.runtimeApproval)===approvalPin&&webhookPin()===pinnedWebhook&&marketplace.webhook?.resolveDisputePolicy===disputePolicy);
+    check(Object.entries(marketPorts).every(([key,value])=>marketplace[key]===value)&&(!commerceHash||hash(marketplace.commerceConfig)===commerceHash)&&hash(marketplace.runtimeApproval)===approvalPin&&webhookPin()===pinnedWebhook&&marketplace.webhook?.resolveDisputePolicy===disputePolicy);
     check(hash({...marketBinding,listingPolicyHash:hash(marketplace.listingPolicy),financePolicyHash:hash(marketplace.financePolicy),fulfillmentPolicyHash:hash(marketplace.fulfillmentPolicy)})===marketPin
       &&marketplace.runtimeApproval?.approved===true&&hash(marketplace.runtimeApproval.binding)===marketPin);
     syncReady(assertRuntimeReady,binding);
@@ -116,13 +119,16 @@ export async function createR1MarketplaceHost(options={}) {
   }
   current();
   const store=createPostgresStore({...database,environment:env,clock,enabled:true});
+  let commerce=null;
+  try {
   let settlementCapability;
   if(config.settlement?.enabled===true) {
     check(ref(config.settlement.approvalRef)&&typeof options.assertSettlementReady==='function');
     settlementCapability=createRecoverySettlementCapability({enabled:true,store,environment:env,platformAccountId:marketplace.platformAccountId,
       approvalRef:config.settlement.approvalRef,assertRuntimeReady:scope=>{current();return options.assertSettlementReady(scope);}});
   } else check(config.settlement===undefined||config.settlement===null||config.settlement.enabled===false);
-  const service=createMarketplacePilot({...marketplace,enabled:true,environment:env,store,clock,recoverySettlementCapability:settlementCapability,
+  if(marketplace.createCommercePorts)commerce=instantiateMarketplaceCommerce(marketplace.createCommercePorts,{store,context,environment:env,platformAccountId:marketplace.platformAccountId,clock});
+  const service=createMarketplacePilot({...marketplace,...(commerce?{quoteProvider:commerce.quoteProvider,destinations:commerce.destinations,taxLifecycle:commerce.taxLifecycle}:{}),enabled:true,environment:env,store,clock,recoverySettlementCapability:settlementCapability,
     // R1 has not supplied qualified title/custody/Fingerprint sale authority.
     // No configuration ref or collection label may promote this candidate.
     eligibility:createR1AuthorityCompatibilityAdapter(),
@@ -181,6 +187,7 @@ export async function createR1MarketplaceHost(options={}) {
       };
       handlers=Object.freeze({listener,publicCatalog:catalog,...nodes});return handlers;
     },
-    async close(){if(closed)return;closed=true;handlers?.publicCatalog.close();for(const role of ['buyer','seller','staff'])handlers?.[role].close();try{await finance?.stop();}finally{store.close();}},
+    async close(){if(closed)return;closed=true;handlers?.publicCatalog.close();for(const role of ['buyer','seller','staff'])handlers?.[role].close();try{await finance?.stop();}finally{commerce?.close();store.close();}},
   });
+  } catch(error) {try{commerce?.close();}finally{store.close();}throw error;}
 }
