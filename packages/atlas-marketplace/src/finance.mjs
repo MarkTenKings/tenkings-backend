@@ -1,3 +1,4 @@
+import { validateInstantPayoutQuote } from './payout-instant.mjs';
 import { financeAssert as check, integerCents as cents, safeSum, digest, copy, identifier, postJournal, posting as line, accountBalance, recordProviderTransaction, cashLedgerHash } from './ledger.mjs';
 
 const TERMINAL_FAILURE = new Set(['FAILED', 'CANCELED']);
@@ -151,14 +152,18 @@ export function preparePayout(tx, input) {
   check(!payments.some(payment => restrictedByException(tx, payment)), 'SELLER_FUNDS_RESTRICTED');
   check(payments.every(payment => payment.sellerId === input.sellerId && payment.connectedAccountId === input.connectedAccountId && digest(payment.policy) === digest(base.policy)), 'PAYOUT_SCOPE_MISMATCH');
   check(!Object.values(state(tx).financeOrders).some(order => order.sellerId === input.sellerId && order.blocked), 'SELLER_FUNDS_RESTRICTED');
+  check(input.method === undefined || ['standard','instant'].includes(input.method), 'UNSUPPORTED_PAYOUT_METHOD');
+  const instantQuote = input.method === 'instant' ? validateInstantPayoutQuote(tx, { quoteId: input.quoteId, sellerId: input.sellerId, connectedAccountId: input.connectedAccountId, externalAccountId: input.externalAccountId, amountCents: input.amountCents, policy: input.instantPolicy, eligibilityEvidence: input.instantEvidence, intentId: input.intentId }) : null;
+  if (instantQuote) check(input.instantPolicy.environment === base.policy.environment && input.instantPolicy.platformAccountId === base.platformAccountId, 'INSTANT_PAYOUT_POLICY_REQUIRED');
   const fields = { ...baseFrom(base), orderId: null, order: null, kind: 'PAYOUT', accountId: input.connectedAccountId, externalAccountId: input.externalAccountId, amountCents: input.amountCents, bindingHash: digest({ sellerId: input.sellerId, connectedAccountId: input.connectedAccountId, externalAccountId: input.externalAccountId, amountCents: input.amountCents, allocationOrderIds: input.allocationOrderIds }) };
+  if (instantQuote) Object.assign(fields, { method: 'instant', instantPolicy: copy(input.instantPolicy), instantQuote, totalDebitCents: instantQuote.totalDebitCents, bindingHash: digest({ allocationBinding: fields.bindingHash, method: 'instant', quoteHash: instantQuote.quoteHash, policyHash: instantQuote.policyHash }) });
   accountCheck(tx, input.accountEvidence, fields, { payout: true });
   fresh(tx, input.balanceEvidence, base.policy);
   const balance = input.balanceEvidence;
   check(balance.accountId === input.connectedAccountId && balance.livemode === (base.policy.environment === 'stripe-production') && balance.currency === 'USD', 'BALANCE_SCOPE_MISMATCH'); cents(balance.availableCents);
   requireAccountReconciliation(tx, fields, balance);
-  const inFlight = Object.values(state(tx).intents).filter(i => i.kind === 'PAYOUT' && i.accountId === input.connectedAccountId && !['SUCCEEDED', ...TERMINAL_FAILURE].includes(i.status));
-  check(safeSum(input.amountCents, ...inFlight.map(i => i.amountCents)) <= balance.availableCents, 'PROVIDER_BALANCE_INSUFFICIENT');
+  const inFlight = Object.values(state(tx).intents).filter(i => i.kind === 'PAYOUT' && i.accountId === input.connectedAccountId && !['SUCCEEDED', 'VOIDED', ...TERMINAL_FAILURE].includes(i.status));
+  check(safeSum(fields.totalDebitCents ?? input.amountCents, ...inFlight.map(i => i.totalDebitCents ?? i.amountCents)) <= balance.availableCents, 'PROVIDER_BALANCE_INSUFFICIENT');
   let remaining = input.amountCents; const allocation = [];
   for (const payment of payments) {
     const available = liability(tx, payment, 'seller_available'); cents(available);
@@ -167,11 +172,21 @@ export function preparePayout(tx, input) {
     remaining -= amountCents;
   }
   check(remaining === 0, 'SELLER_BALANCE_INSUFFICIENT');
+  if (instantQuote) {
+    let feeRemaining = instantQuote.sellerFeeCents;
+    for (const payment of payments) {
+      const a = allocation.find(row => row.orderId === payment.orderId);
+      const feeCents = Math.min(feeRemaining, liability(tx, payment, 'seller_available') - (a?.amountCents ?? 0));
+      if (feeCents) { if (a) a.feeCents = feeCents; else allocation.push({ orderId: payment.orderId, amountCents: 0, feeCents }); feeRemaining -= feeCents; }
+    }
+    check(feeRemaining === 0, 'SELLER_BALANCE_INSUFFICIENT');
+    tx.state.financePayoutQuotes[input.quoteId].consumedBy = input.intentId;
+  }
   const result = save(tx, input, { ...fields, payoutAllocations: allocation });
-  journal(tx, result, 'PAYOUT_RESERVED', input, allocation.flatMap(a => [line(cbook(result), account('seller_available', a.orderId), a.amountCents), line(cbook(result), account('seller_withdrawing', a.orderId), -a.amountCents)]));
+  journal(tx, result, 'PAYOUT_RESERVED', input, allocation.flatMap(a => [line(cbook(result), account('seller_available', a.orderId), safeSum(a.amountCents,a.feeCents ?? 0)), line(cbook(result), account('seller_withdrawing', a.orderId), -safeSum(a.amountCents,a.feeCents ?? 0))]));
   return result;
 }
-export function claimDispatch(tx, intentId, accountEvidence = null, balanceEvidence = null) {
+export function claimDispatch(tx, intentId, accountEvidence = null, balanceEvidence = null, instantEvidence = null) {
   const intent = getIntent(tx, intentId);
   check(intent.status === 'PREPARED' && intent.dispatchCount === 0, 'RECONCILIATION_REQUIRED');
   if (['TRANSFER', 'REVERSAL', 'PAYOUT'].includes(intent.kind)) accountCheck(tx, accountEvidence, intent, { payout: intent.kind === 'PAYOUT' });
@@ -179,8 +194,11 @@ export function claimDispatch(tx, intentId, accountEvidence = null, balanceEvide
     fresh(tx, balanceEvidence, intent.policy);
     check(balanceEvidence.accountId === intent.accountId && balanceEvidence.livemode === (intent.policy.environment === 'stripe-production') && balanceEvidence.currency === 'USD', 'BALANCE_SCOPE_MISMATCH');
     cents(balanceEvidence.availableCents);
-    check(balanceEvidence.availableCents >= intent.amountCents, 'PROVIDER_BALANCE_INSUFFICIENT');
+    check(balanceEvidence.availableCents >= (intent.totalDebitCents ?? intent.amountCents), 'PROVIDER_BALANCE_INSUFFICIENT');
     requireAccountReconciliation(tx, intent, balanceEvidence);
+    if (intent.method === 'instant') {
+      validateInstantPayoutQuote(tx, { quoteId: intent.instantQuote.quoteId, sellerId: intent.sellerId, connectedAccountId: intent.connectedAccountId, externalAccountId: intent.externalAccountId, amountCents: intent.amountCents, policy: intent.instantPolicy, eligibilityEvidence: instantEvidence, intentId: intent.id });
+    }
   }
   if (['TRANSFER', 'PAYOUT'].includes(intent.kind)) {
     check(!restrictedByException(tx, intent), 'SELLER_FUNDS_RESTRICTED');
@@ -189,6 +207,31 @@ export function claimDispatch(tx, intentId, accountEvidence = null, balanceEvide
   intent.status = 'DISPATCHING'; intent.dispatchCount = 1; intent.dispatchedAt = tx.now;
   intent.idempotencyKey = `atlas-marketplace:${digest({ intentId: intent.id, requestHash: intent.requestHash })}`;
   tx.emit?.('FINANCE_DISPATCH_CLAIMED', { intentId, kind: intent.kind });
+  return copy(intent);
+}
+export function voidPreparedPayment(tx, { intentId }) {
+  const intent = getIntent(tx, intentId, 'PAYMENT');
+  check(intent.dispatchCount === 0 && intent.objectId === null && !intent.confirmed && !intent.terminalUnpaid && !intent.dispatchedAt && !intent.reconciledAt && !intent.idempotencyKey && !intent.evidenceHash && !intent.chargeId && !Object.values(state(tx).financeBalanceTransactions ?? {}).some(row => row.owner === intentId) && !state(tx).financeObservations[intentId] && !Object.values(state(tx).financeObjects).includes(intentId) && !state(tx).financeOrders[intent.orderId]?.confirmed && !state(tx).journals.some(row => row.intentId === intentId), 'PAYMENT_LOCAL_VOID_REFUSED');
+  if (intent.status === 'VOIDED') { check(intent.locallyVoided === true && Number.isSafeInteger(intent.voidedAt) && intent.voidedAt <= tx.now, 'PAYMENT_LOCAL_VOID_REFUSED'); return copy(intent); }
+  check(intent.status === 'PREPARED', 'PAYMENT_LOCAL_VOID_REFUSED');
+  intent.status = 'VOIDED'; intent.locallyVoided = true; intent.voidedAt = tx.now;
+  return copy(intent);
+}
+export function voidPreparedPayout(tx, { intentId }) {
+  const intent = getIntent(tx, intentId, 'PAYOUT');
+  check(intent.dispatchCount === 0 && intent.objectId === null && !intent.confirmed && !intent.cashDebited && !intent.returned && !intent.dispatchedAt && !intent.reconciledAt && !intent.idempotencyKey && !intent.evidenceHash && !intent.chargeId && !Object.values(state(tx).financeBalanceTransactions ?? {}).some(row => row.owner === intentId) && !state(tx).financeObservations[intentId] && !Object.values(state(tx).financeObjects).includes(intentId), 'PAYOUT_LOCAL_VOID_REFUSED');
+  const expected = intent.payoutAllocations.flatMap(a => [line(cbook(intent), account('seller_available', a.orderId), safeSum(a.amountCents,a.feeCents ?? 0)), line(cbook(intent), account('seller_withdrawing', a.orderId), -safeSum(a.amountCents,a.feeCents ?? 0))]);
+  const entries = state(tx).journals.filter(row => row.intentId === intentId), reserved = entries.find(row => row.id === `${intentId}:PAYOUT_RESERVED`);
+  check(reserved?.kind === 'PAYOUT_RESERVED' && digest(reserved.lines) === digest(expected), 'PAYOUT_LOCAL_VOID_REFUSED');
+  if (intent.status === 'VOIDED') {
+    const correction = entries.find(row => row.id === `${intentId}:PAYOUT_RESERVATION_VOIDED`);
+    check(intent.locallyVoided === true && Number.isSafeInteger(intent.voidedAt) && intent.voidedAt <= tx.now && entries.length === 2 && correction?.kind === 'PAYOUT_RESERVATION_VOIDED' && digest(correction.lines) === digest(expected.map(row => ({...row,cents:-row.cents}))), 'PAYOUT_LOCAL_VOID_REFUSED');
+    return copy(intent);
+  }
+  check(intent.status === 'PREPARED' && entries.length === 1, 'PAYOUT_LOCAL_VOID_REFUSED');
+  for (const a of intent.payoutAllocations) check(-accountBalance(tx.state,cbook(intent),account('seller_withdrawing',a.orderId)) >= safeSum(a.amountCents,a.feeCents ?? 0), 'PAYOUT_LOCAL_VOID_REFUSED');
+  journal(tx,intent,'PAYOUT_RESERVATION_VOIDED',{reservationHash:reserved.hash,reason:'NEVER_DISPATCHED'},expected.map(row => ({...row,cents:-row.cents})));
+  intent.status = 'VOIDED'; intent.locallyVoided = true; intent.voidedAt = tx.now;
   return copy(intent);
 }
 export function markFinanceUnknown(tx, intentId) {
@@ -210,7 +253,7 @@ function evidenceCheck(tx, intent, evidence) {
   check(intent.dispatchCount === 1 && (!intent.objectId || intent.objectId === evidence.objectId), 'UNBOUND_PROVIDER_OBJECT');
   if (intent.parentObjectId) check(intent.parentObjectId === evidence.parentObjectId, 'PROVIDER_PARENT_MISMATCH');
   if (intent.kind === 'TRANSFER') check(evidence.destinationAccountId === intent.connectedAccountId, 'PROVIDER_DESTINATION_MISMATCH');
-  if (intent.kind === 'PAYOUT') check(evidence.externalAccountId === intent.externalAccountId, 'PROVIDER_DESTINATION_MISMATCH');
+  if (intent.kind === 'PAYOUT') check(evidence.externalAccountId === intent.externalAccountId && (evidence.method ?? 'standard') === (intent.method ?? 'standard') && (evidence.type ?? 'bank_account') === 'bank_account', 'PROVIDER_DESTINATION_MISMATCH');
   for (const key of ['balanceTransaction', 'connectedBalanceTransaction', 'failureBalanceTransaction']) {
     const previous = state(tx).financeObservations[intent.id]?.[key];
     const next = evidence[key];
@@ -306,10 +349,21 @@ function postReversal(tx, intent, evidence) {
   journal(tx, intent, 'REVERSAL_SETTLED', evidence, [line(pbook(intent), 'provider_cash', intent.amountCents), line(pbook(intent), account('seller_recovery', intent.orderId), -intent.amountCents), line(cbook(intent), account('seller_available', intent.orderId), fromAvailable), line(cbook(intent), account('seller_pending', intent.orderId), intent.amountCents - fromAvailable), line(cbook(intent), 'provider_cash', -intent.amountCents)]);
 }
 function payoutDebit(tx, intent, evidence) {
-  const bt = balanceTransaction(evidence, -intent.amountCents, intent.objectId); check(bt.feeCents === 0, 'UNSUPPORTED_PAYOUT_FEE');
+  const bt = balanceTransaction(evidence, -intent.amountCents, intent.objectId);
+  const sellerFee = intent.instantQuote?.sellerFeeCents ?? 0, providerFee = intent.instantQuote?.providerFeeCents ?? 0;
+  check(bt.feeCents === sellerFee, 'UNSUPPORTED_PAYOUT_FEE');
+  if (intent.method === 'instant') {
+    const fee = evidence.applicationFee;
+    if (sellerFee) {
+      check(fee && fee.accountId === intent.connectedAccountId && fee.platformAccountId === intent.platformAccountId && fee.livemode === evidence.livemode && fee.applicationId === intent.instantPolicy.applicationId && fee.payoutId === intent.objectId && fee.amountCents === sellerFee && fee.refundedCents === 0 && fee.currency === 'USD', 'INSTANT_PAYOUT_FEE_MISMATCH');
+      const feeBt = balanceTransaction({ balanceTransaction: fee.balanceTransaction }, sellerFee, fee.objectId); check(feeBt.feeCents === 0, 'INSTANT_PAYOUT_FEE_MISMATCH');
+      check(Array.isArray(bt.feeDetails) && bt.feeDetails.length === 1 && bt.feeDetails[0].type === 'application_fee' && bt.feeDetails[0].applicationId === fee.applicationId && bt.feeDetails[0].amountCents === sellerFee && bt.feeDetails[0].currency === 'USD', 'INSTANT_PAYOUT_FEE_MISMATCH');
+      recordProviderTransaction(tx, { accountId: intent.platformAccountId, transaction: feeBt, owner: intent.id, observedAt: evidence.observedAt, livemode: evidence.livemode });
+    } else check(fee === null, 'INSTANT_PAYOUT_FEE_MISMATCH');
+  }
   remember(tx, intent, evidence);
   if (!intent.cashDebited) {
-    journal(tx, intent, 'PAYOUT_DEBITED', evidence, [line(cbook(intent), `payout_clearing:${intent.id}`, intent.amountCents), line(cbook(intent), 'provider_cash', -intent.amountCents)]);
+    journal(tx, intent, 'PAYOUT_DEBITED', evidence, [line(cbook(intent), `payout_clearing:${intent.id}`, intent.amountCents), line(cbook(intent), 'provider_cash', -safeSum(intent.amountCents,sellerFee)), ...intent.payoutAllocations.filter(a => a.feeCents).map(a => line(cbook(intent), account('seller_withdrawing', a.orderId), a.feeCents)), line(pbook(intent), 'provider_cash', sellerFee), line(pbook(intent), 'instant_fee_revenue', -sellerFee), line(pbook(intent), 'instant_provider_fee_expense', providerFee), line(pbook(intent), 'instant_provider_fee_payable', -providerFee)]);
     intent.cashDebited = true;
   }
 }
@@ -339,6 +393,7 @@ export function reconcileFinance(tx, { intentId, evidence }) {
   if (success) {
     if (intent.kind === 'TRANSFER') postTransfer(tx, intent, evidence);
     else if (intent.kind === 'PAYMENT') postPayment(tx, intent, evidence);
+    else if (intent.kind === 'PAYOUT') postPayout(tx, intent, evidence);
     else if (!intent.confirmed) ({ PAYMENT: postPayment, REFUND: postRefund, REVERSAL: postReversal, PAYOUT: postPayout })[intent.kind](tx, intent, evidence);
     intent.status = 'SUCCEEDED'; intent.confirmed = true;
   } else if (intent.kind === 'PAYMENT' && evidence.status === 'canceled') {

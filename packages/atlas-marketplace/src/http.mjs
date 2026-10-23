@@ -1,10 +1,13 @@
 import { requireValue } from './contract.mjs';
 import { createMarketplaceHostCheck } from './host-boundary.mjs';
+import { projectBuyerQuote } from './projections.mjs';
 
 const commands = Object.freeze({
   '/consent':['SELLER','recordConsent',['requestId','cardId','choice','evidenceRef']],
-  '/listings':['SELLER','publishListing',['requestId','cardId','askingPriceCents']],
-  '/listings/revise':['SELLER','reviseListing',['requestId','listingId','expectedVersion','expectedBindingHash','askingPriceCents']],
+  '/listings/preview':['SELLER','previewListingFee',['cardId','askingPriceCents','listingId']],
+  '/listings':['SELLER','publishListing',['requestId','cardId','askingPriceCents','feeQuoteId']],
+  '/listings/revise':['SELLER','reviseListing',['requestId','listingId','expectedVersion','expectedBindingHash','askingPriceCents','feeQuoteId']],
+  '/quote':['BUYER','quote',['listingId','destinationId']],
   '/listings/withdraw':['SELLER','withdrawListing',['requestId','listingId','expectedVersion','expectedBindingHash']],
   '/reservations':['BUYER','reserve',['requestId','listingId','listingVersion','listingHash','quoteId']],
   '/reservations/cancel':['BUYER','cancelReservation',['requestId','reservationId']],
@@ -14,12 +17,16 @@ const commands = Object.freeze({
   '/payments/reconcile':['BUYER','reconcilePayment',['reservationId']],
   '/fulfillment':['STAFF','fulfill',['requestId','orderId','action','evidence']],
   '/transfers/reconcile':['STAFF','resumeTransfer',['orderId']],
-  '/withdrawals':['SELLER','withdraw',['requestId','amountCents','externalAccountId']],
+  '/withdrawals/quote':['SELLER','quoteWithdrawal',['amountCents','externalAccountId','method']],
+  '/withdrawals':['SELLER','withdraw',['requestId','amountCents','externalAccountId','method','quoteId']],
   '/withdrawals/reconcile':['SELLER','reconcileWithdrawal',['intentId']],
+  '/withdrawals/cancel':['SELLER','cancelWithdrawal',['intentId']],
   '/cases':['BUYER,SELLER,STAFF','openCase',['requestId','caseId','orderId','kind','evidenceRef']],
   '/cases/refund':['STAFF','refundCase',['orderId','caseId','amountCents','allocations','reviewRef']],
   '/cases/refund/reconcile':['STAFF','reconcileRefund',['orderId','caseId']],
   '/staff/reconcile':['STAFF','reconcileFinance',['intentIds','limit']],
+  '/staff/incidents':['STAFF','reviewFinanceIncident',['requestId','alertId','expectedVersion','action','reviewRef','evidenceHash']],
+  '/staff/instant-fees/settle':['STAFF','settleInstantFees',['settlementId','intentIds','evidenceRef','reviewRef']],
   '/cases/resolve':['STAFF','resolveCase',['requestId','orderId','caseId','outcome','evidence']],
 });
 const baseHeaders=Object.freeze({'Cache-Control':'no-store','Content-Type':'application/json','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'});
@@ -60,7 +67,7 @@ export function createMarketplaceHttpHandler({ enabled=false, origin, acceptedHo
           requireValue(evidence?.authorized===true&&Buffer.isBuffer(evidence.bytes)&&evidence.bytes.length<=10485760&&['image/png','image/jpeg','image/webp','application/pdf'].includes(evidence.contentType),'EVIDENCE_UNAVAILABLE');
           return {status:200,headers:{...baseHeaders,'Content-Type':evidence.contentType,'Content-Security-Policy':"default-src 'none'; sandbox"},body:evidence.bytes};
         }
-        if(path==='/quote') { requireValue(actor.role==='BUYER'&&[...url.searchParams.keys()].length===1&&url.searchParams.has('listingId'),'FORBIDDEN'); return result(200,await service.quote(actor,url.searchParams.get('listingId'))); }
+        if(path==='/quote') { requireValue(actor.role==='BUYER'&&[...url.searchParams.keys()].length===1&&url.searchParams.has('listingId'),'FORBIDDEN'); return result(200,projectBuyerQuote(await service.quote(actor,url.searchParams.get('listingId')))); }
         if(path==='/staff/queue') { requireValue(actor.role==='STAFF','FORBIDDEN'); requireValue([...url.searchParams.keys()].every(key=>['status','kind','query','offset','limit'].includes(key))&&new Set(url.searchParams.keys()).size===[...url.searchParams.keys()].length,'FILTER_INVALID'); return result(200,await service.staffQueue(actor,Object.fromEntries(url.searchParams))); }
         if(path==='/staff/metrics') { requireValue(actor.role==='STAFF'&&url.search==='','FORBIDDEN'); return result(200,await service.metrics(actor)); }
         requireValue(false,'NOT_FOUND');
@@ -72,8 +79,12 @@ export function createMarketplaceHttpHandler({ enabled=false, origin, acceptedHo
       const [roles,name,keys]=command; requireValue(roles.split(',').includes(actor.role),'FORBIDDEN');
       requireValue(input&&Object.getPrototypeOf(input)===Object.prototype&&Object.keys(input).every(key=>keys.includes(key)),'INVALID_REQUEST');
       const output=await service[name](actor,input);
+      if(name==='quote')return result(200,projectBuyerQuote(output));
+      if(name==='previewListingFee')return result(200,output);
+      if(name==='quoteWithdrawal')return result(200,Object.fromEntries(['quoteId','method','currency','externalAccountId','amountCents','sellerFeeCents','totalDebitCents','timingDisclosure','feeDisclosure','expiresAt'].map(key=>[key,output[key]])));
+      if(name==='settleInstantFees')return result(200,{settlementId:output.settlementId,amountCents:output.amountCents,transactionId:output.transactionId});
       if(name==='paymentCollection'||name==='onboard'||name==='reconcileFinance') return result(200,output);
-      return result(200,Object.fromEntries(['id','orderId','reservationId','status','version','bindingHash','outcome','kind','confirmed'].filter(key=>output?.[key]!==undefined).map(key=>[key,output[key]])));
+      return result(200,Object.fromEntries(['id','orderId','reservationId','alertId','generation','status','version','bindingHash','outcome','kind','confirmed'].filter(key=>output?.[key]!==undefined).map(key=>[key,output[key]])));
       };
       return typeof auth.withAuthorized==='function'?await auth.withAuthorized(principal,dispatch):await dispatch();
     }catch(error){

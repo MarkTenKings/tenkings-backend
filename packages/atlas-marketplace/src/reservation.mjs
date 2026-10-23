@@ -1,9 +1,10 @@
 import { cents, clone, hash, requireValue, sumCents } from './contract.mjs';
 import { requiredText } from './eligibility.mjs';
 import { authorityContext, contextFor, domainId, authorityId } from './authority-context.mjs';
-import { assertCurrentHoldConsent, assertCurrentListingAuthority, assertListingBinding } from './listing.mjs';
+import { assertCurrentHoldConsent, assertCurrentListingAuthority, assertListingBinding, isLocallyVoidedPayment } from './listing.mjs';
+import { assertCheckoutQuoteBinding, CHECKOUT_QUOTE_SCHEMA } from './checkout-quote.mjs';
 
-export function assertBuyerQuote(quote, listing, now, suppliedContext) {
+export function assertBuyerQuote(quote, listing, now, suppliedContext, buyerId) {
   const context = authorityContext(suppliedContext);
   assertListingBinding(listing, context);
   requireValue(quote && typeof quote === 'object', 'QUOTE_REQUIRED', 'A complete current buyer quote is required.');
@@ -18,6 +19,7 @@ export function assertBuyerQuote(quote, listing, now, suppliedContext) {
   requiredText(quote.deliveryEstimate, 'Delivery estimate');
   requireValue(quote.protectionTerms === listing.policy.protectionTerms, 'QUOTE_PROTECTION_MISMATCH', 'The buyer must see the exact listing protection terms.');
   requireValue(Number.isFinite(Date.parse(quote.expiresAt)) && Date.parse(quote.expiresAt) > now, 'QUOTE_EXPIRED', 'Refresh the complete buyer quote before reserving.');
+  if(quote.schema === CHECKOUT_QUOTE_SCHEMA) assertCheckoutQuoteBinding(quote, {listing,buyerId:buyerId ?? quote.buyerId,destinationId:quote.destination?.id},now,context);
   return quote;
 }
 
@@ -80,7 +82,7 @@ export function reserveListing(tx, input) {
   requireValue(input.buyerId !== listing.sellerId, 'SELF_PURCHASE_REFUSED', 'A seller cannot purchase their own listing.');
   assertCurrentListingAuthority(listing, input.eligibility, tx.now, context);
   assertCurrentHoldConsent(tx, listing);
-  assertBuyerQuote(input.quote, listing, tx.now, context);
+  assertBuyerQuote(input.quote, listing, tx.now, context, input.buyerId);
   requireValue(!tx.state.reservations[input.reservationId], 'RESERVATION_ID_CONFLICT', 'This reservation identity is already used.');
   requireValue(!Object.values(tx.state.reservations).some((other) => other.orderId === orderId), 'ORDER_ID_CONFLICT', 'This order identity is already used.');
   // Expiry frees only an untouched reservation. Payment work must reconcile first.
@@ -116,6 +118,8 @@ export function markReservationPaymentPending(tx, { reservationId, paymentIntent
       requireValue(reservation.status === 'PAYMENT_PENDING' && listing.status === 'RESERVED' && listing.activeReservationId === reservationId, 'RESERVATION_UNAVAILABLE', 'Only the still-held original checkout may dispatch its prepared payment.');
       assertCurrentListingAuthority(listing, eligibility, tx.now, contextFor(tx));
       assertCurrentHoldConsent(tx, listing);
+      requireValue(Date.parse(reservation.expiresAt)>tx.now,'RESERVATION_EXPIRED','An undispatched prepared payment needs an unexpired original checkout.');
+      assertBuyerQuote(reservation.quote,listing,tx.now,contextFor(tx),reservation.buyerId);
     }
     return clone(reservation);
   }
@@ -124,6 +128,7 @@ export function markReservationPaymentPending(tx, { reservationId, paymentIntent
   requireValue(Date.parse(reservation.expiresAt) > tx.now, 'RESERVATION_EXPIRED', 'The reservation expired before payment began.');
   assertCurrentListingAuthority(listing, eligibility, tx.now, contextFor(tx));
   assertCurrentHoldConsent(tx, listing);
+  assertBuyerQuote(reservation.quote,listing,tx.now,contextFor(tx),reservation.buyerId);
   // Verify before mutating; the local store also rolls back the enclosing transaction.
   const intent = tx.state.intents[paymentIntentId];
   requireValue(intent?.kind === 'PAYMENT' && intent.id === paymentIntentId && intent.intentId === paymentIntentId && intent.status === 'PREPARED', 'PAYMENT_INTENT_REQUIRED', 'Prepare the exact payment intent in this transaction before dispatch.');
@@ -155,13 +160,14 @@ export function settleReservation(tx, { reservationId, paymentIntentId, orderId 
 
 export function releaseReservation(tx, { reservationId, reason, buyerId, paymentIntentId }) {
   const { reservation, listing } = assertReservation(tx, reservationId);
-  requireValue(['LEASE_EXPIRED', 'BUYER_CANCELED', 'PAYMENT_CANCELED'].includes(reason), 'RELEASE_REASON_INVALID', 'A supported release reason is required.');
+  requireValue(['LEASE_EXPIRED', 'BUYER_CANCELED', 'PAYMENT_CANCELED', 'UNDISPATCHED_CANCELED'].includes(reason), 'RELEASE_REASON_INVALID', 'A supported release reason is required.');
   if (reservation.status === 'RELEASED') return clone(reservation);
   requireValue(['HELD', 'PAYMENT_PENDING'].includes(reservation.status), 'RESERVATION_UNAVAILABLE', 'A sold reservation cannot be released.');
   requireValue(listing.status === 'RESERVED' && listing.activeReservationId === reservationId, 'RESERVATION_UNAVAILABLE', 'Reservation does not own this card.');
   if (reservation.paymentIntentId !== null) {
     const intent = assertPaymentIntent(tx, reservation, paymentIntentId);
-    requireValue(reason === 'PAYMENT_CANCELED' && intent.status === 'CANCELED' && intent.terminalUnpaid === true && intent.confirmed === false && hasReconciledObject(intent, tx.now), 'PAYMENT_RECONCILIATION_REQUIRED', 'Unknown, pending or failed payment outcomes retain the card until exact terminal-unpaid reconciliation.');
+    if (reason === 'UNDISPATCHED_CANCELED') requireValue(buyerId === reservation.buyerId && isLocallyVoidedPayment(tx,intent), 'PAYMENT_LOCAL_VOID_REFUSED', 'Only the exact owned, locally voided and never-dispatched intent may release this checkout.');
+    else requireValue(reason === 'PAYMENT_CANCELED' && intent.status === 'CANCELED' && intent.terminalUnpaid === true && intent.confirmed === false && hasReconciledObject(intent, tx.now), 'PAYMENT_RECONCILIATION_REQUIRED', 'Unknown, pending or failed payment outcomes retain the card until exact terminal-unpaid reconciliation.');
   } else if (reason === 'LEASE_EXPIRED') {
     requireValue(Date.parse(reservation.expiresAt) <= tx.now, 'RESERVATION_NOT_EXPIRED', 'The reservation lease has not expired.');
   } else {
@@ -182,8 +188,8 @@ export function cancelReservation(tx, { requestId, reservationId, buyerId }) {
   requireValue(reservation?.buyerId === buyerId, 'RELEASE_UNAUTHORIZED');
   const key = `reservation-cancel:${requestId}`, requestHash = hash({ reservationId, buyerId }), prior = tx.state.receipts[key];
   if (prior) { requireValue(prior.requestHash === requestHash, 'IDEMPOTENCY_CONFLICT'); return clone(prior.result); }
-  requireValue(reservation.paymentIntentId === null, 'PAYMENT_RECONCILIATION_REQUIRED', 'A saved payment must be reconciled; cancellation cannot release an uncertain payment.');
-  const result = releaseReservation(tx, { reservationId, buyerId, reason: 'BUYER_CANCELED' });
+  if (reservation.paymentIntentId !== null) requireValue(isLocallyVoidedPayment(tx,tx.state.intents[reservation.paymentIntentId]), 'PAYMENT_RECONCILIATION_REQUIRED', 'A saved payment must be reconciled; cancellation cannot release an uncertain payment.');
+  const result = releaseReservation(tx, { reservationId, buyerId, reason: reservation.paymentIntentId === null ? 'BUYER_CANCELED' : 'UNDISPATCHED_CANCELED', ...(reservation.paymentIntentId !== null ? {paymentIntentId:reservation.paymentIntentId} : {}) });
   tx.state.receipts[key] = { requestHash, result: clone(result) };
   return result;
 }

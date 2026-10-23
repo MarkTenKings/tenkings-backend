@@ -40,7 +40,7 @@ export const STRIPE_PRODUCTION_APPROVAL_REFS = Object.freeze(['activationRef', '
 const authorizations = new WeakSet();
 // This is a server-composition brand, not verification that references are approved.
 // The runtime must verify each referenced approval before constructing this value.
-export function createStripeAuthorization({ environment, platformAccountId, allowedConnectedAccountIds, apiVersion, allowedReturnOrigins = [], approvalRefs } = {}) {
+export function createStripeAuthorization({ environment, platformAccountId, allowedConnectedAccountIds, apiVersion, allowedReturnOrigins = [], approvalRefs, instantPayoutPolicyHashes = [], instantPayoutQualificationRef = null } = {}) {
   check(['PROVIDER_SANDBOX', 'PRODUCTION'].includes(environment), 'STRIPE_ENVIRONMENT_REQUIRED');
   check(/^acct_[A-Za-z0-9]+$/.test(platformAccountId ?? ''), 'STRIPE_PLATFORM_REQUIRED');
   check(Array.isArray(allowedConnectedAccountIds) && allowedConnectedAccountIds.length > 0 && allowedConnectedAccountIds.every(account => /^acct_[A-Za-z0-9]+$/.test(account) && account !== platformAccountId) && new Set(allowedConnectedAccountIds).size === allowedConnectedAccountIds.length, 'STRIPE_CONNECTED_SCOPE_REQUIRED');
@@ -50,7 +50,9 @@ export function createStripeAuthorization({ environment, platformAccountId, allo
     check(approvalRefs && Object.keys(approvalRefs).length === STRIPE_PRODUCTION_APPROVAL_REFS.length, 'STRIPE_PRODUCTION_APPROVALS_REQUIRED');
     for (const key of STRIPE_PRODUCTION_APPROVAL_REFS) identifier(approvalRefs[key]);
   }
-  const result = Object.freeze({ environment, platformAccountId, allowedConnectedAccountIds: Object.freeze([...allowedConnectedAccountIds]), apiVersion, allowedReturnOrigins: Object.freeze([...allowedReturnOrigins]), approvalRefs: Object.freeze({ ...(approvalRefs ?? {}) }) });
+  check(Array.isArray(instantPayoutPolicyHashes) && instantPayoutPolicyHashes.length <= 20 && instantPayoutPolicyHashes.every(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)) && new Set(instantPayoutPolicyHashes).size === instantPayoutPolicyHashes.length, 'STRIPE_INSTANT_AUTHORIZATION_REQUIRED');
+  if (instantPayoutPolicyHashes.length) identifier(instantPayoutQualificationRef);
+  const result = Object.freeze({ instantPayoutPolicyHashes: Object.freeze([...instantPayoutPolicyHashes]), instantPayoutQualificationRef, environment, platformAccountId, allowedConnectedAccountIds: Object.freeze([...allowedConnectedAccountIds]), apiVersion, allowedReturnOrigins: Object.freeze([...allowedReturnOrigins]), approvalRefs: Object.freeze({ ...(approvalRefs ?? {}) }) });
   authorizations.add(result); return result;
 }
 // Never reads env, retries writes, selects an account, or enables live execution by default.
@@ -99,7 +101,7 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
     if (!value) return null;
     const key = id(value);
     const raw = await request('GET', `/v1/balance_transactions/${key}`, accountId); objectCheck(raw, 'balance_transaction', key);
-    return { ...bt(raw), rawHash: rawHashes.get(raw) };
+    return { ...bt(raw), ...(Array.isArray(raw.fee_details) ? { feeDetails: raw.fee_details.map(detail => ({ type: detail.type, applicationId: detail.application ?? null, currency: String(detail.currency).toUpperCase(), amountCents: cents(detail.amount) })) } : {}), rawHash: rawHashes.get(raw) };
   }
   function pathFor(intent, objectId) {
     if (intent.kind === 'REVERSAL') return `/v1/transfers/${id(intent.parentObjectId)}/reversals${objectId ? `/${id(objectId)}` : ''}`;
@@ -132,7 +134,7 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
     acceptsAccount: accountId => allowed.has(accountId),
     async getIdentity() {
       await scope();
-      return { provider: 'stripe', environment, livemode: live, platformAccountId, allowedConnectedAccountIds: [...allowed].filter(accountId => accountId !== platformAccountId), apiVersion, paymentCollectionConfigured: validPublishableKey(), onboardingConfigured: allowedReturnOrigins.length > 0 };
+      return { provider: 'stripe', environment, livemode: live, platformAccountId, allowedConnectedAccountIds: [...allowed].filter(accountId => accountId !== platformAccountId), apiVersion, instantPayoutPolicyHashes: [...authorization.instantPayoutPolicyHashes], paymentCollectionConfigured: validPublishableKey(), onboardingConfigured: allowedReturnOrigins.length > 0 };
     },
     async getPaymentCollection(intent) {
       intentScope(intent); check(intent.kind === 'PAYMENT' && intent.accountId === platformAccountId && validPublishableKey(), 'STRIPE_PAYMENT_COLLECTION_NOT_CONFIGURED');
@@ -176,6 +178,22 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
       return { accountId, livemode: live, observedAt: clock(), transfersActive, payoutsEnabled, manualPayouts, requirementsSatisfied, requirements: { currentlyDue: account.requirements?.currently_due ?? [], pastDue: account.requirements?.past_due ?? [], pendingVerification: account.requirements?.pending_verification ?? [], disabledReason: account.requirements?.disabled_reason ?? null }, bankAccounts, payoutEligibleExternalAccountIds,
         // Historical compatibility name: same payout eligibility, NOT identity verification.
         verifiedExternalAccountIds: [...payoutEligibleExternalAccountIds] };
+    },
+    async getInstantPayoutEligibility(accountId, { externalAccountId }) {
+      await scope(); check(accountId !== platformAccountId && allowed.has(accountId), 'STRIPE_ACCOUNT_SCOPE_MISMATCH');
+      const account = await request('GET', `/v1/accounts/${id(accountId)}`, platformAccountId); objectCheck(account, 'account', accountId);
+      const bank = await request('GET', `/v1/accounts/${id(accountId)}/external_accounts/${id(externalAccountId)}`, platformAccountId); objectCheck(bank, 'bank_account', externalAccountId);
+      const balance = await request('GET', '/v1/balance?expand[]=instant_available.net_available', accountId);
+      check(balance.object === 'balance' && balance.livemode === live && Array.isArray(balance.available) && Array.isArray(balance.instant_available), 'STRIPE_BALANCE_MISMATCH');
+      const available = balance.available.filter(row => row.currency === 'usd'), instant = balance.instant_available.filter(row => row.currency === 'usd');
+      check(available.length === 1 && instant.length <= 1, 'STRIPE_BALANCE_MISMATCH');
+      const bucket = instant[0]; if (bucket) check(Array.isArray(bucket.net_available), 'STRIPE_INSTANT_NET_BALANCE_REQUIRED');
+      const net = (bucket?.net_available ?? []).filter(row => row.destination === externalAccountId); check(net.length <= 1, 'STRIPE_BALANCE_MISMATCH');
+      const requirementsSatisfied = account.requirements?.disabled_reason === null && Array.isArray(account.requirements?.currently_due) && Array.isArray(account.requirements?.past_due) && Array.isArray(account.requirements?.errors) && noDueRequirements(account.requirements);
+      const manualPayouts = account.settings?.payouts?.schedule?.interval === 'manual';
+      const fullServiceAgreement = account.tos_acceptance?.service_agreement === 'full';
+      const instantSupported = bank.account === accountId && bank.deleted !== true && bank.status === 'new' && bank.currency === 'usd' && Array.isArray(bank.available_payout_methods) && bank.available_payout_methods.includes('instant') && noDueRequirements(bank.requirements) && noDueRequirements(bank.future_requirements) && account.capabilities?.transfers === 'active' && account.payouts_enabled === true && requirementsSatisfied && manualPayouts && fullServiceAgreement && net.length === 1;
+      return { provider: 'stripe', platformAccountId, accountId, livemode: live, currency: 'USD', externalAccountId, type: 'bank_account', availableCents: cents(available[0].amount), instantAvailableCents: cents(bucket?.amount ?? 0), instantNetAvailableCents: cents(net[0]?.amount ?? 0), instantSupported, fullServiceAgreement, requirementsSatisfied, manualPayouts, observedAt: clock(), rawHashes: { account: rawHashes.get(account), destination: rawHashes.get(bank), balance: rawHashes.get(balance) } };
     },
     async getBalance(accountId) {
       await scope(); const balance = await request('GET', '/v1/balance', accountId);
@@ -260,7 +278,7 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
       if (intent.kind === 'PAYMENT') { parameters.payment_method_types = ['card']; parameters.transfer_group = intent.orderId; parameters.capture_method = 'automatic'; parameters.confirmation_method = 'automatic'; }
       if (intent.kind === 'TRANSFER') { parameters.destination = intent.connectedAccountId; parameters.source_transaction = intent.parentObjectId; parameters.transfer_group = intent.orderId; }
       if (intent.kind === 'REFUND') parameters.charge = intent.parentObjectId;
-      if (intent.kind === 'PAYOUT') { parameters.destination = intent.externalAccountId; parameters.method = 'standard'; }
+      if (intent.kind === 'PAYOUT') { parameters.destination = intent.externalAccountId; parameters.method = intent.method ?? 'standard'; if (parameters.method === 'instant') check(authorization.instantPayoutPolicyHashes.includes(intent.instantQuote?.policyHash), 'STRIPE_INSTANT_AUTHORIZATION_REQUIRED'); else check(parameters.method === 'standard', 'STRIPE_PAYOUT_MISMATCH'); }
       const result = await request('POST', pathFor(intent), intent.accountId, parameters, intent.idempotencyKey);
       check(result.object === OBJECTS[intent.kind], 'STRIPE_OBJECT_MISMATCH');
       // Do not expose client_secret or adopt the create response as settlement.
@@ -308,9 +326,20 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
         evidence.destinationPaymentRefundRawHash = rawHashes.get(refund);
         evidence.connectedBalanceTransaction = await getTransaction(refund.balance_transaction, intent.connectedAccountId);
       } else if (intent.kind === 'PAYOUT') {
-        check(id(object.destination) === intent.externalAccountId && object.automatic === false && object.method === 'standard' && object.type === 'bank_account', 'STRIPE_PAYOUT_MISMATCH');
+        check(id(object.destination) === intent.externalAccountId && object.automatic === false && object.method === (intent.method ?? 'standard') && object.type === 'bank_account', 'STRIPE_PAYOUT_MISMATCH');
+        evidence.method = object.method; evidence.type = object.type;
         evidence.externalAccountId = id(object.destination); evidence.balanceTransaction = await getTransaction(object.balance_transaction, intent.accountId);
         evidence.failureBalanceTransaction = await getTransaction(object.failure_balance_transaction, intent.accountId);
+        if (intent.method === 'instant') {
+          const expectedFee = intent.instantQuote.sellerFeeCents;
+          check((object.application_fee_amount ?? 0) === expectedFee, 'STRIPE_INSTANT_FEE_MISMATCH');
+          if (expectedFee === 0) { check(object.application_fee == null, 'STRIPE_INSTANT_FEE_MISMATCH'); evidence.applicationFee = null; }
+          else {
+            const feeId = id(object.application_fee), fee = await request('GET', `/v1/application_fees/${feeId}`, platformAccountId); objectCheck(fee, 'application_fee', feeId);
+            check(fee.livemode === live && id(fee.account) === intent.connectedAccountId && id(fee.application) === intent.instantPolicy.applicationId && fee.currency === 'usd' && fee.amount === expectedFee && fee.fee_source?.type === 'payout' && id(fee.fee_source.payout) === object.id && fee.amount_refunded === 0 && fee.refunded === false, 'STRIPE_INSTANT_FEE_MISMATCH');
+            evidence.applicationFee = { objectId: feeId, platformAccountId, accountId: intent.connectedAccountId, livemode: live, currency: 'USD', applicationId: id(fee.application), payoutId: object.id, amountCents: cents(fee.amount), refundedCents: 0, balanceTransaction: await getTransaction(fee.balance_transaction, platformAccountId), rawHash: rawHashes.get(fee) };
+          }
+        }
       }
       // Attach the observation time after all dependent reads have completed.
       evidence.observedAt = clock();

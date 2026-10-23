@@ -45,13 +45,27 @@ export function verifyRawWebhook({ rawBody, signature, secret, now = Date.now(),
   check(valid, 'INVALID_WEBHOOK_SIGNATURE');
   let event; try { event = JSON.parse(rawBody.toString('utf8')); } catch { check(false, 'INVALID_WEBHOOK_JSON'); }
   check(typeof expectedLivemode === 'boolean' && event && event.object === 'event' && event.livemode === expectedLivemode && typeof event.type === 'string' && event.data?.object, 'INVALID_WEBHOOK_EVENT');
-  identifier(event.id);
+  identifier(event.id); check(/^evt_[A-Za-z0-9_]+$/.test(event.id), 'INVALID_WEBHOOK_EVENT');
   return { event, rawHash: createHash('sha256').update(rawBody).digest('hex') };
 }
 const EVENT_KINDS = { payment_intent: 'PAYMENT', refund: 'REFUND', transfer: 'TRANSFER', transfer_reversal: 'REVERSAL', payout: 'PAYOUT' };
 export async function handleFinanceWebhook({ store, provider, rawBody, signature, secret, platformAccountId, now = Date.now(), enabled = false, resolveDisputePolicy, expectedLivemode = false }) {
   check(enabled === true, 'FINANCE_WEBHOOK_DISABLED');
   const { event, rawHash } = verifyRawWebhook({ rawBody, signature, secret, now, expectedLivemode });
+  return reconcileVerifiedEvent({ store, provider, event, rawHash, platformAccountId, resolveDisputePolicy, expectedLivemode });
+}
+
+// Only a durable receipt produced by the verified ingress is accepted here.
+// Delayed processing uses the retained verification, not an expired signature.
+export async function reconcileRetainedFinanceWebhook({ store, provider, receiptId, platformAccountId, configurationHash, retainedConfigurationHashes = [], allowedConnectedAccountIds, expectedLivemode, resolveDisputePolicy, maxRoutingItems = 100 }) {
+  check(Number.isSafeInteger(maxRoutingItems) && maxRoutingItems >= 1 && maxRoutingItems <= 500 && Array.isArray(retainedConfigurationHashes) && retainedConfigurationHashes.length <= 4 && retainedConfigurationHashes.every(value => /^[a-f0-9]{64}$/.test(value)), 'WEBHOOK_WORKER_BOUNDS_REQUIRED');
+  const row = await store.read(state => state.financeWebhookIngress?.[receiptId]);
+  check(row && row.receiptId === receiptId && row.platformAccountId === platformAccountId && [configurationHash,...retainedConfigurationHashes].includes(row.configurationHash) && row.expectedLivemode === expectedLivemode && row.envelopeHash === digest(row.envelope), 'WEBHOOK_RECEIPT_BINDING_MISMATCH');
+  check(row.accountId === platformAccountId || allowedConnectedAccountIds.includes(row.accountId), 'WEBHOOK_SCOPE_MISMATCH');
+  check(row.status === 'PROCESSING' && row.envelope.id === receiptId && (row.envelope.account ?? platformAccountId) === row.accountId && row.envelope.livemode === expectedLivemode, 'WEBHOOK_RECEIPT_BINDING_MISMATCH');
+  return reconcileVerifiedEvent({ store, provider, event: row.envelope, rawHash: row.rawHash, platformAccountId, resolveDisputePolicy, expectedLivemode, maxRoutingItems });
+}
+async function reconcileVerifiedEvent({ store, provider, event, rawHash, platformAccountId, resolveDisputePolicy, expectedLivemode, maxRoutingItems = 2000 }) {
   identifier(platformAccountId);
   const object = event.data.object, accountId = event.account ?? platformAccountId;
   identifier(object.id ?? (event.type === 'balance.available' ? accountId : null));
@@ -73,7 +87,7 @@ export async function handleFinanceWebhook({ store, provider, rawBody, signature
   const related = async parent => {
     if (!provider.listRelatedObjects) return exception('PROVIDER_RELATED_RECONCILIATION_UNAVAILABLE', parent.orderId);
     const listed = await provider.listRelatedObjects(parent);
-    check(listed.complete === true, 'RELATED_PROVIDER_OBJECTS_INCOMPLETE');
+    check(listed.complete === true && Array.isArray(listed.objects) && listed.objects.length <= maxRoutingItems, 'RELATED_PROVIDER_OBJECTS_INCOMPLETE');
     const results = [];
     for (const item of listed.objects) {
       const candidate = await store.read(state => state.intents[item.intentId]);
@@ -116,6 +130,7 @@ export async function handleFinanceWebhook({ store, provider, rawBody, signature
     } else if (event.type === 'account.application.deauthorized') result = await exception('CONNECTED_ACCOUNT_DEAUTHORIZED');
     else if (event.type === 'balance.available') {
       const candidates = intents.filter(intent => intent.kind === 'TRANSFER' && intent.connectedAccountId === accountId && intent.confirmed && !intent.available);
+      check(candidates.length <= maxRoutingItems, 'WEBHOOK_ROUTING_LIMIT');
       for (const candidate of candidates) await reconcileFinanceIntent({ store, provider, intentId: candidate.id });
       result = { status: 'RECONCILED', reconciledCount: candidates.length, accountReconciliationRequired: true };
     } else result = await exception('UNSUPPORTED_FINANCE_WEBHOOK', null, { type: event.type });

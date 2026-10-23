@@ -4,7 +4,7 @@ import { createMarketplaceHttpHandler } from '../src/http.mjs';
 import { openLocalStore } from '../src/store.mjs';
 import { createLocalFixture, actors } from '../scripts/local-fixture.mjs';
 import { marketplaceOperations, projectMarketplaceWorkspace, staffQueueCsv } from '../src/projections.mjs';
-import { makeSyntheticEligibility } from './listing-fixtures.mjs';
+import { makeSyntheticEligibility, makeSyntheticPolicy } from './listing-fixtures.mjs';
 import { createMarketplacePilot } from '../src/service.mjs';
 
 const origin='https://marketplace.example.test', token='t'.repeat(64);
@@ -46,7 +46,13 @@ test('buyer workspace includes only their retained checkout and conceals seller 
     await service.pay(actors.buyer,{reservationId:reservation.id});
     const response=await request('/workspace'); assert.equal(response.status,200);
     const visible=response.body; assert.equal(visible.reservations.length,1); assert.equal(visible.listings.length,1);
-    assert.equal(visible.listings[0].sellerNetCents,undefined); assert.equal(visible.listings[0].policy,undefined);
+    const publicListing=visible.listings[0];
+    const publicPolicyKeys=['id','version','feeDisclosure','fulfillmentRoute','protectionTerms','returnsTerms','transferReleaseTerms','payoutTerms','reservationTtlMs'];
+    assert.deepEqual(Object.keys(publicListing.policy).sort(),[...publicPolicyKeys].sort());
+    assert.deepEqual(publicListing.policy,Object.fromEntries(publicPolicyKeys.map(key=>[key,listing.policy[key]])));
+    for(const key of ['sellerId','connectedAccountId','feeCents','sellerNetCents','feeQuote','authority','activeReservationId']) assert.equal(Object.hasOwn(publicListing,key),false,key);
+    for(const key of ['approvalRef','feeCents','feeSchedule','fulfillmentPolicy','feeQuote','receiptHash']) assert.equal(Object.hasOwn(publicListing.policy,key),false,key);
+    assert.equal(JSON.stringify(visible).includes(actors.alternateBuyer.id),false);
     assert.equal(visible.balance,null); assert.equal(visible.sellerEligibility,null); assert.equal(visible.intents[0].objectId,undefined);
     assert.equal(visible.intents[0].policy,undefined); assert.deepEqual(visible.consent,{});
     state.actor=actors.alternateBuyer; const other=(await request('/workspace')).body;
@@ -120,10 +126,14 @@ test('POST CSRF is verified before entering the opaque R1 dispatch boundary',asy
 test('historical buyer workspace cannot expose another reservation or adapter-private card metadata',()=>{
   const card=makeSyntheticEligibility().approvedCard;
   card.privateLocation='secret-vault';card.identity.privateAccount='secret-account';card.media.front.storageSecret='secret-storage';
-  const state={listings:{demo_l:{id:'demo_l',cardId:'demo_card',status:'RESERVED',activeReservationId:'other_buyers_reservation',approvedCard:card}},reservations:{demo_old:{id:'demo_old',buyerId:actors.buyer.id,listingId:'demo_l',status:'RELEASED'},other:{id:'other_buyers_reservation',buyerId:actors.alternateBuyer.id,listingId:'demo_l',status:'HELD'}},orders:{},intents:{},fulfillment:{},consent:{},events:[]};
+  const policy=makeSyntheticPolicy({approvalRef:'secret-policy-approval',feeSchedule:{approvalRef:'secret-schedule-approval'},fulfillmentPolicy:{approvalRef:'secret-fulfillment-approval'}});
+  const feeQuote={id:'secret-fee-receipt',sellerId:'secret-seller',receiptHash:'secret-receipt-hash'};
+  const state={listings:{demo_l:{id:'demo_l',cardId:'demo_card',status:'RESERVED',activeReservationId:'other_buyers_reservation',approvedCard:card,policy,feeQuote}},reservations:{demo_old:{id:'demo_old',buyerId:actors.buyer.id,listingId:'demo_l',status:'RELEASED'},other:{id:'other_buyers_reservation',buyerId:actors.alternateBuyer.id,listingId:'demo_l',status:'HELD'}},orders:{},intents:{},fulfillment:{},consent:{},events:[]};
   const projection=projectMarketplaceWorkspace(state,actors.buyer,{now:Date.now(),environment:'SYNTHETIC_LOCAL'});
   const json=JSON.stringify(projection);
-  for(const privateValue of ['other_buyers_reservation','secret-vault','secret-account','secret-storage']) assert.equal(json.includes(privateValue),false);
+  for(const privateValue of [actors.alternateBuyer.id,'other_buyers_reservation','secret-vault','secret-account','secret-storage','secret-policy-approval','secret-schedule-approval','secret-fulfillment-approval',...Object.values(feeQuote)]) assert.equal(json.includes(privateValue),false,privateValue);
   assert.equal(projection.listings[0].approvedCard.certificateId,'SYNTHETIC-001');
+  assert.equal(projection.listings[0].policy.returnsTerms,policy.returnsTerms);
+  assert.equal(state.listings.demo_l.feeQuote,feeQuote);
   assert.equal(card.privateLocation,'secret-vault');
 });

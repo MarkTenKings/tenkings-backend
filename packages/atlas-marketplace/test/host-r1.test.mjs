@@ -8,6 +8,7 @@ import {createAuthorityContext} from '../src/authority-context.mjs';
 import {emptyMarketplaceState,POSTGRES_STORE_FORMAT} from '../src/store-postgres.mjs';
 import {hash} from '../src/contract.mjs';
 import {createHostedFinance} from '../src/host-finance.mjs';
+import {createR1MarketplaceRouteComposition} from '../src/routes-r1.mjs';
 
 // Resolve one existing dependency-free workspace export in this isolated
 // checkout. No module source is substituted, installed, or written to R1.
@@ -104,4 +105,24 @@ test('R1 and finance hosts share branded original dependencies; cloned, plain an
     assert.equal(first.f.connects,0);assert.equal(first.f.providerCalls,0);assert.equal(other.f.providerCalls,0);
     assert.equal(JSON.stringify(first.finance.binding).includes('whsec_'),false);assert.equal(first.finance.binding.webhookBinding.endpoints.length,2);
   }finally{await first.host.close();await other.finance.stop();await other.host.close();}
+});
+
+test('actual route composition is cold by default and keeps original R1 requests and unrelated handlers intact',async()=>{
+  let fallback=0;const marker={};const existing=(req,res)=>{fallback++;assert.equal(req.marker,marker);return 'original';};
+  const cold=createR1MarketplaceRouteComposition({host:new Proxy({},{get(){assert.fail('cold composition read host configuration');}})});
+  assert.equal(await cold.wrap('customer',existing)({url:'/account/marketplace/api/workspace',marker},{}),'original');await cold.close();
+  const f=await fixture(),composition=createR1MarketplaceRouteComposition({enabled:true,host:f.options});
+  assert.equal(f.connects,0);assert.equal(f.providerCalls,0);
+  assert.equal(await composition.wrap('staff',existing)({url:'/admin/grading',marker},{}),'original');
+  const server=createServer(composition.wrap('customer',(req,res)=>{res.writeHead(404);res.end('{}');}));
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try {
+    const result=await fetchNode(server,'/account/marketplace/api/workspace',{cookie:f.cookie,'x-fixture-original-proof':'unchanged'});
+    assert.equal(result.status,200);assert.equal(result.body.scope.role,'BUYER');
+    assert.equal(f.ingress[0].url,'/account/marketplace/api/workspace');assert.equal(f.providerCalls,0);
+    assert.equal(composition.status().initialized,true);assert.equal(composition.status().financeConfigured,false);
+    f.ready=false;assert.equal((await fetchNode(server,'/account/marketplace/api/workspace',{cookie:f.cookie,'x-fixture-original-proof':'unchanged'})).status,503);
+    assert.equal(await composition.wrap('staff',existing)({url:'/admin/grading',marker},{}),'original');
+  }finally{await composition.close();await new Promise(resolve=>server.close(resolve));}
+  assert.equal(fallback,3);
 });

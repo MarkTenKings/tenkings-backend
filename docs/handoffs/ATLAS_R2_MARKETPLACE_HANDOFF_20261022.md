@@ -1,4 +1,22 @@
-# ATLAS R2 parallel lead handoff — October 22 host integration candidate
+# ATLAS R2 parallel lead handoff — October 22 remaining-engineering candidate
+
+## Latest additive increment after cef23852
+
+Built the remaining independent fee/checkout, optional instant payout, webhook durability, operator review and cold route composition work with the same two Astra/xHigh specialists. Exact new source commit/tree are in the external `R2_IMPLEMENTATION_HANDOFF.md` and `continuation/r2-completion-engineering-qualification.json`. No runtime registration, shared migration, deployment or new provider operation occurred.
+
+- Explicit approved fee schedule and immutable seller fee/net preview; retained per-listing public terms and exact revision binding. No default8% or independently charged processing allocation.
+- Qualified destination/shipping/tax composer with bounded ports, safe browser projection, freshness/revocation checks and exact checkout totals. Actual provider adapters and policy remain required.
+- Optional instant quote/confirm, exact destination net availability and separately authorized dispatch, seller fee revenue/provider-cost accrual, original-only recovery and reviewed actual bill settlement. Actual instant capability/layout remains unqualified; retained standard sandbox success is distinct.
+- Atomic cancellation only before financial dispatch; exact internal withdrawal hold compensation and no fabricated provider-unpaid evidence. Dispatched/unknown originals remain reconciliation-only.
+- Explicit verified durable webhook retention before ACK, restart/lease/retry/rotation-bound worker and quarantine/backpressure. Scoped original GET and opaque settlement only; hosted transport/latency/timeout acceptance remains external.
+- Versioned staff incident acknowledge/resolve with evidence/CAS and generation-specific notification identity; uncertain prior sends remain lookup-only. Review never clears financial exceptions or releases money. Measured production-only cohorts and explicit unavailable cost/visit/labor metrics.
+- Cold fixed public/customer/staff route wrappers around the original raw Node request with unchanged fallback identities, lazy canonical host, bounded requests and owned close/drain. No Next route, gateway, pool, timer or shared configuration registered.
+
+**164/164 tests across32 affected files pass**; zero failures/cancellations/skips. Exact command/TAP retained. Initial162/163 result retained separately: obsolete public-policy absence assertion was replaced with exact closed fields plus private/cross-buyer leak checks. Actual Chrome desktop1594px and visually inspected measured320px CSS frames cover the new controls; no physical-phone/live checkout claim. Owned preview processes/tab are closed. All35 prior host/provider artifacts and7 canonical source pins verified; unchanged SQL/storage/auth evidence reused without repeated provider/PG runs. Counts from earlier checkpoints below overlap and are historical.
+
+R1's selective local optional-comp candidate is `8070c5f22a843b6d9a8ba8347f5235754cc1daa5`, parent accepted live `a537f922`; it is not itself asserted deployed. Apply additive R2 work only against the accepted R1 successor and reconcile documentation, never merge the old foundation wholesale. Grading, slab/report/photos/labels and Ten Kings remain untouched. Claims/history remain disabled and genuine title/custody authority unavailable. Master ID27 stays open.
+
+Review [completion and exact APIs](../atlas/audits/2026-10-22/r2-completion-engineering.md), [fee/checkout evidence](../atlas/audits/2026-10-22/r2-fee-checkout-policy.md), [durable ingress/instant packet](../atlas/audits/2026-10-22/r2-durable-ingress-instant-payout.md) and [concrete unapproved commercial recommendations](../atlas/audits/2026-10-22/r2-policy-recommendations.md). The remaining activation inputs are qualified actual authority, approved policy, real shipping/tax/physical evidence ports, hosted sandbox/dedicated gateway-storage/scheduler-sender/liveness acceptance, actual instant qualification only if selected, and a joined authenticated physical-card pilot. R1 owns production integration/release.
 
 ## Source and ownership
 

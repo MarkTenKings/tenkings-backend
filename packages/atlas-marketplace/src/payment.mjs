@@ -1,15 +1,19 @@
 import { financeAssert as check, copy } from './ledger.mjs';
+import { requireOperationalReady } from './finance-scheduler.mjs';
 import { claimDispatch, markFinanceUnknown, bindFinanceObject, reconcileFinance } from './finance.mjs';
 
 // These are the only wrappers that perform provider I/O. The durable claim commits before create.
 // After ANY create exception, even a validation-looking response, this intent is reconcile-only.
-export async function executeFinanceIntent({ store, provider, intentId, enabled = false }) {
+export async function executeFinanceIntent({ store, provider, intentId, enabled = false, assertInstantPayoutReady }) {
   check(enabled === true && provider && typeof provider.create === 'function', 'FINANCE_DISABLED');
   const prepared = await store.read(state => copy(state.intents[intentId])); check(prepared, 'INTENT_NOT_FOUND');
   check(prepared.status === 'PREPARED', 'RECONCILIATION_REQUIRED');
+  const instantReady = () => { if (prepared.method === 'instant') { check(typeof assertInstantPayoutReady === 'function', 'INSTANT_PAYOUT_UNQUALIFIED'); requireOperationalReady(assertInstantPayoutReady, { policyHash: prepared.instantQuote.policyHash, environment: prepared.instantPolicy.environment, platformAccountId: prepared.platformAccountId }); } };
+  instantReady();
+  const instant = prepared.method === 'instant' ? await provider.getInstantPayoutEligibility(prepared.connectedAccountId, { externalAccountId: prepared.externalAccountId }) : null;
   const account = ['TRANSFER', 'REVERSAL', 'PAYOUT'].includes(prepared.kind) ? await provider.getAccount(prepared.connectedAccountId) : null;
   const balance = prepared.kind === 'PAYOUT' ? await provider.getBalance(prepared.connectedAccountId) : null;
-  const intent = await store.transaction(tx => claimDispatch(tx, intentId, account, balance));
+  const intent = await store.transaction(tx => { instantReady(); return claimDispatch(tx, intentId, account, balance, instant); });
   try {
     const result = await provider.create(intent);
     check(result && typeof result.objectId === 'string', 'PROVIDER_RESULT_UNKNOWN');

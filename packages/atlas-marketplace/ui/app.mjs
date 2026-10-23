@@ -9,13 +9,16 @@ if (!/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(apiPath) || !/^\/[A-Za-z0-9_
 const statePath = localDemo ? '/api/demo' : apiPath+'/workspace';
 function endpointPath(path) { return localDemo ? path : apiPath + (path === '/api/reconcile' ? '/payments/reconcile' : path.slice(4)); }
 const authenticatedFields = {
-  '/api/consent': ['requestId','cardId','choice','evidenceRef'], '/api/listings': ['requestId','cardId','askingPriceCents'],
-  '/api/listings/revise': ['requestId','listingId','expectedVersion','expectedBindingHash','askingPriceCents'], '/api/listings/withdraw': ['requestId','listingId','expectedVersion','expectedBindingHash'],
+  '/api/consent': ['requestId','cardId','choice','evidenceRef'], '/api/listings': ['requestId','cardId','askingPriceCents','feeQuoteId'],
+  '/api/listings/revise': ['requestId','listingId','expectedVersion','expectedBindingHash','askingPriceCents','feeQuoteId'], '/api/listings/withdraw': ['requestId','listingId','expectedVersion','expectedBindingHash'],
   '/api/reservations': ['requestId','listingId','listingVersion','listingHash','quoteId'], '/api/reservations/cancel': ['requestId','reservationId'],
   '/api/payments': ['reservationId'], '/api/reconcile': ['reservationId'], '/api/fulfillment': ['requestId','orderId','action','evidence'],
-  '/api/transfers/reconcile': ['orderId'], '/api/withdrawals': ['requestId','amountCents','externalAccountId'], '/api/withdrawals/reconcile': ['intentId'],
+  '/api/transfers/reconcile': ['orderId'], '/api/withdrawals': ['requestId','amountCents','externalAccountId','method','quoteId'], '/api/withdrawals/reconcile': ['intentId'],
+  '/api/withdrawals/cancel': ['intentId'],
   '/api/cases': ['requestId','caseId','orderId','kind','evidenceRef'], '/api/cases/refund': ['orderId','caseId','amountCents','allocations','reviewRef'],
   '/api/cases/refund/reconcile': ['orderId','caseId'], '/api/cases/resolve': ['requestId','orderId','caseId','outcome','evidence'],
+  '/api/staff/incidents': ['requestId','alertId','expectedVersion','action','reviewRef','evidenceHash'],
+  '/api/staff/instant-fees/settle': ['settlementId','intentIds','evidenceRef','reviewRef'],
 };
 let data = null, paymentSurface = null;
 const paymentReturnKey = 'atlas.marketplace.payment-return:'+mountPath;
@@ -42,7 +45,7 @@ function scheduleExpiry() {
   clearTimeout(expiryTimer);
   const reservations = Array.isArray(data?.reservations) ? data.reservations : Object.values(data?.reservations ?? {});
   const now = serverNow + Math.max(0, Date.now() - readAt);
-  const next = [ui.quote?.expiresAt, ...reservations.filter(item => item.status === 'HELD' && !item.paymentIntentId).map(item => item.expiresAt)].map(Date.parse).filter(time => time > now).sort((a, b) => a - b)[0];
+  const next = [ui.quote?.expiresAt, ui.feeQuote?.expiresAt, ui.instantQuote?.expiresAt, ...reservations.filter(item => item.status === 'HELD' && !item.paymentIntentId).map(item => item.expiresAt)].map(Date.parse).filter(time => time > now).sort((a, b) => a - b)[0];
   if (next) {
     expiryTimer = setTimeout(() => { ui.notice = 'A quote or unpaid reservation reached its deadline. Refresh saved state and review a current total before payment.'; render(); scheduleExpiry(); }, Math.min(2147483647, next - now + 1));
     expiryTimer.unref?.();
@@ -56,6 +59,7 @@ async function readState() {
   data.runtime = localDemo ? 'LOCAL_DEMO' : 'AUTHENTICATED';
   readAt = Date.now(); serverNow = Number.isSafeInteger(data.now) ? data.now : readAt;
   if (ui.quote && !(Array.isArray(data.listings) ? data.listings : Object.values(data.listings ?? {})).some(item => item.status === 'ACTIVE' && item.bindingHash === ui.quote.listingHash)) ui.quote = null;
+  if (data.quoteDestinationRequired && !data.quoteDestinations?.some(item => item.id === ui.destinationId && (!ui.quote || item.version === ui.quote.destination?.version))) { ui.destinationId = ''; ui.quote = null; }
   ui.catalog = null;
   ui.uncertain = false;
   scheduleExpiry();
@@ -100,13 +104,28 @@ async function mutate(endpoint, body, success, requestKey) {
 }
 
 root.addEventListener('input', (event) => {
+  if (event.target.id === 'instant-amount') {
+    ui.instantAmount = event.target.value; ui.instantQuote = null;
+    root.querySelector('.instant-review')?.remove();
+    return;
+  }
   if (event.target.id !== 'asking-price') return;
   ui.price = event.target.value;
+  ui.feeQuote = null;
+  if (data?.feePreviewRequired) {
+    root.querySelectorAll('.seller-amounts dd').forEach(node => { node.textContent = 'Review a current fee'; });
+    const submit = root.querySelector('#listing-form [type="submit"]'); if (submit) submit.disabled = true;
+    return;
+  }
   // Keep input focus and selection; only update the derived seller net.
   const fee = data?.policy?.feeCents;
   const price = parsePrice(ui.price);
   const net = document.querySelector('.seller-amounts .total dd');
   if (net) net.textContent = price !== null && Number.isSafeInteger(fee) && price > fee ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((price - fee) / 100) : 'Enter a valid price';
+});
+root.addEventListener('change', event => {
+  if (event.target.id !== 'quote-destination') return;
+  ui.destinationId = event.target.value; ui.quote = null; render();
 });
 root.addEventListener('submit', async (event) => {
   const form = event.target;
@@ -114,7 +133,19 @@ root.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (ui.busy || ui.uncertain) return;
     const values = new FormData(form), orderId = form.dataset.order, caseId = form.dataset.case;
-    if (form.dataset.form === 'consent') {
+    if (form.dataset.form === 'instant-fee-settlement') {
+      if (localDemo || data?.scope?.role !== 'STAFF' || data.operations?.instantFeeSettlementAvailable !== true || !values.has('reviewConfirmed')) return;
+      const intentIds = values.getAll('intentIds').sort(), eligible = new Set((data.operations.unsettledInstantFeeIntents ?? []).map(row => row.id));
+      if (!intentIds.length || new Set(intentIds).size !== intentIds.length || intentIds.some(id => !eligible.has(id))) { ui.notice = 'Select the exact eligible payout intents you reviewed.'; render(); return; }
+      const evidenceRef = values.get('evidenceRef'), reviewRef = values.get('reviewRef'), key = `instant-fees:${JSON.stringify(intentIds)}:${evidenceRef}:${reviewRef}`;
+      await mutate('/api/staff/instant-fees/settle', { settlementId: requestId(key), intentIds, evidenceRef, reviewRef }, 'Reviewed provider fee settlement recorded.', key);
+    } else if (form.dataset.form === 'finance-incident') {
+      if (localDemo || data?.scope?.role !== 'STAFF' || !values.has('reviewConfirmed')) return;
+      const incident = data.operations?.incidents?.find(item => item.alertId === form.dataset.alert);
+      if (!incident || incident.status === 'RESOLVED') return;
+      const action = values.get('action'), key = `incident:${incident.alertId}:${incident.version}:${action}`;
+      await mutate('/api/staff/incidents', { requestId: requestId(key), alertId: incident.alertId, expectedVersion: incident.version, action, reviewRef: values.get('reviewRef'), evidenceHash: incident.latestEvidenceHash }, 'Incident review recorded.', key);
+    } else if (form.dataset.form === 'consent') {
       if (localDemo) return;
       const choice = values.get('choice'), cardId = form.dataset.card, key = `consent:${cardId}:${choice}`;
       await mutate('/api/consent', { requestId: requestId(key), cardId, choice, evidenceRef: values.get('evidenceRef') }, 'Disposition recorded.', key);
@@ -183,15 +214,17 @@ root.addEventListener('submit', async (event) => {
   const askingPriceCents = parsePrice(ui.price);
   if (askingPriceCents === null) { ui.notice = 'Enter a positive USD amount with no more than two decimal places.'; render(); return; }
   const card = Array.isArray(data?.eligibilityCards) ? data.eligibilityCards[0] : Object.values(data?.eligibilityCards ?? {})[0];
+  const feeQuoteId = data?.feePreviewRequired ? ui.feeQuote?.id : undefined;
+  if (data?.feePreviewRequired && (!feeQuoteId || ui.feeQuote.askingPriceCents !== askingPriceCents || Date.parse(ui.feeQuote.expiresAt) <= serverNow + Math.max(0, Date.now() - readAt))) { ui.notice = 'Review a fresh exact fee and proceeds quote before listing.'; render(); return; }
   if (form.dataset.mode === 'revise') {
     const listing = (Array.isArray(data.listings) ? data.listings : Object.values(data.listings)).find(item => item.id === form.dataset.listing);
     if (!listing) return;
     const key = `revision:${listing.id}:${listing.version}:${askingPriceCents}`;
-    await mutate('/api/listings/revise', { requestId: requestId(key), listingId: listing.id, expectedVersion: listing.version, expectedBindingHash: listing.bindingHash, askingPriceCents }, 'A new listing revision is saved. Earlier buyer quotes cannot be used.', key);
+    await mutate('/api/listings/revise', { requestId: requestId(key), listingId: listing.id, expectedVersion: listing.version, expectedBindingHash: listing.bindingHash, askingPriceCents, feeQuoteId }, 'A new listing revision is saved. Earlier buyer quotes cannot be used.', key);
     return;
   }
   const key = `listing:${card?.cardId}:${askingPriceCents}`;
-  void mutate('/api/listings', { requestId: requestId(key), cardId: card?.cardId, askingPriceCents }, 'The synthetic listing is saved with its exact fee, net, report and photographs.', key);
+  await mutate('/api/listings', { requestId: requestId(key), cardId: card?.cardId, askingPriceCents, feeQuoteId }, 'The synthetic listing is saved with its exact fee, net, report and photographs.', key);
 });
 root.addEventListener('click', async (event) => {
   const target = event.target.closest('button[data-action]');
@@ -207,10 +240,46 @@ root.addEventListener('click', async (event) => {
   if (ui.busy || ui.uncertain) return;
   if (action === 'collect-payment') { await openPaymentCollection(target.dataset.reservation); return; }
   if (action === 'onboard') { await openOnboarding(); return; }
+  if (action === 'preview-fee') {
+    if (localDemo || data?.scope?.role !== 'SELLER') return;
+    const rows = Array.isArray(data.listings) ? data.listings : Object.values(data.listings ?? {});
+    const listing = rows.find(row => row.id === ui.selectedListingId) ?? rows.find(row => row.status === 'ACTIVE') ?? rows[0];
+    const editable = listing?.status === 'ACTIVE';
+    const card = editable ? listing.approvedCard : (Array.isArray(data.eligibilityCards) ? data.eligibilityCards : Object.values(data.eligibilityCards ?? {}))[0];
+    const askingPriceCents = parsePrice(ui.price);
+    if (!card || askingPriceCents === null) { ui.notice = 'Enter a positive USD price before reviewing the fee.'; render(); return; }
+    ui.feeQuote = null;
+    await readPreview('/listings/preview', { cardId: card.cardId, askingPriceCents, ...(editable ? { listingId: listing.id } : {}) }, result => {
+      if (result.cardId !== card.cardId || result.askingPriceCents !== askingPriceCents || !result.id) throw new Error('Fee quote did not match the selected card and price.');
+      ui.feeQuote = result; ui.notice = 'Review the exact fee, proceeds and terms, then explicitly list the card.';
+    });
+    return;
+  }
+  if (action === 'quote-withdrawal') {
+    if (localDemo || data?.scope?.role !== 'SELLER') return;
+    const amountCents = parsePrice(ui.instantAmount ?? ''), externalAccountId = target.dataset.bank;
+    ui.instantQuote = null;
+    if (amountCents === null || !externalAccountId) { ui.notice = 'Enter a positive amount and review the selected payout bank.'; render(); return; }
+    await readPreview('/withdrawals/quote', { amountCents, externalAccountId, method: 'instant' }, result => {
+      if (result.amountCents !== amountCents || result.method !== 'instant' || !result.quoteId || result.externalAccountId !== undefined && result.externalAccountId !== externalAccountId || !Number.isSafeInteger(result.sellerFeeCents) || result.sellerFeeCents < 0 || !Number.isSafeInteger(result.totalDebitCents) || result.totalDebitCents !== amountCents + result.sellerFeeCents) throw new Error('The instant payout quote is incomplete or changed.');
+      ui.instantQuote = { ...result, externalAccountId }; ui.notice = 'Review the exact instant fee, balance debit and timing before confirming.';
+    });
+    return;
+  }
+  if (action === 'confirm-instant-withdrawal') {
+    if (localDemo || data?.scope?.role !== 'SELLER') return;
+    const quote = ui.instantQuote;
+    if (!quote || quote.quoteId !== target.dataset.quote || Date.parse(quote.expiresAt) <= serverNow + Math.max(0, Date.now() - readAt)) return;
+    const key = `instant-withdraw:${quote.quoteId}`;
+    await mutate('/api/withdrawals', { requestId: requestId(key), amountCents: quote.amountCents, externalAccountId: quote.externalAccountId, method: 'instant', quoteId: quote.quoteId }, 'Original instant payout recorded.', key);
+    ui.instantQuote = null; render(); return;
+  }
   if (action === 'quote') {
     ui.busy = true; render();
     try {
-      const response = await fetch(`${endpointPath('/api/quote')}?listingId=${encodeURIComponent(target.dataset.listing)}`, { cache: 'no-store', credentials: 'same-origin' });
+      const response = data?.quoteDestinationRequired
+        ? await fetch(endpointPath('/api/quote'), { method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json','x-atlas-csrf':data.csrfToken},body:JSON.stringify({listingId:target.dataset.listing,destinationId:ui.destinationId}) })
+        : await fetch(`${endpointPath('/api/quote')}?listingId=${encodeURIComponent(target.dataset.listing)}`, { cache: 'no-store', credentials: 'same-origin' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? result.error ?? 'Quote unavailable.');
       ui.quote = result.quote ?? result;
@@ -267,8 +336,22 @@ root.addEventListener('click', async (event) => {
     await mutate('/api/withdrawals', { requestId: requestId(key), amountCents, ...(!localDemo ? { externalAccountId: target.dataset.bank } : {}) }, 'The synthetic withdrawal intent is saved. Confirm its bank result with the local simulator.', key);
   } else if (action === 'reconcile-withdrawal') {
     await mutate('/api/withdrawals/reconcile', { intentId: target.dataset.intent }, 'The original withdrawal was reconciled. No replacement payout was created.');
+  } else if (action === 'cancel-withdrawal') {
+    const intent = (Array.isArray(data.intents) ? data.intents : Object.values(data.intents ?? {})).find(row => row.id === target.dataset.intent);
+    if (intent?.kind !== 'PAYOUT' || intent.status !== 'PREPARED') return;
+    await mutate('/api/withdrawals/cancel', { intentId: intent.id }, 'The undispatched withdrawal was canceled and its reserved balance released.');
   }
 });
+async function readPreview(path, body, adopt) {
+  ui.busy = true; render();
+  try {
+    const response = await fetch(apiPath + path, { method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json','x-atlas-csrf':data?.csrfToken ?? ''},body:JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message ?? result.error?.message ?? result.error ?? 'Current quote unavailable.');
+    adopt(result); scheduleExpiry();
+  } catch (error) { ui.notice = String(error.message ?? error); }
+  finally { ui.busy = false; render(); }
+}
 async function openPaymentCollection(reservationId) {
   if (localDemo || data?.scope?.role !== 'BUYER' || ui.busy || ui.uncertain) return;
   const rows = () => Array.isArray(data?.reservations) ? data.reservations : Object.values(data?.reservations ?? {});

@@ -1,3 +1,7 @@
+# Successor route composition
+
+`src/routes-r1.mjs` now provides unregistered, lazy, default-off wrappers for the actual raw Node request boundary around the existing public/customer/staff handler. Fixed mounts retain the exact signed URI/body/socket/cookies; unrelated traffic falls through unchanged. No frontend route, rewrite, pool, environment or scheduler is automatically registered. The new commerce policy/instant fee ports and ingress configuration are pinned by the host. See `r2-completion-engineering.md`.
+
 # R2 default-off R1 host integration candidate
 
 This lane extends isolated R2 commit `70f1c1ab`; it does not register routes, import an R1 runtime, change shared roles/grants/environment, deploy, contact a provider, or activate title, claims or history. R1's released `a537f922` remains the production reference; the later local optional-comps commit `cf3f563f` is separate R1 work. Current canonical source paths were inspected read-only rather than copied from the older R2 checkout.

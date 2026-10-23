@@ -91,8 +91,8 @@ export async function createR1MarketplaceHost(options={}) {
   const r1Ports=[staffState.assertRequest,customerState.assertRequest,staffAuth.database,customerAuth.database,staffAuth.database.client,customerAuth.database.client];
   const configIntegrityPin=hash([configIntegrity(staffConfig),configIntegrity(customerConfig)]);
   const pinnedR1=r1Pin(),pool=database.pool,connect=pool.connect,provider=marketplace.provider,marketReady=marketplace.assertRuntimeReady;
-  const marketPorts=Object.fromEntries(['context','provider','quoteProvider','sellerAccount','onboarding','readEvidence','validateEvidence','webhook','runtimeApproval','assertRuntimeReady'].map(key=>[key,marketplace[key]]));
-  const webhookPin=()=>marketplace.webhook?hash({secret:marketplace.webhook.secret??null,endpoints:marketplace.webhook.endpoints??null}):null;
+  const marketPorts=Object.fromEntries(['context','provider','quoteProvider','feeCalculator','instantPolicy','assertInstantPayoutReady','quoteInstantPayoutFee','readInstantFeeSettlement','sellerAccount','onboarding','readEvidence','validateEvidence','webhook','runtimeApproval','assertRuntimeReady'].map(key=>[key,marketplace[key]]));
+  const webhookPin=()=>marketplace.webhook?hash({secret:marketplace.webhook.secret??null,endpoints:marketplace.webhook.endpoints??null,ingress:marketplace.webhook.ingress??null,allowedConnectedAccountIds:marketplace.webhook.allowedConnectedAccountIds??null}):null;
   const approvalPin=hash(marketplace.runtimeApproval),pinnedWebhook=webhookPin(),disputePolicy=marketplace.webhook?.resolveDisputePolicy;
   const databasePin=()=>hash([database.expectedRole,database.expectedDatabase,database.expectedFunctionOwner]);const pinnedDatabase=databasePin();
   const binding=immutable({schema:'atlas-r1-marketplace-host-v1',environment:env,origin:config.origin,approvalRef:config.approvalRef,

@@ -9,11 +9,43 @@ export function recordOperationalAlert(tx, { scope, topic, code, reference, evid
   check(/^[a-f0-9]{64}$/.test(evidenceHash), 'FINANCE_ALERT_EVIDENCE_REQUIRED');
   const alertId = `alert:${digest({ scope, topic })}`, alerts = tx.state.financeOperationalAlerts ??= {};
   const old = alerts[alertId];
-  if (old) { old.lastObservedAt = tx.now; old.latestEvidenceHash = evidenceHash; old.latestReference = reference; return copy(old); }
-  const alert = { alertId, scope, topic, code, reference, evidenceHash, latestEvidenceHash: evidenceHash, firstObservedAt: tx.now, lastObservedAt: tx.now, status: 'OPEN' };
+  if (old && old.status !== 'RESOLVED') {
+    if (old.latestEvidenceHash !== evidenceHash || (old.latestReference ?? old.reference) !== reference || old.code !== code) old.version = (old.version ?? 1) + 1;
+    old.lastObservedAt = tx.now; old.latestEvidenceHash = evidenceHash; old.latestReference = reference; old.code = code;
+    return copy(old);
+  }
+  const generation = (old?.generation ?? (old ? 1 : 0)) + 1;
+  const deliveryKey = generation === 1 ? alertId : `${alertId}:generation:${generation}`;
+  const history = old?.history ?? [];
+  if (old) history.push({ action: 'RECURRED', at: tx.now, generation, evidenceHash });
+  const alert = { alertId, scope, topic, code, reference, evidenceHash, latestEvidenceHash: evidenceHash, firstObservedAt: old?.firstObservedAt ?? tx.now, lastObservedAt: tx.now, status: 'OPEN', generation, version: (old?.version ?? 0) + 1, deliveryKey, history };
   alerts[alertId] = alert;
-  (tx.state.financeAlertOutbox ??= {})[alertId] = { alertId, scope, status: 'PENDING', dispatchCount: 0, lookupCount: 0, lastAttemptAt: 0, claim: null };
+  // A recurrence has its own delivery identity. Prior UNKNOWN deliveries are
+  // retained for lookup; resolving an incident never resets their dispatch.
+  (tx.state.financeAlertOutbox ??= {})[deliveryKey] = { alertId, deliveryKey, generation, scope, status: 'PENDING', dispatchCount: 0, lookupCount: 0, lastAttemptAt: 0, claim: null,
+    envelope: { alertId, code, reference, evidenceHash, firstObservedAt: tx.now } };
   return copy(alert);
+}
+
+// Alert review is separate from financial exception/hold resolution. It never
+// changes ledger entries, provider intents, an unknown delivery or sale authority.
+export function reviewOperationalAlert(tx, { actor, requestId, alertId, expectedVersion, action, reviewRef, evidenceHash }) {
+  check(actor?.role === 'STAFF', 'FORBIDDEN');
+  for (const value of [actor.id, requestId, alertId, reviewRef]) identifier(value);
+  check(['ACKNOWLEDGE','RESOLVE'].includes(action) && Number.isSafeInteger(expectedVersion) && expectedVersion >= 1 && /^[a-f0-9]{64}$/.test(evidenceHash), 'FINANCE_INCIDENT_REVIEW_INVALID');
+  const requestHash = digest({ actorId: actor.id, alertId, expectedVersion, action, reviewRef, evidenceHash });
+  const receipts = tx.state.financeIncidentReviews ??= {}, key = digest({ actorId: actor.id, requestId });
+  if (receipts[key]) { check(receipts[key].requestHash === requestHash, 'IDEMPOTENCY_CONFLICT'); return copy(receipts[key].result); }
+  const row = tx.state.financeOperationalAlerts?.[alertId];
+  check(row && (row.version ?? 1) === expectedVersion && row.latestEvidenceHash === evidenceHash, 'FINANCE_INCIDENT_CHANGED');
+  check(action === 'ACKNOWLEDGE' ? row.status === 'OPEN' : ['OPEN','ACKNOWLEDGED'].includes(row.status), 'FINANCE_INCIDENT_TRANSITION_REFUSED');
+  row.version = expectedVersion + 1; row.generation ??= 1;
+  row.status = action === 'ACKNOWLEDGE' ? 'ACKNOWLEDGED' : 'RESOLVED';
+  (row.history ??= []).push({ action, at: tx.now, actorId: actor.id, reviewRef, evidenceHash, generation: row.generation });
+  const result = { alertId, status: row.status, version: row.version, generation: row.generation };
+  receipts[key] = { requestHash, result: copy(result), at: tx.now };
+  tx.emit('FINANCE_INCIDENT_REVIEWED', { ...result, actorId: actor.id, reviewRef });
+  return result;
 }
 
 // Claim before send. A lost response can only use lookup for that original key;
@@ -39,7 +71,7 @@ export function createFinanceAlertOutbox({ enabled = false, store, scope, config
     status: () => ({ inFlightCount: transportSlots.size }),
     async flush({ signal, deadline = null } = {}) {
       ready(); if (!sender) return { status: 'SENDER_NOT_CONFIGURED', results: [] };
-      const ids = await store.read(state => Object.values(state.financeAlertOutbox ?? {}).filter(row => row.scope === scope && row.status !== 'DELIVERED').sort((a,b) => a.lastAttemptAt - b.lastAttemptAt || a.alertId.localeCompare(b.alertId)).slice(0, config.maxItems).map(row => row.alertId));
+      const ids = await store.read(state => Object.entries(state.financeAlertOutbox ?? {}).filter(([,row]) => row.scope === scope && row.status !== 'DELIVERED').sort(([ak,a],[bk,b]) => a.lastAttemptAt - b.lastAttemptAt || ak.localeCompare(bk)).slice(0, config.maxItems).map(([key]) => key));
       const results = []; let busy = false;
       for (const alertId of ids) {
         if (signal?.aborted || deadline !== null && Date.now() >= deadline) break; ready(); const token = randomUUID();
@@ -56,8 +88,8 @@ export function createFinanceAlertOutbox({ enabled = false, store, scope, config
           if (action === 'send') row.dispatchCount++; else row.lookupCount++;
           row.status = action === 'send' ? 'SENDING' : 'LOOKING_UP'; row.lastAttemptAt = tx.now;
           row.claim = { token, expiresAt: tx.now + config.leaseMs };
-          const a = tx.state.financeOperationalAlerts[alertId];
-          return { action, alert: { alertId, code: a.code, reference: a.reference, evidenceHash: a.evidenceHash, firstObservedAt: a.firstObservedAt } };
+          const a = tx.state.financeOperationalAlerts[row.alertId];
+          return { action, alert: copy(row.envelope ?? { alertId: row.alertId, code: a.code, reference: a.reference, evidenceHash: a.evidenceHash, firstObservedAt: a.firstObservedAt }) };
         }); } catch (error) { transportSlots.delete(token); throw error; }
         if (!work) { transportSlots.delete(token); continue; }
         let outcome, started = false;
