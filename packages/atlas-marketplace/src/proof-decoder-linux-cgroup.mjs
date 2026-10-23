@@ -1,6 +1,8 @@
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {loadProofDecoderLinuxPrimitives} from './proof-decoder-linux-observer.mjs';
+import {assertProofDecoderLaunchPlan} from './proof-decoder-profile.mjs';
+import {reviewProofDecoderKernelWorkerControls} from './proof-decoder-linux-worker-controls.mjs';
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 
 const controllers=new WeakMap(),observations=new WeakMap();
@@ -19,9 +21,9 @@ export function createProofDecoderLinuxCgroupController(options={}) {
   const bootId=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
   check(bootId===expectedBootId,'DECODER_KERNEL_BOOT');
   const native=loadProofDecoderLinuxPrimitives({enabled,addonPath,addonSha256});
-  check(['captureGroup','groupStatus','freezeAndKillGroup','closeGroup','assertGroupMember'].every(key=>typeof native[key]==='function'),'DECODER_KERNEL_ADDON');
+  check(['captureGroup','groupStatus','freezeAndKillGroup','closeGroup','assertGroupMember','captureWorkerControls','inspectWorkerBarrier','closeWorkerBarrier'].every(key=>typeof native[key]==='function'),'DECODER_KERNEL_ADDON');
   const group=native.captureGroup();
-  let closed=false,quarantined=false,initial;
+  let closed=false,quarantined=false,initial,pendingInput=false;const inputBarriers=new Set();
   try{initial=native.groupStatus(group);check(initial.healthy&&!initial.closed,'DECODER_KERNEL_PARENT_UNAVAILABLE');}
   catch(error){native.closeGroup(group);throw error;}
   const {device,inode}=initial;
@@ -47,11 +49,34 @@ export function createProofDecoderLinuxCgroupController(options={}) {
       const state=status();check(state.healthy&&!state.freezeRequested&&!state.frozen,'DECODER_KERNEL_MEMBER');
       check(native.assertGroupMember(group,pid,containerId)===true,'DECODER_KERNEL_MEMBER');return true;
     },
+    async openWorkerInputBarrier(options={}){
+      const {pid,containerId,plan:rawPlan,deadlineBootNs}=engineDataOptions(options,['pid','containerId','plan','deadlineBootNs']);
+      const plan=assertProofDecoderLaunchPlan(rawPlan);
+      check(Number.isSafeInteger(pid)&&pid>1&&pid<=2147483647&&typeof containerId==='string'&&/^[a-f0-9]{64}$/.test(containerId),'DECODER_KERNEL_INPUT_ARGUMENT');
+      check(typeof deadlineBootNs==='string'&&/^[1-9][0-9]{0,19}$/.test(deadlineBootNs),'DECODER_KERNEL_INPUT_DEADLINE');
+      const deadline=BigInt(deadlineBootNs),began=clock();
+      check(deadline<=18446744073709551615n&&deadline>began&&deadline-began<=BigInt(plan.profile.limits.timeoutMs)*1000000n,'DECODER_KERNEL_INPUT_DEADLINE');
+      check(!pendingInput&&inputBarriers.size===0&&status().healthy,'DECODER_KERNEL_INPUT_UNAVAILABLE');pendingInput=true;
+      let captured=null,retained=false;
+      try{
+        captured=await native.captureWorkerControls(group,pid,containerId,deadline);
+        check(!closed&&status().healthy&&clock()<deadline&&native.inspectWorkerBarrier(captured.handle)===true,'DECODER_KERNEL_INPUT_STALE');
+        const review=reviewProofDecoderKernelWorkerControls({snapshot:captured.snapshot,plan,pid,containerId});
+        const observedAtNs=clock().toString();let ended=false;
+        const summary=Object.freeze({...review,bootId,parentBindingHash:bindingHash,observedAtNs,deadlineBootNs});
+        const barrier=Object.freeze({
+          summary,
+          assertLive(){check(!ended&&!closed&&status().healthy&&clock()<deadline&&native.inspectWorkerBarrier(captured.handle)===true,'DECODER_KERNEL_INPUT_STALE');return summary;},
+          close(){if(!ended){ended=true;native.closeWorkerBarrier(captured.handle);inputBarriers.delete(barrier);}}
+        });
+        barrier.assertLive();inputBarriers.add(barrier);retained=true;return barrier;
+      }finally{pendingInput=false;if(captured&&!retained)native.closeWorkerBarrier(captured.handle);}
+    },
     freezeAndKill(){
       check(!closed,'DECODER_KERNEL_PARENT_CLOSED');quarantined=true;
       native.freezeAndKillGroup(group);return status();
     },
-    close(){if(!closed){closed=true;native.closeGroup(group);}}
+    close(){if(!closed){closed=true;for(const barrier of [...inputBarriers])barrier.close();native.closeGroup(group);}}
   });
   controllers.set(controller,{empty,clock});return controller;
 }

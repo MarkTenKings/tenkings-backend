@@ -52,7 +52,7 @@ export function createProofDecoderEngineTransport(options={}) {
   check(Number.isFinite(deadline)&&deadline>began&&deadline-began<=plan.profile.limits.timeoutMs);
   check(Number.isSafeInteger(headerTimeout)&&headerTimeout>=1&&headerTimeout<=5000);
   check(signal===undefined||signal instanceof AbortSignal);
-  let target={},runtime=null,targetMemberPid=null,endpoint=null;
+  let target={},runtime=null,targetMemberPid=null,endpoint=null,inputBarrier=null,inputControls=null;
   check((input.targetBinding===undefined)===(input.targetRuntime===undefined));
   if(input.targetBinding!==undefined){
     assertProofDecoderEngineTargetSocketPath(input.socketPath);
@@ -143,7 +143,7 @@ export function createProofDecoderEngineTransport(options={}) {
   if(signal?.aborted)abort();
 
   function writeChunk(chunk) {
-    live();check(attachment&&!attachment.destroyed&&chunk.length>0&&chunk.length<=65536);if(endpoint)endpoint.assertSocket(attachment);
+    live();check(attachment&&!attachment.destroyed&&chunk.length>0&&chunk.length<=65536);if(runtime){check(inputBarrier,'ENGINE_TRANSPORT_INPUT_BARRIER');inputBarrier.assertLive();}if(endpoint)endpoint.assertSocket(attachment);
     return new Promise((resolve,reject)=>{
       const socket=attachment;let settled=false,callbackDone=false,drained=false,needsDrain=false,insideWrite=true;
       const cleanup=()=>{socket.off('drain',onDrain);socket.off('error',onError);socket.off('close',onClose);};
@@ -221,7 +221,11 @@ export function createProofDecoderEngineTransport(options={}) {
     async sendOriginal() {
       live();check(!inputStarted&&attachment&&review().started,'ENGINE_TRANSPORT_SEQUENCE');inputStarted=true;activeWrites++;
       try {
-        if(runtime){check(Number.isSafeInteger(targetMemberPid)&&targetMemberPid>0,'ENGINE_TRANSPORT_MEMBERSHIP');runtime.controller.assertMember({pid:targetMemberPid,containerId:job.containerId});live();}
+        if(runtime){
+          check(Number.isSafeInteger(targetMemberPid)&&targetMemberPid>0,'ENGINE_TRANSPORT_MEMBERSHIP');
+          inputBarrier=await runtime.controller.openWorkerInputBarrier({pid:targetMemberPid,containerId:job.containerId,plan,deadlineBootNs:runtime.deadlineBootNs});
+          live();inputControls=inputBarrier.assertLive();
+        }
         for(const chunk of [header,...Array.from({length:Math.ceil(bytes.length/65536)},(_,i)=>bytes.subarray(i*65536,Math.min(bytes.length,(i+1)*65536)))]){
           await writeChunk(chunk);live();append('INPUT',{bytes:chunk});inputBytesWritten+=chunk.length;
         }
@@ -230,21 +234,21 @@ export function createProofDecoderEngineTransport(options={}) {
           const cleanup=()=>{socket.off('error',failed);socket.off('close',failed);};
           const failed=()=>{cleanup();reject(fault('ENGINE_TRANSPORT_WRITE'));};
           socket.once('error',failed);socket.once('close',failed);
-          live();if(endpoint)endpoint.assertSocket(socket);
+          live();if(runtime){check(inputBarrier,'ENGINE_TRANSPORT_INPUT_BARRIER');inputBarrier.assertLive();}if(endpoint)endpoint.assertSocket(socket);
           socket.end(()=>{cleanup();try{live();if(endpoint)endpoint.assertSocket(socket);append('INPUT_EOF');inputClosed=true;resolve();}catch{reject(fault('ENGINE_TRANSPORT_WRITE'));}});
         });
-      }catch{fail('ENGINE_TRANSPORT_WRITE','INPUT');throw fault('ENGINE_TRANSPORT_WRITE');}
-      finally{activeWrites--;}
+      }catch(error){const code=typeof error?.code==='string'&&/^DECODER_(?:KERNEL|NATIVE)_INPUT_[A-Z_]+$/.test(error.code)?error.code:'ENGINE_TRANSPORT_WRITE';fail(code,'INPUT');throw fault(code);}
+      finally{inputBarrier?.close();inputBarrier=null;activeWrites--;}
     },
     outputComplete(){return outputDone;},
     review,
     status(){return decoderFreeze({...MARKERS,closed,failure,requestCount,pendingRequests:requests.size,openSockets:sockets.size,activeWrites,backpressureEvents,inputBytesWritten,inputClosed,outputClosed,outputBytes,
-      job,cleanup:'UNKNOWN',capacityHeld:true,peerIdentityVerified:false,independentWatchdog:false});},
+      job,inputControls,cleanup:'UNKNOWN',capacityHeld:true,peerIdentityVerified:false,independentWatchdog:false});},
     close(){
       if(closed)return this.status();
       if(!outputClosed||requests.size||activeWrites)fail('ENGINE_TRANSPORT_CLOSED');
       try{finalReview=review();}catch{finalReview=null;}
-      closed=true;connecting?.abort();clearTimeout(timeout);signal?.removeEventListener('abort',abort);
+      closed=true;inputBarrier?.close();inputBarrier=null;connecting?.abort();clearTimeout(timeout);signal?.removeEventListener('abort',abort);
       for(const request of requests)request.destroy();for(const socket of sockets)socket.destroy();agent.destroy();
       rejectOutput(fault('ENGINE_TRANSPORT_CLOSED'));multiplex.dispose();worker.dispose();
       for(const buffer of bodyBuffers)buffer.fill(0);bodyBuffers.clear();bytes.fill(0);seccomp.fill(0);header.fill(0);events.length=0;

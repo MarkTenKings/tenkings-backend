@@ -7,15 +7,16 @@ control probe and completed qualification are distinct evidence.
 
 Actual isolated-target evidence is retained separately in
 `/Users/markthomas/.codex/atlas-handoffs/atlas-r2-target-proposal-20261023`.
-`ops/security-profile-apply-01` records successful exact AppArmor compilation
-and enforcing load; `target-worker-bootstrap-01` records the first immutable
-worker's successful small PNG decode and genuine Engine/kernel cleanup. The
-worker's nonroot identity, security filters and resource limits were sampled,
-but this run had no before-input observation barrier or application IPC. Its
-full native dynamic closure remains unobserved. Those partial diagnostic facts
-do not complete a qualification case below. The probe source has separately
-passed seven pure protocol checks and strict target compilation; it has not
-been executed. No qualification or publication authority is enabled.
+`ops/security-profile-apply-01` records exact AppArmor compilation and enforcing
+load. Initial worker/IPC diagnostics and a damaged-PNG diagnostic retain their
+limited scope. `ops/input-barrier-02` records the actual mandatory native
+pre-input barrier and successful4000×4000RGBA PNG decode with genuine finalized
+cleanup. A separate pidfd-owned stopped observation after input hashed all11
+mapped native files, including sharp/libvips, against the inventory; tasks and
+mappings were stable. The failed preceding guard/addon mismatch remains retained.
+The complete broker corpus/fault cases and hostile probes below remain open;
+these partial observations do not constitute qualification or publication
+permission. The separately pinned probe image is cached but has not executed.
 
 The candidate binds the imported linux/amd64 image
 `127.0.0.1:5001/atlas-r2-proof@sha256:2b497d3724e65ca2ae449072dada74b3197247649eaa2a8349b7d02d79609ac6`,
@@ -135,10 +136,10 @@ outside this lane and disabled pending Fingerprint PLUS genuine ownership author
 
 | Case ID | Evidence lane and required variants | Status |
 | --- | --- | --- |
-| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | NOT_RUN |
+| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: direct diagnostic evidence only |
 | `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | NOT_RUN |
-| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | NOT_RUN |
-| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | NOT_RUN |
+| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE: direct diagnostic evidence only |
+| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: direct diagnostic evidence only |
 | `FORGED_DUPLICATE_OR_TRAILING_OUTPUT` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Distinct malicious-output probe emits wrong request/hash, early one-byte stdout prefix, duplicate/trailing/oversize/partial PDW1 and stderr flood. Actual broker refusal/hold; never claim this is normal worker output. | NOT_RUN |
 | `EXTERNAL_NETWORK_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: AF_INET/INET6, raw, AF_PACKET, AF_ALG, VSOCK and AF_UNIX socket attempts; seccomp/AA denial and net namespace lo-only/no ports. No external packets need be transmitted. | NOT_RUN |
 | `HOST_SECRET_PROOF_DOCKER_ACCESS_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Dedicated nonsecret absent/unmounted canaries and exact Docker/guard/broker path open attempts; kernel mount/namespace evidence. No real secrets enumerated/read; distinguish ENOENT absence from policy EACCES/EPERM. | NOT_RUN |

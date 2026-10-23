@@ -18,6 +18,8 @@
 #include <sys/vfs.h>
 #include <sys/syscall.h>
 #include <linux/magic.h>
+#include <dirent.h>
+#include <sys/sysmacros.h>
 
 #ifndef SO_PEERPIDFD
 #error "Linux headers with SO_PEERPIDFD are required; no PID lookup fallback"
@@ -340,6 +342,244 @@ static napi_value notify_supervisor(napi_env env,napi_callback_info info) {
   if(count<0||(size_t)count!=strlen(message))return fail(env,"DECODER_NATIVE_NOTIFY");
   NAPI(napi_get_boolean(env,true,&result));return result;
 }
+/* Input release is gated by an asynchronous, bounded live-kernel observation.
+ * No caller-selected paths, namespaces, process signals or file contents. */
+#define WORKER_TASKS 32
+#define WORKER_FDS 64
+#define WORKER_NS 6
+static const char *worker_ns_names[WORKER_NS]={"pid","ipc","net","mnt","cgroup","user"};
+static const char *worker_resources[]={"memory.max","memory.swap.max","cpu.max","pids.max","pids.current","memory.events","cgroup.procs"};
+static const char *worker_files[]={"/opt/atlas-proof-decoder/worker.mjs","/opt/atlas-proof-decoder/contract.mjs","/opt/atlas-proof-decoder/proof-decoder-protocol.mjs","/opt/atlas-proof-decoder/proof-decoder-worker-protocol.mjs","/opt/atlas-proof-decoder/proof-image-decode.mjs"};
+static const napi_type_tag worker_tag={UINT64_C(0xa57c305fa03b43a7),UINT64_C(0x815c618e7c75a643)};
+static _Atomic unsigned int active_workers=0;
+typedef struct {int tid;char status[8192],apparmor[256],ns[WORKER_NS][64];} worker_task;
+typedef struct {int number;char target[4096],info[4096];struct stat st;uint64_t mount_id;bool root_match;} worker_fd;
+typedef struct {
+  char executable[512],command[512],mounts[65536],limits[8192],network[8192];size_t command_size;
+  char resources[7][4096],host_ns[WORKER_NS][64];
+  worker_task tasks[WORKER_TASKS];size_t task_count;
+  worker_fd fds[WORKER_FDS];size_t fd_count;
+} worker_snapshot;
+typedef struct {
+  group_record group;int pid_fd,proc_fd,scope_fd,pid;
+  dev_t scope_device,proc_device;ino_t scope_inode,proc_inode;
+  char id[65],scope[96];uint64_t deadline;
+  bool counted,closed;worker_snapshot *snapshot;
+} worker_record;
+typedef struct {worker_record *record;napi_deferred deferred;napi_async_work work;const char *error;} worker_work;
+static bool worker_clock(uint64_t *now) {
+  struct timespec ts;if(clock_gettime(CLOCK_BOOTTIME,&ts)<0||ts.tv_sec<0||ts.tv_nsec<0||ts.tv_nsec>=1000000000L||(uint64_t)ts.tv_sec>(UINT64_MAX-(uint64_t)ts.tv_nsec)/UINT64_C(1000000000))return false;
+  *now=(uint64_t)ts.tv_sec*UINT64_C(1000000000)+(uint64_t)ts.tv_nsec;return true;
+}
+static bool worker_time(worker_record *w) {uint64_t now;struct pollfd p={.fd=w->pid_fd,.events=POLLIN};return !w->closed&&worker_clock(&now)&&now<w->deadline&&w->pid_fd>=0&&poll(&p,1,0)==0;}
+static bool worker_text(worker_record *w,int parent,const char *name,char *out,size_t cap,size_t *length) {
+  if(!worker_time(w))return false;
+  int fd=openat(parent,name,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);struct stat st;size_t used=0;bool ok=false;
+  if(fd<0)return false;
+  if(fstat(fd,&st)<0||!S_ISREG(st.st_mode))goto done;
+  while(used<cap-1){if(!worker_time(w))goto done;ssize_t n=read(fd,out+used,cap-1-used);if(n<0){if(errno==EINTR)continue;goto done;}if(n==0){out[used]='\0';if(length)*length=used;ok=true;goto done;}used+=(size_t)n;}
+ done:close(fd);return ok&&worker_time(w);
+}
+static bool worker_link(worker_record *w,int parent,const char *name,char *out,size_t cap) {
+  if(!worker_time(w))return false;
+  ssize_t n=readlinkat(parent,name,out,cap-1);if(n<=0||(size_t)n>=cap-1)return false;out[n]='\0';return worker_time(w);
+}
+static int worker_directory(int parent,const char *name) {return openat(parent,name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);}
+static int number_compare(const void *a,const void *b){int x=*(const int *)a,y=*(const int *)b;return (x>y)-(x<y);}
+static bool worker_numbers(worker_record *w,int parent,const char *name,int *out,size_t cap,size_t *count) {
+  int fd=worker_directory(parent,name);if(fd<0)return false;DIR *dir=fdopendir(fd);if(!dir){close(fd);return false;}bool ok=false;size_t n=0;
+  for(;;){if(!worker_time(w))goto done;errno=0;struct dirent *e=readdir(dir);if(!e){if(errno)goto done;break;}if(strcmp(e->d_name,".")==0||strcmp(e->d_name,"..")==0)continue;
+    char *end;errno=0;long value=strtol(e->d_name,&end,10);if(errno||!*e->d_name||*end||value<0||value>INT_MAX||n>=cap)goto done;
+    char canonical[32];snprintf(canonical,sizeof(canonical),"%ld",value);if(strcmp(canonical,e->d_name)!=0)goto done;out[n++]=(int)value;
+  }
+  qsort(out,n,sizeof(*out),number_compare);for(size_t i=1;i<n;i++)if(out[i]==out[i-1])goto done;*count=n;ok=true;
+ done:closedir(dir);return ok;
+}
+static bool worker_identity(worker_record *w) {
+  if(!worker_time(w))return false;
+  bool p=false,r=false,f=false;
+  if(!group_observation(&w->group,&p,&r,&f)||!p||r||f)return false;
+  struct stat scope,proc;
+  if(fstatat(w->group.group_fd,w->scope,&scope,AT_SYMLINK_NOFOLLOW)<0||!S_ISDIR(scope.st_mode)||scope.st_uid!=0||(scope.st_mode&0022)!=0||scope.st_dev!=w->scope_device||scope.st_ino!=w->scope_inode||
+    fstat(w->proc_fd,&proc)<0||proc.st_dev!=w->proc_device||proc.st_ino!=w->proc_inode)return false;
+  char expected[160],actual[512];snprintf(expected,sizeof(expected),"0::/atlasdecoder.slice/%s\n",w->scope);
+  return worker_text(w,w->proc_fd,"cgroup",actual,sizeof(actual),NULL)&&strcmp(actual,expected)==0&&worker_time(w);
+}
+static void release_worker(worker_record *w) {
+  if(!w||w->closed)return;
+  w->closed=true;
+  int *fds[]={&w->pid_fd,&w->proc_fd,&w->scope_fd,&w->group.root_fd,&w->group.group_fd,&w->group.events_fd,&w->group.freeze_fd};
+  for(size_t i=0;i<sizeof(fds)/sizeof(fds[0]);i++)if(*fds[i]>=0){close(*fds[i]);*fds[i]=-1;}
+  if(w->snapshot){memset(w->snapshot,0,sizeof(*w->snapshot));free(w->snapshot);w->snapshot=NULL;}
+  if(w->counted){w->counted=false;atomic_fetch_sub(&active_workers,1);}
+}
+static void finalize_worker(napi_env env,void *data,void *hint){(void)env;(void)hint;worker_record *w=data;release_worker(w);free(w);}
+static worker_record *get_worker(napi_env env,napi_value value){bool tagged=false;void *data=NULL;if(napi_check_object_type_tag(env,value,&worker_tag,&tagged)!=napi_ok||!tagged||napi_unwrap(env,value,&data)!=napi_ok||!data){fail(env,"DECODER_NATIVE_INPUT_HANDLE");return NULL;}return data;}
+static bool worker_namespaces(worker_record *w,int proc,char ns[WORKER_NS][64]) {
+  int fd=worker_directory(proc,"ns");if(fd<0)return false;bool ok=true;
+  for(size_t i=0;i<WORKER_NS;i++)if(!worker_link(w,fd,worker_ns_names[i],ns[i],64)){ok=false;break;}
+  close(fd);return ok;
+}
+static bool worker_regular_matches(worker_record *w,const char *path,const struct stat *observed) {
+  bool permitted=strcmp(path,"/dev/null")==0;
+  for(size_t i=0;i<sizeof(worker_files)/sizeof(worker_files[0]);i++)if(strcmp(path,worker_files[i])==0)permitted=true;
+  if(!permitted)return false;
+  // This is the only followed proc magic link; subsequent walk forbids links.
+  int at=openat(w->proc_fd,"root",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NONBLOCK);if(at<0)return false;
+  char copy[512];if(strlen(path)>=sizeof(copy)){close(at);return false;}strcpy(copy,path+1);char *save=NULL,*name=strtok_r(copy,"/",&save);bool same=false;
+  while(name){char *next=strtok_r(NULL,"/",&save);if(next){int fd=worker_directory(at,name);close(at);at=fd;if(at<0)return false;}else{struct stat s;same=fstatat(at,name,&s,AT_SYMLINK_NOFOLLOW)==0&&s.st_dev==observed->st_dev&&s.st_ino==observed->st_ino&&s.st_mode==observed->st_mode;break;}name=next;}
+  close(at);return same&&worker_time(w);
+}
+/* Only metadata of explicitly allowed targets may be followed. Unknown
+ * socket/path descriptors are refused before any target dereference. */
+static bool worker_fd_target(const char *target) {
+  if(strcmp(target,"anon_inode:[eventpoll]")==0||strcmp(target,"anon_inode:[eventfd]")==0||strcmp(target,"/dev/null")==0)return true;
+  for(size_t i=0;i<sizeof(worker_files)/sizeof(worker_files[0]);i++)if(strcmp(target,worker_files[i])==0)return true;
+  if(strncmp(target,"pipe:[",6)!=0)return false;
+  const char *p=target+6;if(*p<'1'||*p>'9')return false;
+  while(*p>='0'&&*p<='9')p++;
+  return p[0]==']'&&p[1]=='\0';
+}
+static bool worker_fd_fields(const char *raw,uint64_t *flags,uint64_t *inode,uint64_t *mount) {
+  bool seen[3]={false,false,false};const char *names[]={"flags:","ino:","mnt_id:"};uint64_t *values[]={flags,inode,mount};
+  for(const char *line=raw;*line;){const char *end=strchr(line,'\n');if(!end)return false;
+    for(size_t i=0;i<3;i++)if(strncmp(line,names[i],strlen(names[i]))==0){
+      if(seen[i])return false;
+      seen[i]=true;const char *at=line+strlen(names[i]);while(at<end&&(*at==' '||*at=='\t'))at++;
+      if(at==end)return false;
+      unsigned base=i==0?8:10;uint64_t value=0;
+      for(;at<end;at++){if(*at<'0'||*at>'9'||(unsigned)(*at-'0')>=base||value>(UINT64_MAX-(unsigned)(*at-'0'))/base)return false;value=value*base+(unsigned)(*at-'0');}*values[i]=value;
+    }line=end+1;
+  }
+  return seen[0]&&seen[1]&&seen[2];
+}
+static bool worker_fd_stat(int dir,const char *name,struct stat *st,uint64_t *mount) {
+  struct statx sx;
+  const unsigned required=STATX_TYPE|STATX_MODE|STATX_INO|STATX_UID|STATX_GID|STATX_MNT_ID;
+  if(fstatat(dir,name,st,AT_NO_AUTOMOUNT)<0||statx(dir,name,AT_NO_AUTOMOUNT,required,&sx)<0||(sx.stx_mask&required)!=required||
+    sx.stx_ino!=st->st_ino||sx.stx_mode!=st->st_mode||sx.stx_uid!=st->st_uid||sx.stx_gid!=st->st_gid||
+    makedev(sx.stx_dev_major,sx.stx_dev_minor)!=st->st_dev)return false;
+  *mount=sx.stx_mnt_id;return true;
+}
+
+static void execute_worker(napi_env env,void *data) {
+  (void)env;worker_work *work=data;worker_record *w=work->record;worker_snapshot *s=w->snapshot;
+  work->error="DECODER_NATIVE_INPUT_OBSERVATION";
+  if(!worker_identity(w))return;
+  int host=open("/proc/1",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);
+  if(host<0)return;
+  bool host_ok=worker_namespaces(w,host,s->host_ns);close(host);if(!host_ok)return;
+  if(!worker_link(w,w->proc_fd,"exe",s->executable,sizeof(s->executable))||!worker_text(w,w->proc_fd,"cmdline",s->command,sizeof(s->command),&s->command_size)||
+    !worker_text(w,w->proc_fd,"mountinfo",s->mounts,sizeof(s->mounts),NULL)||!worker_text(w,w->proc_fd,"limits",s->limits,sizeof(s->limits),NULL))return;
+  int net=worker_directory(w->proc_fd,"net");if(net<0)return;bool net_ok=worker_text(w,net,"dev",s->network,sizeof(s->network),NULL);close(net);if(!net_ok)return;
+  for(size_t i=0;i<7;i++)if(!worker_text(w,w->scope_fd,worker_resources[i],s->resources[i],sizeof(s->resources[i]),NULL))return;
+  int numbers[WORKER_TASKS],again[WORKER_TASKS];size_t count=0,count_again=0;
+  if(!worker_numbers(w,w->proc_fd,"task",numbers,WORKER_TASKS,&count)||count<1)return;
+  int tasks=worker_directory(w->proc_fd,"task");if(tasks<0)return;bool task_ok=true;
+  for(size_t i=0;i<count;i++){
+    worker_task *t=&s->tasks[i];t->tid=numbers[i];char name[32];snprintf(name,sizeof(name),"%d",t->tid);int fd=worker_directory(tasks,name);
+    if(fd<0){task_ok=false;break;}int attr=worker_directory(fd,"attr");
+    task_ok=attr>=0&&worker_text(w,fd,"status",t->status,sizeof(t->status),NULL)&&worker_text(w,attr,"current",t->apparmor,sizeof(t->apparmor),NULL)&&worker_namespaces(w,fd,t->ns);
+    if(attr>=0)close(attr);
+    close(fd);if(!task_ok)break;
+  }close(tasks);if(!task_ok)return;s->task_count=count;
+  int fds[WORKER_FDS],fds_again[WORKER_FDS];size_t fd_count=0,fd_count_again=0;
+  if(!worker_numbers(w,w->proc_fd,"fd",fds,WORKER_FDS,&fd_count)||fd_count<3)return;
+  int fd_dir=worker_directory(w->proc_fd,"fd"),info_dir=worker_directory(w->proc_fd,"fdinfo");
+  if(fd_dir<0||info_dir<0){if(fd_dir>=0)close(fd_dir);if(info_dir>=0)close(info_dir);return;}bool fd_ok=true;
+  for(size_t i=0;i<fd_count;i++){
+    worker_fd *f=&s->fds[i];f->number=fds[i];char name[32];snprintf(name,sizeof(name),"%d",f->number);
+    uint64_t flags,ino,mount,after_flags,after_ino,after_mount,final_mount;struct stat final_stat;
+    if(!worker_link(w,fd_dir,name,f->target,sizeof(f->target))||!worker_fd_target(f->target)||
+      !worker_text(w,info_dir,name,f->info,sizeof(f->info),NULL)||!worker_fd_fields(f->info,&flags,&ino,&mount)||
+      !worker_fd_stat(fd_dir,name,&f->st,&f->mount_id)||ino!=f->st.st_ino||mount!=f->mount_id){fd_ok=false;break;}
+    if(S_ISREG(f->st.st_mode)||S_ISCHR(f->st.st_mode))f->root_match=worker_regular_matches(w,f->target,&f->st);
+    char after[4096],after_info[4096];
+    if(!worker_link(w,fd_dir,name,after,sizeof(after))||strcmp(after,f->target)!=0||
+      !worker_text(w,info_dir,name,after_info,sizeof(after_info),NULL)||!worker_fd_fields(after_info,&after_flags,&after_ino,&after_mount)||
+      flags!=after_flags||ino!=after_ino||mount!=after_mount||!worker_fd_stat(fd_dir,name,&final_stat,&final_mount)||final_mount!=mount||
+      final_stat.st_dev!=f->st.st_dev||final_stat.st_ino!=f->st.st_ino||final_stat.st_mode!=f->st.st_mode||
+      final_stat.st_uid!=f->st.st_uid||final_stat.st_gid!=f->st.st_gid||final_stat.st_rdev!=f->st.st_rdev){fd_ok=false;break;}
+  }close(fd_dir);close(info_dir);if(!fd_ok)return;s->fd_count=fd_count;
+  if(!worker_numbers(w,w->proc_fd,"task",again,WORKER_TASKS,&count_again)||count!=count_again||memcmp(numbers,again,count*sizeof(int))||
+    !worker_numbers(w,w->proc_fd,"fd",fds_again,WORKER_FDS,&fd_count_again)||fd_count!=fd_count_again||memcmp(fds,fds_again,fd_count*sizeof(int))||!worker_identity(w))return;
+  char final_exe[512];if(!worker_link(w,w->proc_fd,"exe",final_exe,sizeof(final_exe))||strcmp(final_exe,s->executable))return;
+  work->error=NULL;
+}
+static napi_status worker_string(napi_env env,napi_value object,const char *name,const char *text){napi_value value;napi_status s=napi_create_string_utf8(env,text,NAPI_AUTO_LENGTH,&value);return s==napi_ok?napi_set_named_property(env,object,name,value):s;}
+static napi_status worker_number(napi_env env,napi_value object,const char *name,double number){napi_value value;napi_status s=napi_create_double(env,number,&value);return s==napi_ok?napi_set_named_property(env,object,name,value):s;}
+static napi_status worker_bool(napi_env env,napi_value object,const char *name,bool boolean){napi_value value;napi_status s=napi_get_boolean(env,boolean,&value);return s==napi_ok?napi_set_named_property(env,object,name,value):s;}
+static napi_status worker_ns_object(napi_env env,char ns[WORKER_NS][64],napi_value *result){napi_status s=napi_create_object(env,result);if(s!=napi_ok)return s;for(size_t i=0;i<WORKER_NS;i++){s=worker_string(env,*result,worker_ns_names[i],ns[i]);if(s!=napi_ok)return s;}return napi_ok;}
+static bool worker_js_snapshot(napi_env env,worker_record *w,napi_value *out) {
+  worker_snapshot *s=w->snapshot;napi_value value,rows,row,ns;char number[32];
+#define W(call) do{if((call)!=napi_ok)return false;}while(0)
+  W(napi_create_object(env,out));W(worker_string(env,*out,"executable",s->executable));W(napi_create_string_utf8(env,s->command,s->command_size,&value));W(napi_set_named_property(env,*out,"command",value));
+  W(worker_string(env,*out,"mountinfo",s->mounts));W(worker_string(env,*out,"limits",s->limits));W(worker_string(env,*out,"network",s->network));W(worker_ns_object(env,s->host_ns,&ns));W(napi_set_named_property(env,*out,"hostNamespaces",ns));
+  W(napi_create_object(env,&value));for(size_t i=0;i<7;i++)W(worker_string(env,value,worker_resources[i],s->resources[i]));W(napi_set_named_property(env,*out,"resources",value));
+  W(napi_create_array_with_length(env,s->task_count,&rows));for(size_t i=0;i<s->task_count;i++){worker_task *t=&s->tasks[i];W(napi_create_object(env,&row));W(worker_number(env,row,"tid",t->tid));W(worker_string(env,row,"status",t->status));W(worker_string(env,row,"apparmor",t->apparmor));W(worker_ns_object(env,t->ns,&ns));W(napi_set_named_property(env,row,"namespaces",ns));W(napi_set_element(env,rows,(uint32_t)i,row));}W(napi_set_named_property(env,*out,"tasks",rows));
+  W(napi_create_array_with_length(env,s->fd_count,&rows));for(size_t i=0;i<s->fd_count;i++){worker_fd *f=&s->fds[i];W(napi_create_object(env,&row));W(worker_number(env,row,"number",f->number));W(worker_string(env,row,"target",f->target));W(worker_string(env,row,"info",f->info));W(worker_number(env,row,"mode",f->st.st_mode));W(worker_number(env,row,"uid",f->st.st_uid));W(worker_number(env,row,"gid",f->st.st_gid));snprintf(number,sizeof(number),"%llu",(unsigned long long)f->st.st_dev);W(worker_string(env,row,"device",number));snprintf(number,sizeof(number),"%llu",(unsigned long long)f->st.st_ino);W(worker_string(env,row,"inode",number));snprintf(number,sizeof(number),"%llu",(unsigned long long)f->mount_id);W(worker_string(env,row,"mountId",number));W(worker_bool(env,row,"rootMatches",f->root_match));W(napi_set_element(env,rows,(uint32_t)i,row));}W(napi_set_named_property(env,*out,"fds",rows));
+#undef W
+  return true;
+}
+static void complete_worker(napi_env env,napi_status status,void *data) {
+  worker_work *work=data;worker_record *w=work->record;napi_value result,handle,snapshot,error,code;
+  const char *failure=work->error;bool wrapped=false;
+  if(status!=napi_ok)failure="DECODER_NATIVE_INPUT_ASYNC";
+  if(!failure&&!worker_identity(w))failure="DECODER_NATIVE_INPUT_STALE";
+  if(!failure&&(napi_create_object(env,&result)!=napi_ok||napi_create_object(env,&handle)!=napi_ok||!worker_js_snapshot(env,w,&snapshot)||
+    napi_type_tag_object(env,handle,&worker_tag)!=napi_ok))failure="DECODER_NATIVE_API";
+  if(!failure){if(napi_wrap(env,handle,w,finalize_worker,NULL,NULL)!=napi_ok)failure="DECODER_NATIVE_API";else wrapped=true;}
+  if(!failure&&(napi_set_named_property(env,result,"handle",handle)!=napi_ok||napi_set_named_property(env,result,"snapshot",snapshot)!=napi_ok))failure="DECODER_NATIVE_API";
+  if(failure){if(napi_create_string_utf8(env,failure,NAPI_AUTO_LENGTH,&code)==napi_ok&&napi_create_error(env,code,code,&error)==napi_ok)napi_reject_deferred(env,work->deferred,error);release_worker(w);if(!wrapped)free(w);}
+  else napi_resolve_deferred(env,work->deferred,result);
+  napi_delete_async_work(env,work->work);free(work);
+}
+static napi_value capture_worker(napi_env env,napi_callback_info info) {
+  size_t argc=5,length=0;napi_value args[5],promise,name;double pid;uint64_t deadline;bool lossless=false;
+  NAPI(napi_get_cb_info(env,info,&argc,args,NULL,NULL));if(argc!=4||geteuid()!=0)return fail(env,"DECODER_NATIVE_INPUT_ARGUMENT");
+  group_record *group=get_group(env,args[0]);if(!group)return NULL;
+  if(napi_get_value_double(env,args[1],&pid)!=napi_ok||!(pid>1&&pid<=INT_MAX)||pid!=(int)pid||napi_get_value_bigint_uint64(env,args[3],&deadline,&lossless)!=napi_ok||!lossless||
+    napi_get_value_string_utf8(env,args[2],NULL,0,&length)!=napi_ok||length!=64)return fail(env,"DECODER_NATIVE_INPUT_ARGUMENT");
+  if(atomic_fetch_add(&active_workers,1)>=1){atomic_fetch_sub(&active_workers,1);return fail(env,"DECODER_NATIVE_INPUT_CAPACITY");}
+  worker_record *w=calloc(1,sizeof(*w));worker_work *work=calloc(1,sizeof(*work));
+  if(!w||!work){free(w);free(work);atomic_fetch_sub(&active_workers,1);return fail(env,"DECODER_NATIVE_MEMORY");}
+  w->counted=true;w->pid_fd=w->proc_fd=w->scope_fd=-1;w->group.root_fd=w->group.group_fd=w->group.events_fd=w->group.freeze_fd=w->group.kill_fd=-1;
+  w->pid=(int)pid;w->deadline=deadline;w->snapshot=calloc(1,sizeof(*w->snapshot));
+  if(!w->snapshot||napi_get_value_string_utf8(env,args[2],w->id,sizeof(w->id),&length)!=napi_ok||length!=64)goto refused;
+  for(size_t i=0;i<64;i++)if(!((w->id[i]>='a'&&w->id[i]<='f')||(w->id[i]>='0'&&w->id[i]<='9')))goto refused;
+  bool p=false,r=false,f=false;if(group->quarantined||!group_observation(group,&p,&r,&f)||!p||r||f)goto refused;
+  w->group.root_device=group->root_device;w->group.root_inode=group->root_inode;w->group.device=group->device;w->group.inode=group->inode;
+  w->group.root_fd=fcntl(group->root_fd,F_DUPFD_CLOEXEC,3);w->group.group_fd=fcntl(group->group_fd,F_DUPFD_CLOEXEC,3);
+  w->group.events_fd=group_file(w->group.group_fd,"cgroup.events",O_RDONLY);w->group.freeze_fd=group_file(w->group.group_fd,"cgroup.freeze",O_RDONLY);
+  if(w->group.root_fd<0||w->group.group_fd<0||w->group.events_fd<0||w->group.freeze_fd<0)goto refused;
+  w->pid_fd=(int)syscall(SYS_pidfd_open,w->pid,0);if(w->pid_fd<0)goto refused;
+  int proc=open("/proc",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);struct statfs fs;char pid_name[32];snprintf(pid_name,sizeof(pid_name),"%d",w->pid);
+  if(proc<0)goto refused;
+  if(fstatfs(proc,&fs)<0||(unsigned long)fs.f_type!=(unsigned long)PROC_SUPER_MAGIC){close(proc);goto refused;}
+  w->proc_fd=worker_directory(proc,pid_name);close(proc);if(w->proc_fd<0)goto refused;
+  snprintf(w->scope,sizeof(w->scope),"docker-%s.scope",w->id);w->scope_fd=protected_dir(w->group.group_fd,w->scope);struct stat st;
+  if(w->scope_fd<0||fstat(w->scope_fd,&st)<0)goto refused;
+  w->scope_device=st.st_dev;w->scope_inode=st.st_ino;
+  if(fstat(w->proc_fd,&st)<0)goto refused;
+  w->proc_device=st.st_dev;w->proc_inode=st.st_ino;if(!worker_identity(w))goto refused;
+  work->record=w;
+  if(napi_create_promise(env,&work->deferred,&promise)!=napi_ok||napi_create_string_utf8(env,"atlas-worker-input",NAPI_AUTO_LENGTH,&name)!=napi_ok||
+    napi_create_async_work(env,NULL,name,execute_worker,complete_worker,work,&work->work)!=napi_ok)goto refused;
+  if(napi_queue_async_work(env,work->work)!=napi_ok){napi_delete_async_work(env,work->work);goto refused;}
+  return promise;
+ refused:release_worker(w);free(w);free(work);return fail(env,"DECODER_NATIVE_INPUT_CAPTURE");
+}
+static napi_value inspect_worker(napi_env env,napi_callback_info info) {
+  size_t argc=2;napi_value args[2],result;NAPI(napi_get_cb_info(env,info,&argc,args,NULL,NULL));if(argc!=1)return fail(env,"DECODER_NATIVE_INPUT_HANDLE");worker_record *w=get_worker(env,args[0]);if(!w)return NULL;
+  bool ok=worker_identity(w);char executable[512],ns[WORKER_NS][64];
+  if(ok)ok=worker_link(w,w->proc_fd,"exe",executable,sizeof(executable))&&strcmp(executable,w->snapshot->executable)==0&&worker_namespaces(w,w->proc_fd,ns);
+  if(ok){worker_task *leader=NULL;for(size_t i=0;i<w->snapshot->task_count;i++)if(w->snapshot->tasks[i].tid==w->pid)leader=&w->snapshot->tasks[i];ok=leader!=NULL;if(leader)for(size_t i=0;i<WORKER_NS;i++)if(strcmp(ns[i],leader->ns[i])!=0)ok=false;}
+  NAPI(napi_get_boolean(env,ok,&result));return result;
+}
+static napi_value close_worker(napi_env env,napi_callback_info info) {
+  size_t argc=2;napi_value args[2],result;NAPI(napi_get_cb_info(env,info,&argc,args,NULL,NULL));if(argc!=1)return fail(env,"DECODER_NATIVE_INPUT_HANDLE");worker_record *w=get_worker(env,args[0]);if(!w)return NULL;release_worker(w);NAPI(napi_get_undefined(env,&result));return result;
+}
+
 static napi_value initialize(napi_env env,napi_value exports) {
   napi_property_descriptor methods[]={
     {"capture",NULL,capture,NULL,NULL,NULL,napi_default,NULL},
@@ -351,7 +591,10 @@ static napi_value initialize(napi_env env,napi_value exports) {
     {"freezeAndKillGroup",NULL,freeze_kill_group,NULL,NULL,NULL,napi_default,NULL},
     {"closeGroup",NULL,close_group,NULL,NULL,NULL,napi_default,NULL},
     {"assertGroupMember",NULL,assert_group_member,NULL,NULL,NULL,napi_default,NULL},
-    {"notifySupervisor",NULL,notify_supervisor,NULL,NULL,NULL,napi_default,NULL}
+    {"notifySupervisor",NULL,notify_supervisor,NULL,NULL,NULL,napi_default,NULL},
+    {"captureWorkerControls",NULL,capture_worker,NULL,NULL,NULL,napi_default,NULL},
+    {"inspectWorkerBarrier",NULL,inspect_worker,NULL,NULL,NULL,napi_default,NULL},
+    {"closeWorkerBarrier",NULL,close_worker,NULL,NULL,NULL,napi_default,NULL}
   };
   NAPI(napi_define_properties(env,exports,sizeof(methods)/sizeof(methods[0]),methods));return exports;
 }
