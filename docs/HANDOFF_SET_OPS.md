@@ -1,5 +1,11 @@
 # Set Ops Handoff (Living)
 
+## Current ATLAS handoff — October 23, 2026
+
+LeRoy Butler's Back preparation blocker is repaired and deployed in coordinated native/staff/public source `6f3c6d1495a61f1b61058f0ac4044ee03e993726`. The outline projection now clips polygon segments correctly after an inward corner edit. The exact photo passed qualification; running module bytes and the original saved revision 4 were independently verified. Native/web readiness and full preservation passed; successful release/absence at `2026-10-23T23:45:16.167Z` permits grading to resume.
+
+Sign in again in a new tab, then open original card `89df8525-e4ef-4e98-acc5-edb6d2af2cd7`. Keep the old tab as a reference for unsaved outline edits; the old editor's CSRF value does not refresh when another tab signs in. The reviewer still supplies outline/findings/grade approvals. A later duplicate LeRoy intake is a different card. No re-upload is required. [Release audit and recovery instructions](atlas/audits/2026-10-23/leroy-back-geometry.md) contain exact production identities and evidence. Earlier dated deployment identities below are historical; Set Ops behavior is unchanged.
+
 ## Current ATLAS archive release — October 21, 2026 UTC
 
 The completed archive release supersedes the older deployment identities below. Staff/public web source is `c4b7cc85f01754eb5776042147e6c0fdf50f845a`; native source is `31c6685e8ae49e05c8f78b748a6233d143776131` and image is `sha256:f64dfc31485603df756ec9cd64976fda8cc5effe8b0155fa727a45fb82b4fa52`. Registered SQL008 is installed with manual-only access; customer deployment and Set Ops behavior are unchanged. The release hold was explicitly released at 2026-10-21T06:42:09.621Z and absence independently verified. The owner approved the live Graded Cards gallery in signed-in Chrome. Dedicated card-detail, SQL009 history, and reviewed Sports identity enhancements remain local next-release work.

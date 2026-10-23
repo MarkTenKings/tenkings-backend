@@ -1,5 +1,13 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## Current coordinated ATLAS release — October 23, 2026
+
+Native main/worker and staff/public now serve `6f3c6d1495a61f1b61058f0ac4044ee03e993726`, including exact LeRoy geometry repair `dbcd3c38`. Native image is `sha256:d6e94d46e1993c9b8c585a490fb2c9bfc64e9190913e3144cc1eae91c19ab0de`; main `97f040f8a7e249d382520090a043d1dc807a5e8bc0d0f03b2273abeadc956fc5`, worker `8f5cbf0de4235364747c4ebce2fb4edcf5a3b7fed0379917682f19720980e4c8`. Staff deployment is `dpl_C3HUcvJXcw4AxRHVXuwcqbgEbvQd`; public is `dpl_2KgjhxNUSo5Xi2fyDTpvr6pVxNf2`. Customer `dpl_6RFr24d3KbnvTu8bhMubXBhkpY7n` / `a537f922c567795b2a568048c78f595ff8853731` is retained.
+
+The authorized Edges lead owned the single cutover after real background jobs finished. Both old roles exited cleanly; native qualification (162 tests), START/SEAL, canonical promotion checks and full database preservation passed. Admission was explicitly released; absence proof `27c610398edf00356fcdaf39343f27e25da6f88513eedb8838196fd85e11ff0c` at `2026-10-23T23:45:16.167Z` confirms no release holder or locks remain. Grading may resume after fresh staff sign-in. Independent geometry byte and original-card proofs passed; human review remains pending.
+
+See [LeRoy geometry audit](../atlas/audits/2026-10-23/leroy-back-geometry.md) for complete identities and receipt hashes. Evidence roots are `~/.codex/atlas-handoffs/atlas-edges-quarter-20261023/` and `~/.codex/atlas-handoffs/atlas-leroy-back-review-20261023/`. Consumed release packets and the two aborted, stage-only geometry attempts are historical evidence, not rerunnable scripts. Recovery requires a fresh observed plan; never restart a retired generation. Earlier dated “current” deployment identities below are superseded. Set Ops behavior is unchanged.
+
 ## Observed production baseline for photo/font work — October 22, 2026 Pacific
 
 Read-only evidence at 2026-10-23 06:26 UTC supersedes the older release headings below: native source is `8070c5f22a843b6d9a8ba8347f5235754cc1daa5`, image `sha256:c2a274de50803b232a71042bb87876c849666d50264d9d076610081f5e03bca8`, main `atlas-r1-main-8070c5f2-02`, worker `atlas-r1-worker-8070c5f2-01`. The completed optional-comp release and effective native recovery are retained at `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/release-01/`. Installed schema012 and the retained customer successor must be preserved; old schema011→012 migration and admission plans must not be replayed.

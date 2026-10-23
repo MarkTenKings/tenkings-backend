@@ -1,5 +1,11 @@
 # Ten Kings Master Product Context
 
+## Current ATLAS geometry recovery — October 23, 2026
+
+Combined source `6f3c6d1495a61f1b61058f0ac4044ee03e993726` is deployed on native main/worker and staff/public web. It includes the LeRoy Butler Back preparation repair `dbcd3c387c15da5a31010b9207fce957e3ab32ae`: intersect the retained material outline with the corrected card rectangle instead of clamping separate coordinates into duplicate points. The exact saved photo now passes preparation, reprojection and measurement in qualification; independent production verification confirms the tested module bytes. The original card remains at revision 4 with its saved corner correction intact. The combined release also carries the separately authorized Edges scoring change; this geometry repair itself changes no scoring policy.
+
+Canonical web checks and final database preservation passed. Explicit release/absence at `2026-10-23T23:45:16.167Z` confirms grading may resume. Staff must sign in again in a new tab; keep the old review tab as a reference for unsaved outline edits. Authenticated human completion of LeRoy's review remains pending. No re-upload or fabricated approval is needed. Full identities, checks and recovery instructions: [LeRoy geometry audit](../atlas/audits/2026-10-23/leroy-back-geometry.md). Earlier dated deployment identities below are historical; Set Ops behavior is unchanged.
+
 ## Current Atlas slab and card presentation — October 22, 2026
 
 Application source `20b747badb8ad34c510673c446cf326396bdeeac` is deployed on native, staff and public. Existing and future eligible approved cards use the shared staff archive/detail renderer with the improved slab, equal card spacing, Front/Back views, front NFC reference and optional higher-resolution 3D. Exact approved inspection photographs and matching saved labels remain the source; recorded physical slab photos keep precedence. Small source-bound transparent previews are cached privately and verified on delivery; full-detail 3D is loaded on selection, with verified media fallbacks.
