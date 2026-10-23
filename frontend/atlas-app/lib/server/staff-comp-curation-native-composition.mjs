@@ -8,7 +8,7 @@ import { compEvidenceSelectionPolicy } from '../../../../packages/atlas-connecte
 import { createCompCurationArchiveCapability } from '../../../../packages/atlas-connected-manual/src/comp-curation-archive.mjs';
 import { createStaffCompCurationHandler } from './staff-comp-curation-http.mjs';
 
-const keys = ['enabled', 'environment', 'auth', 'boundary', 'approved', 'artifacts', 'validateAccess', 'assertRequest', 'origin', 'selectionPolicy', 'archiveCompAccess'];
+const keys = ['enabled', 'environment', 'auth', 'boundary', 'approved', 'artifacts', 'validateAccess', 'assertRequest', 'origin', 'selectionPolicy', 'archiveCompAccess', 'designationReviewsEnabled'];
 const refuse = ok => requireThat(ok, 503, 'COMP_NOT_CONFIGURED');
 
 export function createStaffCompCurationNativeComposition(options = {}) {
@@ -25,6 +25,9 @@ export function createStaffCompCurationNativeComposition(options = {}) {
   const selectionPolicySnapshot = canonical(selectionPolicy);
   const archiveCompAccess = options.archiveCompAccess;
   refuse(archiveCompAccess === undefined || typeof archiveCompAccess === 'boolean');
+  const designationReviewsEnabled = options.designationReviewsEnabled;
+  refuse(designationReviewsEnabled === undefined || typeof designationReviewsEnabled === 'boolean');
+  refuse(designationReviewsEnabled !== true || selectionPolicy !== null && archiveCompAccess === true);
   let closed = false;
   function configured() {
     refuse(!closed && options.enabled === true && options.environment === environmentInput
@@ -33,6 +36,7 @@ export function createStaffCompCurationNativeComposition(options = {}) {
       && options.assertRequest === assertRequest && options.origin === origin
       && options.selectionPolicy === selectionPolicyInput && canonical(options.selectionPolicy ?? null) === selectionPolicySnapshot
       && options.archiveCompAccess === archiveCompAccess
+      && options.designationReviewsEnabled === designationReviewsEnabled
       && Reflect.ownKeys(options).every(key => keys.includes(key)));
     refuse(environment && typeof environment === 'object' && !environment.VERCEL && !environment.AWS_LAMBDA_FUNCTION_NAME);
     refuse(typeof authenticate === 'function' && auth.authenticate === authenticate
@@ -76,12 +80,13 @@ export function createStaffCompCurationNativeComposition(options = {}) {
     // guard. No current runtime caller supplies this opt-in.
     policy: null,
     selectionPolicy,
+    designationReviewsEnabled: designationReviewsEnabled === true,
   };
   const service = createCompCurationService({ ...serviceOptions,
     archiveCapability: archiveCompAccess === true ? createCompCurationArchiveCapability(serviceOptions) : null });
   const handler = createStaffCompCurationHandler({
     auth: Object.freeze({ authenticate: (...args) => call(auth, authenticate, args) }),
-    service, origin,
+    service, origin, designationReviewsEnabled: designationReviewsEnabled === true,
     assertRequest(req) {
       configured();
       const result = Reflect.apply(assertRequest, options, [req]);

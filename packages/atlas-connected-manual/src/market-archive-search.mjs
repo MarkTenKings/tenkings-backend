@@ -124,7 +124,8 @@ export function createMarketArchiveSearchCapability({ boundary, artifacts, valid
         requireThat(digest(row.request) === row.request_hash && (!row.result || digest(row.result) === row.result_hash), 503, 'PRESENTATION_CORRUPT');
         const after = await scope(context, cardId, before.publication.action_id);
         requireThat(same(before.binding, after.binding) && before.actor.id === after.actor.id, 409, 'MARKET_ARCHIVE_APPROVAL_STALE');
-        return { ...row, input: JSON.parse(row.request), saved: row.result ? JSON.parse(row.result) : null };
+        return { ...row, input: JSON.parse(row.request), saved: row.result ? JSON.parse(row.result) : null,
+          archiveReadBinding: { ...before.binding, actorId: before.actor.id, accessVersion: before.actor.accessVersion } };
       });
     },
     async latestMarket(staff, cardId) {

@@ -26,6 +26,8 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const finishingRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/finishing/(${id})$`);
   const presentationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation(?:/(uploads|remove)(?:/(${id})/(sign|complete))?)?$`);
   const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market(?:/(search|select))?$`);
+  const archiveMarketImageRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market/archive-image$`);
+  const archiveMarketImageQuery=new RegExp(`^\\?(?:preview=${id}&image=[a-f0-9]{64}|image=[a-f0-9]{64}&preview=${id})$`);
   const variantImageRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants/images/([a-f0-9]{64})$`);
   const variantRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/variants(?:/(confirm|refresh|retry-labels))?$`);
   const gradingImageRetryRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/grading-images/(FRONT|BACK)/retry$`);
@@ -127,6 +129,21 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
         const result=write?await connected.dealerOffers.select(staff,dealerFound[1],req.body):await connected.dealerOffers.status(staff,dealerFound[1]);
         res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
+      }
+      const archiveMarketImage=archiveMarketImageRoute.exec(url.pathname);
+      if(archiveMarketImage){
+        requireThat(req.method==='GET' && archiveMarketImageQuery.test(url.search),405,'METHOD_NOT_ALLOWED');
+        const body=req.body;
+        requireThat((body==null || body==='' || Buffer.isBuffer(body) && body.length===0
+          || body && Object.getPrototypeOf(body)===Object.prototype && Reflect.ownKeys(body).length===0)
+          && [undefined,'0'].includes(req.headers['content-length']) && req.headers['transfer-encoding']===undefined
+          && (req.rawBody===undefined || Buffer.isBuffer(req.rawBody) && req.rawBody.length===0)
+          && !(req.readableLength>0),400,'MANUAL_REQUEST_INVALID');
+        requireThat(typeof connected.market?.archiveImage==='function',503,'MARKET_ARCHIVE_CONFIGURATION_REQUIRED');
+        const staff=await boundary.authenticate(req.headers.cookie??'');
+        const photo=await connected.market.archiveImage(staff,archiveMarketImage[1],url.searchParams.get('preview'),url.searchParams.get('image'));
+        res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Type',photo.contentType);
+        res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");res.status(200).send(photo.bytes);return true;
       }
       const marketFound=marketRoute.exec(url.pathname);
       if(marketFound){

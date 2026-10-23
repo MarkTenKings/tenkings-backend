@@ -15,7 +15,7 @@ import { createManualFinishing } from './finishing.mjs';
 const refuse = ok => requireThat(ok, 503, 'COMP_NOT_CONFIGURED');
 const keys = ['enabled', 'environment', 'auth', 'staffConfig', 'settings', 'createClient', 'artifactReader', 'nonceStore'];
 const settingKeys = ['databaseUrl', 'role', 'schemaOwner', 'schemaSha256', 'origin', 'transportKey'];
-const optionalSettingKeys = ['guardVersion', 'selectionPolicy', 'archiveCompAccess'];
+const optionalSettingKeys = ['guardVersion', 'selectionPolicy', 'archiveCompAccess', 'designationReviewsEnabled'];
 const allSettingKeys = [...settingKeys, ...optionalSettingKeys];
 const name = value => typeof value === 'string' && /^[a-z][a-z0-9_]{0,62}$/.test(value) && value !== 'public' && !value.startsWith('pg_');
 const exactKeys = (value, allowed) => value && Object.getPrototypeOf(value) === Object.prototype
@@ -48,9 +48,11 @@ export function createNativeCompCurationRuntime(options = {}) {
   const guardVersion = settings.guardVersion === undefined ? 'SQL011' : settings.guardVersion;
   const selectionPolicy = settings.selectionPolicy === undefined ? null : settings.selectionPolicy;
   const archiveCompAccess = settings.archiveCompAccess === undefined ? false : settings.archiveCompAccess;
+  const designationReviewsEnabled = settings.designationReviewsEnabled === undefined ? false : settings.designationReviewsEnabled;
   refuse(['SQL011', COMP_EVIDENCE_GUARD_VERSION].includes(guardVersion) && typeof archiveCompAccess === 'boolean');
   const selection = compEvidenceSelectionPolicy(selectionPolicy);
   refuse(selection === null || guardVersion === COMP_EVIDENCE_GUARD_VERSION);
+  refuse(typeof designationReviewsEnabled === 'boolean' && (!designationReviewsEnabled || selection !== null && archiveCompAccess));
   const optionalPins = optionalSettingKeys.map(key => [key, settings[key]]), policyText = JSON.stringify(selectionPolicy);
   let dbUrl, authUrl, publicUrl;
   try { dbUrl = new URL(databaseUrl); authUrl = new URL(staffConfig.databaseUrl); publicUrl = new URL(origin); } catch { refuse(false); }
@@ -125,7 +127,7 @@ export function createNativeCompCurationRuntime(options = {}) {
   const adapter = createStaffCompCurationPrivateAdapter({ enabled: true, key: keyCopy, origin, nonceStore,
     native: { environment, auth: Object.freeze({ async authenticate(...args) {
       current(); const value = await Reflect.apply(authMethods[0][1], auth, args); current(); return value;
-    } }), boundary, approved: Object.freeze({ loadPacket: finishing.loadPacket }), artifacts, validateAccess, selectionPolicy, archiveCompAccess } });
+    } }), boundary, approved: Object.freeze({ loadPacket: finishing.loadPacket }), artifacts, validateAccess, selectionPolicy, archiveCompAccess, designationReviewsEnabled } });
   current();
   return Object.freeze({
     get configuredForDisplay() { try { current(); return !closing; } catch { return false; } },

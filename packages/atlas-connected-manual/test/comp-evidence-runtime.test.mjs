@@ -28,6 +28,8 @@ test('candidate and deployed schemas cannot be auto-adopted by the opposite runt
 test('selection policy requires explicit candidate contract and never accepts pricing or malformed archive settings', async t => {
   const f = await fixture(); t.after(()=>f.runtime.close());
   for(const extra of [{selectionPolicy:policy},{guardVersion:'unknown'}, {guardVersion:null}, {archiveCompAccess:'true'},
+    {designationReviewsEnabled:true},{designationReviewsEnabled:'true'},
+    {guardVersion:'EVIDENCE_SELECTION_V1',selectionPolicy:policy,designationReviewsEnabled:true},
     {guardVersion:'EVIDENCE_SELECTION_V1',selectionPolicy:{...policy,recencyDays:90}},
     {guardVersion:'EVIDENCE_SELECTION_V1',selectionPolicy:{...policy,rightsStatus:'APPROVED'}}]) {
     const options = {...f.options,settings:{...f.options.settings,...extra}};
@@ -38,7 +40,7 @@ test('selection policy requires explicit candidate contract and never accepts pr
 
 test('captured candidate options and policy bytes cannot change during artifact work', async () => {
   for(const mutate of [f=>{f.options.settings.guardVersion='SQL011';},f=>{f.options.settings.archiveCompAccess=false;},
-    f=>{f.options.settings.selectionPolicy.recencyDays=90;}]) {
+    f=>{f.options.settings.selectionPolicy.recencyDays=90;},f=>{f.options.settings.designationReviewsEnabled=true;}]) {
     const f=await fixture({evidenceSelection:true,archiveCompAccess:true}), entered=deferred(),resume=deferred();
     f.hooks.artifact=async()=>{entered.resolve();await resume.promise;};
     const pending=f.request();await entered.promise;mutate(f);resume.resolve();

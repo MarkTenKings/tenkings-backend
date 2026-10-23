@@ -46924,3 +46924,8 @@ Retained bounded implementation/database evidence lives in sibling `database-qua
 ### 2026-10-22 R1 — selective archive administration candidate
 
 Composed only the reviewed15-path archive CSV, browser-local saved filters and read-only audit details delta over accepted production8070. Prior local component, scoped-test and Chrome download acceptance is reused (root acceptance8b535163). Production slab viewport/image-window CSS is preserved by selective hunks; all other production source, native image/code, customer, grading and provider behavior is unchanged. This is a local candidate only, with no deployment, database, runtime, search or business-record effect. Fresh build and coordinated release qualification remain.
+
+
+### 2026-10-22 — combined selective local candidate
+
+Applied exactly25 reviewed designation source/test paths from foundation 9a4bba45095daf3c812746f518137b571c246864 onto archive-admin92df, a selective8070 child. Default-off retained-photo review with native ACL/runtime forwarding plus prior archive administration.24 files equal qualified foundation bytes; transport.mjs intentionally retains production label Back/foil/color route and embedded-image CSP changes, with exact reverse-hunk preservation proof. All unselected production code, SQL/roles, provider/acquisition/grading logic, slab CSS, public/customer source and lockfile remain exact. No native/web build, dependency install, migration, deployment or admission hold. Final composed transport/native/web qualification and fresh coordinated release remain.

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createStaffCompCurationController } from '../lib/staff-comp-curation-controller.mjs';
 import { curationStaff } from '../lib/staff-comp-curation-client.mjs';
 import { compCurationCard, assertCompCurationBinding, createSavedCompEntryReader } from '../lib/staff-comp-curation-entry.mjs';
+import { applyDesignationReview } from '../lib/staff-comp-designation-review.mjs';
+import StaffCompDesignationReview from './StaffCompDesignationReview.jsx';
 import styles from './StaffCompCuration.module.css';
 
 const reasons = {
@@ -36,7 +38,7 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
   live.current = { staff, card, key, request, enabled, accessState, onAccessLost, reload, refreshToken, onPendingChange };
   useEffect(() => {
     const context = { staff, card, key, request, reload, refreshToken: live.current.refreshToken,
-      abort: new AbortController(), cancelled: false, control: null, selectedIds: [], page: 0, blocked: false };
+      abort: new AbortController(), cancelled: false, control: null, selectedIds: [], designationReviews: [], page: 0, blocked: false };
     owner.current = context;
     const current = () => {
       const now = live.current;
@@ -51,7 +53,7 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
     };
     context.publish = value => {
       if (!current()) return;
-      if (value.phase === 'CONFIRMED') { context.selectedIds = []; setDraft(null); }
+      if (value.phase === 'CONFIRMED') { context.selectedIds = []; context.designationReviews = []; setDraft(null); }
       context.block(Boolean(context.selectedIds.length || value.pending || ['LOADING', 'SAVING', 'RECONCILING'].includes(value.phase)));
       setView({ context, ...value });
     };
@@ -108,7 +110,12 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
   const phase = !configured ? 'DISABLED' : ended ? 'ENDED' : !key ? 'CHANGED' : visible ? view.phase
     : context === owner.current && view?.phase === 'CHANGED' ? 'CHANGED' : 'LOADING';
   const state = visible ? view.state : null, receipt = visible ? view.receipt : null;
-  const rows = state?.preview?.candidates ?? [];
+  const sourceRows = state?.preview?.candidates ?? [];
+  const designationReviews = draft && draft.context === context ? draft.designationReviews ?? [] : [];
+  const rows = sourceRows.map(row => {
+    const review = designationReviews.find(value => value.id === row.id);
+    return review ? applyDesignationReview(row, review, { source: state.source, actorId: staff.id, reviewedAt: state.preview.policy.asOf }) : row;
+  });
   const selectedIds = draft && draft.context === context ? draft.selectedIds : [];
   const page = draft && draft.context === context ? draft.page : 0, pages = Math.max(1, Math.ceil(rows.length / 20));
   const selected = rows.filter(row => selectedIds.includes(row.id)), first = selected[0];
@@ -127,16 +134,28 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
       const ids = context.selectedIds, prior = rows.find(candidate => ids.includes(candidate.id));
       if (!ids.includes(row.id) && (ids.length >= 5 || prior && (prior.group !== row.group || prior.currency !== row.currency))) return;
       context.selectedIds = ids.includes(row.id) ? ids.filter(id => id !== row.id) : [...ids, row.id];
+      context.designationReviews = context.designationReviews.filter(review => context.selectedIds.includes(review.id));
       context.block(context.selectedIds.length > 0);
-      setDraft({ context, page: context.page, selectedIds: context.selectedIds });
+      setDraft({ context, page: context.page, selectedIds: context.selectedIds, designationReviews: context.designationReviews });
     });
   }
+  function chooseDesignation(row, review) { act(() => {
+    if (context.control.snapshot().phase !== 'READY' || state.policy?.version !== 'atlas-comp-evidence-selection-policy-v1') return;
+    const selectedRow = applyDesignationReview(row, review, { source: state.source, actorId: staff.id, reviewedAt: state.preview.policy.asOf });
+    const prior = rows.find(value => context.selectedIds.includes(value.id));
+    if (context.selectedIds.includes(row.id) || context.selectedIds.length >= 5
+      || prior && (prior.group !== selectedRow.group || prior.currency !== selectedRow.currency)) return;
+    context.designationReviews = [...context.designationReviews, review];
+    context.selectedIds = [...context.selectedIds, row.id]; context.block(true);
+    setDraft({ context, page: context.page, selectedIds: context.selectedIds, designationReviews: context.designationReviews });
+  }); }
   function movePage(direction) { act(() => {
     context.page = Math.max(0, Math.min(pages - 1, context.page + direction));
-    setDraft({ context, page: context.page, selectedIds: context.selectedIds });
+    setDraft({ context, page: context.page, selectedIds: context.selectedIds, designationReviews: context.designationReviews });
   }); }
   function decide(outcome) { act(() => context.control.decide({ requestId: crypto.randomUUID(), outcome,
-    selectedIds: outcome === 'SELECTED' ? context.selectedIds : [], reviewedIds: outcome === 'SELECTED' ? context.selectedIds : [] })); }
+    selectedIds: outcome === 'SELECTED' ? context.selectedIds : [], reviewedIds: outcome === 'SELECTED' ? context.selectedIds : [],
+    ...(outcome === 'SELECTED' && context.designationReviews.length ? { designationReviews: { version: 'atlas-comp-designation-reviews-v1', rows: context.designationReviews } } : {}) })); }
   const refresh = () => act(() => { if (!context.blocked && !context.control?.snapshot().pending) setReload(value => value + 1); });
   const busy = ['LOADING', 'SAVING', 'RECONCILING'].includes(phase);
   return <section className={styles.panel} aria-label="Private comp selection">
@@ -170,6 +189,11 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
                   <div className={styles.saleTop}><strong>{row.title}</strong><span className={styles.amount}>{money(row)}</span></div>
                   <p className={styles.small}>{row.group} · {row.soldAt ? `Sold ${row.soldAt.slice(0, 10)}` : 'Sale date unavailable'}</p>
                   <div className={styles.rowActions}><label className={styles.check}><input type="checkbox" checked={checked} disabled={Boolean(disabled)} aria-describedby={help} onChange={() => toggle(row)}/>Use this reviewed sale</label>{row.listingUrl && <a href={row.listingUrl} target="_blank" rel="noreferrer noopener">View listing<span className={styles.srOnly}>: {row.title}</span></a>}</div>
+                  {row.designationReview && <StaffCompDesignationReview key={row.designationReview.proofHash} row={row}
+                    cardId={card.cardId} previewId={state.source.previewId} disabled={selectedIds.length >= 5}
+                    selectionGroup={first?.group ?? null} selectionCurrency={first?.currency ?? null}
+                    onChoose={review => chooseDesignation(row, review)}/>}
+                  {row.designationEvidence && <p className={styles.small}>Label designation confirmed by you for this private selection.</p>}
                   <p id={help} className={styles.reason}>{row.reasonCodes.map(reason => reasons[reason]).join(' ') || (incompatible ? 'Choose the same grade group and currency as your selection.' : !checked && selectedIds.length >= 5 ? 'Five sales selected. Remove one to choose this sale.' : 'Review the listing before selecting it.')}</p>
                 </li>;
               })}</ol>
