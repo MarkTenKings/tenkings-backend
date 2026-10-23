@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { renderApprovedBLabel, LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-approved-b';
+import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 import { createLabelService } from '../src/label-sheet-service.mjs';
+import { LABEL_REFRESH_REASON, labelRefreshRequestId, labelRefreshRequestHash,
+  labelReplacementIntent, assertLabelRefreshSnapshot } from '../src/label-replacement-intent.mjs';
 import { createApprovedLabelStyler } from '../src/label-style-service.mjs';
 import { createLabelStyleCache } from '../src/label-style-cache.mjs';
 import { LABEL_STYLE_MODEL } from '../src/label-style-contract.mjs';
@@ -125,6 +128,45 @@ test('source change or revoked access after style resolution blocks rendering an
     assert.equal(await f.service.runPending(), 0); assert.equal(calls, 1); assert.equal(f.loads, 2);
     assert.equal(f.renders, 0); assert.equal(f.saved.length, 0); assert.equal(f.failures.length, 1); assert.equal(f.deferred, 0);
     assert.equal(f.failures[0][2].materialProfileId, 'atlas-v4-gold-v1');
+  }
+});
+
+test('fractional new and valid REFRESH jobs fail before style resolution or provider dispatch', async () => {
+  for (const purpose of ['ORIGINAL', 'REFRESH']) {
+    const styled = await originalStylerFixture(); let styleCalls = 0;
+    styled.source.packet.report.finalGrade = purpose === 'ORIGINAL' ? 8.5 : 9.5;
+    styled.source.publicHash = digest(JSON.stringify(styled.source.packet));
+    styled.source.row.public_hash = styled.source.publicHash;
+    const f = serviceFixture({ approvedSource: styled.source, styler: { async resolve(...args) {
+      styleCalls++; return styled.styler.resolve(...args);
+    } } });
+    let original;
+    if (purpose === 'REFRESH') {
+      const packet = f.packet, report = packet.report;
+      const snapshot = canonical({ identity: report.identity, grade: report.finalGrade, finalGrade: report.finalGrade,
+        cardProfile: report.cardProfile, reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion,
+        reportHref: `https://atlasgrading.com/reports/${packet.publicToken}?v=${packet.approvalVersion}` });
+      original = { ...f.item, id: randomUUID(), state: 'READY', snapshot, snapshot_hash: digest(snapshot),
+        print_svg: '<svg data-retained="historical-print"/>', preview_svg: '<svg data-retained="historical-preview"/>',
+        renderer_profile_hash: digest('previous renderer'), material_profile_id: 'atlas-v4-gold-v1', jig_hash: LABEL_JIG_V1.jigHash };
+      original.artwork_hash = digest(original.print_svg);
+      const target = { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
+        materialProfileId: original.material_profile_id, jigHash: original.jig_hash };
+      f.item.purpose = 'REPRINT'; f.item.original_item_id = original.id; f.item.reason = LABEL_REFRESH_REASON;
+      f.item.request_id = labelRefreshRequestId(original.id, original.artwork_hash, target);
+      f.item.request_hash = labelRefreshRequestHash(original.id,
+        { requestId: f.item.request_id, expectedLabelHash: original.artwork_hash }, target);
+      Object.assign(f.item, { renderer_profile_hash: target.rendererProfileHash,
+        material_profile_id: target.materialProfileId, jig_hash: target.jigHash });
+      f.repository.item = async () => original;
+      assert.equal(labelReplacementIntent(f.item, original).kind, 'REFRESH');
+      assert.doesNotThrow(() => assertLabelRefreshSnapshot(original, packet));
+    }
+    const sourceBefore = structuredClone(f.source), originalBefore = structuredClone(original);
+    assert.equal(await f.service.runPending(), 0);
+    assert.equal(styleCalls, 0); assert.equal(styled.calls.length, 0); assert.equal(styled.values.size, 0);
+    assert.equal(f.renders, 0); assert.equal(f.saved.length, 0); assert.equal(f.failures.length, 1); assert.equal(f.deferred, 0);
+    assert.deepEqual(f.events, ['load', 'fail']); assert.deepEqual(f.source, sourceBefore); assert.deepEqual(original, originalBefore);
   }
 });
 

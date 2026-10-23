@@ -71,6 +71,10 @@ export function createLabelService({ boundary, repository, finishing, storage, s
       }
       if (!result) {
         const report = packet.report, material = materials[report.cardProfile];
+        // New artwork must be printable before any paid style work. Historical
+        // COPY replacements retain their original grade and bypass this branch.
+        requireThat(Number.isInteger(report.finalGrade) && report.finalGrade >= 1 && report.finalGrade <= 10,
+          409, 'LABEL_WHOLE_GRADE_REQUIRED');
         requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
         if (replacement?.kind === 'REFRESH') requireThat(replacement.target.rendererProfileHash === LABEL_APPROVED_B_RENDERER_PROFILE_HASH
           && replacement.target.materialProfileId === material.id && replacement.target.jigHash === jigHash, 409, 'LABEL_RENDERER_CHANGED');
