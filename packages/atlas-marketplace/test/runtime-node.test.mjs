@@ -15,6 +15,7 @@ test('Node integration serves only authenticated assets, bounds raw webhook byte
     assert.equal(home.status,200); assert.ok((await home.text()).includes('data-runtime="AUTHENTICATED"'));
     assert.ok(home.headers.get('content-security-policy').includes('https://js.stripe.com'));
     const module=await fetch(origin+'/marketplace/stripe-payment.mjs');assert.equal(module.status,200);assert.match(module.headers.get('content-type'),/javascript/);
+    const reportModule=await fetch(origin+'/marketplace/report-link.mjs');assert.equal(reportModule.status,200);assert.match(await reportModule.text(),/export function approvedReportPath/);
     assert.notEqual((await fetch(origin+'/demo/front.svg')).status,200);
     assert.equal((await fetch(origin+'/api/marketplace/workspace')).status,503);
     const bytes=Buffer.from('{ "preserve" : "exact whitespace" }');
@@ -64,6 +65,7 @@ test('public Node mount serves catalog without a session and cannot dispatch pri
   handler=createMarketplacePublicNodeHandler({enabled:true,origin,service:{publicCatalog:async()=>{reads++;return {environment:'PROVIDER_SANDBOX',items:[],total:0,offset:0,nextOffset:null};}},admitPublicRequest:async()=>true});
   try {
     const home=await fetch(origin+'/marketplace/');assert.equal(home.status,200);assert.match(await home.text(),/Available cards/);
+    const reportModule=await fetch(origin+'/marketplace/report-link.mjs');assert.equal(reportModule.status,200);assert.match(await reportModule.text(),/export function approvedReportPath/);
     assert.equal((await fetch(origin+'/marketplace/catalog')).status,200);assert.equal(reads,1);
     assert.equal((await fetch(origin+'/marketplace/catalog',{method:'POST',body:'{}'})).status,405);
     assert.equal((await fetch(origin+'/api/marketplace/payments',{method:'POST',body:'{}'})).status,404);

@@ -19,7 +19,7 @@ END $$;
 
 ALTER FUNCTION atlas_customer.customer_call(text,jsonb,jsonb) RENAME TO customer_call_before_marketplace_session_access;
 CREATE FUNCTION atlas_customer.customer_call(action text,b jsonb,d jsonb) RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,atlas_customer AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE ctl atlas_customer."CustomerControl"; a atlas_customer."CustomerAccount";
   s atlas_customer."CustomerSession"; browser atlas_customer."CustomerBrowser"; observed timestamptz;
 BEGIN

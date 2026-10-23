@@ -1,4 +1,5 @@
 import { requireValue } from './contract.mjs';
+import { createMarketplaceHostCheck } from './host-boundary.mjs';
 
 const commands = Object.freeze({
   '/consent':['SELLER','recordConsent',['requestId','cardId','choice','evidenceRef']],
@@ -26,14 +27,15 @@ const result=(status,body)=>({status,headers:{...baseHeaders},body});
 
 // Inert framework-neutral handler. resolveSession and verifyCsrf are server-only
 // R1 integration ports: no browser-provided actor, role, mode or session is used.
-export function createMarketplaceHttpHandler({ enabled=false, origin, apiPath='/api/marketplace', service, resolveSession, verifyCsrf, issueCsrf, admitRequest, createAuthContext, clock=Date.now }={}) {
+export function createMarketplaceHttpHandler({ enabled=false, origin, acceptedHosts, apiPath='/api/marketplace', service, resolveSession, verifyCsrf, issueCsrf, admitRequest, createAuthContext, clock=Date.now }={}) {
+  const acceptsHost=enabled===true?createMarketplaceHostCheck({origin,acceptedHosts}):()=>false;
   let closed=false;
   return Object.freeze({ close(){closed=true;}, async handle(request){
     if(closed || enabled!==true) return result(503,{error:'MARKETPLACE_DISABLED'});
     let auth;
     try {
-      const url=new URL(request.url,origin), expected=new URL(origin), headers=request.headers??{}, method=request.method;
-      requireValue(url.origin===origin&&headers.host===expected.host,'HOST_REFUSED');
+      const url=new URL(request.url,origin), headers=request.headers??{}, method=request.method;
+      requireValue(url.origin===origin&&acceptsHost(headers.host),'HOST_REFUSED');
       requireValue(!headers.origin||headers.origin===origin,'ORIGIN_REFUSED');
       requireValue(!headers['sec-fetch-site']||['none','same-origin'].includes(headers['sec-fetch-site']),'CROSS_SITE_REFUSED');
       requireValue(/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(apiPath),'ROUTE_CONFIGURATION_UNAVAILABLE');

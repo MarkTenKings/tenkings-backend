@@ -11,6 +11,7 @@ import { actors, createLocalFixture, syntheticFulfillmentEvidence } from './loca
 import { createMarketplacePublicNodeHandler } from '../src/runtime-public-node.mjs';
 
 const STATIC = new Map([
+  ['/report-link.mjs', ['report-link.mjs', 'text/javascript']],
   ['/', ['index.html', 'text/html']], ['/app.mjs', ['app.mjs', 'text/javascript']], ['/stripe-payment.mjs',['stripe-payment.mjs','text/javascript']], ['/view.mjs', ['view.mjs', 'text/javascript']], ['/styles.css', ['styles.css', 'text/css']],
   ['/demo/front.svg', ['front.svg', 'image/svg+xml']], ['/demo/back.svg', ['back.svg', 'image/svg+xml']], ['/demo/report', ['report.html', 'text/html']],
 ]);

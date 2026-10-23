@@ -3,6 +3,34 @@ import { financeAssert as check, identifier, digest } from './ledger.mjs';
 import { reconcileFinanceIntent } from './payment.mjs';
 import { recordFinanceException, reconcileProviderDispute } from './reconciliation.mjs';
 
+export function scopedWebhookBinding({ endpoints, secret }) {
+  check(secret === undefined && Array.isArray(endpoints) && endpoints.length >= 1 && endpoints.length <= 4, 'WEBHOOK_ENDPOINT_CONFIG_REQUIRED');
+  const ids = new Set(), secrets = new Set();
+  for (const endpoint of endpoints) {
+    check(endpoint && Object.keys(endpoint).sort().join(',') === 'id,scope,secret', 'WEBHOOK_ENDPOINT_CONFIG_REQUIRED');
+    identifier(endpoint.id);
+    check(['PLATFORM','CONNECTED'].includes(endpoint.scope) && typeof endpoint.secret === 'string' && endpoint.secret.length >= 16 && endpoint.secret.length <= 512 && !ids.has(endpoint.id) && !secrets.has(endpoint.secret), 'WEBHOOK_ENDPOINT_CONFIG_REQUIRED');
+    ids.add(endpoint.id); secrets.add(endpoint.secret);
+  }
+  // Digest binds the server credential generation without returning credentials.
+  return { endpoints: endpoints.map(({ id, scope }) => ({ id, scope })).sort((a,b) => a.id.localeCompare(b.id)), configurationHash: digest(endpoints) };
+}
+
+export function verifyScopedRawWebhook({ endpoints, secret, platformAccountId, ...input }) {
+  scopedWebhookBinding({ endpoints, secret }); identifier(platformAccountId);
+  for (let index = 0; index < endpoints.length; index++) {
+    let verified;
+    try { verified = verifyRawWebhook({ ...input, secret: endpoints[index].secret }); }
+    catch (error) { if (error.code === 'INVALID_WEBHOOK_SIGNATURE') continue; throw error; }
+    const account = verified.event.account;
+    const platform = account === undefined || account === platformAccountId;
+    check(endpoints[index].scope === (platform ? 'PLATFORM' : 'CONNECTED'), 'WEBHOOK_ENDPOINT_SCOPE_MISMATCH');
+    if (!platform) identifier(account);
+    return { ...verified, endpointIndex: index, endpointId: endpoints[index].id };
+  }
+  check(false, 'INVALID_WEBHOOK_SIGNATURE');
+}
+
 export function verifyRawWebhook({ rawBody, signature, secret, now = Date.now(), toleranceSeconds = 300, expectedLivemode = false }) {
   check(Buffer.isBuffer(rawBody) && rawBody.length > 0 && rawBody.length <= 1048576, 'RAW_WEBHOOK_BYTES_REQUIRED');
   check(typeof secret === 'string' && secret.length >= 16 && typeof signature === 'string' && signature.length <= 8192, 'INVALID_WEBHOOK_SIGNATURE');

@@ -48158,3 +48158,55 @@ Exact owned PIDs90118/90119/87587/87588 and earlier90039/88547/89056 are absent 
 
 
 Closeout verification: all three retained QA SQLite stores pass read-only quick_check. Exact captured secret/signing values were absent from marketplace source, updated handoff/audits/master/log and every QA database. All four private credential/config files are0600. Master IDs01–30 present exactly once; git diff check clean. No additional source changes after the163-test aggregate; later edits are documentation only.
+
+
+### 2026-10-22 — R2 host integration continuation and original-payment settlement
+
+Continuing only in the isolated R2 checkout from70f1c1ab; exactly two existing specialists own host/auth/storage and hosted-finance readiness. R1 remains the sole shared production operator. Added a server-only, opaque, store/account/environment-bound recovery settlement capability with independently rechecked synchronous readiness. It settles only retained terminal originals already independently reconciled by GET; no browser actor, new provider operation or automatic authority. Guard runs again inside the atomic settlement transaction. Targeted recovery/service tests8/8 pass, including restart/replay, canceled original, forged/cross-store authority and readiness revocation at commit. Prior163-test/provider evidence remains retained.
+
+Next bounded change: exact trusted deployment Host admission while preserving original signed request bytes, URI, socket and headers; browser Origin remains canonical. No production route, migration, credential, provider or account change is planned.
+
+
+### 2026-10-22 — Exact host admission and immutable report links
+
+Added immutable, explicitly configured acceptedHosts to the public/authenticated HTTP and Node boundaries. Default remains canonical host only; deployment hosts require exact pins, with no wildcard/forwarded-header trust or browser-Origin widening. Native IncomingMessage test retains original URI, Host, socket and raw body. Host/runtime/auth/catalog checks19/19 pass. R1 browser report route verified from current source: /reports/ar_{24}?v={approvalVersion}. UI now renders only that exact relative token route with the retained card version; JSON reports are not mislabeled as PDF. Report/UI/catalog/runtime checks17/17 pass. Shared helper is included in all four explicit static-asset maps. No published reader, authority, shared routing or provider effect changed.
+
+
+### 2026-10-22 — Launch decision and physical evidence packet
+
+Added r2-launch-decisions.md with concrete unanswered fee/tax/shipping/returns/reserve/release/payout/refund-dispute-funding inputs, exact policy contracts, engineering defaults and actual physical evidence required at intake/packing/dispatch/delivery/return/release/cash-out. No business values or approvals are inferred. Corrected the historical Stripe design header to acknowledge retained actual sandbox qualification while keeping hosted/authority/physical/live gates open. R1 reports local optional-comp checkpointcf3f563f; production remainsa537f922. Read its review record only; comp implementation stays R1-owned.
+
+
+### 2026-10-22 — Planned owned PostgreSQL host-role qualification
+
+Host specialist will create a fresh mode0700 /private/tmp/atlas-r2-host-qa-<random> socket/data tree, initialize PostgreSQL17 with its owned admin, TCP disabled and isolated port65433. Only new database atlas_marketplace_review_candidate in that new cluster will receive the existing marketplace storage proposal and new role-proposal body; the unconditional review guard is removed only in memory for this recorded disposable qualification. Seed exact empty PROVIDER_SANDBOX state; verify distinct NOLOGIN owner, writer's exact three gateways, PUBLIC/direct table/journal refusal and actual createPostgresStore read/transaction. Close pools and stop only that cluster. Existing storage restart and17-drift evidence is reused. No shared database, customer gateway, migration registration, credentials, provider or production runtime will be touched.
+
+
+### 2026-10-22 — Owned host-role qualification observed
+
+New PostgreSQL17 role-proposal qualification passed in /private/tmp/atlas-r2-host-qa-1slnjL with TCP disabled/port65433. Unchanged guarded SQL refused first; guard removed only in memory for the explicitly recorded owned candidate. Receipt continuation/r2-host-role-proposal-receipt.json retains script321d0cbe85e6009b7182a5d9c437f117c2beb33f17cae5167b9cd8b7565c3089 and role-proposalbff383a4c4354cb1d395ab2420333cc7d2f42ebba39deba1df866b4b13e52063. Exact3 SECURITY DEFINER/pg_catalog gateways, distinct NOLOGIN owner, writer without membership/direct rights, no default PUBLIC function execute, and actual store read/commit passed; stateff31b11f49ba4542ee247f08c958e827b3be5777f07806b31baff260cdf11459. Pools closed; owned cluster stopped, pg_ctl status3. No shared/customer-session SQL or provider work. Historical restart/17-drift evidence remains separately retained.
+
+
+### 2026-10-22 — Review correction: runtime status is not title authority
+
+Host specialist found service.status incorrectly equated an active PRODUCTION runtime with realAuthorityEnabled. Corrected status to preserve false and report PER_ACTION_VERIFICATION_REQUIRED; current exact title/custody assertion remains independently required per sale action. Added focused production-shaped structural regression; no real authority or provider port invoked. Final focused aggregate will include this change. Updated master/handoff candidate descriptions without closing any real launch gate or changing R1 source.
+
+
+### 2026-10-22 — Planned owned passive-session gateway qualification
+
+A narrowly scoped second owned PostgreSQL17 check will qualify the new pg_catalog-only passive gateway against R1's canonical standalone customer baseline. Fresh mode0700 /private/tmp/atlas-r2-session-qa-* with TCP disabled/port65434, one new database, NOLOGIN schema owner and only isolated fixture control/account/browser/challenge/session rows. Prove unchanged proposal guard refuses, then remove exactly that guard only in memory. Actual canonical CustomerDatabase/CustomerAuth will exercise exact session/browser/control binding, prior-action delegation, unchanged rows on passive reads, expiry/revocation/access-version refusal, old-wrapper privilege removal and conservative small-clock-lead handling. Close pools/stop only this cluster. Shared schema/migrations/routes, real accounts, provider, claims and original R1 checkout remain untouched.
+
+
+Owned passive-session qualification first attempt stopped safely before proposal execution: canonical SMS claim guard correctly rejected the test's LOCAL_FIXTURE releaseSha of repeateda. Canonical fixture exemption requires LOCAL_FIXTURE, loopback origin and all-zero releaseSha. Only isolated test binding will be corrected to that existing contract; no trigger/production guard weakening, provider/SMS call or shared change. Retain the failed stopped-cluster receipt, then run one fresh owned cluster under the same recorded bounded plan.
+
+
+### 2026-10-22 — Final host/recovery interface qualification
+
+Exactly two original specialists completed the default-off canonical host/evidence/storage lane and hosted webhook/recovery/scheduler/alert lane. Root independently reviewed boundaries, integrated exact Host pins/report links/opaque settlement/status corrections, and passed84 focused tests across84 top-level groups in18 files, zero failures/cancellations/skips. TAP continuation/r2-host-integration-tests.tap SHA25623ade96a37b0561a77cd2f77b9bd077f9993c45b558ccc0644693fec0b24b7bb; exact command retained separately. No repeated broad grading/provider scenarios. All30 artifacts from the prior provider qualification retain their recorded hashes; manifest e5eefdbbb1944c7a90f4866c6a330dff619b58333571b514acb787f5fdce4f80. All7 directly imported canonical modules match the current R1 readonly checkout.
+
+New hosted finance verifies separately scoped platform/connected endpoint secrets and retains exact raw-event/reconciliation semantics. Explicit schedule leases and separate settlement capability cannot dispatch replacements. Whole-run admission budgets and joined commits are documented accurately; ignored GET/sender responses retain transport capacity until actual completion, preventing later runs accumulating I/O. Sender timeout becomes durable UNKNOWN and lookup-only; alerts are sticky incidents, not automatic resolution. No endpoint, timer, external alert or provider call was activated.
+
+Second owned session qualification passed in /private/tmp/atlas-r2-session-qa-ODIxD4, TCP disabled, with canonical R1 baseline and actual CustomerDatabase/Auth. Unchanged guard refused before in-memory-only removal; pg_catalog-only search path, sole gateway, delegated prior action, old-wrapper/table refusal, exact hash/deployment binding, expiry/revocation/access-version and conservative500ms DB lead/1000ms tolerance passed. All account/session/browser/challenge/control/rate rows retained snapshot055abb75310693d26284026789fa57464257488134792adbc46c6498f7a8f30b. Receipt r2-host-session-proposal-receipt.json preserves script5032fed7f9e05fe9ae0167d01cc71e63d74e42835b64b582f99d91a7f1c14f4b, baseline68afb04dff6bb81a4b42a9de1412fc8322c6b0696d94e833df03e3183dadde8f, guarded SQL7a925b42d7392d932f770282f8d1ad2b2be6b5d5090dd06dae8efda578810282 and exact tested body3df1246d85e03d78b0067656456dc2e1094a24d22d88d06d787ea3e1bed9444c. Pools closed/cluster stopped; root independently observed pg_ctl status3. Failed first isolated seed refusal remains separately retained; no shared gateway/manifest changed.
+
+
+Final freeze review:48 changed paths are confined to packages/atlas-marketplace and R2/master/handoff documentation. All30 master scope IDs remain present exactly once; new local documentation links resolve; git diff check passes. Both owned SQL script/proposal hashes independently match their successful receipts and both pg_ctl status checks report stopped. Existing163-test/provider checkpoint is not relabeled as the new aggregate. No source changes followed the84-test integrated run except separately executed/hash-verified owned SQL qualification script; remaining edits are documentation. Ready for isolated additive commit and external exact-source manifest/handoff. Shared deployment and real effects remain R1-owned.

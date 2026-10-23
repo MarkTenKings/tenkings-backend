@@ -8,7 +8,17 @@ import { openLocalStore } from '../src/store.mjs';
 import { createMarketplacePilot, intentId } from '../src/service.mjs';
 import { assertJournal } from '../src/ledger.mjs';
 import { reconcileFinanceIntent } from '../src/payment.mjs';
+import { createAuthorityContext } from '../src/authority-context.mjs';
+import { hash } from '../src/contract.mjs';
 import { actors, createLocalFixture, syntheticFulfillmentEvidence } from '../scripts/local-fixture.mjs';
+
+test('qualified production runtime never reports global title authority or enabled claims',()=>{
+  const environment='PRODUCTION',context=createAuthorityContext({environment,evidenceOrigin:'https://fixture.invalid',evidencePathPrefixes:['/approved/'],qualificationRefs:Object.fromEntries(['fingerprintRef','titlePolicyRef','marketplacePolicyRef','evidenceContractRef'].map(key=>[key,'STRUCTURAL_TEST_NO_REAL_AUTHORITY']))});
+  const options={enabled:true,environment,context,platformAccountId:'acct_fixture',listingPolicy:{},financePolicy:{environment:'stripe-production'},fulfillmentPolicy:{},assertRuntimeReady:()=>true};
+  options.runtimeApproval={approved:true,binding:{environment,platformAccountId:options.platformAccountId,listingPolicyHash:hash(options.listingPolicy),financePolicyHash:hash(options.financePolicy),fulfillmentPolicyHash:hash(options.fulfillmentPolicy),qualificationRefs:context.qualificationRefs}};
+  const status=createMarketplacePilot(options).status();
+  assert.equal(status.enabled,true);assert.equal(status.realAuthorityEnabled,false);assert.equal(status.authorityStatus,'PER_ACTION_VERIFICATION_REQUIRED');assert.equal(status.ownershipClaimsEnabled,false);assert.equal(status.ownershipHistoryEnabled,false);
+});
 
 test('durable local listing → unknown payment → restart → exact sale → protected delivery → transfer → bank payout', async () => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'atlas-r2-e2e-')));

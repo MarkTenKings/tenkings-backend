@@ -1,4 +1,4 @@
-# ATLAS R2 parallel lead handoff — October 22 provider qualification
+# ATLAS R2 parallel lead handoff — October 22 host integration candidate
 
 ## Source and ownership
 
@@ -15,7 +15,7 @@ Exactly two original Astra/xHigh specialists completed complementary listing/aut
 - Customer/staff workspace, strict role/CSRF/admission projections, exact signed-request preservation and explicit R1 auth bridge. Existing REVIEWER capability only; OBSERVER cannot receive write rights. Two short authority checks bracket provider work without retaining an R1 lock.
 - Ephemeral buyer/reservation-bound Stripe Payment Element confirmation/return handling, prebound Connect onboarding, explicit test/live authorization, exact raw webhooks, original payment/order settlement and finance holds on physical commitments.
 - Integer-cent independent platform/connected journals; payment/transfer/refund/reversal/payout and failure/dispute reconciliation; reviewed openings, external suspense and fresh two-account reconciliation before withdrawals.
-- Default-off bounded GET-only recovery runner with durable overlap/expiry receipts and affected original payment IDs for host settlement. No scheduler, replacement financial action or automatic exception resolution.
+- Default-off bounded GET-only recovery plus explicitly started durable scheduling and operational alert outbox. A separate opaque capability settles retained terminal original payments; no STAFF impersonation, replacement financial action or automatic exception resolution.
 - Separate function-only PostgreSQL persistence/proposal with per-acquisition effective-privilege qualification; retained local SQLite implementation and explicitly synthetic preview.
 - Staff fulfillment/protection/refund evidence UI, seller bank readiness and USD balance, production-only metrics with synthetic activity excluded.
 
@@ -23,18 +23,20 @@ Exactly two original Astra/xHigh specialists completed complementary listing/aut
 
 | Interface | Explicit requirement |
 | --- | --- |
-| Permanent card evidence | Card/certificate identity, exact approved report version/hash and Front/Back object/hash/dimensions. Changed evidence cannot silently rebind a listing/order. Public bytes need a separately qualified read-only projection/reader. |
+| Permanent card evidence | New fixed-origin reader verifies exact approved public packet/public hash/private approval hash and Front/Back descriptors/bytes. R1 must independently qualify its binding source and ingress. UI links the exact retained /reports/token?v=version browser report. No image/report is sale authority. |
 | Seller authority | Independent current title, consignment, Hold and list consent, ATLAS custody and seller/account evidence. R1 staff/submission/display/holder facts are never sale authority. `authority-r1.mjs` currently returns unavailable for real eligibility. |
 | Authentication | Canonical R1 instances, approved audience/role policy and genuine original request. The guarded `sql/r1-session-access-proposal.sql` must be reviewed and registered as a passive customer gateway by R1; it is unapplied. Signed transport allowlists/routes remain unchanged. |
-| Mounted routes | Public `/marketplace/`; customer workspace/API beneath existing `/account` cookie scope; staff workspace/API beneath existing staff cookie scope. Configure explicit `mountPath`/`apiPath`; do not widen cookies or bypass signed ingress. |
-| Persistence | Review `sql/proposal.sql` separately. Runtime writer can execute exactly three owned SECURITY DEFINER gateways with sole `search_path=pg_catalog`, no unrelated data/column/schema/function rights. Actual integration must provision and qualify exact roles. |
-| Financial policy | Versioned approved fee/tax/shipping/returns/reserve/release/payout/recovery/authority references and funded refund/dispute capacity. Proposed8% is not approved. Fixture amounts/timing establish no production terms. |
+| Mounted routes | New default-off `createR1MarketplaceHost` composes public `/marketplace/`, BUYER/SELLER workspace/API beneath `/account`, and STAFF beneath `/admin`, preserving original signed requests/cookies. Exact trusted deployment Host pins do not broaden browser Origin. R1 must still register and qualify actual routes/gateways. |
+| Persistence | Existing storage and new guarded `sql/r1-marketplace-role-proposal.sql` passed an owned PostgreSQL role qualification. Runtime writer can execute exactly three SECURITY DEFINER gateways, sole `search_path=pg_catalog`, no unrelated/direct rights. R1 must still provision its exact dedicated database/roles; no shared migration was registered or applied. |
+| Financial policy | Complete [launch decisions](../atlas/audits/2026-10-22/r2-launch-decisions.md): fee/tax/shipping/returns/reserve/release/payout/recovery/authority and funded refund/dispute capacity. Proposed8% remains unapproved. Fixture amounts/timing establish no production terms. |
 | Provider | Exact approved platform/connected allowlist, test/live mode, pinned API version, private key, webhook secret and allowed HTTPS onboarding returns. Provider payout eligibility does not establish actual bank ownership. |
-| Durable operations | Run the bounded recovery runner under qualified server identity. Feed affected payment IDs to `service.reconcileFinance` in batches<=100 with genuine STAFF authority; this settles exact originals and preserves financial holds. Persist/alert on REVIEW_REQUIRED, ERROR, INTERRUPTED and stale reports. Never discard uncertain state or replace an intent. |
+| Durable operations | New hosted-finance composition binds exact store/provider/service and separately qualified opaque recovery-settlement capability. It settles reconciled terminal originals without a browser role, retains durable schedule/alerts, and verifies scoped platform/connected webhook secrets. R1 supplies independently approved schedule, sender/lookup, stop controls and actual hosted acceptance. Never discard uncertain state or replace an intent. |
 | Physical evidence | Trusted evidence validation for consent, packing/dispatch/delivery/release, refund review and case closure. Actual fitted insert/two seals/label area/resale instructions/replacement kit, tracking/coverage and inspected-return acceptance. |
 | Comp guidance | Current copied curation receipt, selected sold facts, method/date/count/range and approved usage rights. Unresolved rights remain unavailable; refresh cannot rewrite reports or seller asks. |
 
 ## Verified evidence to reuse
+
+Newest changed-interface aggregate: **84 focused tests across84 groups in18 files passed**, zero failures/cancellations/skips. `continuation/r2-host-integration-tests.tap` SHA256 `23ade96a37b0561a77cd2f77b9bd077f9993c45b558ccc0644693fec0b24b7bb`. This is separate from the prior163/137 checkpoint, not a claim that counts are additive. New role and passive-session proposals also passed actual owned PostgreSQL17 qualification; both clusters stopped, no shared apply. See [host integration](../atlas/audits/2026-10-22/r2-host-integration.md) and the exact [hosted finance packet](../atlas/audits/2026-10-22/r2-hosted-finance-readiness.md).
 
 Final Node22.16.0 package run: **163 passing tests across137 top-level groups**, zero failures/cancellations/skips. `continuation/r2-provider-qualification-tests.tap`. Includes SQLite multiprocess contention/reopen and focused mocked provider/auth/HTTP/UI risks. Actual Stripe evidence is separate below. Prior147/121 and initial45-group checkpoints remain historical; prior PostgreSQL and unchanged R1 evidence are reused within their source bounds.
 

@@ -152,3 +152,24 @@ test('live webhook mode is rejected by default and requires explicit matching se
   assert.throws(() => verifyRawWebhook({ rawBody, signature: signature(rawBody), secret, now: NOW }), { code: 'INVALID_WEBHOOK_EVENT' });
   assert.equal(verifyRawWebhook({ rawBody, signature: signature(rawBody), secret, now: NOW, expectedLivemode: true }).event.livemode, true);
 });
+
+test('scoped endpoints bind signatures to platform or Connect account, allow bounded rotation, and refuse mixed or ambiguous keys', async () => {
+  const { verifyScopedRawWebhook, scopedWebhookBinding } = await import('../src/webhook.mjs');
+  const endpoints = [{ id: 'we_platform', scope: 'PLATFORM', secret }, { id: 'we_connect', scope: 'CONNECTED', secret: 'whsec_connect_fixture_only' }, { id: 'we_platform_rotation', scope: 'PLATFORM', secret: 'whsec_platform_rotation_fixture_only' }];
+  const event = { id: 'evt_scoped', object: 'event', livemode: false, type: 'payment_intent.succeeded', data: { object: { id: 'pi_scoped', object: 'payment_intent' } } };
+  const verify = (value, signingSecret, override = {}) => {
+    const rawBody = Buffer.from(JSON.stringify(value)), time = NOW/1000;
+    const signature = `t=${time},v1=${createHmac('sha256', signingSecret).update(`${time}.`).update(rawBody).digest('hex')}`;
+    return verifyScopedRawWebhook({ rawBody, signature, now: NOW, endpoints, platformAccountId: 'acct_platform', ...override });
+  };
+  assert.equal(verify(event, secret).endpointId, 'we_platform');
+  assert.equal(verify(event, endpoints[2].secret).endpointId, 'we_platform_rotation');
+  assert.equal(verify({ ...event, account: 'acct_seller' }, endpoints[1].secret).endpointId, 'we_connect');
+  assert.throws(() => verify(event, endpoints[1].secret), { code: 'WEBHOOK_ENDPOINT_SCOPE_MISMATCH' });
+  assert.throws(() => verify({ ...event, account: 'acct_seller' }, secret), { code: 'WEBHOOK_ENDPOINT_SCOPE_MISMATCH' });
+  assert.throws(() => verify({ ...event, livemode: true }, secret), { code: 'INVALID_WEBHOOK_EVENT' });
+  assert.throws(() => verify(event, secret, { secret }), { code: 'WEBHOOK_ENDPOINT_CONFIG_REQUIRED' });
+  assert.throws(() => scopedWebhookBinding({ endpoints: [endpoints[0], { ...endpoints[1], secret }] }), { code: 'WEBHOOK_ENDPOINT_CONFIG_REQUIRED' });
+  assert.throws(() => scopedWebhookBinding({ endpoints: Array(5).fill(endpoints[0]) }), { code: 'WEBHOOK_ENDPOINT_CONFIG_REQUIRED' });
+  assert.equal(JSON.stringify(scopedWebhookBinding({ endpoints })).includes('whsec_'), false);
+});

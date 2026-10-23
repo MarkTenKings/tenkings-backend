@@ -141,3 +141,14 @@ test('unexplained provider movement on either account produces review evidence w
   assert.equal(Object.values(f.store.read().financeAdjustments).length, 2);
   assert.equal(f.store.read().financeRecoveryRuns.external_movement.status, 'REVIEW_REQUIRED');
 });
+
+test('runtime revocation stops admission after an already admitted GET finishes', async t => {
+  const f = setup(t); f.prepare('payment_two');
+  for (const id of ['payment_one','payment_two']) { await f.execute(id); f.provider.resolve(id, { status: 'succeeded' }); }
+  let approved = true, reads = 0;
+  const provider = { ...f.recoveryProvider, retrieve: async (...args) => { reads++; const result = await f.recoveryProvider.retrieve(...args); approved = false; return result; } };
+  const result = await f.runner({ provider, config: { ...config, concurrency: 1 }, assertRuntimeReady: () => approved }).run({ runId: 'revoked_during_get' });
+  assert.equal(result.status, 'ERROR'); assert.equal(result.code, 'RECOVERY_RUNTIME_UNQUALIFIED'); assert.equal(reads, 1);
+  assert.equal(result.accountReports.length, 0); assert.equal(f.calls.snapshots, 0);
+  assert.equal(Object.values(f.store.read().intents).filter(row => row.confirmed).length, 1);
+});

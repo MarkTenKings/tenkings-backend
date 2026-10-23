@@ -6,7 +6,7 @@ import { createR1MarketplaceAuthBridge, R1_SESSION_ACCESS_ACTION, R1_SESSION_ACC
 const id='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222';
 const sessionHash='1'.repeat(64),browserHash='2'.repeat(64),cookie='opaque_fixture_cookie';
 const denied=code=>Object.assign(new Error(code),{code});
-function fixture({role='BUYER',method='GET',staffRoles=['REVIEWER']}={}) {
+function fixture({role='BUYER',method='GET',staffRoles=['REVIEWER'],maxDatabaseClockSkewMs=0}={}) {
   const control={now:1792706400000,revoked:false,accountId:id,staffRole:'REVIEWER',gatewayMissing:false,extraResult:{},calls:[],admissions:0,limited:false,guardCalls:0,refreshes:0,boundaryActive:false,boundaryVisits:0,handle:null};
   const config={mode:'LOCAL_FIXTURE',origin:'http://127.0.0.1:4318',deploymentId:'isolated-auth-contract-test',releaseSha:'a'.repeat(40),configHash:'b'.repeat(64),cookies:{browser:'fixture_browser',session:'fixture_session'}};
   config.binding=Object.fromEntries(['mode','origin','deploymentId','releaseSha','configHash'].map(key=>[key,config[key]]));
@@ -36,7 +36,7 @@ function fixture({role='BUYER',method='GET',staffRoles=['REVIEWER']}={}) {
   const boundary={async transaction(handle,work){assert.equal(handle,control.handle);assert.equal(staffAuth.actors.has(handle),true);assert.equal(control.boundaryActive,false);control.boundaryActive=true;control.boundaryVisits++;try{const refresh=async()=>{control.refreshes++;if(control.revoked)throw denied('SIGN_IN_REQUIRED');return {principal:{id,role:control.staffRole,accessVersion:1},now:new Date(control.now)};};const current=await refresh();const result=await work({...current,refresh});await refresh();return result;}finally{control.boundaryActive=false;}}};
   const options={enabled:true,environment:'PROVIDER_SANDBOX',policy:{approved:true,approvalRef:'ISOLATED_AUTH_POLICY_TEST_ONLY',environment:'PROVIDER_SANDBOX',r1Mode:'LOCAL_FIXTURE',staffRoles,customerRoles:['BUYER','SELLER']},
     staff:{state:{auth:staffAuth,assertRequest:guard},boundary,DurableStaffAuth},customer:{state:{auth:customerAuth,config,assertRequest:guard},CustomerAuth,CustomerDatabase},clock:()=>control.now,
-    admitRequest:async input=>{control.admissions++;assert.equal(input.actorId,id);return !control.limited;}};
+    maxDatabaseClockSkewMs,admitRequest:async input=>{control.admissions++;assert.equal(input.actorId,id);return !control.limited;}};
   const request={method,url:role==='STAFF'?'/admin/marketplace/api/workspace':'/account/marketplace/api/workspace',headers:{cookie,host:'127.0.0.1:4318',origin:config.origin,'sec-fetch-site':'same-origin'},socket:{remoteAddress:'127.0.0.1'},body:method==='POST'?{actor:{id:other,role:'STAFF'}}:undefined};
   const path='/workspace',bridge=createR1MarketplaceAuthBridge(options);
   const open=()=>bridge.open(request,{audience:role});
@@ -99,4 +99,24 @@ test('revocation after work suppresses its response without claiming rollback; i
   const swapped=fixture(),swapCtx=swapped.open();swapped.options.customer.state.auth.authority=()=>({sessionHash,browserHash});await assert.rejects(swapped.resolve(swapCtx),{code:'AUTH_BOUNDARY_UNAVAILABLE'});
   const asyncGuard=fixture();asyncGuard.options.customer.state.assertRequest=async()=>{};assert.throws(asyncGuard.open,{code:'AUTH_BOUNDARY_UNAVAILABLE'});
   const rate=fixture(),rateCtx=rate.open(),ratePrincipal=await rate.resolve(rateCtx);rate.control.limited=true;assert.equal(await rate.admit(rateCtx,ratePrincipal),false);await assert.rejects(rateCtx.withAuthorized(ratePrincipal,()=>assert.fail('rate bypass')),{code:'RATE_LIMITED'});
+});
+
+test('bounded database clock skew shortens expiry and conservatively checks freshness without accepting arbitrary future observations',async()=>{
+  for(const maxDatabaseClockSkewMs of [-1,2001,1.5]) {const f=fixture({maxDatabaseClockSkewMs});assert.throws(f.open,{code:'AUTH_BOUNDARY_UNAVAILABLE'});}
+  const strict=fixture();strict.control.extraResult={observedAt:strict.control.now+1};await assert.rejects(strict.resolve(strict.open()),{code:'AUTH_BOUNDARY_UNAVAILABLE'});
+  const f=fixture({maxDatabaseClockSkewMs:2000});f.control.extraResult={observedAt:f.control.now+2000,expiresAt:f.control.now+10000};
+  const ctx=f.open(),principal=await f.resolve(ctx);assert.equal(principal.expiresAt,f.control.now+8000);await f.admit(ctx,principal);
+  f.control.now+=8000;await assert.rejects(ctx.withAuthorized(principal,()=>assert.fail('expired')),{code:'SIGN_IN_REQUIRED'});
+  for(const offset of [2001,-28001]) {const old=fixture({maxDatabaseClockSkewMs:2000});old.control.extraResult={observedAt:old.control.now+offset};await assert.rejects(old.resolve(old.open()),{code:'AUTH_BOUNDARY_UNAVAILABLE'});}
+  const boundary=fixture({maxDatabaseClockSkewMs:2000});boundary.control.extraResult={observedAt:boundary.control.now-28000};assert.equal((await boundary.resolve(boundary.open())).actor.id,id);
+  const almostExpired=fixture({maxDatabaseClockSkewMs:2000});almostExpired.control.extraResult={observedAt:almostExpired.control.now-1,expiresAt:almostExpired.control.now+2000};await assert.rejects(almostExpired.resolve(almostExpired.open()),{code:'SIGN_IN_REQUIRED'});
+});
+
+test('clock rollback, deadline jumps and revoked sessions cannot reuse a clock-skew allowance',async()=>{
+  for(const offset of [-1,30000]) {
+    const f=fixture({maxDatabaseClockSkewMs:2000}),ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);f.control.now+=offset;
+    await assert.rejects(ctx.withAuthorized(principal,()=>assert.fail('clock changed')),{code:offset<0?'AUTH_BOUNDARY_UNAVAILABLE':'SIGN_IN_REQUIRED'});
+  }
+  const f=fixture({maxDatabaseClockSkewMs:2000}),ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);f.control.revoked=true;
+  await assert.rejects(ctx.withAuthorized(principal,()=>assert.fail('revoked')),{code:'SIGN_IN_REQUIRED'});
 });

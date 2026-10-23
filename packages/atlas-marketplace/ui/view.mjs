@@ -1,3 +1,4 @@
+import { approvedReportPath } from './report-link.mjs';
 export function escapeHTML(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
@@ -46,7 +47,7 @@ export function renderApp(data, ui = {}) {
   const firstName = identity?.name ?? (localDemo ? 'No synthetic specimen available' : 'No eligible approved card available');
   const side = ui.side === 'back' ? 'back' : 'front';
   const src = localUrl(card?.media?.[side]?.url, localDemo, ui.evidencePathPrefix);
-  const report = localUrl(card?.reportUrl, localDemo, ui.evidencePathPrefix);
+  const report = approvedReportPath(card?.reportUrl,card?.reportVersion)??localUrl(card?.reportUrl, localDemo, ui.evidencePathPrefix);
   const controlAttrs = reserved ? identifier('reservation', reserved.id) : '';
   return `
     <div class="local-banner"><span class="local-dot" aria-hidden="true"></span><strong>${localDemo ? 'LOCAL SYNTHETIC DEMO' : data.environment === 'PROVIDER_SANDBOX' ? 'PROVIDER SANDBOX' : 'ATLAS MARKETPLACE'}</strong><span>${localDemo ? 'No real cards, payments or shipments.' : data.environment === 'PROVIDER_SANDBOX' ? 'Authenticated workspace · Test money only.' : `Authenticated ${h(role.toLowerCase())} workspace`}</span></div>

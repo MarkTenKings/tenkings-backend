@@ -9,14 +9,15 @@ import { authorityContext, authorityId, domainId } from './authority-context.mjs
 import { catalogListings } from './catalog.mjs';
 import { reconcileAccount, reconcilePendingFinance } from './reconciliation.mjs';
 import { randomUUID } from 'node:crypto';
-import { handleFinanceWebhook } from './webhook.mjs';
+import { handleFinanceWebhook, scopedWebhookBinding, verifyScopedRawWebhook } from './webhook.mjs';
 import { projectMarketplaceWorkspace, projectStaffQueue, marketplaceOperations } from './projections.mjs';
+import { assertRecoverySettlementCapability } from './recovery-settlement.mjs';
 
 export const intentId = (kind, value, context) => `${authorityContext(context).environment === 'SYNTHETIC_LOCAL' ? 'demo_' : 'atlas_'}${kind}_${hash(value).slice(0, 32)}`;
 
 // Trusted composition boundary. No production auth, eligibility or credentials
 // are discovered here. Every runtime must explicitly provide its own ports.
-export function createMarketplacePilot({ enabled = false, environment, store, eligibility = createUnavailableEligibilityAdapter(), quoteProvider, provider, listingPolicy, financePolicy, fulfillmentPolicy, platformAccountId, context: suppliedContext, runtimeApproval, assertRuntimeReady, sellerAccount, onboarding, readEvidence, validateEvidence, webhook, clock = Date.now } = {}) {
+export function createMarketplacePilot({ enabled = false, environment, store, eligibility = createUnavailableEligibilityAdapter(), quoteProvider, provider, listingPolicy, financePolicy, fulfillmentPolicy, platformAccountId, context: suppliedContext, runtimeApproval, assertRuntimeReady, sellerAccount, onboarding, readEvidence, validateEvidence, webhook, recoverySettlementCapability, clock = Date.now } = {}) {
   const context = authorityContext(suppliedContext), rawStore = store;
   if (rawStore) store = { read: (...args) => rawStore.read(...args), transaction: fn => rawStore.transaction(tx => fn({ ...tx, context })) };
   const idFor = (kind,value) => intentId(kind,value,context);
@@ -43,8 +44,9 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     requireValue(reservation?.buyerId === actor.id, 'RESERVATION_NOT_FOUND');
     return reservation;
   }
-  async function settle(intent, reservationId) {
+  async function settle(intent, reservationId, authorizeCommit) {
     return await store.transaction(tx => {
+      if (authorizeCommit) authorizeCommit();
       const reservation = tx.state.reservations[reservationId];
       if (intent.status === 'SUCCEEDED') {
         const order = settleReservation(tx, { reservationId, paymentIntentId: intent.id, orderId: reservation.orderId });
@@ -88,7 +90,9 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     return dispatchOrReconcile(transferId);
   }
   return Object.freeze({
-    status() { let active=false; try { gate(); active=true; } catch {} return { enabled: active, environment: environment ?? null, realAuthorityEnabled: active && environment==='PRODUCTION', ownershipClaimsEnabled: false, ownershipHistoryEnabled: false }; },
+    // Runtime qualification never establishes global title/custody authority.
+    // Each sale action must independently obtain its exact current assertion.
+    status() { let active=false; try { gate(); active=true; } catch {} return { enabled: active, environment: environment ?? null, realAuthorityEnabled: false, authorityStatus: 'PER_ACTION_VERIFICATION_REQUIRED', ownershipClaimsEnabled: false, ownershipHistoryEnabled: false }; },
     async recordConsent(actor, input) { authorize(actor, ['SELLER']); await validated('CONSENT',actor,input); return await store.transaction(tx => recordHoldChoice(tx, { ...input, actor })); },
     async publishListing(actor, input) {
       authorize(actor, ['SELLER']);
@@ -241,9 +245,19 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
       return reconcileOriginal(idFor('refund', { orderId, caseId }));
     },
     async balance(actor) { authorize(actor, ['SELLER']); return await store.read(state => sellerBalance(state, actor.id)); },
+    getHostedWebhookBinding() {
+      gate(); const binding = scopedWebhookBinding(webhook ?? {});
+      requireValue(binding.endpoints.some(item=>item.scope==='PLATFORM')&&binding.endpoints.some(item=>item.scope==='CONNECTED'),'WEBHOOK_DUAL_SCOPE_REQUIRED');
+      return {environment,platformAccountId,...binding};
+    },
     async receiveProviderWebhook({rawBody,signature}) {
-      gate(); requireValue(typeof webhook?.secret==='string','WEBHOOK_UNAVAILABLE');
-      const result=await handleFinanceWebhook({store,provider,rawBody,signature,secret:webhook.secret,platformAccountId,now:clock(),enabled:true,expectedLivemode:environment==='PRODUCTION',resolveDisputePolicy:webhook.resolveDisputePolicy});
+      gate(); const now=clock(),expectedLivemode=environment==='PRODUCTION';
+      let selectedSecret;
+      if(webhook?.endpoints!==undefined) {
+        const verified=verifyScopedRawWebhook({rawBody,signature,endpoints:webhook.endpoints,secret:webhook.secret,platformAccountId,now,expectedLivemode});
+        selectedSecret=webhook.endpoints[verified.endpointIndex].secret;
+      } else {requireValue(typeof webhook?.secret==='string','WEBHOOK_UNAVAILABLE');selectedSecret=webhook.secret;}
+      const result=await handleFinanceWebhook({store,provider,rawBody,signature,secret:selectedSecret,platformAccountId,now,enabled:true,expectedLivemode,resolveDisputePolicy:webhook.resolveDisputePolicy});
       // Completing the order is a separate idempotent commit. If it fails, the
       // endpoint fails and redelivery retrieves and settles the same payment.
       const paymentCandidate=result.affectedPaymentIntentId??result.intentId;
@@ -286,6 +300,28 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
       for(const result of results) {
         const intent=await store.read(state=>state.intents[result.intentId]);
         if(intent?.kind==='PAYMENT'&&intent.order?.reservationId) await settle(intent,intent.order.reservationId);
+      }
+      return results;
+    },
+    // Separate server-only capability for a qualified recovery worker. This is
+    // deliberately absent from HTTP operation maps and never impersonates staff.
+    async settleRecoveredPayments(capability, { intentIds } = {}) {
+      const authorizeCommit = () => {
+        gate();
+        requireValue(capability === recoverySettlementCapability, 'RECOVERY_SETTLEMENT_UNAVAILABLE');
+        assertRecoverySettlementCapability(capability, { store: rawStore, environment, platformAccountId });
+      };
+      authorizeCommit();
+      requireValue(Array.isArray(intentIds) && intentIds.length <= 100 && new Set(intentIds).size === intentIds.length && intentIds.every(id => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id)), 'INVALID_REQUEST');
+      const originals = await store.read(state => intentIds.map(id => {
+        const intent = Object.hasOwn(state.intents, id) ? state.intents[id] : null;
+        requireValue(intent?.kind === 'PAYMENT' && intent.id === id && intent.dispatchCount === 1 && intent.platformAccountId === platformAccountId && intent.accountId === platformAccountId && typeof intent.objectId === 'string' && intent.objectId.length > 0 && intent.order?.reservationId && Number.isSafeInteger(intent.reconciledAt) && intent.reconciledAt <= clock() && ((intent.status === 'SUCCEEDED' && intent.confirmed === true) || (intent.status === 'CANCELED' && intent.terminalUnpaid === true)), 'RECOVERY_PAYMENT_NOT_SETTLEABLE');
+        return intent;
+      }));
+      const results = [];
+      for (const intent of originals) {
+        const result = await settle(intent, intent.order.reservationId, authorizeCommit);
+        results.push({ intentId: intent.id, reservationId: intent.order.reservationId, status: result.status, orderId: intent.orderId });
       }
       return results;
     },

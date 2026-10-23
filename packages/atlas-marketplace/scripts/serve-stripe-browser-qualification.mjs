@@ -15,6 +15,7 @@ const assets = new Map([
   ['', ['workspace.html', 'text/html']], ['app.mjs', ['app.mjs', 'text/javascript']],
   ['view.mjs', ['view.mjs', 'text/javascript']], ['stripe-payment.mjs', ['stripe-payment.mjs', 'text/javascript']],
   ['styles.css', ['styles.css', 'text/css']],
+  ['report-link.mjs', ['report-link.mjs', 'text/javascript']],
 ]);
 const banner = '<aside class="notice attention" role="note"><strong>LOCAL STRIPE SANDBOX QUALIFICATION — SYNTHETIC SESSION AND CHECKOUT</strong><p>This isolated test uses real Stripe test APIs and a synthetic buyer/reservation projection. It does not authenticate through R1, qualify card ownership or custody, create a sale, or move real money. Only the original test payment can be collected and reconciled. The fixture reservation stays held after payment; no marketplace order or fulfillment is created.</p></aside>';
 const safeCode = error => /^[A-Z0-9_]{1,100}$/.test(error?.code ?? '') ? error.code : 'BROWSER_QUALIFICATION_FAILED';

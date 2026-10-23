@@ -20,7 +20,7 @@ const sameToken = (a,b) => typeof a==='string' && typeof b==='string' && HASH.te
  * remains the correct result until its SQL and deployment binding are approved.
  */
 export function createR1MarketplaceAuthBridge(options={}) {
-  const { enabled=false,environment,policy,staff,customer,admitRequest,clock=Date.now,requestTtlMs=30000 }=options;
+  const { enabled=false,environment,policy,staff,customer,admitRequest,clock=Date.now,requestTtlMs=30000,maxDatabaseClockSkewMs=0 }=options;
   const policyPin=policy?hash(policy):null;
   function configured() {
     unavailable(enabled===true && options.enabled===true && options.environment===environment && ['PROVIDER_SANDBOX','PRODUCTION'].includes(environment));
@@ -28,6 +28,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
     unavailable(environment!=='PRODUCTION'||policy.r1Mode==='PRODUCTION');
     unavailable(options.policy===policy && hash(policy)===policyPin && options.staff===staff && options.customer===customer && options.admitRequest===admitRequest && typeof admitRequest==='function');
     unavailable(Number.isSafeInteger(requestTtlMs)&&requestTtlMs>0&&requestTtlMs<=60000);
+    unavailable(Number.isSafeInteger(maxDatabaseClockSkewMs)&&maxDatabaseClockSkewMs>=0&&maxDatabaseClockSkewMs<=2000&&(options.maxDatabaseClockSkewMs??0)===maxDatabaseClockSkewMs);
   }
   return Object.freeze({ open(originalRequest,{audience}={}) {
     configured();
@@ -50,6 +51,8 @@ export function createR1MarketplaceAuthBridge(options={}) {
     if(!isStaff) unavailable(allowedRoles.includes(audience));
     const start=clock(), deadline=start+requestTtlMs, pinnedConfig=configPin(config), pinnedRequest=requestPin(originalRequest);
     unavailable(Number.isSafeInteger(start)&&Number.isSafeInteger(deadline));
+    let lastClock=start;
+    function now() { const value=clock(); unavailable(Number.isSafeInteger(value)&&value>=lastClock); lastClock=value; return value; }
     const req=originalRequest, cookie=req.headers?.cookie??'', method=req.method, target=req.url;
     signedIn(typeof cookie==='string'&&cookie.length>0&&cookie.length<=8192);
     unavailable(['GET','POST'].includes(method)&&typeof target==='string'&&target.startsWith('/')&&!target.startsWith('//')&&!/[\\#\s]/.test(target));
@@ -59,7 +62,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
     if(method==='POST') requireValue(req.headers?.origin===config.origin,'ORIGIN_REFUSED');
     let ended=false, principal=null, staffHandle=null, originalAccess=null, csrfVerified=false, admitted=false, dispatched=false, normalizedPath=null;
     function current() {
-      configured(); signedIn(!ended&&!req.aborted&&clock()<deadline);
+      configured(); signedIn(!ended&&!req.aborted&&now()<deadline);
       unavailable(source.state===state && state.auth===auth && auth.config===config && auth.database===database && state.assertRequest===guard && configPin(config)===pinnedConfig && requestPin(req)===pinnedRequest && auth.digest===digest && AuthClass.prototype.digest===digest);
       unavailable(isStaff ? source.DurableStaffAuth===AuthClass && source.boundary===boundary && boundary.transaction===transaction && auth.authenticate===authenticate && auth.withStaff===withStaff && AuthClass.prototype.authenticate===authenticate && AuthClass.prototype.withStaff===withStaff
         : source.CustomerAuth===AuthClass && source.CustomerDatabase===DatabaseClass && auth.authority===authority && AuthClass.prototype.authority===authority && database.call===databaseCall && DatabaseClass.prototype.call===databaseCall && database.config===config && state.config===config);
@@ -68,10 +71,10 @@ export function createR1MarketplaceAuthBridge(options={}) {
     const admission=guard.call(state,req);
     if(admission&&typeof admission.then==='function') { void Promise.resolve(admission).catch(()=>{}); unavailable(false); }
     unavailable(admission===undefined); current();
-    function exactPrincipal(value) { current(); signedIn(principal&&value===principal&&principal.expiresAt>clock()); }
+    function exactPrincipal(value) { current(); signedIn(principal&&value===principal&&principal.expiresAt>now()); }
     function sameAccess(access) {
       if(originalAccess) signedIn(access.id===originalAccess.id&&access.sessionHash===originalAccess.sessionHash&&access.browserHash===originalAccess.browserHash&&access.sourceRole===originalAccess.sourceRole&&access.accessVersion===originalAccess.accessVersion);
-      signedIn(Number.isSafeInteger(access.expiresAt)&&access.expiresAt>clock());
+      signedIn(Number.isSafeInteger(access.expiresAt)&&access.expiresAt>now());
       return access;
     }
     async function readAccess() {
@@ -83,7 +86,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
         access=await withStaff.call(auth,staffHandle,async context=>{
           current(); const identity=context.identity, session=context.session;
           signedIn(UUID.test(identity?.id??'')&&allowedRoles.includes(identity.role)&&Number.isSafeInteger(identity.accessVersion)&&identity.accessVersion>0&&session?.tokenHash===handle.sessionHash&&session.browserHash===handle.browserHash&&session.identityId===identity.id&&session.accessVersion===identity.accessVersion);
-          return {id:identity.id,sourceRole:identity.role,accessVersion:identity.accessVersion,sessionHash:handle.sessionHash,browserHash:handle.browserHash,expiresAt:time(session.expiresAt)};
+          return {id:identity.id,sourceRole:identity.role,accessVersion:identity.accessVersion,sessionHash:handle.sessionHash,browserHash:handle.browserHash,expiresAt:time(session.expiresAt)-maxDatabaseClockSkewMs};
         });
       } else {
         const capability=authority.call(auth,cookie);
@@ -92,8 +95,12 @@ export function createR1MarketplaceAuthBridge(options={}) {
         try { result=await databaseCall.call(database,R1_SESSION_ACCESS_ACTION,{sessionHash:capability.sessionHash,browserHash:capability.browserHash}); }
         catch(error) { if(['SIGN_IN_REQUIRED','SIGN_IN_SESSION_EXPIRED'].includes(error?.code)) signedIn(false); unavailable(false); }
         current();
-        unavailable(closed(result,['schema','accountId','sessionHash','browserHash','expiresAt','observedAt'])&&result.schema===R1_SESSION_ACCESS_SCHEMA&&UUID.test(result.accountId??'')&&result.sessionHash===capability.sessionHash&&result.browserHash===capability.browserHash&&Number.isSafeInteger(result.expiresAt)&&Number.isSafeInteger(result.observedAt)&&result.observedAt<=clock()&&clock()-result.observedAt<=requestTtlMs&&result.expiresAt>result.observedAt);
-        access={id:result.accountId,sourceRole:audience,accessVersion:null,sessionHash:result.sessionHash,browserHash:result.browserHash,expiresAt:result.expiresAt};
+        const observedNow=now();
+        // Allow only an explicitly bounded DB clock lead. Use the oldest
+        // plausible observation and earliest plausible expiry; tolerance can
+        // never extend session authority or make stale evidence fresh.
+        unavailable(closed(result,['schema','accountId','sessionHash','browserHash','expiresAt','observedAt'])&&result.schema===R1_SESSION_ACCESS_SCHEMA&&UUID.test(result.accountId??'')&&result.sessionHash===capability.sessionHash&&result.browserHash===capability.browserHash&&Number.isSafeInteger(result.expiresAt)&&Number.isSafeInteger(result.observedAt)&&result.observedAt-observedNow<=maxDatabaseClockSkewMs&&observedNow-result.observedAt+maxDatabaseClockSkewMs<=requestTtlMs&&result.expiresAt>result.observedAt);
+        access={id:result.accountId,sourceRole:audience,accessVersion:null,sessionHash:result.sessionHash,browserHash:result.browserHash,expiresAt:result.expiresAt-maxDatabaseClockSkewMs};
       }
       current(); return sameAccess(access);
     }

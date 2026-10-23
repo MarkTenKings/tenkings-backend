@@ -1,12 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { createMarketplaceHttpHandler } from './http.mjs';
 import { requireValue } from './contract.mjs';
+import { createMarketplaceHostCheck } from './host-boundary.mjs';
 
 const assets=new Map([
   ['',['workspace.html','text/html']],
   ['app.mjs',['app.mjs','text/javascript']],
   ['stripe-payment.mjs',['stripe-payment.mjs','text/javascript']],
   ['view.mjs',['view.mjs','text/javascript']],
+  ['report-link.mjs',['report-link.mjs','text/javascript']],
   ['styles.css',['styles.css','text/css']],
 ]);
 export const MARKETPLACE_CSP="default-src 'self'; script-src 'self' https://js.stripe.com https://*.js.stripe.com; style-src 'self'; img-src 'self'; connect-src 'self' https://api.stripe.com https://r.stripe.com https://m.stripe.network; frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
@@ -18,6 +20,7 @@ export function createMarketplaceNodeHandler(options={}) {
   requireValue(/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\/$/.test(mountPath)&&/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(apiPath),'ROUTE_CONFIGURATION_UNAVAILABLE');
   const handler=createMarketplaceHttpHandler(options);
   const enabled=options.enabled===true; let closed=false;
+  const acceptsHost=enabled?createMarketplaceHostCheck(options):()=>false;
   const listener=async(request,response)=>{
     const send=(status,body,headers={})=>{
       response.writeHead(status,{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Type':'application/json',...headers});
@@ -26,7 +29,7 @@ export function createMarketplaceNodeHandler(options={}) {
     if(!enabled||closed) return send(503,{error:'MARKETPLACE_DISABLED'});
     try {
       const url=new URL(request.url,options.origin);
-      requireValue(url.origin===options.origin&&request.headers.host===new URL(options.origin).host,'HOST_REFUSED');
+      requireValue(url.origin===options.origin&&acceptsHost(request.headers.host),'HOST_REFUSED');
       const asset=url.pathname.startsWith(mountPath)?assets.get(url.pathname.slice(mountPath.length)):null;
       if(request.method==='GET'&&asset) {
         const [name,type]=asset;

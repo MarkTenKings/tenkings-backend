@@ -51,14 +51,17 @@ export function createFinanceRecoveryRunner({ enabled = false, store, provider, 
     getAccountSnapshot: (...args) => provider.getAccountSnapshot(...args),
     listBalanceTransactions: (...args) => provider.listBalanceTransactions(...args)
   });
+  const ready = () => {
+    const result = assertRuntimeReady(copy(config));
+    if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});
+    check(result === true, 'RECOVERY_RUNTIME_UNQUALIFIED');
+  };
   return Object.freeze({
     async run({ runId, signal } = {}) {
       identifier(runId);
       check(!signal || typeof signal.aborted === 'boolean', 'RECOVERY_SIGNAL_INVALID');
       // Approval references are bindings, never authority inferred from a string.
-      const ready = assertRuntimeReady(copy(config));
-      if (ready && typeof ready.then === 'function') Promise.resolve(ready).catch(() => {});
-      check(ready === true, 'RECOVERY_RUNTIME_UNQUALIFIED');
+      ready();
       const token = randomUUID();
       const start = await store.transaction(tx => {
         const runs = tx.state.financeRecoveryRuns ??= {}, leases = tx.state.financeRecoveryLeases ??= {};
@@ -84,7 +87,11 @@ export function createFinanceRecoveryRunner({ enabled = false, store, provider, 
       });
       if (!start.claimed) return start.receipt;
       const owns = tx => tx.state.financeRecoveryLeases?.[scope]?.token === token && tx.state.financeRecoveryRuns[runId]?.status === 'RUNNING';
-      const canStart = async () => !signal?.aborted && await store.transaction(tx => owns(tx) && tx.now < start.receipt.deadline);
+      const canStart = async () => {
+        if (signal?.aborted) return false;
+        ready();
+        return store.transaction(tx => owns(tx) && tx.now < start.receipt.deadline);
+      };
       const append = async (key, value) => store.transaction(tx => {
         if (!owns(tx)) return false;
         const run = tx.state.financeRecoveryRuns[runId]; run[key].push(copy(value));

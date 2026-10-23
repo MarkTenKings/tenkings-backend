@@ -1,6 +1,6 @@
 # ATLAS R2 marketplace pilot
 
-Default-off, isolated implementation of an ATLAS-held fixed-price marketplace. Nothing in this package registers routes, applies shared migrations, reads grading credentials, schedules jobs or changes grading/Ten Kings. Ownership claims and customer ownership history remain disabled pending Fingerprint and separate authority/policy approval.
+Default-off, isolated implementation of an ATLAS-held fixed-price marketplace. Importing or constructing this package does not register routes, apply shared migrations, read grading credentials, start jobs or change grading/Ten Kings. Hosted recovery requires separate approval and an explicit start. Ownership claims and customer ownership history remain disabled pending Fingerprint and separate authority/policy approval.
 
 ## Local preview and tests
 
@@ -21,6 +21,8 @@ The demo uses synthetic identities, artwork, policy and provider effects. The il
 | Component | Contract |
 | --- | --- |
 | `service.mjs` | Async composition over atomic reducers; explicit policy/evidence/provider ports. Non-local environments require matching server qualification bindings. |
+| `host-r1.mjs`, `evidence-r1.mjs` | Default-off canonical R1 host, unchanged cookie paths/original signed requests, dedicated PostgreSQL and fixed exact approved report/Front/Back transport. Real sale authority remains unavailable. |
+| `host-finance.mjs`, `finance-scheduler.mjs`, `finance-alerts.mjs`, `recovery-settlement.mjs` | Explicitly started durable recovery, dual scoped webhook secrets, opaque original-payment settlement and bounded alert outbox. Uncertain delivery uses lookup only; no replacement financial dispatch or automatic exception clearing. |
 | `authority-context.mjs`, `authority-r1.mjs` | Separate synthetic/sandbox/production identity and evidence contracts. R1 copied owner/display facts do not establish sale authority; unresolved title/consignment/custody fails closed. |
 | `listing.mjs`, `reservation.mjs` | Frozen identity, Front/Back/report, policies and quote. Price revision/withdrawal use exact version/hash and reject financial exposure. Atomic reservation, untouched cancellation and conservative expiry. |
 | `public-http.mjs`, `runtime-public-node.mjs` | Default-off session-free GET catalog; mandatory request admission, typed facets and a closed public projection. No financial commands. Exact public media/report access requires a qualified host reader. |
@@ -52,3 +54,5 @@ Two dependency-injected helpers keep this evidence separate from production inte
 Final lead verification after provider corrections: **163 tests across137 top-level groups pass**, with no failures/cancellations/skips on Node22.16.0; external `continuation/r2-provider-qualification-tests.tap`. The earlier147-test/121-group result remains a historical checkpoint. The browser and webhook helper tests each passed two focused groups using real local HTTP with mocked providers; the six Stripe UI groups include timeout/disposal, exact binding, original-intent recovery and disabled Link. Actual provider outcomes above are separate evidence. No live money, real bank ownership, physical-title verification, ownership claims/history enablement or R1 activation is established. Never copy QA references into live approval or treat a test payout as real bank settlement.
 
 Use the current [lead handoff](../../docs/handoffs/ATLAS_R2_MARKETPLACE_HANDOFF_20261022.md), [integration audit](../../docs/atlas/audits/2026-10-22/r2-marketplace-pilot.md), [auth bridge](../../docs/atlas/audits/2026-10-22/r2-auth-r1-bridge.md), [listing interface](../../docs/atlas/audits/2026-10-22/r2-listing-implementation.md) and finance audit for exact evidence and open gates. Shared production operations remain with the R1 lead. A flag change alone cannot supply real authority, legal terms, infrastructure qualification or physical acceptance.
+
+The additive host candidate and owned-role evidence are described in [host integration](../../docs/atlas/audits/2026-10-22/r2-host-integration.md). The exact hosted sandbox deployment/verification packet is in [hosted finance readiness](../../docs/atlas/audits/2026-10-22/r2-hosted-finance-readiness.md); R1 remains the operator. Complete [launch decisions and physical acceptance](../../docs/atlas/audits/2026-10-22/r2-launch-decisions.md) before any live scope. New focused host/recovery results are separate from the retained163-test provider checkpoint above.

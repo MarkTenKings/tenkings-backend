@@ -1,6 +1,7 @@
 import { requireValue } from './contract.mjs';
 import { parseCatalogFilters } from './http.mjs';
 import { publicApprovedCard } from './card-projection.mjs';
+import { createMarketplaceHostCheck } from './host-boundary.mjs';
 
 const headers=Object.freeze({'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'});
 const reply=(status,body)=>({status,headers:{...headers},body});
@@ -21,7 +22,8 @@ function publicPage(value) {
 /** Public GET-only composition. No session, actor, mutation, credentials or
  * route registration. The service port must perform only its scoped public read.
  */
-export function createPublicCatalogHandler({enabled=false,origin,catalogPath='/marketplace/catalog',service,admitPublicRequest,maxQueryLength=2000}={}) {
+export function createPublicCatalogHandler({enabled=false,origin,acceptedHosts,catalogPath='/marketplace/catalog',service,admitPublicRequest,maxQueryLength=2000}={}) {
+  const acceptsHost=enabled===true?createMarketplaceHostCheck({origin,acceptedHosts}):()=>false;
   let closed=false;
   return Object.freeze({close(){closed=true;},async handle(request){
     if(closed||enabled!==true)return reply(503,{error:'CATALOG_DISABLED'});
@@ -29,7 +31,7 @@ export function createPublicCatalogHandler({enabled=false,origin,catalogPath='/m
       requireValue(typeof service?.publicCatalog==='function'&&typeof admitPublicRequest==='function'&&pathShape(catalogPath)&&Number.isSafeInteger(maxQueryLength)&&maxQueryLength>0&&maxQueryLength<=8192,'CATALOG_UNAVAILABLE');
       const expected=new URL(origin),raw=request.url,method=request.method,source=request.headers??{};
       requireValue(expected.origin===origin&&(expected.protocol==='https:'||expected.protocol==='http:'&&['127.0.0.1','localhost'].includes(expected.hostname)),'CATALOG_UNAVAILABLE');
-      requireValue(source.host===expected.host,'HOST_REFUSED');
+      requireValue(acceptsHost(source.host),'HOST_REFUSED');
       requireValue(source.origin===undefined||source.origin===origin,'ORIGIN_REFUSED');
       requireValue(typeof raw==='string'&&raw.startsWith('/')&&!/[\\#\s]/.test(raw)&&raw.split('?')[0]===catalogPath,'NOT_FOUND');
       requireValue(method==='GET','METHOD_NOT_ALLOWED');
