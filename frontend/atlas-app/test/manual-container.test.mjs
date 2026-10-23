@@ -17,7 +17,8 @@ test('actual clean serving closure contains current workers and camera but no hi
  for(const name of CPU_SOURCES)assert(paths.has('backend/ai-grader-speedster-service/'+name),name);
  for(const path of [...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES])assert(paths.has(path),path);
  const fontRoot='packages/atlas-finishing/assets/approved-b/fonts/';
- for(const name of ['BebasNeue-Regular.ttf','OFL-BebasNeue.txt','README.md'])assert(paths.has(fontRoot+name),`Missing variant font runtime/provenance input: ${name}`);
+ for(const name of ['BebasNeue-Regular.ttf','OFL-BebasNeue.txt','README.md','Knewave-Regular.ttf','Lacquer-Regular.ttf',
+  'OFL-Knewave.txt','OFL-Lacquer.txt','label-style-provenance.json'])assert(paths.has(fontRoot+name),`Missing variant font runtime/provenance input: ${name}`);
  assert.equal(files.find(file=>file.path===fontRoot+'BebasNeue-Regular.ttf').sha256,'830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04');
  assert.match(files.find(file=>file.path===fontRoot+'OFL-BebasNeue.txt').bytes.toString(),/SIL Open Font License, Version 1\.1/);
  for(const module of ['label-approved-b.mjs','label-approved-b-artwork.mjs'])assert(paths.has('packages/atlas-finishing/src/'+module),module);
@@ -67,7 +68,7 @@ test('isolated approved B package verifies exact assets and rejects changed artw
  try{
   const {files}=await collectManualSource(),included=files.filter(file=>LABEL_APPROVED_B_SOURCES.includes(file.path)
    ||file.path.startsWith('frontend/atlas-app/assets/label-templates/')
-   ||['label-approved-b-artwork.mjs','label-sheet.mjs','label-sheet-geometry.mjs','label-sheet-25.mjs'].some(name=>file.path===`packages/atlas-finishing/src/${name}`)
+   ||['label-approved-b-artwork.mjs','label-style-artwork.mjs','label-style-png.mjs','label-sheet.mjs','label-sheet-geometry.mjs','label-sheet-25.mjs'].some(name=>file.path===`packages/atlas-finishing/src/${name}`)
    ||file.path==='frontend/atlas-app/scripts/verify-manual-container.mjs');
   for(const file of included){const path=join(temporary,file.path);await mkdir(dirname(path),{recursive:true});await writeFile(path,file.bytes);}
   await writeFile(manifestPath,JSON.stringify({version:'atlas-clean-manual-source-v1',packages:['packages/atlas-finishing'],files:included.map(({bytes,...file})=>file)}));
@@ -75,7 +76,8 @@ test('isolated approved B package verifies exact assets and rejects changed artw
   const complete=run();assert.equal(complete.status,0,complete.stderr);const result=JSON.parse(complete.stdout);
   assert.equal(result.approvedLabelAssets.version,'atlas-approved-b-static-assets-v1');assert.equal(result.approvedLabelAssets.files,5);
   assert.equal(result.labelJig25.positions,25);assert.equal(result.labelJig25.backFiles,3);
-  for(const name of ['back-black.png','fonts/BebasNeue-Regular.ttf','fonts/OFL-BebasNeue.txt','fonts/README.md']){
+  for(const name of ['back-black.png','fonts/BebasNeue-Regular.ttf','fonts/OFL-BebasNeue.txt','fonts/README.md',
+    'style-front-black.png','style-front-inverted.png','style-artwork-manifest.json','fonts/Knewave-Regular.ttf','fonts/Lacquer-Regular.ttf']){
    const asset=join(temporary,'packages/atlas-finishing/assets/approved-b',name),original=await readFile(asset),bytes=Buffer.from(original);
    bytes[bytes.length-1]^=1;await writeFile(asset,bytes);
    const changed=run();assert.notEqual(changed.status,0,name);assert(changed.stderr.includes(name),changed.stderr);

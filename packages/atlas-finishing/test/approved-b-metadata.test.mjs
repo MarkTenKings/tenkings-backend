@@ -27,7 +27,7 @@ const examples = [
   ['#PD-10 2025-26 Topps Chrome', 'PATENTED · CASE HIT']],
   [{ playerName: 'Mike Trout', cardNumber: '1', year: '2025', manufacturer: 'Topps',
     productSet: 'Topps Chrome 1955 Anniversary', parallel: 'Blue Mini Diamond Refractor', sportsAttributes: serial(132, 199) },
-  ['#1 2025 Topps Chrome 1955 Anniv.', 'BLUE MINI DIAMOND REFRACTOR /199']],
+  ['#1 2025 Topps Chrome 1955 Anniv.', 'BLUE MINI DIAMOND /199']],
   [{ playerName: 'Michael Jordan', cardNumber: 'NNO', year: null, manufacturer: null,
     productSet: 'Michael Jordan Red Border (unlicensed)', parallel: 'Red Border' },
   ['#NNO (unlicensed)', 'RED BORDER']],
@@ -40,7 +40,14 @@ test('six reviewed examples keep product and variant on their own rows without c
     assert.deepEqual(result.diagnostics.metadata.lines, expected);
     assert.deepEqual(result.source, before); assert.deepEqual(source, before);
     assert.equal(result.diagnostics.name.text, identity.playerName.toUpperCase());
-    assert.equal(result.diagnostics.certificate.text, `CERT # ${source.reportNumber}`);
+    assert.equal(result.diagnostics.certificate.text, '#0123456789AB');
+    assert.equal(result.diagnostics.certificate.canonical, source.reportNumber);
+    assert.equal(result.diagnostics.certificate.capHeightMm, 1.3);
+    assert.equal(result.diagnostics.certificate.weight, 500);
+    const certificate = result.diagnostics.certificate.bounds;
+    assert(certificate.x >= 1.9 && certificate.x + certificate.width <= 15.8);
+    assert(Math.abs(certificate.y + certificate.height / 2 - 18.35) < .000001);
+    assert.doesNotMatch(result.printSvg, /CERT #|data-part="certificate-frame"/);
     assert.equal(result.diagnostics.grade.value, source.finalGrade);
     assert(result.diagnostics.metadata.capHeightMm >= 1.3);
     assert(result.diagnostics.metadata.capHeightMm <= 1.6);
@@ -49,9 +56,11 @@ test('six reviewed examples keep product and variant on their own rows without c
   }
   const trout = renderApprovedBLabel(input(examples[4][0]));
   assert.deepEqual(trout.diagnostics.metadata.abbreviations, [{ field: 'productSet', from: 'Chrome 1955 Anniversary',
-    to: 'Chrome 1955 Anniv.', reason: 'readable-two-line-fit' }]);
+    to: 'Chrome 1955 Anniv.', reason: 'readable-two-line-fit' },
+  { field: 'parallel', from: 'Blue Mini Diamond Refractor', to: 'Blue Mini Diamond', reason: 'specific-parallel-omit-refractor-v1' }]);
   assert.equal(trout.source.identity.productSet, 'Topps Chrome 1955 Anniversary');
-  assert.equal(trout.diagnostics.metadata.semanticLines.variant, 'Blue Mini Diamond Refractor /199');
+  assert.equal(trout.source.identity.parallel, 'Blue Mini Diamond Refractor');
+  assert.equal(trout.diagnostics.metadata.semanticLines.variant, 'BLUE MINI DIAMOND /199');
   assert.equal(LABEL_APPROVED_B_RENDERER_PROFILE.detail.maximumLines, 2);
 });
 
@@ -63,26 +72,26 @@ function clearance(bounds) {
 
 test('each detail row uses its pinned font metrics, uniform scale and padded circular NFC clearance', () => {
   const faces = {
-    RobotoCondensed: fontkit.create(readFileSync(new URL('../assets/v4/fonts/RobotoCondensed-variable.ttf', import.meta.url))).getVariation({ wght: 700 }),
-    BebasNeue: fontkit.create(readFileSync(new URL('../assets/approved-b/fonts/BebasNeue-Regular.ttf', import.meta.url))),
+    'Roboto Condensed': fontkit.create(readFileSync(new URL('../assets/v4/fonts/RobotoCondensed-variable.ttf', import.meta.url))).getVariation({ wght: 700 }),
+    Knewave: fontkit.create(readFileSync(new URL('../assets/approved-b/fonts/Knewave-Regular.ttf', import.meta.url))),
   };
   for (const [identity] of examples) {
     const result = renderApprovedBLabel(input(identity)), metadata = result.diagnostics.metadata;
     let lastBottom = 10.37; // Lowest retained two-line name bound.
     for (const [index, bounds] of metadata.bounds.entries()) {
       const variant = metadata.lineRoles[index] === 'variant';
-      assert.equal(bounds.font, variant ? 'BebasNeue' : 'RobotoCondensed');
-      const face = faces[bounds.font], cap = face.layout('H', { kern: false }).bbox;
+      assert.equal(bounds.font, variant ? 'Knewave' : 'Roboto Condensed');
+      const face = faces[bounds.font], cap = face.layout('H', { kern: false, liga: false, clig: false }).bbox;
       const scale = bounds.capHeightMm / (cap.maxY - cap.minY);
-      const bbox = face.layout(metadata.lines[index], { kern: false }).bbox;
+      const bbox = face.layout(metadata.lines[index], { kern: false, liga: false, clig: false }).bbox;
       assert(Math.abs(bounds.width - (bbox.maxX - bbox.minX) * scale) < .00002);
       assert(Math.abs(bounds.height - (bbox.maxY - bbox.minY) * scale) < .00002);
       assert(Math.abs(bounds.fontSizePt - scale * face.unitsPerEm / 25.4 * 72) < .00001);
-      assert(bounds.capHeightMm >= 1.3 && bounds.capHeightMm <= (variant ? 1.9 : 1.6));
+      assert(bounds.capHeightMm >= 1.3 && bounds.capHeightMm <= (variant ? 2.5 : 1.6));
       assert(bounds.x === 17.5 && bounds.width <= 29.000001);
       assert(bounds.y >= 11 && bounds.y > lastBottom);
       lastBottom = bounds.y + bounds.height;
-      assert(lastBottom <= 16.600001 && lastBottom < 16.85, 'text must clear certificate frame stroke');
+      assert(lastBottom <= 16.600001 && bounds.height <= 2.675001, 'detail ink must fit its centered physical slot');
       assert(clearance(bounds) >= 5.85 - .000002, 'detail ink box must clear the NFC aperture plus 0.75mm padding');
     }
     assert.equal(metadata.capHeightMm, Math.min(...metadata.bounds.map(bounds => bounds.capHeightMm)));
@@ -93,7 +102,7 @@ test('each detail row uses its pinned font metrics, uniform scale and padded cir
   const trout = renderApprovedBLabel(input(examples[4][0])).diagnostics.metadata;
   assert(trout.bounds[1].capHeightMm > trout.bounds[0].capHeightMm, 'the long variant should still have greater cap height than its identity row');
   const jordan = renderApprovedBLabel(input(examples[1][0])).diagnostics.metadata;
-  assert.deepEqual(jordan.bounds.map(bounds => bounds.font), ['RobotoCondensed', 'RobotoCondensed']);
+  assert.deepEqual(jordan.bounds.map(bounds => bounds.font), ['Roboto Condensed', 'Roboto Condensed']);
 });
 
 test('NFC padding reduces only the colliding Henderson line and never introduces a third player/card-name row', () => {
@@ -135,24 +144,28 @@ test('only explicit bounded display aliases change product spelling and only spo
   assert.equal(approvedBMetadataLines({ manufacturer: 'Topps', productSet: 'Topps Chrome Basketball' }).identity, 'Topps Chrome');
   assert.equal(approvedBMetadataLines({ manufacturer: 'Panini', productSet: 'Prizm Basketball' }).identity, 'Panini Prizm Basketball');
   const card = { manufacturer: 'Pokémon', productSet: 'Set - Subset', parallel: 'Holo' };
-  assert.deepEqual(approvedBMetadataLines(card, { cardProfile: 'POKEMON' }), { identity: 'Pokémon Set - Subset', variant: 'Holo', abbreviations: [] });
-  assert.equal(approvedBMetadataLines({ productSet: 'Rookies & Stars - Thrillers', insert: 'Thrillers', parallel: 'ICE' }).variant, 'Thrillers · ICE');
+  assert.deepEqual(approvedBMetadataLines(card, { cardProfile: 'POKEMON' }), { identity: 'Pokémon Set - Subset', variant: 'HOLO', abbreviations: [] });
+  assert.equal(approvedBMetadataLines({ productSet: 'Rookies & Stars - Thrillers', insert: 'Thrillers', parallel: 'ICE' }).variant, 'THRILLERS · ICE');
   assert.equal(approvedBMetadataLines({ productSet: 'Rookies-and-Stars', parallel: 'Base Card' }).variant, '');
+  assert.equal(approvedBMetadataLines({ parallel: 'Refractor' }).variant, 'REFRACTOR');
+  assert.equal(approvedBMetadataLines({ parallel: 'Gold Refractor' }).variant, 'GOLD REFRACTOR');
+  assert.equal(approvedBMetadataLines({ parallel: 'Base Gold Refractor' }).variant, 'BASE GOLD REFRACTOR');
+  assert.equal(approvedBMetadataLines({ parallel: 'Blue Mini Diamond Refractor' }).variant, 'BLUE MINI DIAMOND');
 });
 
 test('confirmed features use exact serial denominator, real autograph types, explicit patch material and reviewed enum kinds', () => {
   const attributes = { ...serial(7, 99), autograph: { presence: 'PRESENT', type: 'ON_CARD' },
     relic: { presence: 'PRESENT', windows: [{ material: 'Jersey patch' }] },
     specialFeatures: [{ kind: 'SUPER_SHORT_PRINT' }, { kind: 'CASE_HIT' }, { kind: 'SHORT_PRINT' }] };
-  assert.equal(approvedBMetadataLines({ parallel: 'Refractor', sportsAttributes: attributes }).variant, 'Refractor /99 · AUTO · PATCH · Case Hit · SP · SSP');
+  assert.equal(approvedBMetadataLines({ parallel: 'Refractor', sportsAttributes: attributes }).variant, 'REFRACTOR /99 · AUTO · PATCH · CASE HIT · SP · SSP');
   for (const type of ['ON_CARD', 'STICKER', 'CUT'])
     assert.equal(approvedBMetadataLines({ sportsAttributes: { ...unknown(), autograph: { presence: 'PRESENT', type } } }).variant, 'AUTO');
   for (const type of ['FACSIMILE', 'UNKNOWN'])
     assert.equal(approvedBMetadataLines({ sportsAttributes: { ...unknown(), autograph: { presence: 'PRESENT', type } } }).variant, '');
   for (const material of [null, 'jersey', 'fabric', 'not a patch', 'bat', 'patch-like fabric'])
     assert.equal(approvedBMetadataLines({ sportsAttributes: { ...unknown(), relic: { presence: 'PRESENT', windows: [{ material }] } } }).variant, '');
-  assert.equal(approvedBMetadataLines({ parallel: 'Refractor /99', sportsAttributes: serial(7, 99) }).variant, 'Refractor /99');
-  assert.equal(approvedBMetadataLines({ insert: 'Patented', productSet: 'Case Hit Collection', sportsAttributes: unknown() }).variant, 'Patented');
+  assert.equal(approvedBMetadataLines({ parallel: 'Refractor /99', sportsAttributes: serial(7, 99) }).variant, 'REFRACTOR /99');
+  assert.equal(approvedBMetadataLines({ insert: 'Patented', productSet: 'Case Hit Collection', sportsAttributes: unknown() }).variant, 'PATENTED');
   assert.equal(approvedBMetadataLines({ sportsAttributes: attributes }, { cardProfile: 'POKEMON' }).variant, '');
 });
 
@@ -167,7 +180,7 @@ test('malformed or unsupported feature claims fail closed and private evidence i
   const privateAttributes = { ...unknown(), version: 'atlas-sports-attributes-v1',
     specialFeatures: [{ kind: 'CASE_HIT', evidence: { type: 'REVIEWED_REFERENCE', sourceTitle: 'Private reference', sourceUrl: 'https://example.com/', matchNote: 'Staff note' } }] };
   const result = renderApprovedBLabel(input({ playerName: 'A Player', sportsAttributes: privateAttributes }));
-  assert.equal(result.diagnostics.metadata.text, 'Case Hit');
+  assert.equal(result.diagnostics.metadata.text, 'CASE HIT');
   assert.doesNotMatch(result.printSvg, /Private reference|example.com|Staff note/);
   assert.deepEqual(result.source.identity.sportsAttributes, privateAttributes);
 });
@@ -192,6 +205,7 @@ test('approved-B profile compatibility is limited to the retained physical templ
   assert.equal(LABEL_APPROVED_B_RENDERER_PROFILE.version, 'atlas-approved-b-v1');
   assert.notEqual(LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH, LABEL_APPROVED_B_RENDERER_PROFILE_HASH);
   assert(isApprovedBRendererProfile('a0491ff4f0a86166371f950c658c3e08397e688fe13f9e60f28abbda88b764ab'));
+  assert(isApprovedBRendererProfile('b8bb56e7e816b1324b6ba3a1b5d9b683e761fc084ae986f253ae113e88ea6a0a'));
   assert(isApprovedBRendererProfile(LABEL_APPROVED_B_RENDERER_PROFILE_HASH));
   for (const value of [undefined, null, '', '0'.repeat(64), { hash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH }]) assert(!isApprovedBRendererProfile(value));
 });

@@ -249,12 +249,20 @@ export function createLabelRepository({ boundary, validateAccess = null, validat
       id, attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.jigHash ?? null); return null; }
       // Record the attempted recipe before storage/rendering, including a process
       // crash. A successor's target remains immutable across deployments.
-      const [claimed] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET claim_id=$2::uuid,lease_until=clock_timestamp()+interval '2 minutes',attempts=attempts+1,updated_at=clock_timestamp(),
+      const [claimed] = await tx.$queryRawUnsafe(`UPDATE ${S}.label_item SET claim_id=$2::uuid,lease_until=clock_timestamp()+interval '20 minutes',attempts=attempts+1,code=NULL,updated_at=clock_timestamp(),
         renderer_profile_hash=CASE WHEN purpose IN ('LAYOUT_RETRY','REPRINT') THEN renderer_profile_hash ELSE COALESCE($3,renderer_profile_hash) END,
         jig_hash=CASE WHEN purpose IN ('LAYOUT_RETRY','REPRINT') THEN jig_hash ELSE COALESCE($4,jig_hash) END WHERE id=$1::uuid RETURNING *`,
       id, randomUUID(), attemptedProfile?.rendererProfileHash ?? null, attemptedProfile?.jigHash ?? null);
       return claimed;
     }); },
+    deferItem(staff,claimed) {return boundary.transaction(staff,async({tx,principal})=>{
+      await lock(tx,principal.id);const item=await scopedItem(tx,principal,claimed.id);
+      requireThat(item.state==='PENDING_RENDER'&&typeof item.claim_id==='string'&&item.claim_id===claimed.claim_id,409,'LABEL_CLAIM_CHANGED');
+      if(item.code==='LABEL_STYLE_PROVIDER_PENDING')return;
+      // Keep the claim/lease pair until the short delay expires. The installed
+      // schema requires both fields to be present or both to be null.
+      await tx.$executeRawUnsafe(`UPDATE ${S}.label_item SET lease_until=clock_timestamp()+interval '30 seconds',attempts=GREATEST(0,attempts-1),code='LABEL_STYLE_PROVIDER_PENDING',updated_at=clock_timestamp() WHERE id=$1::uuid`,item.id);
+    });},
     finishItem(staff, claimed, result) { return boundary.transaction(staff, async ({ tx, principal }) => {
       await lock(tx, principal.id); const item = await scopedItem(tx, principal, claimed.id); matches(item, result.row);
       if (item.state !== 'PENDING_RENDER') return itemView(item);

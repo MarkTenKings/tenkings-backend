@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { isLabelStyleArtwork, validateLabelStyleArtwork, labelStyleBlackInk } from './label-style-artwork.mjs';
 
 const root = new URL('../assets/approved-b/', import.meta.url);
 export const APPROVED_B_ASSETS = JSON.parse(readFileSync(new URL('manifest.json', root)));
@@ -24,6 +25,7 @@ export function buildApprovedBFront({ title, cutouts, support }) {
 }
 
 export function validateApprovedBArtwork({ printSvg, artworkHash }) {
+  if (isLabelStyleArtwork(printSvg)) return validateLabelStyleArtwork({printSvg,artworkHash});
   const fail = () => { throw new Error('LABEL_PRINT_ARTWORK_INVALID'); };
   if (typeof printSvg !== 'string' || Buffer.byteLength(printSvg) > 1048576 || approvedBHash(printSvg) !== artworkHash
     || ![opening('PRINT', 'FRONT'), opening('PRINT', 'BACK')].some(prefix => printSvg.startsWith(prefix))) fail();
@@ -46,6 +48,7 @@ export function validateApprovedBArtwork({ printSvg, artworkHash }) {
 }
 
 export function renderApprovedBBlackInk(item) {
+  if (isLabelStyleArtwork(item.printSvg)) return labelStyleBlackInk(item);
   const svg = validateApprovedBArtwork(item);
   if (svg.includes('data-side="BACK"')) return svg;
   const match = svg.match(/<g id="approved-support" fill="white">([^]*)<\/g><\/svg>$/);

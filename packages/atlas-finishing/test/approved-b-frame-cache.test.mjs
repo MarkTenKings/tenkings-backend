@@ -27,7 +27,7 @@ async function* pngRows(bytes) {
 
 const items = () => Array.from({ length: 50 }, (_, i) => ({ slot: i + 1,
   ...renderApprovedBLabel({ identity: { playerName: 'Kobe Bryant', year: '1996–97', manufacturer: 'Topps', productSet: 'Basketball', cardNumber: '138' },
-    finalGrade: 1 + (i % 19) / 2, reportNumber: `ATLAS-${String(i + 1).padStart(12, '0')}`, approvalVersion: 1, cardProfile: 'SPORTS' }) }));
+    finalGrade: 1 + (i % 10), reportNumber: `ATLAS-${String(i + 1).padStart(12, '0')}`, approvalVersion: 1, cardProfile: 'SPORTS' }) }));
 
 test('full approved-B sheets cache bounded final-grid frames and match partial sheets at every pixel', async () => {
   const all = items(), options = { exportProfileId: LABEL_BLACK_INK_EXPORT_PROFILE_V1.id };

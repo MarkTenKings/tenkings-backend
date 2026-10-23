@@ -10,6 +10,7 @@ import { createConnectedManual, createWorkLimiter } from '@atlas/connected-manua
 import { geometryProcessingEnvironment } from '@atlas/connected-manual/geometry-processing';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { createLabelExportStorage } from '@atlas/connected-manual/label-export-storage';
+import { createS3LabelStyleCache } from '../../../../packages/atlas-connected-manual/src/label-style-cache.mjs';
 import { identificationEffects } from '@atlas/connected-manual/identification';
 import { createAstraDefectProvider } from '@atlas/defect-analysis/provider';
 import { requireThat } from '@atlas/manual-service/contract';
@@ -65,6 +66,14 @@ export function manualRuntimeSettings(env,staffConfig) {
     && typeof env.ATLAS_MANUAL_STORAGE_SECRET_KEY==='string' && env.ATLAS_MANUAL_STORAGE_SECRET_KEY.length>=16,503,'MANUAL_STORAGE_CONFIGURATION_INVALID');
   return {databaseUrl:database.href,endpoint:endpoint.origin,uploadOrigin:uploadOrigin.origin,bucket:env.ATLAS_MANUAL_STORAGE_BUCKET,
     region:env.ATLAS_MANUAL_STORAGE_REGION,keyPrefix:env.ATLAS_MANUAL_STORAGE_PREFIX,pythonExecutable:env.ATLAS_MANUAL_PYTHON};
+}
+
+export function manualLabelStyleCredentials(env) {
+  if(env.ATLAS_LABEL_PHOTO_STYLE_ENABLED!=='true')return null;
+  const apiKey=env.ATLAS_MANUAL_OPENAI_KEY,imageApiKey=env.ATLAS_LABEL_WORDMARK_OPENAI_KEY;
+  requireThat([apiKey,imageApiKey].every(key=>typeof key==='string'&&key.length>=16&&key.length<=2048&&!/[\s\x00-\x1f\x7f]/.test(key)),
+    503,'LABEL_STYLE_CREDENTIAL_CONFIGURATION_INVALID');
+  return {apiKey,imageApiKey};
 }
 
 export function manualProcessingSettings(env) {
@@ -235,7 +244,9 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
   requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
   const connected=createConnectedManual({orderDesk,orderDeskInbox,gradedCards,cardProvenance,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,marketLabeler,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
-    labelStorage,archiveMarketSearch:Boolean(archiveSearchSettings),readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
+    labelStorage,labelStyleConfig:labelStorage&&env.ATLAS_LABEL_PHOTO_STYLE_ENABLED==='true'?{
+      ...manualLabelStyleCredentials(env),cache:createS3LabelStyleCache({client,bucket:settings.bucket,keyPrefix:settings.keyPrefix})}:null,
+    archiveMarketSearch:Boolean(archiveSearchSettings),readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.

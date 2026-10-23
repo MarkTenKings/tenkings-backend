@@ -49,6 +49,7 @@ import { createConnectedCardReader } from './card-reader.mjs';
 import { createMachineBatchSnapshot } from './batch-snapshot.mjs';
 import { createLabelRepository } from './label-sheet-repository.mjs';
 import { createLabelService } from './label-sheet-service.mjs';
+import { createApprovedLabelStyler } from './label-style-service.mjs';
 import { createLabelWorker } from './label-worker.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
@@ -68,7 +69,7 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
   };
 }
 export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketLabeler=null,marketAutomaticEnabled=false,marketConcurrency=2,variantReviewEnabled=false,variantReadReferenceImage=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,orderDesk=null,orderDeskInbox=null,gradedCards=null,cardProvenance=null,reportImageProvider=null,reportImageConcurrency=2,readOnlyGradingImages=false,
-  labelStorage=null,archiveMarketSearch=false,processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
+  labelStorage=null,labelStyleConfig=null,archiveMarketSearch=false,processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null,variantReview=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const autonomous=batchEnabled&&typeof boundary.machineTransaction==='function';
@@ -116,7 +117,8 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const publicationRepository=createPublicationRepository({boundary,validateAccess,publicationCommitted:labelRepository?.publicationCommitted});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:readGradingSource,onError:onWorkerError});
   const finishing=createManualFinishing({repository:publicationRepository,artifacts});
-  const labels=labelRepository?createLabelService({boundary,repository:labelRepository,finishing,storage:labelStorage}):null;
+  const labelStyler=labelStyleConfig?createApprovedLabelStyler({...labelStyleConfig,artifacts,storage}):null;
+  const labels=labelRepository?createLabelService({boundary,repository:labelRepository,finishing,storage:labelStorage,styler:labelStyler}):null;
   const labelWorker=labels?createLabelWorker({service:labels,onError:onWorkerError}):null;
   const station=stationConfig?createFinishingStationService({...stationConfig,finishing,repository:createFinishingStationRepository({boundary,validateAccess})}):null;
   const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix,validateAccess}):null;

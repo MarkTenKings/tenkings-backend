@@ -1,0 +1,32 @@
+{
+  "version": "atlas-label-style-fonts-v1",
+  "license": "OFL-1.1",
+  "sourceCommit": "45e3d5269e4a17d823f6d84470bc084dc5ae46f6",
+  "source": "Preserved licensed font binaries from the completed local typography study; no candidate specimen font reconstructed.",
+  "files": [
+    {
+      "file": "Knewave-Regular.ttf",
+      "sha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436",
+      "bytes": 32460,
+      "sourceUrl": "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/knewave/Knewave-Regular.ttf"
+    },
+    {
+      "file": "OFL-Knewave.txt",
+      "sha256": "14b3fbd06078a869cf2ba96e6dacb852d373703c86ca7ad54a4cdd6e20fbab19",
+      "bytes": 4419,
+      "sourceUrl": "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/knewave/OFL.txt"
+    },
+    {
+      "file": "Lacquer-Regular.ttf",
+      "sha256": "140c21f71907a16952926ee354c81081092c90d599c89fe8b4557baeaebbbe83",
+      "bytes": 294060,
+      "sourceUrl": "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/lacquer/Lacquer-Regular.ttf"
+    },
+    {
+      "file": "OFL-Lacquer.txt",
+      "sha256": "7dcb8031db2b0f39d41c3ec93a3cd77ccc53fb4ab3f691095ca6c51a06a52cb6",
+      "bytes": 4388,
+      "sourceUrl": "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/lacquer/OFL.txt"
+    }
+  ]
+}

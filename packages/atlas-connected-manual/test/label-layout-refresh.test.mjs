@@ -9,6 +9,7 @@ import { createLabelRepository } from '../src/label-sheet-repository.mjs';
 import { createManualFinishing } from '../src/finishing.mjs';
 import { LABEL_REFRESH_REASON, labelRefreshRequestId, labelRefreshRequestHash, labelReplacementIntent } from '../src/label-replacement-intent.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
+import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
 
 const target = cardProfile => ({ rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
   materialProfileId: cardProfile === 'POKEMON' ? 'atlas-v4-holo-v1' : 'atlas-v4-gold-v1', jigHash: LABEL_JIG_V1.jigHash });
@@ -23,11 +24,11 @@ function replacement(original, { refresh = true, recipe = target('SPORTS') } = {
     renderer_profile_hash: recipe.rendererProfileHash, material_profile_id: refresh ? recipe.materialProfileId : null,
     jig_hash: recipe.jigHash, attempts: 0, claim_id: null, lease_until: null };
 }
-async function fixture(cardProfile = 'SPORTS') {
+async function fixture(cardProfile = 'SPORTS', finalGradePolicy = ATLAS_FINAL_GRADE_POLICY) {
   const identity = cardProfile === 'POKEMON'
     ? { cardName: 'Sylveon ex', year: '2024', manufacturer: 'The Pokémon Company International', productSet: 'Surging Sparks', cardNumber: '086/191' }
     : { playerName: 'Jaxson Dart', year: '2025', manufacturer: 'Panini', productSet: 'Prizm', cardNumber: '1' };
-  const f = await publicationFixture({ cardProfile, identity }); f.row.mode = 'PRODUCTION'; await f.publication.publish({}, f.cardId, f.actionId);
+  const f = await publicationFixture({ cardProfile, identity, finalGradePolicy }); f.row.mode = 'PRODUCTION'; await f.publication.publish({}, f.cardId, f.actionId);
   const finishing = createManualFinishing({ repository: f.repository, artifacts: f.artifacts });
   const { packet } = await finishing.loadPacket({}, f.cardId, f.actionId), recipe = target(cardProfile);
   const snapshot = canonical({ identity: packet.report.identity, grade: packet.report.finalGrade, finalGrade: packet.report.finalGrade,
@@ -51,7 +52,7 @@ async function fixture(cardProfile = 'SPORTS') {
 }
 
 test('ordinary replacement copies exact saved bytes even with crash-populated profile fields', async () => {
-  const f = await fixture(); f.child = replacement(f.original, { refresh: false });
+  const f = await fixture('SPORTS', ATLAS_HALF_POINT_FINAL_GRADE_POLICY); f.child = replacement(f.original, { refresh: false });
   f.child.renderer_profile_hash = digest('crashed newer renderer'); f.child.material_profile_id = 'historic-attempt';
   const before = structuredClone(f.original); assert.equal(labelReplacementIntent(f.child, f.original).kind, 'COPY');
   assert.equal(await f.service.runPending(), 1); assert.equal(f.rendered, 0); assert.equal(f.failures, 0);
@@ -94,7 +95,7 @@ test('valid older target and mismatched saved approval fail closed before render
     } else {
       const snapshot = JSON.parse(f.original.snapshot);
       if (change === 'identity') snapshot.identity.playerName = 'Changed identity';
-      else if (change === 'grade') snapshot.grade = 10;
+      else if (change === 'grade') snapshot.grade = snapshot.grade === 10 ? 9 : 10;
       else snapshot.reportHref += '&changed=true';
       f.original.snapshot = canonical(snapshot); f.original.snapshot_hash = digest(f.original.snapshot);
     }

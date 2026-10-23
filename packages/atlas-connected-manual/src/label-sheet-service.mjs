@@ -37,7 +37,7 @@ const exact = (input, required, optional = []) => {
 };
 const binding = row => ({ exportId: row.id, manifestHash: row.manifest_hash, kind: row.kind });
 
-export function createLabelService({ boundary, repository, finishing, storage,
+export function createLabelService({ boundary, repository, finishing, storage, styler = null,
   renderer = { label: renderApprovedBLabel, sheet: renderLabelSheetPng, individual: renderLabelV4Png },
   materials = { SPORTS: { id: 'atlas-v4-gold-v1', preview: 'gold' }, POKEMON: { id: 'atlas-v4-holo-v1', preview: 'holo' } } }) {
   requireThat(repository?.pendingCandidates && finishing?.loadPacket && storage?.write && storage?.download && boundary?.machineOwner
@@ -59,7 +59,8 @@ export function createLabelService({ boundary, repository, finishing, storage,
     try {
       // This adapter proves exact approval/action/draft lineage and reauthenticates
       // after the immutable public packet is read from object storage.
-      const { packet, row } = await finishing.loadPacket(staff, claimed.card_id, claimed.action_id);
+      const approvedSource = await finishing.loadPacket(staff, claimed.card_id, claimed.action_id);
+      const { packet, row } = approvedSource;
       let result, replacement = null;
       if (claimed.purpose === 'REPRINT') {
         const original = await repository.item(staff, claimed.original_item_id);
@@ -74,13 +75,21 @@ export function createLabelService({ boundary, repository, finishing, storage,
         if (replacement?.kind === 'REFRESH') requireThat(replacement.target.rendererProfileHash === LABEL_APPROVED_B_RENDERER_PROFILE_HASH
           && replacement.target.materialProfileId === material.id && replacement.target.jigHash === jigHash, 409, 'LABEL_RENDERER_CHANGED');
         attemptedProfile = { ...attemptedProfile, materialProfileId: material.id };
+        const style=styler?await styler.resolve(approvedSource,{signal:AbortSignal.timeout(18*60*1000)}):null;
+        if(style?.state==='PENDING') { await repository.deferItem(staff,claimed);return false; }
+        if(styler) {
+          const after=await finishing.loadPacket(staff,claimed.card_id,claimed.action_id);
+          requireThat(after.publicHash===approvedSource.publicHash,409,'LABEL_SOURCE_CHANGED');
+        }
         const rendered = await renderer.label({ identity: report.identity, finalGrade: report.finalGrade,
-          reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, cardProfile: report.cardProfile }, { previewMaterial: material.preview });
+          reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, cardProfile: report.cardProfile },
+          { previewMaterial: material.preview,...(style?{styleSpec:style.styleSpec,textures:style.textures,wordmarks:style.wordmarks}:{}) });
         result = { ...rendered, rendererProfileHash: rendered.rendererProfileHash ?? LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
           code: rendered.diagnostics?.code ?? 'LABEL_NEEDS_LAYOUT', materialProfileId: material.id, jigHash,
           snapshot: { identity: report.identity, grade: report.finalGrade, finalGrade: report.finalGrade, cardProfile: report.cardProfile,
             reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, reportHref: `https://atlasgrading.com/reports/${packet.publicToken}?v=${packet.approvalVersion}`,
             previewMaterial: material.preview, source: rendered.source, diagnostics: rendered.diagnostics ?? [],
+            ...(style?{labelStyle:style.receipt,styleSpec:style.styleSpec}:{}),
             ...((rendered.layoutVersion ?? rendered.diagnostics?.layoutVersion) ? { layoutVersion: rendered.layoutVersion ?? rendered.diagnostics.layoutVersion } : {}),
             ...(rendered.backPrintSvg ? { backArtworkHash: digest(rendered.backPrintSvg) } : {}) } };
       }

@@ -101,7 +101,7 @@ if(mode==='native'){
   // Verify the packaged exact artwork, approved fonts and native child together.
   const {renderApprovedBLabel}=await import('../../../packages/atlas-finishing/src/label-approved-b.mjs');
   const {renderLabelV4Png,LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1}=await import('../../../packages/atlas-finishing/src/label-sheet.mjs');
-  const label=renderApprovedBLabel({identity:{playerName:'Kobe Bryant',year:'1996–97',manufacturer:'Topps',productSet:'Basketball',cardNumber:'138'},finalGrade:9.5,reportNumber:'ATLAS-0123456789AB',approvalVersion:1,cardProfile:'SPORTS'});
+  const label=renderApprovedBLabel({identity:{playerName:'Kobe Bryant',year:'1996–97',manufacturer:'Topps',productSet:'Basketball',cardNumber:'138'},finalGrade:9,reportNumber:'ATLAS-0123456789AB',approvalVersion:1,cardProfile:'SPORTS'});
   assert.equal(label.state,'READY');
   const labelPng=await renderLabelV4Png(label),labelMetadata=await sharp(labelPng.bytes).metadata();
   assert.equal(labelMetadata.width,6458);assert.equal(labelMetadata.height,1898);assert.equal(labelMetadata.hasAlpha,true);

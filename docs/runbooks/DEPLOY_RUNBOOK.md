@@ -1,5 +1,11 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## Observed production baseline for photo/font work — October 22, 2026 Pacific
+
+Read-only evidence at 2026-10-23 06:26 UTC supersedes the older release headings below: native source is `8070c5f22a843b6d9a8ba8347f5235754cc1daa5`, image `sha256:c2a274de50803b232a71042bb87876c849666d50264d9d076610081f5e03bca8`, main `atlas-r1-main-8070c5f2-02`, worker `atlas-r1-worker-8070c5f2-01`. The completed optional-comp release and effective native recovery are retained at `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/release-01/`. Installed schema012 and the retained customer successor must be preserved; old schema011→012 migration and admission plans must not be replayed.
+
+The photo/font candidate is being implemented and qualified in `codex/atlas-slab-quality`, after preserving pending work in `b64e8b99` and merging the live source in `31b0c67f`. It is not yet deployed. Fresh source/image/web qualification, current runtime/control observations, a no-migration preservation gate and new release intents are required for its already-authorized production rollout. The external baseline audit is `~/.codex/atlas-handoffs/atlas-two-line-labels-20261022/grade10-material-comparison-20261022/proofs/release-readiness-20261023.json`; historical observations do not grant freshness for a later effect.
+
 ## Current Atlas slab quality and retained jig25 release — October 22, 2026 Pacific
 
 Production native, staff and public now serve application source **`20b747badb8ad34c510673c446cf326396bdeeac`**. The shared staff Graded Cards/detail viewer gives existing and future eligible approvals the improved slab, centered Front/Back placement, front NFC reference and optional higher-resolution 3D. It composes exact approved inspection photographs and matching saved label artwork at display time. Recorded physical slab photographs retain their existing precedence. The previously deployed 25-position label template and shared backs remain included.

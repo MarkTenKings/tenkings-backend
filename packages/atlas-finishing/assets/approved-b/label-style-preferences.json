@@ -1,0 +1,200 @@
+{
+  "version": "atlas-reviewed-label-style-preferences-v1",
+  "records": [
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-769cca069d18-variant",
+      "photoShas": {
+        "FRONT": "769cca069d18d9fc049e88374e6c766af1338dcc830952df205dd6630d91d324",
+        "BACK": "f80441708674f71dfeb4d77712a7e6e3a23edc9bee71857e99681b60db675525"
+      },
+      "role": "variant",
+      "text": "REFRACTOR /499",
+      "overrides": {
+        "fontId": "knewave",
+        "fontSha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436",
+        "flatFill": {
+          "baseColor": "#ffffff",
+          "accentColor": "#ffffff"
+        },
+        "capMm": 2.1
+      },
+      "evidence": {
+        "proofSha256": "f6dc405447e2161ecea914069ee07b52d0179bdb7239c6eee66e083a4f860850",
+        "sourceLabelSha256": "190789f10a42a36dc7e704c3b746a5027cabd2b90af33782a35eef1c8bc8450f",
+        "proofReference": "atlas-two-line-labels-20261022/color-layout-exploration/proofs/a-ATLAS-A470A6494DF8.svg",
+        "comment": "User accepted the existing variant as fine as is: retain the complete Knewave face, flat white fill, and 2.1mm target cap height."
+      },
+      "preferenceSha256": "529addcb08de504c3d84dd0feb1eca90f050fd52d1427f321274a30bfa39757b"
+    },
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-ccff4b9b34e5-variant",
+      "photoShas": {
+        "FRONT": "ccff4b9b34e586ef3ff44bd5812a8e15b9b50d349a67f3ac2ccf7f2a6e520737",
+        "BACK": "300d96d2186381b96b327d80ef59e1ee090ddbbb9831ecc3fb094f59b99b0f26"
+      },
+      "role": "variant",
+      "text": "PATENTED · CASE HIT",
+      "overrides": {
+        "fontId": "knewave",
+        "fontSha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436"
+      },
+      "evidence": {
+        "proofSha256": "4311f848f0bc4ea4068fe499765984bbee4d9a4fa3fd228288ae73ad6b704969",
+        "sourceLabelSha256": "6c1c943beeef5bc225b4cecd34154fe4ec7920242cd688f68aac9ed8a8e22663",
+        "proofReference": "atlas-two-line-labels-20261022/color-layout-exploration/proofs/a-ATLAS-049D1386AD0E.svg",
+        "comment": "User accepted the existing font. Retain Knewave; the photo-informed material and colors remain automatic."
+      },
+      "preferenceSha256": "5d846e9f56ca6a43f0776ac235e81ca519f5e2ec01d83b225f7e9e108382c272"
+    },
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-eb68ec90db15-variant",
+      "photoShas": {
+        "FRONT": "eb68ec90db1525b7721ca7a8e0132278ecf92a4ac58fd6d3d56595236945950c",
+        "BACK": "1aad10548ba7a36ef1f29a57c8d52381445f7542060296e19e2b335f2faf98b2"
+      },
+      "role": "variant",
+      "text": "BLUE MINI DIAMOND /199",
+      "overrides": {
+        "fontId": "knewave",
+        "fontSha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436"
+      },
+      "evidence": {
+        "proofSha256": "35c002c3af83793fd737a4456d615e8b6259868ff893195db153b4e8b4f6b9de",
+        "sourceLabelSha256": "1e398c7863106503fa9f044e36befce17bc4ddef1a66e1c88fe9a875da5aa994",
+        "proofReference": "atlas-two-line-labels-20261022/color-layout-exploration/proofs/a-ATLAS-F6ED24F547A6.svg",
+        "comment": "User accepted the existing Knewave font. The retained proof uses the longer caption BLUE MINI DIAMOND REFRACTOR /199; this font-only preference applies to the current exact qualification display caption without rewriting its text. Photo-informed blue border material remains automatic."
+      },
+      "preferenceSha256": "c80006d152824ddceec05f0c02c1493bbb16fbce74401c5082ed5a27a2c9b925"
+    },
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-61ea5b26c9bb-variant",
+      "photoShas": {
+        "FRONT": "61ea5b26c9bb13d9ec05fbff72aa65eb9aa20fd621580135c8889da0bb526205",
+        "BACK": "3e798257afed73bc62d7af96f9165c981fb5397e5a1a13eb448b0b05f245fd52"
+      },
+      "role": "variant",
+      "text": "RED BORDER",
+      "overrides": {
+        "fontId": "knewave",
+        "fontSha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436",
+        "capMm": 2.1
+      },
+      "evidence": {
+        "proofSha256": "6b4c2e79e2f99a9384a94fb2932b8de65b0c56d63d27d23359b101be53adc8d2",
+        "sourceLabelSha256": "b2c38cb44e3eebce7ec62c6d7a0794962af1fd33f7d259ad83b7e79c63feea01",
+        "proofReference": "atlas-two-line-labels-20261022/color-layout-exploration/proofs/a-ATLAS-5CD3E0E55A3A.svg",
+        "comment": "User accepted the existing Knewave face and size. Retain the 2.1mm target cap height while the photo-informed red material remains automatic."
+      },
+      "preferenceSha256": "57ad233ca4e3ab29d0314d7a5071257424d4ad579921a670c16bf4a106435c7f"
+    },
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-769cca069d18-variant-saved",
+      "photoShas": {
+        "FRONT": "769cca069d18d9fc049e88374e6c766af1338dcc830952df205dd6630d91d324",
+        "BACK": "f80441708674f71dfeb4d77712a7e6e3a23edc9bee71857e99681b60db675525"
+      },
+      "role": "variant",
+      "text": "REFRACTOR",
+      "overrides": {
+        "fontId": "knewave",
+        "fontSha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436",
+        "flatFill": {
+          "baseColor": "#ffffff",
+          "accentColor": "#ffffff"
+        },
+        "capMm": 2.1
+      },
+      "evidence": {
+        "proofSha256": "f6dc405447e2161ecea914069ee07b52d0179bdb7239c6eee66e083a4f860850",
+        "sourceLabelSha256": "190789f10a42a36dc7e704c3b746a5027cabd2b90af33782a35eef1c8bc8450f",
+        "proofReference": "atlas-two-line-labels-20261022/color-layout-exploration/proofs/a-ATLAS-A470A6494DF8.svg",
+        "comment": "User accepted the existing variant as fine as is: retain the complete Knewave face, flat white fill, and 2.1mm target cap height. This exact caption comes from the saved source identity; the preference transfers styling only and adds no serial or feature facts."
+      },
+      "preferenceSha256": "5a28b7977c84746aa6be8559a2681d36ee0fc36129bb958e094e014c6f7ecaab"
+    },
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-ccff4b9b34e5-variant-saved",
+      "photoShas": {
+        "FRONT": "ccff4b9b34e586ef3ff44bd5812a8e15b9b50d349a67f3ac2ccf7f2a6e520737",
+        "BACK": "300d96d2186381b96b327d80ef59e1ee090ddbbb9831ecc3fb094f59b99b0f26"
+      },
+      "role": "variant",
+      "text": "PATENTED",
+      "overrides": {
+        "fontId": "knewave",
+        "fontSha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436"
+      },
+      "evidence": {
+        "proofSha256": "4311f848f0bc4ea4068fe499765984bbee4d9a4fa3fd228288ae73ad6b704969",
+        "sourceLabelSha256": "6c1c943beeef5bc225b4cecd34154fe4ec7920242cd688f68aac9ed8a8e22663",
+        "proofReference": "atlas-two-line-labels-20261022/color-layout-exploration/proofs/a-ATLAS-049D1386AD0E.svg",
+        "comment": "User accepted the existing font. Retain Knewave; the photo-informed material and colors remain automatic. This exact caption comes from the saved source identity; the preference transfers styling only and adds no serial or feature facts."
+      },
+      "preferenceSha256": "cf77a8af00284819570514391cfeaae1557a23163ab4db575bf5fabd1bb9a56b"
+    },
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-eb68ec90db15-variant-saved",
+      "photoShas": {
+        "FRONT": "eb68ec90db1525b7721ca7a8e0132278ecf92a4ac58fd6d3d56595236945950c",
+        "BACK": "1aad10548ba7a36ef1f29a57c8d52381445f7542060296e19e2b335f2faf98b2"
+      },
+      "role": "variant",
+      "text": "BLUE MINI DIAMOND",
+      "overrides": {
+        "fontId": "knewave",
+        "fontSha256": "ed3bac761d755b89ab3082c844d4a623d63c7d6eef85d22ba1fb6c680e6a4436"
+      },
+      "evidence": {
+        "proofSha256": "35c002c3af83793fd737a4456d615e8b6259868ff893195db153b4e8b4f6b9de",
+        "sourceLabelSha256": "1e398c7863106503fa9f044e36befce17bc4ddef1a66e1c88fe9a875da5aa994",
+        "proofReference": "atlas-two-line-labels-20261022/color-layout-exploration/proofs/a-ATLAS-F6ED24F547A6.svg",
+        "comment": "User accepted the existing Knewave font. The retained proof uses the longer caption BLUE MINI DIAMOND REFRACTOR /199; this font-only preference applies to the current exact qualification display caption without rewriting its text. Photo-informed blue border material remains automatic. This exact caption comes from the saved source identity; the preference transfers styling only and adds no serial or feature facts."
+      },
+      "preferenceSha256": "69ae6a0ecb3d031a3914fcf90e3bace8830201b434e89b2db218685061ac3a8c"
+    },
+    {
+      "version": "atlas-reviewed-label-style-preference-v1",
+      "id": "reviewed-797d42a27d14-variant",
+      "photoShas": {
+        "FRONT": "797d42a27d147180f2e3110e7cc15701170cd5f70a0dbac9d8d39ac2cca1aab6",
+        "BACK": "1f610160467fcf2ef050594e4cc823608ef04dd46a669af42ac992fe14a8a088"
+      },
+      "role": "variant",
+      "text": "THRILLERS · ICE",
+      "overrides": {
+        "spanPaints": [
+          {
+            "start": 0,
+            "end": 9,
+            "baseColor": "#ff4b2f",
+            "accentColor": "#ff4b2f",
+            "pattern": "NONE"
+          },
+          {
+            "start": 12,
+            "end": 15,
+            "baseColor": "#92e2ff",
+            "accentColor": "#92e2ff",
+            "pattern": "NONE"
+          }
+        ],
+        "normalizeWordInkHeight": true,
+        "capMm": 2.5
+      },
+      "evidence": {
+        "proofSha256": "92d83a7969f7108d743e8b9a03c1a9355589055a4b94abef34a6783b75710dd3",
+        "sourceLabelSha256": "f94e59dbc02dbe2964c22a48e27b3774ee1910cc4ce88f1cc473bf401ce27272",
+        "proofReference": "atlas-two-line-labels-20261022/photo-font-pilot-20261022/results/henderson-matched-label.svg",
+        "comment": "User accepted red THRILLERS and ice-blue ICE and requested larger lettering with matching apparent word height. These are paint-only preferences from the accepted comparison; the commercial specimen font, its bitmap, and its letter shapes are not packaged or reused. Original generated lettering mode and traits remain the separately verified model selection."
+      },
+      "preferenceSha256": "cf89d650f6228c675ee6f45f2e34b45723971794da719f14bb41dd7b0a32219e"
+    }
+  ]
+}

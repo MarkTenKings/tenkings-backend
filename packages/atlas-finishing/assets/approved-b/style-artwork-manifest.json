@@ -1,0 +1,21 @@
+{
+  "version": "atlas-selected-a-template-v1",
+  "source": "5131223aad71c454586731fa4e64a10e2229f8d1e0e577023707d393109b1718",
+  "generatorSha256": "c53b77c01c03a4479b657991f6005527508605839610438f59998797fd91ab2b",
+  "widthMm": 68.342,
+  "heightMm": 20.082,
+  "grading": {
+    "scale": 1.25,
+    "outwardWeightMm": 0.0125
+  },
+  "files": {
+    "style-front-black.png": {
+      "sha256": "59aeb47c919efd598c530326cbd408e2a20d4c53b54fbc80be1998d2d8ff690b",
+      "byteCount": 551021
+    },
+    "style-front-inverted.png": {
+      "sha256": "04b0e4358f101b36391de50fbf793ff677726584d0266446a9ab2e2b02e2828a",
+      "byteCount": 548424
+    }
+  }
+}

@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import * as fontkit from 'fontkit';
-import { APPROVED_B_ASSETS, APPROVED_B_LAYOUT, approvedBHash, buildApprovedBFront,
+import { APPROVED_B_ASSETS, APPROVED_B_LAYOUT, approvedBHash,
   approvedBColors, colorApprovedBArtwork, renderApprovedBBack } from './label-approved-b-artwork.mjs';
+import { LABEL_STYLE_FONT_CATALOG, LABEL_STYLE_PAINT_VERSION, shapeLabelStyleText } from './label-style-paint.mjs';
+import { LABEL_STYLE_ARTWORK, buildLabelStyleFront } from './label-style-artwork.mjs';
+import { LABEL_STYLE_WORDMARK_VERSION, shapeLabelStyleWordmark } from './label-style-wordmark.mjs';
+import { LABEL_STYLE_CONTRAST_VERSION, labelStyleContrast } from './label-style-contrast.mjs';
+import { LABEL_STYLE_PREFERENCES_VERSION, LABEL_STYLE_PREFERENCES_SHA256 } from './label-style-preferences.mjs';
 
 const stable = value => value && typeof value === 'object' ? Array.isArray(value) ? `[${value.map(stable).join(',')}]`
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}` : JSON.stringify(value);
@@ -13,10 +18,7 @@ const font = (name, weight) => {
   return fontkit.create(bytes).getVariation({ wght: weight });
 };
 const headline = font('Montserrat', 900), detail = font('RobotoCondensed', 700);
-const variantFontHash = '830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04';
-const variantFontBytes = readFileSync(new URL('../assets/approved-b/fonts/BebasNeue-Regular.ttf', import.meta.url));
-if (approvedBHash(variantFontBytes) !== variantFontHash) throw new Error('APPROVED_B_FONT_HASH_MISMATCH');
-const variantFace = fontkit.create(variantFontBytes);
+const certificateFace = font('RobotoCondensed', 500);
 const vectorBytes = readFileSync(new URL('../assets/approved-b/vectors.json', import.meta.url));
 if (approvedBHash(vectorBytes) !== APPROVED_B_ASSETS.files['vectors.json']?.sha256) throw new Error('APPROVED_B_ASSET_HASH_MISMATCH');
 const vectors = JSON.parse(vectorBytes);
@@ -24,14 +26,14 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE = Object.freeze({
   version: APPROVED_B_LAYOUT, format: 'atlas-approved-b-label-v1', widthMm: 68.342, heightMm: 20.082,
   assets: Object.fromEntries(Object.entries(APPROVED_B_ASSETS.files).map(([name, value]) => [name, value.sha256])),
   fonts: { headline: fontProvenance.files['fonts/Montserrat-variable.ttf'], detail: fontProvenance.files['fonts/RobotoCondensed-variable.ttf'],
-    headlineWeight: 900, detailWeight: 700, variant: variantFontHash, variantFace: 'BebasNeue-Regular',
+    headlineWeight: 900, detailWeight: 700, variant: LABEL_STYLE_FONT_CATALOG.knewave.sha256, variantFace: 'Knewave-Regular',
     shaping: 'fontkit-2.0.4-kern-disabled-uniform-v1', baseFontsAccepted: '2026-10-22' },
   nfcClearance: { x: 51.8, y: 9.75, radius: 5.1, padding: .75, fitting: 'per-line-outline-box-v1' },
   name: { x: 17.5, width: 29, targetHeight: 3.35, minimumHeight: 1.9, oneLineTop: 4.8, twoLineTop: 3.05, gap: .62 },
   detail: { x: 17.5, top: 11, bottom: 16.6, width: 29, targetCapHeight: 1.6, minimumCapHeight: 1.3,
     lineGap: .25, semanticLines: 2, maximumLines: 2, maximumTokens: 128, fitting: 'independent-centered-slots-v3',
-    variant: { targetCapHeight: 1.9, casing: 'uppercase', color: 'stock-knockout', font: 'BebasNeue' } },
-  certificate: { x: 17.5, top: 17, maxWidth: 29.4, height: 2.1, stroke: .3 },
+    variant: { targetCapHeight: 2.5, casing: 'uppercase', color: 'photo-style', font: 'Knewave' } },
+  certificate: { x: 1.9, centerY: 18.35, maxWidth: 13.9, capHeight: 1.3, weight: 500 },
   metadata: 'number-year-brand-set-and-confirmed-features-v2',
   metadataRules: { brand: 'exact-maker-alias-prefix-dedupe-bowman-v1', subset: 'sports-final-spaced-hyphen-v1',
     redundantProduct: 'sports-exact-player-then-variant-prefix-v1',
@@ -39,13 +41,19 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE = Object.freeze({
     features: 'reviewed-serial-real-autograph-explicit-patch-special-features-v1' },
   displayName: 'alakazam-ex-omission-v1',
   colors: approvedBColors, grade: 'retained-grade10-uniform-roboto-other-grades-v1', backQr: 'https://atlasgrading.com/',
+  photoStyle: {version: LABEL_STYLE_PAINT_VERSION, wordmark:LABEL_STYLE_WORDMARK_VERSION, contrastVersion:LABEL_STYLE_CONTRAST_VERSION,
+    sourceTexturePolicy:'atlas-label-source-texture-v2', originalRasterPolicy:'atlas-label-wordmark-near-monochrome-v1',
+    reviewedPreferences:{version:LABEL_STYLE_PREFERENCES_VERSION,sha256:LABEL_STYLE_PREFERENCES_SHA256},
+    fonts:LABEL_STYLE_FONT_CATALOG, artwork:LABEL_STYLE_ARTWORK,
+    wholeNumberGrades:true, contrast:'shared-below-10-black-exact10-exposed-foil-v1', variantTargetCapMm:2.5,
+    certificate:'full-12hex-under-logo-cap1.3mm-weight500', grade10Accent:'retain-photo-hue-dark-outline-v1'},
 });
 export const LABEL_APPROVED_B_RENDERER_PROFILE_HASH = approvedBHash(stable(LABEL_APPROVED_B_RENDERER_PROFILE));
 // Retained approved-B artwork owns the same physical template and shared back.
 // Recognizing it never rerenders or replaces its saved front bytes.
 export const LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH = 'a0491ff4f0a86166371f950c658c3e08397e688fe13f9e60f28abbda88b764ab';
 export const LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES = Object.freeze([
-  LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH, LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
+  LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH, 'b8bb56e7e816b1324b6ba3a1b5d9b683e761fc084ae986f253ae113e88ea6a0a', LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
 ]);
 export const isApprovedBRendererProfile = hash => LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES.includes(hash);
 const round = value => Number(value.toFixed(6));
@@ -174,11 +182,18 @@ function metadataProjection(identity, { cardProfile = 'SPORTS', abbreviate = fal
     }
   }
   const features = cardProfile === 'SPORTS' ? confirmedFeatures(identity.sportsAttributes) : { serial: '', tokens: [] };
-  const variants = unique([subset, clean(identity.insert), clean(identity.parallel)].filter(value => !absentVariant(value)));
+  let parallel = clean(identity.parallel);
+  const namedRefractor = /^(\S(?:.*\S)?)\s+Refractor$/iu.exec(parallel);
+  if (namedRefractor && (namedRefractor[1].match(/[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*/gu)??[]).length>=2
+    && !/^(?:base|standard|regular)\b/iu.test(namedRefractor[1])) {
+    abbreviations.push({field:'parallel',from:parallel,to:namedRefractor[1],reason:'specific-parallel-omit-refractor-v1'});
+    parallel=namedRefractor[1];
+  }
+  const variants = unique([subset, clean(identity.insert), parallel].filter(value => !absentVariant(value)));
   let variant = variants.join(' · ');
   if (features.serial && !variants.some(value => new RegExp(`(?:^|\\s)/${features.serial.slice(1)}(?:$|\\s)`).test(value)))
     variant = [variant, features.serial].filter(Boolean).join(' ');
-  variant = unique([variant, ...features.tokens.filter(token => !variants.some(value => same(value, token)))]).join(' · ');
+  variant = unique([variant, ...features.tokens.filter(token => !variants.some(value => same(value, token)))]).join(' · ').toUpperCase();
   const prefix = [number ? `#${number}` : '', year, maker].filter(Boolean).join(' ');
   return { identity: [prefix, product].filter(Boolean).join(' '), variant, abbreviations, identityParts: [prefix, product].filter(Boolean) };
 }
@@ -190,78 +205,120 @@ export function approvedBMetadata(identity, options) {
   const lines = approvedBMetadataLines(identity, options);
   return [lines.identity, lines.variant].filter(Boolean).join(' · ');
 }
-
-const detailCapHeight = shape('H', detail).height;
-const variantCapHeight = shape('H', variantFace).height;
-function metadataFit(lines) {
-  const box = LABEL_APPROVED_B_RENDERER_PROFILE.detail;
-  const slotHeight = lines.length ? (box.bottom - box.top - box.lineGap * (lines.length - 1)) / lines.length : 0;
-  const renderedLines = lines.map(line => ({ ...line, text: line.role === 'variant' ? line.text.toUpperCase() : line.text }));
-  const faces = renderedLines.map(line => line.role === 'variant' ? variantFace : detail);
-  const shapes = renderedLines.map((line, index) => shape(line.text, faces[index]));
-  const placements = shapes.map((value, index) => {
-    const variant = renderedLines[index].role === 'variant', cap = variant ? variantCapHeight : detailCapHeight;
-    const target = variant ? box.variant.targetCapHeight : box.targetCapHeight;
-    const scale = Math.min(target / cap, box.width / value.width, slotHeight / value.height);
-    const placement = fitClearLine(value, { x: box.x, width: box.width,
-      centerY: box.top + index * (slotHeight + box.lineGap) + slotHeight / 2, height: value.height * scale });
-    return { ...placement, capHeight: placement.scale * cap,
-      fontSizePt: placement.scale * faces[index].unitsPerEm / 25.4 * 72, font: variant ? 'BebasNeue' : 'RobotoCondensed' };
-  });
-  return { lines: renderedLines, shapes, placements, capHeight: placements.length ? Math.min(...placements.map(p => p.capHeight)) : 0,
-    widths: placements.map(p => p.width), heights: placements.map(p => p.height) };
+export function approvedBStyleInputLines(identity, options) {
+  const semantic=metadataProjection(identity,options);
+  return ['identity','variant'].filter(role=>semantic[role]).map(role=>({role,text:semantic[role],
+    styleableSpans:role==='variant'?[{start:0,end:semantic[role].length}]:!semantic.variant&&semantic.identityParts[1]
+      ?[{start:semantic.identity.lastIndexOf(semantic.identityParts[1]),end:semantic.identity.length}]:[]}));
 }
-function fitMetadata(identity, cardProfile) {
-  const box = LABEL_APPROVED_B_RENDERER_PROFILE.detail;
-  let semantic = metadataProjection(identity, { cardProfile });
-  const rows = () => ['identity', 'variant'].filter(role => semantic[role]).map(role => ({ role, text: semantic[role] }));
-  const fitRows = lines => {
-    const fit = metadataFit(lines);
-    if (!semantic.variant && semantic.identityParts.length === 2 && fit.capHeight < box.targetCapHeight) {
-      const productRows = metadataFit(semantic.identityParts.map(text => ({ role: 'identity', text })));
-      if (productRows.capHeight > fit.capHeight) return productRows;
+
+function styledRow(line, semantic, styleSpec, textures) {
+  const original = styleSpec?.lines?.find(value=>value.role===line.role);
+  const offset = semantic[line.role].indexOf(line.text);
+  const crop = values => (values??[]).flatMap(value=>{
+    const start=Math.max(value.start,offset),end=Math.min(value.end,offset+line.text.length);
+    return start<end?[{...value,start:start-offset,end:end-offset}]:[];
+  });
+  const allowed = original ? crop(original.styleableSpans) : [];
+  const usable = original && offset>=0 && allowed.length>0;
+  const fontId = usable ? original.fontId : line.role==='variant'?'knewave':'roboto-condensed';
+  const fontEntry=LABEL_STYLE_FONT_CATALOG[fontId];
+  const recipe={...(usable?original:{}),text:line.text,fontId,fontSha256:fontEntry?.sha256,
+    spans:usable?crop(original.spans):[],protectedSpans:original?crop(original.protectedSpans):[],
+    styleableSpans:usable?allowed:[{start:0,end:line.text.length}],emphasis:usable?original.emphasis:'NORMAL'};
+  const allTextures=textures?.lines?.find(value=>value.role===line.role)?.spanTextures;
+  const spanTextures=usable && allTextures ? original.spans.flatMap((value,i)=>crop([value]).length?[allTextures[i]]:[]):undefined;
+  return {recipe,spanTextures};
+}
+function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks) {
+  const box=LABEL_APPROVED_B_RENDERER_PROFILE.detail;
+  const slotHeight=lines.length?(box.bottom-box.top-box.lineGap*(lines.length-1))/lines.length:0;
+  const recipes=lines.map(line=>styledRow(line,semantic,styleSpec,textures));
+  const contrast=recipes.map(({recipe})=>labelStyleContrast({recipe,inverted}));
+  const shapes=lines.map((line,index)=>{
+    const options={text:line.text,...recipes[index],spanColors:contrast[index].spanColors,defaultColor:inverted?'#090a0b':'#ffffff'};
+    return options.recipe.letteringMode==='ORIGINAL_WORDMARK'
+      ? shapeLabelStyleWordmark({...options,wordmark:wordmarks?.[line.role],expectedSourceHash:styleSpec.specHash,
+        outlineColor:contrast[index].outlineColor,outlineRadiusUnits:contrast[index].outlineMm/2.5*256})
+      : shapeLabelStyleText(options);
+  });
+  const placements=shapes.map((value,index)=>{
+    const variant=lines[index].role==='variant', styled=recipes[index].recipe.spans.length>0;
+    const reviewedCap=recipes[index].recipe.reviewedCapMm;
+    if(reviewedCap!==undefined&&(!Number.isFinite(reviewedCap)||reviewedCap<1.3||reviewedCap>2.5))throw Error('LABEL_STYLE_REVIEWED_CAP_INVALID');
+    const target=reviewedCap??(variant?2.5:styled&&value.emphasis==='LARGE'?2.3:box.targetCapHeight);
+    const pad=value.representation!=='ALPHA_MASK' ? contrast[index].outlineMm : 0;
+    const scale=Math.min(target/value.capHeight,(box.width-2*pad)/value.width,(slotHeight-2*pad)/value.height);
+    const outer=fitClearLine({...value,width:value.width+2*pad/scale,height:value.height+2*pad/scale},
+      {x:box.x,width:box.width,centerY:box.top+index*(slotHeight+box.lineGap)+slotHeight/2,height:value.height*scale+2*pad});
+    const innerScale=(outer.height-2*pad)/value.height;
+    return {...outer,x:outer.x+pad,y:outer.y+pad,width:outer.width-2*pad,height:outer.height-2*pad,scale:innerScale,
+      outerBounds:outer,pad,outlineColor:contrast[index].outlineColor,capHeight:innerScale*value.capHeight,fontSizePt:innerScale*(value.unitsPerEm??1000)/25.4*72,font:value.fontFamily};
+  });
+  return {lines,shapes,placements,capHeight:placements.length?Math.min(...placements.map(p=>p.capHeight)):0,
+    widths:placements.map(p=>p.width),heights:placements.map(p=>p.height)};
+}
+function fitMetadata(identity, cardProfile, styleSpec, textures, inverted, wordmarks) {
+  const box=LABEL_APPROVED_B_RENDERER_PROFILE.detail;
+  let semantic=metadataProjection(identity,{cardProfile});
+  const rows=()=>['identity','variant'].filter(role=>semantic[role]).map(role=>({role,text:semantic[role]}));
+  const fitRows=lines=>{
+    const fit=metadataFit(lines,semantic,styleSpec,textures,inverted,wordmarks);
+    if(!semantic.variant&&semantic.identityParts.length===2) {
+      const productRows=metadataFit(semantic.identityParts.map(text=>({role:'identity',text})),semantic,styleSpec,textures,inverted,wordmarks);
+      if(productRows.capHeight>fit.capHeight||styleSpec?.lines?.some(line=>line.role==='identity'&&line.emphasis==='LARGE'))return productRows;
     }
     return fit;
   };
-  let lines = rows();
-  if (!lines.length) return { ...metadataFit([]), semantic };
-  if (lines.reduce((sum, line) => sum + line.text.split(' ').length, 0) > box.maximumTokens) return null;
-  let fit = fitRows(lines);
-  if (fit.capHeight < box.minimumCapHeight) {
-    semantic = metadataProjection(identity, { cardProfile, abbreviate: true }); lines = rows(); fit = fitRows(lines);
-  }
-  if (fit.capHeight >= box.minimumCapHeight) return { ...fit, semantic };
-  // A lone identity may wrap at an existing word boundary, within two rows.
-  // No word/number is clipped, abbreviated by length or horizontally squeezed.
-  const choices = [];
-  for (const [row, line] of lines.entries()) {
-    const words = line.text.split(' ');
-    for (let index = 1; index < words.length; index++) {
-      if (words[index - 1] === '·' || words[index] === '·') continue;
-      const wrapped = [...lines.slice(0, row), { role: line.role, text: words.slice(0, index).join(' ') },
-        { role: line.role, text: words.slice(index).join(' ') }, ...lines.slice(row + 1)];
-      if (wrapped.length <= box.maximumLines) choices.push(metadataFit(wrapped));
+  let lines=rows();
+  if(!lines.length)return {...metadataFit([],semantic,styleSpec,textures,inverted,wordmarks),semantic};
+  if(lines.reduce((sum,line)=>sum+line.text.split(' ').length,0)>box.maximumTokens)return null;
+  let fit=fitRows(lines);
+  // Display aliases are selected before model analysis. Never apply a different
+  // text projection after retaining a source-bound style recipe.
+  const unstyledIdentity=!styleSpec||styleSpec.lines.every(line=>line.role!=='identity'
+    ||line.letteringMode==='CATALOG'&&line.styleableSpans.length===0&&line.spans.length===0);
+  if(fit.capHeight<box.minimumCapHeight&&unstyledIdentity){semantic=metadataProjection(identity,{cardProfile,abbreviate:true});lines=rows();fit=fitRows(lines);}
+  if(fit.capHeight>=box.minimumCapHeight)return {...fit,semantic};
+  const choices=[];
+  for(const [row,line] of lines.entries()){
+    if(styleSpec?.lines?.some(value=>value.role===line.role&&value.letteringMode==='ORIGINAL_WORDMARK'))continue;
+    const words=line.text.split(' ');
+    for(let index=1;index<words.length;index++){
+      if(words[index-1]==='·'||words[index]==='·')continue;
+      const wrapped=[...lines.slice(0,row),{role:line.role,text:words.slice(0,index).join(' ')},{role:line.role,text:words.slice(index).join(' ')},...lines.slice(row+1)];
+      if(wrapped.length<=box.maximumLines)choices.push(metadataFit(wrapped,semantic,styleSpec,textures,inverted,wordmarks));
     }
   }
-  choices.sort((a, b) => b.capHeight - a.capHeight || (Math.max(...a.widths) - Math.min(...a.widths)) - (Math.max(...b.widths) - Math.min(...b.widths)));
-  return choices[0]?.capHeight >= box.minimumCapHeight ? { ...choices[0], semantic } : null;
+  choices.sort((a,b)=>b.capHeight-a.capHeight);
+  return choices[0]?.capHeight>=box.minimumCapHeight?{...choices[0],semantic}:null;
 }
+
 const descriptors = { 1: 'POOR', 1.5: 'FAIR', 2: 'GOOD', 2.5: 'GOOD+', 3: 'VERY GOOD', 3.5: 'VG+',
   4: 'VG-EX', 4.5: 'VG-EX+', 5: 'EXCELLENT', 5.5: 'EX+', 6: 'EX-MT', 6.5: 'EX-MT+',
   7: 'NEAR MINT', 7.5: 'NM+', 8: 'NM-MINT', 8.5: 'NM-MINT+', 9: 'MINT', 9.5: 'MINT+', 10: 'GEM MINT' };
 
 /** Deterministic label rendering only. Approval authority and exact source
  * packet authentication remain with the existing finishing service. */
-export function renderApprovedBLabel(input, { previewMaterial = 'gold' } = {}) {
+export function renderApprovedBLabel(input, { previewMaterial = 'gold', styleSpec = null, textures = null, wordmarks = null } = {}) {
   const { identity, finalGrade, reportNumber, approvalVersion, cardProfile } = input ?? {};
   if (!identity || Object.getPrototypeOf(identity) !== Object.prototype || !['SPORTS', 'POKEMON'].includes(cardProfile)
-    || !Number.isFinite(finalGrade) || finalGrade < 1 || finalGrade > 10 || finalGrade * 2 % 1
+    || !Number.isInteger(finalGrade) || finalGrade < 1 || finalGrade > 10
     || typeof reportNumber !== 'string' || !reportNumber.trim() || reportNumber.length > 100
     || !Number.isSafeInteger(approvalVersion) || approvalVersion < 1 || !['gold', 'holo'].includes(previewMaterial)) throw new Error('LABEL_V4_SOURCE_INVALID');
   for (const key of ['playerName', 'cardName', 'year', 'manufacturer', 'productSet', 'cardNumber', 'parallel', 'insert'])
     if (identity[key] != null && (typeof identity[key] !== 'string' || identity[key].length > 512)) throw new Error('LABEL_V4_SOURCE_INVALID');
+  if(styleSpec) {
+    const {specHash,...body}=styleSpec, expected=approvedBStyleInputLines(identity,{cardProfile});
+    if(styleSpec.version!=='atlas-photo-informed-label-style-v1'||approvedBHash(stable(body))!==specHash
+      ||!Array.isArray(styleSpec.lines)||styleSpec.lines.length!==expected.length
+      ||styleSpec.lines.some((line,index)=>line.role!==expected[index].role||line.text!==expected[index].text
+        ||stable(line.styleableSpans)!==stable(expected[index].styleableSpans)
+        ||line.fontSha256!==LABEL_STYLE_FONT_CATALOG[line.fontId]?.sha256))throw Error('LABEL_STYLE_SPEC_CHANGED');
+    if(textures&&textures.recipeHash!==approvedBHash(stable(styleSpec)))throw Error('LABEL_STYLE_TEXTURE_BINDING_INVALID');
+  } else if(textures||wordmarks)throw Error('LABEL_STYLE_SPEC_REQUIRED');
   const source = structuredClone({ identity, finalGrade, reportNumber, approvalVersion, cardProfile });
-  const diagnostics = { layoutVersion: APPROVED_B_LAYOUT, typography: 'two-line-nfc-clearance-bebas-variant-v1', name: null, metadata: null, certificate: null };
+  const diagnostics = { layoutVersion: APPROVED_B_LAYOUT, typography: 'photo-informed-selected-a-v1', name: null, metadata: null, certificate: null };
   const attention = code => ({ state: 'NEEDS_LAYOUT', source, rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH, diagnostics: { ...diagnostics, code } });
   try {
     let name = clean(cardProfile === 'SPORTS' ? identity.playerName : identity.cardName).toUpperCase();
@@ -287,14 +344,16 @@ export function renderApprovedBLabel(input, { previewMaterial = 'gold' } = {}) {
     const names = fit.shapes.map((value, i) => {
       const p = fit.placements[i]; return place(value, p.x, p.y, p.height);
     }).join('');
-    const metadata = fitMetadata(identity, cardProfile);
+    const metadata = fitMetadata(identity, cardProfile, styleSpec, textures, finalGrade===10, wordmarks);
     if (!metadata) return attention('METADATA_OVERFLOW');
     const bounds = [], metadataPaths = { identity: '', variant: '' };
     metadata.shapes.forEach((value, index) => {
       const p = metadata.placements[index], role = metadata.lines[index].role;
       bounds.push({ role, x: p.x, y: round(p.y), width: round(p.width), height: round(p.height),
-        font: p.font, capHeightMm: round(p.capHeight), fontSizePt: round(p.fontSizePt) });
-      metadataPaths[role] += place(value, p.x, p.y, p.height);
+        font: p.font, capHeightMm: round(p.capHeight), fontSizePt: round(p.fontSizePt),
+        outerBounds:{x:p.outerBounds.x,y:round(p.outerBounds.y),width:round(p.outerBounds.width),height:round(p.outerBounds.height)} });
+      const outlined=p.pad>0?{...value,paths:`<g stroke="${p.outlineColor}" stroke-width="${round(p.pad*2/p.scale)}" stroke-linejoin="round" paint-order="stroke fill">${value.paths}</g>`}:value;
+      metadataPaths[role] += place(outlined, p.x, p.y, p.height);
     });
     diagnostics.metadata = { text: [metadata.semantic.identity, metadata.semantic.variant].filter(Boolean).join('\n'),
       semanticLines: { identity: metadata.semantic.identity, variant: metadata.semantic.variant },
@@ -302,11 +361,13 @@ export function renderApprovedBLabel(input, { previewMaterial = 'gold' } = {}) {
       abbreviations: metadata.semantic.abbreviations, capHeightMm: round(metadata.capHeight),
       fontSizePt: round(metadata.placements.length ? Math.min(...metadata.placements.map(p => p.fontSizePt)) : 0),
       inkHeightMm: round(Math.max(0, ...metadata.heights)), bounds };
-    const certText = `CERT # ${reportNumber}`, cert = shape(certText, detail), certHeight = Math.min(1.35, 28.1 * cert.height / cert.width);
-    if (certHeight < .8) return attention('CERTIFICATE_OVERFLOW');
-    const certWidth = cert.width / cert.height * certHeight, frameWidth = certWidth + 1.3;
-    diagnostics.certificate = { text: certText, inkHeightMm: round(certHeight), frame: { x: 17.5, y: 17, width: round(frameWidth), height: 2.1 } };
-    const certPaths = place(cert, 18.15, 17 + (2.1 - certHeight) / 2, certHeight);
+    const certificate=/^ATLAS-([A-F0-9]{12})$/.exec(reportNumber);
+    const certText=`#${certificate?certificate[1]:reportNumber}`,cert=shape(certText,certificateFace);
+    const certScale=1.3/shape('H',certificateFace).height,certHeight=cert.height*certScale,certWidth=cert.width*certScale;
+    if(certWidth>13.9||certHeight>1.6)return attention('CERTIFICATE_OVERFLOW');
+    const certPaths=place(cert,1.9+(13.9-certWidth)/2,18.35-certHeight/2,certHeight);
+    diagnostics.certificate={text:certText,canonical:reportNumber,capHeightMm:1.3,inkHeightMm:round(certHeight),weight:500,
+      bounds:{x:round(1.9+(13.9-certWidth)/2),y:round(18.35-certHeight/2),width:round(certWidth),height:round(certHeight)}};
     let grade = vectors.grade10;
     if (finalGrade !== 10) {
       const value = shape(String(finalGrade), detail), height = Math.min(10.2, 9.47 * value.height / value.width), width = value.width / value.height * height;
@@ -316,9 +377,18 @@ export function renderApprovedBLabel(input, { previewMaterial = 'gold' } = {}) {
     const descHeight = Math.min(1.35, 8.8 * descriptorShape.height / descriptorShape.width);
     const descWidth = descriptorShape.width / descriptorShape.height * descHeight;
     diagnostics.grade = { value: finalGrade, descriptor, uniformScaling: true };
-    const cutouts = `<g data-part="name">${names}</g><g data-part="variant">${metadataPaths.variant}</g><g data-part="grade">${grade}</g><g data-part="descriptor">${place(descriptorShape, 58.35 + (8.8 - descWidth) / 2, 16.15 + (1.35 - descHeight) / 2, descHeight)}</g><rect x="17.5" y="17" width="${round(frameWidth)}" height="2.1" rx=".85" fill="none" stroke="black" stroke-width=".3"/><path d="M16.9 18.08 C17.1 18.08 17.25 18.05 17.50 18.05" fill="none" stroke="black" stroke-width=".36" stroke-linecap="round"/>`;
-    const support = `<g data-part="metadata">${metadataPaths.identity}</g><g data-part="certificate">${certPaths}</g>`;
-    const printSvg = buildApprovedBFront({ title: `${name}, grade ${finalGrade}, ${reportNumber}, version ${approvalVersion}`, cutouts, support });
+    const primary=`<g data-part="name">${names}</g><g data-part="grade">${grade}</g><g data-part="descriptor">${place(descriptorShape,58.35+(8.8-descWidth)/2,16.15+(1.35-descHeight)/2,descHeight)}</g>`;
+    const reportShape=shape('GRADE',detail),reportShape2=shape('REPORT',detail);
+    const reportPaths=[reportShape,reportShape2].map((value,i)=>{const h=1.05,w=value.width/value.height*h;return place(value,51.8-w/2,15.25+i*1.2,h);}).join('');
+    const support=`<g data-part="certificate">${certPaths}</g><g data-part="grade-report">${reportPaths}</g>`;
+    const accents=`<g data-part="metadata">${metadataPaths.identity}</g><g data-part="variant">${metadataPaths.variant}</g>`;
+    diagnostics.style={version:LABEL_STYLE_PAINT_VERSION,specHash:styleSpec?.specHash??null,provenance:styleSpec?.provenance??{kind:'DETERMINISTIC_FALLBACK'},
+      contrast:finalGrade===10?'exact10-exposed-foil':'shared-below10-black',textures:textures?.receipts??[],
+      lettering:metadata.shapes.map((value,index)=>({role:metadata.lines[index].role,font:value.fontFamily,
+        representation:value.representation??'FONT_OUTLINES',wordmarkArtifactHash:value.wordmarkArtifactHash??null,
+        provenance:value.wordmarkArtifactHash?'ORIGINAL_GENERATED_LETTERING':'PACKAGED_FONT'}))};
+    const printSvg=buildLabelStyleFront({title:`${name}, grade ${finalGrade}, ${reportNumber}, version ${approvalVersion}`,primary,support,accents,
+      defs:metadata.shapes.map(value=>value.defs??'').join(''),inverted:finalGrade===10});
     const previewSvg = colorApprovedBArtwork(printSvg, previewMaterial);
     if (Buffer.byteLength(previewSvg) > 1048576) return attention('ARTWORK_SIZE');
     return { state: 'READY', source, diagnostics, layoutVersion: APPROVED_B_LAYOUT,

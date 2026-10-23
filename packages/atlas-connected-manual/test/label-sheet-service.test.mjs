@@ -5,6 +5,7 @@ import { canonical, digest } from '@atlas/manual-service/contract';
 import { createLabelService, LABEL_EXPORT_PROFILES, LABEL_BLACK_INK_EXPORT_PROFILES } from '../src/label-sheet-service.mjs';
 import { createManualFinishing } from '../src/finishing.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
+import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
 import { LABEL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,
   renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg, renderLabelExportSvg, LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES } from '@atlas/finishing/label-sheet';
 import { LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-approved-b';
@@ -14,9 +15,9 @@ import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
 import { LABEL_25_PROFILE_DEFINITIONS, getLabel25Profile } from '@atlas/finishing/label-sheet-25';
 import { labelFailureHash } from '../src/label-sheet-repository.mjs';
 
-async function fixture({ cardProfile = 'SPORTS' } = {}) {
+async function fixture({ cardProfile = 'SPORTS', finalGradePolicy = ATLAS_FINAL_GRADE_POLICY } = {}) {
   const identity = cardProfile === 'SPORTS' ? { playerName:'Nick Smith Jr',year:'2023',manufacturer:'Panini',productSet:'Prizm',cardNumber:'1' } : { cardName:'Mewtwo',year:'1999',manufacturer:'Wizards',productSet:'Base Set',cardNumber:'10/102' };
-  const f = await publicationFixture({ cardProfile, identity });
+  const f = await publicationFixture({ cardProfile, identity, finalGradePolicy });
   f.row.mode='PRODUCTION'; await f.publication.publish({},f.cardId,f.actionId);
   const id=randomUUID(),actor=randomUUID(),item={id,actor_id:actor,access_version:1,card_id:f.cardId,action_id:f.actionId,purpose:'ORIGINAL'},saved=[];let pending=true,failed=0;
   const repository={pendingCandidates:async()=>pending?[{id,actor_id:actor,access_version:1,kind:'ITEM'}]:[],claimItem:async()=>pending?item:null,
@@ -213,7 +214,7 @@ test('approved B back and color artwork binds exact saved profile, stock and rev
 });
 
 test('legacy front and foil bytes remain available while back/color reject a spoofed B snapshot',async()=>{
-  const f=await fixture(),rendered=renderLabelV4({identity:f.f.full.identity,finalGrade:f.f.full.finalGrade,
+  const f=await fixture({finalGradePolicy:ATLAS_HALF_POINT_FINAL_GRADE_POLICY}),rendered=renderLabelV4({identity:f.f.full.identity,finalGrade:f.f.full.finalGrade,
     reportNumber:f.f.row.report_number,approvalVersion:1,cardProfile:'SPORTS'});
   assert.equal(rendered.state,'READY');
   const item={...f.item,state:'READY',print_svg:rendered.printSvg,preview_svg:rendered.previewSvg,artwork_hash:rendered.artworkHash,

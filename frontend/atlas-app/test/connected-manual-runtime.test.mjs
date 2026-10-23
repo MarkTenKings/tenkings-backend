@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateReportImageRuntimeConfiguration,validateLearningRuntimeConfiguration,validateMarketRuntimeConfiguration,manualLabelSheetsEnabled,validateLabelRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
+import {manualLabelStyleCredentials,manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateReportImageRuntimeConfiguration,validateLearningRuntimeConfiguration,validateMarketRuntimeConfiguration,manualLabelSheetsEnabled,validateLabelRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
 
 test('Photoroom removal requires its dedicated private key and cannot borrow OpenAI credentials',()=>{
  const shared='fixture-shared-not-a-real-key',dedicated='fixture-image-not-a-real-key';
@@ -106,4 +106,13 @@ test('removal startup requires the exact005 provider fence and receipt-only func
  for(const rows of [[],[{installed:false}],[{installed:null}],[{installed:'true'}]])
   await assert.rejects(validateReportImageRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async()=>rows}}),{code:'REPORT_IMAGE_SCHEMA_REQUIRED'});
  await assert.rejects(validateReportImageRuntimeConfiguration({enabled:true,client:{$queryRawUnsafe:async()=>{throw Error('database unavailable');}}}),/database unavailable/);
+});
+
+
+test('label style credentials are cold when disabled and isolate generation from analysis', () => {
+ const disabled={get ATLAS_MANUAL_OPENAI_KEY(){assert.fail('disabled must not read a key');},get ATLAS_LABEL_WORDMARK_OPENAI_KEY(){assert.fail('disabled must not read a key');}};
+ assert.equal(manualLabelStyleCredentials(disabled),null);
+ const enabled={ATLAS_LABEL_PHOTO_STYLE_ENABLED:'true',ATLAS_MANUAL_OPENAI_KEY:'fixture-manual-analysis-key',ATLAS_LABEL_WORDMARK_OPENAI_KEY:'fixture-dedicated-image-key'};
+ assert.deepEqual(manualLabelStyleCredentials(enabled),{apiKey:enabled.ATLAS_MANUAL_OPENAI_KEY,imageApiKey:enabled.ATLAS_LABEL_WORDMARK_OPENAI_KEY});
+ for(const imageKey of [undefined,'','short','invalid whitespace image key'])assert.throws(()=>manualLabelStyleCredentials({...enabled,ATLAS_LABEL_WORDMARK_OPENAI_KEY:imageKey}),/LABEL_STYLE_CREDENTIAL_CONFIGURATION_INVALID/);
 });
