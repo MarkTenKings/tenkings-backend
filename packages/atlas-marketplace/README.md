@@ -1,5 +1,11 @@
 # ATLAS R2 marketplace pilot
 
+The additive [Engine contracts checkpoint](../../docs/atlas/audits/2026-10-23/r2-decoder-engine-contracts.md)
+adds inert wire/response/multiplex and [transcript review](PROOF_DECODER_ENGINE_TRANSCRIPT.md),
+plus an unwired [outcome/publication model](PROOF_DECODER_OUTCOME_POLICY.md).
+All remain UNQUALIFIED; actual target isolation and the qualified physical join
+are unfinished. No existing runtime or original proof binding changes here.
+
 Current successor (2026-10-23) adds private encrypted original photo intake, full PNG/JPEG decoding, separate artifact/business review, original ShipStation carrier tracking, actual-delivery and durable release/transfer holds, authenticated physical controls and a versioned owned physical host factory. See the [successor audit](../../docs/atlas/audits/2026-10-23/r2-physical-evidence-shipping.md), [proof interface](PROOF_INTAKE.md) and [shipping interface](SHIPPING_LIFECYCLE_READINESS.md). Published FedEx sizes are selectable planning estimates; packed weight is order-specific. Actual account/coverage/tax/authority/host/physical qualification remains explicit. Claims/history and pricing guidance remain disabled; master owns production. Earlier checkpoint sections below are retained history.
 
 Follow-on integration work fixes both browser module allowlists and exact signed-target agreement at private marketplace seams. A [finite isolated host qualifier](ISOLATED_HOST_QUALIFICATION.md) now exercises three private listeners, real owned PostgreSQL durability and canonical methods with synthetic authority, without starting finance or external operations. See the [46-test ingress correction](../../docs/atlas/audits/2026-10-23/r2-browser-ingress-correction.md) and [local runner qualification](../../docs/atlas/audits/2026-10-23/r2-isolated-host-qualification.md). These receipts do not establish target proxy/gateway, decoder containment, genuine provider or physical acceptance.
