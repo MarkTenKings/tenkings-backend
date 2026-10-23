@@ -1,5 +1,5 @@
 import React from 'react';
-import { emptyAtlasSportsAttributes, atlasPrintedSerial, ATLAS_AUTOGRAPH_TYPES, ATLAS_RELIC_USE, ATLAS_SPORTS_ATTRIBUTE_LABELS as names } from '@atlas/grading-core/identity';
+import { emptyAtlasSportsAttributes, atlasPrintedSerial, ATLAS_AUTOGRAPH_TYPES, ATLAS_RELIC_USE, ATLAS_SPORTS_SPECIAL_FEATURE_KINDS, ATLAS_SPORTS_ATTRIBUTE_LABELS as names } from '@atlas/grading-core/identity';
 import styles from './ReviewIdentityPanel.module.css';
 
 function Observations({ value, onChange, photos, label }) {
@@ -17,11 +17,12 @@ function Presence({ label, value, onChange }) {
 }
 
 export function SportsAttributesSummary({ value }) {
-  if (!value) return <p className={styles.attributeNote}>Numbering, autograph and relic details have not been reviewed.</p>;
+  if (!value) return <p className={styles.attributeNote}>Special features, numbering, autograph and relic details have not been reviewed.</p>;
   return <dl className={styles.summary}>
     <div><dt>Printed serial</dt><dd>{value.serial.presence === 'PRESENT' ? value.serial.printed : names[value.serial.presence]}</dd></div>
     <div><dt>Autograph</dt><dd>{names[value.autograph.presence]}{value.autograph.presence === 'PRESENT' ? ` · ${names[value.autograph.type]}` : ''}</dd></div>
     <div><dt>Relic</dt><dd>{names[value.relic.presence]}</dd></div>
+    {value.specialFeatures?.map(feature => <div key={feature.kind}><dt>Confirmed special feature</dt><dd>{names[feature.kind]}{feature.evidence && <small className={styles.statement}>{feature.evidence.sourceTitle} · {feature.evidence.matchNote}</small>}</dd></div>)}
     {value.relic.windows.map((window, index) => <div key={index}><dt>{window.position}</dt><dd>{window.material || 'Material unknown'} · {names[window.use]}{window.manufacturerStatement && <q className={styles.statement}>{window.manufacturerStatement}</q>}</dd></div>)}
   </dl>;
 }
@@ -29,11 +30,26 @@ export function SportsAttributesSummary({ value }) {
 /** Editing only creates an ordinary draft. The existing Save details action
  * binds the observations to the saved photographs and authenticated reviewer. */
 export default function SportsAttributesFields({ value, onChange, photos, errors = {} }) {
-  if (!value) return <div className={styles.attributes}><button type="button" onClick={() => onChange(emptyAtlasSportsAttributes())}>Review numbered, autograph and relic details</button><p className={styles.attributeNote}>Not detected stays unknown. Presence does not establish autograph authentication.</p></div>;
+  if (!value) return <div className={styles.attributes}><button type="button" onClick={() => onChange(emptyAtlasSportsAttributes())}>Review special features, numbering, autograph and relic details</button><p className={styles.attributeNote}>Unconfirmed details stay unknown. Presence does not establish autograph authentication.</p></div>;
   const update = (key, patch) => onChange({ ...value, [key]: { ...value[key], ...patch } });
   const updateWindow = (index, patch) => update('relic', { windows: value.relic.windows.map((window, current) => current === index ? { ...window, ...patch } : window) });
+  const features = value.specialFeatures ?? [];
+  const setFeatures = next => {
+    const { specialFeatures: _prior, ...attributes } = value;
+    onChange(next.length ? { ...attributes, specialFeatures: next } : attributes);
+  };
+  const updateFeature = (index, patch) => setFeatures(features.map((feature, current) => current === index ? { ...feature, ...patch } : feature));
   const errorMessages = Object.entries(errors).filter(([key]) => key.startsWith('sportsAttributes')).map(([, message]) => message);
   return <div className={styles.attributes}>
+    <h3>Confirmed special features</h3><p className={styles.attributeNote}>Use a reviewed reference that identifies this exact card and printing. A set or insert name alone does not confirm a case hit or short print.</p>
+    {features.map((feature, index) => <div className={styles.attributeGroup} key={index}>
+      <label><span>Special feature</span><select aria-label={`Special feature ${index + 1}`} value={feature.kind} onChange={event => updateFeature(index, { kind: event.target.value })}>{ATLAS_SPORTS_SPECIAL_FEATURE_KINDS.map(kind => <option key={kind} value={kind} disabled={features.some((other, current) => current !== index && other.kind === kind)}>{names[kind]}</option>)}</select></label>
+      <label><span>Reference title</span><input aria-label={`Special feature ${index + 1} reference title`} value={feature.evidence.sourceTitle} maxLength={160} placeholder="Manufacturer checklist or other reviewed reference" onChange={event => updateFeature(index, { evidence: { ...feature.evidence, sourceTitle: event.target.value } })}/></label>
+      <label className={styles.wideAttribute}><span>Reference URL</span><input type="url" aria-label={`Special feature ${index + 1} reference URL`} value={feature.evidence.sourceUrl} maxLength={2048} placeholder="https://…" onChange={event => updateFeature(index, { evidence: { ...feature.evidence, sourceUrl: event.target.value } })}/></label>
+      <label className={styles.wideAttribute}><span>Exact card and printing match</span><input aria-label={`Special feature ${index + 1} match note`} value={feature.evidence.matchNote} maxLength={600} placeholder="Record the matching card number, printing and supporting statement" onChange={event => updateFeature(index, { evidence: { ...feature.evidence, matchNote: event.target.value } })}/></label>
+      <button type="button" onClick={() => setFeatures(features.filter((_, current) => current !== index))}>Remove special feature {index + 1}</button>
+    </div>)}
+    <button type="button" disabled={features.length >= ATLAS_SPORTS_SPECIAL_FEATURE_KINDS.length} onClick={() => setFeatures([...features, { kind: ATLAS_SPORTS_SPECIAL_FEATURE_KINDS.find(kind => !features.some(feature => feature.kind === kind)), evidence: { type: 'REVIEWED_REFERENCE', sourceTitle: '', sourceUrl: '', matchNote: '' } }])}>Add confirmed special feature</button>
     <h3>Numbered edition, autograph and relic</h3><p className={styles.attributeNote}>Review both photographs. Keep the checklist card number separate. Presence does not establish autograph authentication; a relic’s material does not establish use or wear.</p>
     <div className={styles.attributeGroup}>
       <Presence label="Serial numbering" value={value.serial.presence} onChange={presence => update('serial', { presence, ...(presence !== 'PRESENT' ? { printed: null, numerator: null, denominator: null } : {}) })}/>

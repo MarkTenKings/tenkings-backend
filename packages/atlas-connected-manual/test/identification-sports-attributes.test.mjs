@@ -14,6 +14,8 @@ test('machine proposals retain actual source slots, cannot claim absence, and fa
  const unknown=sportsAttributesModelProposal(emptySportsAttributesModelProposal(),input);assert.equal(unknown.attributes.autograph.presence,'UNKNOWN');
  assert.equal(sportsAttributesModelProposal(emptySportsAttributesModelProposal(),input,{sports:false}),null);
  assert.throws(()=>sportsAttributesModelProposal(raw,input,{sports:false}));
+ const invented=structuredClone(p);invented.attributes.specialFeatures=[{kind:'CASE_HIT',evidence:{type:'REVIEWED_REFERENCE',sourceTitle:'Synthetic source',sourceUrl:'https://example.com/checklist',matchNote:'An automated proposal cannot claim a human reference review.'}}];
+ assert.throws(()=>parseSportsAttributesProposal(invented,input),{code:'IDENTIFICATION_SPORTS_ATTRIBUTES_INVALID'});
 });
 test('stored v3 and v4 executions retain their original schema, no sports proposal, and stable request bytes',async()=>{
  const bytes=Object.fromEntries(await Promise.all(['front','back'].map(async(side,index)=>[side,await sharp({create:{width:20,height:28,channels:3,background:index?'#eeeeee':'#ffffff'}}).jpeg().toBuffer()])));

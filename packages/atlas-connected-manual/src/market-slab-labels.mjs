@@ -101,7 +101,13 @@ export function createMarketSlabLabeler({ boundary, apiKey, fetchImpl=globalThis
     }
     await lock(tx,key);const previous=await read(tx,key,true);if(previous&&stableJson(previous)===stableJson(value))return;await write(tx,key,value);
   })};
-  async function targetFor(source,job){requireThat(source.publicHash===digest(JSON.stringify(source.packet)),409,'MARKET_PUBLICATION_MISMATCH');const identity=parsePublicManualReport(source.packet).report.identity;
+  async function targetFor(source,job){requireThat(source.publicHash===digest(JSON.stringify(source.packet)),409,'MARKET_PUBLICATION_MISMATCH');let identity=parsePublicManualReport(source.packet).report.identity;
+    // Reviewed rarity is label metadata, not a new image-matching condition.
+    // Preserve every existing target field and historical reading key.
+    if(identity.sportsAttributes&&Object.hasOwn(identity.sportsAttributes,'specialFeatures')){
+      const {specialFeatures:_labelFeatures,...attributes}=identity.sportsAttributes;
+      identity={...identity,sportsAttributes:attributes};
+    }
     const found=await machine(async({tx})=>{const [row]=await tx.$queryRawUnsafe(`SELECT v.decision,v.candidate_id,v.identity_hash,j.catalog,j.catalog_hash,a.result::jsonb#>'{card,draft,identity}' approved_identity FROM atlas_manual.action a
       JOIN atlas_manual_connected.variant_confirmation v ON v.card_id=a.card_id
         AND v.source_hash=a.result::jsonb#>>'{card,draft,source,sourceHash}'

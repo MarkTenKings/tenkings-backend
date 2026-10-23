@@ -190,10 +190,10 @@ test('foil artwork previews derive from verified saved print geometry and the sa
 });
 
 test('approved B back and color artwork binds exact saved profile, stock and reverse hash',async()=>{
-  for(const cardProfile of ['SPORTS','POKEMON']) {
+  for(const cardProfile of ['SPORTS','POKEMON']) for(const profile of [LABEL_APPROVED_B_RENDERER_PROFILE_HASH,'a0491ff4f0a86166371f950c658c3e08397e688fe13f9e60f28abbda88b764ab']) {
     const f=await fixture({cardProfile});await f.service.runPending();const out=f.saved[0],previewMaterial=out.snapshot.previewMaterial;
     const item={...f.item,state:'READY',print_svg:out.printSvg,preview_svg:out.previewSvg,artwork_hash:out.artworkHash,
-      renderer_profile_hash:out.rendererProfileHash,material_profile_id:out.materialProfileId,snapshot:canonical(out.snapshot),snapshot_hash:digest(canonical(out.snapshot))};
+      renderer_profile_hash:profile,material_profile_id:out.materialProfileId,snapshot:canonical(out.snapshot),snapshot_hash:digest(canonical(out.snapshot))};
     f.repository.item=async()=>item;const before=structuredClone(item),artwork={printSvg:out.printSvg,artworkHash:out.artworkHash,previewMaterial};
     for(const mode of ['preview-back','print-back','preview-back-foil','print-back-foil','print-color','print-back-color']) {
       let expected=renderLabelExportSvg(artwork,{side:mode.includes('-back')?'BACK':'FRONT',blackInkTransparent:mode.endsWith('-foil'),color:mode.endsWith('-color')});

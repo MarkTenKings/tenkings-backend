@@ -50,14 +50,24 @@ test('approved B pins accepted existing font files, uniform physical geometry an
   }
 });
 
-test('every grade and descriptor remains inside approved dynamic regions and clear of the approved NFC opening', async () => {
-  const regions = { name: [17.4, 2.95, 46.6, 11.2], metadata: [17.4, 12.6, 46.6, 14.5],
+test('names, identity, variants and every grade stay in their regions and clear the padded NFC opening', async () => {
+  const regions = { name: [17.4, 2.95, 46.6, 11.2], metadata: [17.4, 10.9, 46.6, 16.7],
+    variant: [17.4, 10.9, 46.6, 16.7],
     grade: [58, 4.3, 67.9, 15.2], descriptor: [58, 16, 67.2, 17.9], certificate: [17.4, 16.75, 47.3, 19.4] };
   const cases = Array.from({ length: 19 }, (_, i) => ({ ...sports, finalGrade: 1 + i / 2 }));
-  cases.push(pokemon, { ...sports, identity: { ...sports.identity, playerName: 'José Ramírez' } });
+  cases.push(pokemon, { ...sports, identity: { ...sports.identity, playerName: 'José Ramírez' } },
+    { ...sports, identity: { playerName: 'TreVeyon Henderson', year: '2025', manufacturer: 'Panini',
+      productSet: 'Rookies & Stars - Thrillers', cardNumber: '20', parallel: 'ICE' } },
+    { ...sports, identity: { playerName: 'Mike Trout', year: '2025', manufacturer: 'Topps',
+      productSet: 'Topps Chrome 1955 Anniversary', cardNumber: '1', parallel: 'Blue Mini Diamond Refractor',
+      sportsAttributes: { version: 'atlas-sports-attributes-public-v1',
+        serial: { presence: 'PRESENT', printed: '132/199', numerator: 132, denominator: 199 },
+        autograph: { presence: 'UNKNOWN', type: 'UNKNOWN' }, relic: { presence: 'UNKNOWN', windows: [] } } } });
   for (const input of cases) {
     const result = renderApprovedBLabel(input); assert.equal(result.state, 'READY');
-    const names = input.finalGrade === 8 || input === pokemon ? Object.keys(regions) : ['grade', 'descriptor'];
+    const names = input.finalGrade === 8 || input === pokemon
+      ? Object.keys(regions).filter(name => name !== 'variant' || result.diagnostics.metadata.lineRoles.includes('variant'))
+      : ['grade', 'descriptor'];
     for (const name of names) {
       const component = part(result.printSvg, name);
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}mm" height="${HEIGHT}mm" viewBox="0 0 ${WIDTH} ${HEIGHT}"><g fill="white">${component}</g></svg>`;
@@ -68,11 +78,25 @@ test('every grade and descriptor remains inside approved dynamic regions and cle
         opaque++; const mmX = (x + .5) * WIDTH / info.width, mmY = (y + .5) * HEIGHT / info.height;
         assert(mmX >= left && mmX <= right && mmY >= top && mmY <= bottom,
           `${input.finalGrade} ${name} escaped dynamic region at ${mmX},${mmY}`);
-        assert(Math.hypot(mmX - 51.8, mmY - 9.75) > 5.1, `${name} entered approved NFC opening`);
+        // The renderer checks the exact 5.85mm padded circle against vector
+        // bounds. Allow 0.05mm here for the center of a 300dpi edge pixel.
+        assert(Math.hypot(mmX - 51.8, mmY - 9.75) > 5.80, `${name} entered padded NFC opening`);
       }
       assert(opaque > 5, `${name} must have visible glyphs`);
     }
   }
+});
+
+test('variant paths are stock cutouts while identity paths retain the white support layer', () => {
+  const result = renderApprovedBLabel({ ...sports, identity: { ...sports.identity, manufacturer: 'Topps', productSet: 'Chrome', parallel: 'Refractor' } });
+  assert.equal(result.state, 'READY');
+  const variant = part(result.printSvg, 'variant'), metadata = part(result.printSvg, 'metadata');
+  const defsEnd = result.printSvg.indexOf('</defs>'), supportStart = result.printSvg.indexOf('<g id="approved-support"');
+  assert(result.printSvg.indexOf(variant) < defsEnd, 'variant must cut through the black plate to the stock');
+  assert(result.printSvg.indexOf(metadata) > supportStart, 'identity must remain in the white support layer');
+  assert.match(variant, /<path /); assert.match(metadata, /<path /);
+  assert.equal(result.source.identity.parallel, 'Refractor');
+  assert.equal(result.diagnostics.metadata.lines.at(-1), 'REFRACTOR');
 });
 
 test('fixed GRADE/REPORT pixels survive every front composition and the back remains exact pinned artwork', async () => {

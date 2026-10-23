@@ -17,11 +17,13 @@ const physical = [{ x: .125, y: .1 }, { x: .875, y: .1 }, { x: .875, y: .9 }, { 
 test('reviewed sports attributes save through the real identity action while measurements stay exact', async () => {
   const f = await fixture(), before = await f.state(), original = f.card(), attributes = emptyAtlasSportsAttributes();
   attributes.serial = { presence: 'PRESENT', ...atlasPrintedSerial('007/099'), evidence: [{ side: 'BACK', imageSha256: before.geometry.sides.BACK.image.originalSha256, observation: 'Back lower edge: 007/099.' }] };
+  attributes.specialFeatures = [{ kind: 'CASE_HIT', evidence: { type: 'REVIEWED_REFERENCE', sourceTitle: 'Synthetic checklist', sourceUrl: 'https://example.com/checklist', matchNote: 'The exact card and printing match the listed case hit.' } }];
   const identity = { ...original.draft.identity, sportsAttributes: attributes };
   await f.execute({ type: 'IDENTITY_EDIT', identity });
   assert.deepEqual(f.card().draft.identity, identity); assert.equal(f.card().draft.identityRevision, original.draft.identityRevision + 1);
   const after = await f.state(); assert.deepEqual(after.geometry, before.geometry); assert.deepEqual(after.defects, before.defects);
   assert.equal(f.measured.length, 0); assert.equal(f.publications.length, 0);
+  assert.deepEqual(f.commits.at(-1).input.action.identity.sportsAttributes.specialFeatures, attributes.specialFeatures);
   const saved = f.card(); identity.sportsAttributes.serial.evidence[0].imageSha256 = hash('f');
   await assert.rejects(f.execute({ type: 'IDENTITY_EDIT', identity }), { code: 'MANUAL_IDENTITY_PHOTO_STALE' });
   assert.deepEqual(f.card(), saved);
@@ -30,6 +32,14 @@ test('machine proposals cannot acquire reviewed sports identity through the huma
   const f = await fixture({ actorKind: 'MACHINE' }), before = f.card();
   await assert.rejects(f.execute({ type: 'IDENTITY_EDIT', identity: { ...before.draft.identity, sportsAttributes: emptyAtlasSportsAttributes() } }), { code: 'MANUAL_HUMAN_REQUIRED' });
   assert.deepEqual(f.card(), before);
+});
+test('reference-only special features use the ordinary identity action without manufacturing photographed facts', async () => {
+  const f = await fixture(), before = f.card(), attributes = emptyAtlasSportsAttributes();
+  attributes.specialFeatures = [{ kind: 'SHORT_PRINT', evidence: { type: 'REVIEWED_REFERENCE', sourceTitle: 'Synthetic short-print checklist', sourceUrl: 'https://example.com/checklist', matchNote: 'Card 7 in the exact saved printing is listed as SP.' } }];
+  await f.execute({ type: 'IDENTITY_EDIT', identity: { ...before.draft.identity, sportsAttributes: attributes } });
+  assert.deepEqual(f.card().draft.identity.sportsAttributes, attributes);
+  assert.deepEqual(f.card().draft.geometry, before.draft.geometry); assert.deepEqual(f.card().draft.defects, before.draft.defects);
+  assert.equal(f.publications.length, 0); assert.equal(f.measured.length, 0);
 });
 const printed = [{ x: .04, y: .06 }, { x: .94, y: .06 }, { x: .94, y: .96 }, { x: .04, y: .96 }];
 function geometry(cardId, printedQuad = printed) {
@@ -343,10 +353,12 @@ test('replacing photographs clears only the new draft claims and preserves prior
   return {geometry:fresh,source:{sourceHash},changedSides:['BACK']};
  }});
  const original=(await f.state()).geometry,attributes=emptyAtlasSportsAttributes();attributes.serial={presence:'PRESENT',...atlasPrintedSerial('007/099'),evidence:[{side:'BACK',imageSha256:original.sides.BACK.image.originalSha256,observation:'Back lower edge: 007/099.'}]};
+ attributes.specialFeatures=[{kind:'CASE_HIT',evidence:{type:'REVIEWED_REFERENCE',sourceTitle:'Synthetic checklist',sourceUrl:'https://example.com/checklist',matchNote:'Exact card and printing match.'}}];
  await f.execute({type:'IDENTITY_EDIT',identity:{...f.card().draft.identity,sportsAttributes:attributes}});await f.inspect();await f.confirm();
  const before=clone(f.approval),card=f.card(),approved=await f.workflow.service.previewReport(f.staff,f.cardId);
  await f.execute({type:'REPLACE_SOURCES',sourceHash:hash('8')});
  assert.equal(Object.hasOwn(f.card().draft.identity,'sportsAttributes'),false);assert.equal(f.card().draft.identityRevision,card.draft.identityRevision+1);assert.deepEqual(f.approval,before);
  assert.equal(approved.review.report.identity.sportsAttributes.serial.printed,'007/099');
+ assert.deepEqual(approved.review.report.identity.sportsAttributes.specialFeatures,attributes.specialFeatures);
  assert.equal((await f.state()).geometry.sides.BACK.image.originalSha256,hash('9'));
 });

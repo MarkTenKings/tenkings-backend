@@ -49,8 +49,9 @@ test('archive projects the exact versioned pair, optional actual slab photo and 
   assert.deepEqual(input, before); assert.deepEqual(archiveApprovedMedia(input), result);
 });
 
-test('only the exact approved-B saved profile projects paired labels with the same approval-bound item', () => {
-  const input = fixture(); input.labelItem.renderer_profile_hash = LABEL_APPROVED_B_RENDERER_PROFILE_HASH;
+test('current and retained approved-B profiles project paired labels with the same approval-bound item', () => {
+  for (const profile of [LABEL_APPROVED_B_RENDERER_PROFILE_HASH, 'a0491ff4f0a86166371f950c658c3e08397e688fe13f9e60f28abbda88b764ab']) {
+  const input = fixture(); input.labelItem.renderer_profile_hash = profile;
   const before = structuredClone(input), result = archiveApprovedMedia(input);
   assert.equal(result.LABEL.layoutVersion, 'atlas-approved-b-v1');
   assert.deepEqual(result.LABEL_BACK, { ...result.LABEL,
@@ -63,6 +64,7 @@ test('only the exact approved-B saved profile projects paired labels with the sa
   input.labelItem.snapshot = canonical({ layoutVersion: 'atlas-approved-b-v1' }); input.labelItem.snapshot_hash = digest(input.labelItem.snapshot);
   const historical = archiveApprovedMedia(input);
   assert.equal(historical.LABEL.layoutVersion, undefined); assert.equal(historical.LABEL_BACK, undefined);
+  }
 });
 
 test('approved-B reverse artwork is omitted together with any invalid or stale front-label binding', () => {

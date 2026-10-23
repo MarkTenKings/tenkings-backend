@@ -16,6 +16,10 @@ test('actual clean serving closure contains current workers and camera but no hi
  assert(!packages.includes('packages/atlas-standalone-database'));
  for(const name of CPU_SOURCES)assert(paths.has('backend/ai-grader-speedster-service/'+name),name);
  for(const path of [...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES])assert(paths.has(path),path);
+ const fontRoot='packages/atlas-finishing/assets/approved-b/fonts/';
+ for(const name of ['BebasNeue-Regular.ttf','OFL-BebasNeue.txt','README.md'])assert(paths.has(fontRoot+name),`Missing variant font runtime/provenance input: ${name}`);
+ assert.equal(files.find(file=>file.path===fontRoot+'BebasNeue-Regular.ttf').sha256,'830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04');
+ assert.match(files.find(file=>file.path===fontRoot+'OFL-BebasNeue.txt').bytes.toString(),/SIL Open Font License, Version 1\.1/);
  for(const module of ['label-approved-b.mjs','label-approved-b-artwork.mjs'])assert(paths.has('packages/atlas-finishing/src/'+module),module);
  assert.equal(CPU_SOURCES.length,8);assert(paths.has('frontend/atlas-shared/RapidCardCamera.jsx'));
  assert.deepEqual([...paths].filter(path=>path.startsWith('packages/card-catalog-evidence/data/')).sort(),await manufacturerRuntimeFiles(root));
@@ -58,7 +62,7 @@ test('isolated packaged catalog resolves Jordan, Nick Kurtz and LaMelo offline a
   }
  }finally{await rm(temporary,{recursive:true,force:true});await rm(temporary+'.manifest.json',{force:true});}
 });
-test('isolated approved B package verifies exact assets and rejects a changed PNG',async()=>{
+test('isolated approved B package verifies exact assets and rejects changed artwork, variant font or provenance bytes',async()=>{
  const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-label-')),manifestPath=temporary+'.manifest.json';
  try{
   const {files}=await collectManualSource(),included=files.filter(file=>LABEL_APPROVED_B_SOURCES.includes(file.path)
@@ -71,8 +75,12 @@ test('isolated approved B package verifies exact assets and rejects a changed PN
   const complete=run();assert.equal(complete.status,0,complete.stderr);const result=JSON.parse(complete.stdout);
   assert.equal(result.approvedLabelAssets.version,'atlas-approved-b-static-assets-v1');assert.equal(result.approvedLabelAssets.files,5);
   assert.equal(result.labelJig25.positions,25);assert.equal(result.labelJig25.backFiles,3);
-  const asset=join(temporary,'packages/atlas-finishing/assets/approved-b/back-black.png'),bytes=await readFile(asset);bytes[bytes.length-1]^=1;await writeFile(asset,bytes);
-  const changed=run();assert.notEqual(changed.status,0);assert.match(changed.stderr,/back-black.png/);
+  for(const name of ['back-black.png','fonts/BebasNeue-Regular.ttf','fonts/OFL-BebasNeue.txt','fonts/README.md']){
+   const asset=join(temporary,'packages/atlas-finishing/assets/approved-b',name),original=await readFile(asset),bytes=Buffer.from(original);
+   bytes[bytes.length-1]^=1;await writeFile(asset,bytes);
+   const changed=run();assert.notEqual(changed.status,0,name);assert(changed.stderr.includes(name),changed.stderr);
+   await writeFile(asset,original);
+  }
  }finally{await rm(temporary,{recursive:true,force:true});await rm(manifestPath,{force:true});}
 });
 test('isolated serving router closure resolves every exported entry including detail report return',async()=>{

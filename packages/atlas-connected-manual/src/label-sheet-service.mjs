@@ -1,5 +1,5 @@
 import { canonical, digest, object, requireThat, uuid, revision } from '@atlas/manual-service/contract';
-import { renderApprovedBLabel, LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-approved-b';
+import { renderApprovedBLabel, LABEL_APPROVED_B_RENDERER_PROFILE_HASH, isApprovedBRendererProfile } from '@atlas/finishing/label-approved-b';
 import { APPROVED_B_LAYOUT, APPROVED_B_MARKER, validateApprovedBArtwork, renderApprovedBBack, colorApprovedBArtwork } from '@atlas/finishing/label-approved-b-artwork';
 import { renderLabelSheetPng, renderLabelV4Png, renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg, renderLabelExportSvg,
   LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES,
@@ -22,7 +22,7 @@ const backArtworkHash = digest(renderApprovedBBack());
 export const LABEL_ARTWORK_MODES = Object.freeze(['preview','print','preview-foil','print-foil','preview-back','print-back',
   'preview-back-foil','print-back-foil','print-color','print-back-color']);
 function requireApprovedB(item, { back = false } = {}) {
-  requireThat(item.renderer_profile_hash === LABEL_APPROVED_B_RENDERER_PROFILE_HASH, 409, 'LABEL_APPROVED_B_REQUIRED');
+  requireThat(isApprovedBRendererProfile(item.renderer_profile_hash), 409, 'LABEL_APPROVED_B_REQUIRED');
   requireThat(typeof item.snapshot === 'string' && digest(item.snapshot) === item.snapshot_hash, 503, 'LABEL_STORED_CONTENT_INVALID');
   const snapshot = JSON.parse(item.snapshot);
   requireThat(snapshot?.layoutVersion === APPROVED_B_LAYOUT && (!back || snapshot.backArtworkHash === backArtworkHash)

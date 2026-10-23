@@ -4,7 +4,8 @@ import {randomUUID} from 'node:crypto';
 import {canonical,digest} from '@atlas/manual-service/contract';
 import {createVariantJobStore,variantBinding,validateVariantAction,variantSelectedIdentity} from '../src/variant-job-store.mjs';
 import {variantReviewStatus} from '../src/variant-service.mjs';
-import {importScrydexVariantCandidates,scrydexVariantSearchUrl} from '@tenkings/card-catalog-evidence';
+import {importScrydexVariantCandidates,scrydexVariantSearchUrl,variantCandidateId} from '@tenkings/card-catalog-evidence';
+import {emptyAtlasSportsAttributes} from '@atlas/grading-core/identity';
 function fixture({confirmed=true}={}){
  const principal={id:randomUUID(),role:'REVIEWER',accessVersion:1},card={cardId:randomUUID(),revision:4,draft:{source:{sourceHash:digest('pair')},identityRevision:2,identity:{cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:'Reverse Holo',layoutType:'POKEMON'}}};
  card.contentHash=digest(canonical(card.draft));const b=variantBinding(card);
@@ -45,6 +46,17 @@ test('missing review and legacy unresolved nonnull printing remain gated',async(
 });
 test('retired catalog photo permission is rejected without business writes',()=>{
  const f=fixture();assert.throws(()=>validateVariantAction({...f.action,referencePermission:{basis:'owned_original',consumers:['inventory','atlas']}}));assert.equal(f.writes.length,0);
+});
+test('variant choices preserve existing reviewed reference features without changing their evidence',()=>{
+ const sportsAttributes={...emptyAtlasSportsAttributes(),specialFeatures:[{kind:'CASE_HIT',evidence:{type:'REVIEWED_REFERENCE',sourceTitle:'Synthetic checklist',sourceUrl:'https://example.com/checklist',matchNote:'Card 7 and its exact printing match.'}}]};
+ const original={playerName:'Synthetic Player',year:'2026',manufacturer:'Fixture',productSet:'Local set',cardNumber:'7',parallel:null,insert:null,sportsAttributes};
+ const card={draft:{identity:original}},candidate={authority:'provider_candidate',label:'Gold',identity:{category:'SPORTS',name:'Synthetic Player',year:'2026',manufacturer:'Fixture',setName:'Local set',cardNumber:'7',language:null},parallel:'Gold',canonical:null,applicability:'unknown',diagnostics:[],images:[],source:{provider:'fixture',recordId:'local',url:null,sha256:digest('synthetic local source'),references:[]},warnings:[]};
+ candidate.candidateId=variantCandidateId(candidate);
+ for(const action of [{decision:'MANUAL',manualParallel:'Gold'},{decision:'UNRESOLVED'},{decision:'SELECTED',candidateId:candidate.candidateId}]){
+  const selected=variantSelectedIdentity(card,action,{catalog:{candidates:[candidate]}});
+  assert.deepEqual(selected.sportsAttributes,sportsAttributes);
+ }
+ assert.equal(original.parallel,null);
 });
 test('Scrydex-verified series names preserve saved set identity during first printing confirmation',()=>{
  const target={category:'POKEMON',name:'Pikachu',year:'2023',setName:'Scarlet & Violet—151',cardNumber:'025/165'};

@@ -41,6 +41,7 @@ export function parseSportsAttributesProposal(value,input,{sports=true}={}){
  bad(sports&&value.version===SPORTS_PROPOSAL_VERSION&&value.authority==='MACHINE_PROPOSAL'&&value.sourceHash===input.subject.revision);
  const photos=photosFor(input);bad(value.photos.FRONT===photos.FRONT&&value.photos.BACK===photos.BACK);
  const attributes=parseAtlasSportsAttributes(value.attributes);
+ bad(!Object.hasOwn(attributes,'specialFeatures'));
  for(const key of ['serial','autograph','relic']){
   bad(attributes[key].presence!=='ABSENT'&&confidenceValues.includes(value.confidence[key]));
   bad(attributes[key].presence==='UNKNOWN'?value.confidence[key]==='unknown':value.confidence[key]!=='unknown');

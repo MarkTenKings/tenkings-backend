@@ -77,3 +77,18 @@ test('adopting a machine suggestion creates only editable facts and requires fre
  assert.equal(proposal.attributes.serial.evidence[0].imageSha256,'a'.repeat(64));
  assert.equal(identity.reviewIdentityEdit(saved.identity,structuredClone(saved.identity)),null);
 });
+
+test('reviewed special features survive ordinary identity edits and require complete human reference fields',()=>{
+ const feature={kind:'CASE_HIT',evidence:{type:'REVIEWED_REFERENCE',sourceTitle:'Synthetic checklist',sourceUrl:'https://example.com/checklist',matchNote:'Card DTBH-JDT matches the named printing and case-hit entry.'}};
+ const current={...sports,sportsAttributes:{...emptyAtlasSportsAttributes(),specialFeatures:[feature]}};
+ const {sportsAttributes:_omitted,...ordinaryFields}=current;
+ assert.equal(identity.reviewIdentityEdit(current,ordinaryFields),null);
+ const edited=identity.reviewIdentityEdit(current,{...ordinaryFields,manufacturer:'Reviewed maker'});
+ assert.deepEqual(edited.identity.sportsAttributes,current.sportsAttributes);
+ assert.equal(identity.reviewIdentityEdit(current,structuredClone(current)),null);
+ const invalid=structuredClone(current);invalid.sportsAttributes.specialFeatures[0].evidence.matchNote='';
+ assert.throws(()=>identity.reviewIdentityEdit(sports,invalid));
+ const proposal={version:'atlas-sports-attributes-proposal-v1',authority:'MACHINE_PROPOSAL',sourceHash:'b'.repeat(64),attributes:current.sportsAttributes};
+ assert.equal(identity.reviewSportsAttributesProposal(proposal,proposal.sourceHash),null);
+ assert.equal(identity.draftSportsAttributesProposal(proposal,proposal.sourceHash),null);
+});
