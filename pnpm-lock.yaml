@@ -872,6 +872,12 @@ importers:
         specifier: workspace:*
         version: link:../atlas-photo-storage
 
+  packages/atlas-marketplace:
+    dependencies:
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+
   packages/atlas-manual-service: {}
 
   packages/atlas-manual-workflow:

@@ -82,7 +82,10 @@ export function recordFulfillment(tx, { requestId, orderId, action, actor, evide
     } else if (action === 'DISPATCH') {
       requireValue(state.status === 'PACKED' && !open, 'FULFILLMENT_TRANSITION');
       for (const field of ['carrierRef', 'trackingRef', 'coverageRef', 'dispatchReceiptRef']) domainId(evidence[field], field, contextFor(tx));
-      state.status = 'DISPATCHED'; state.dispatchedAt = tx.now;
+      const dispatchedAt=evidence.dispatchedAt??tx.now;
+      requireValue(Number.isSafeInteger(dispatchedAt)&&dispatchedAt>=0&&dispatchedAt<=tx.now,'DISPATCH_TIMESTAMP_REQUIRED');
+      state.status = 'DISPATCHED'; state.dispatchedAt = dispatchedAt;
+      if(evidence.dispatchedAt!==undefined)state.dispatchObservedAt=tx.now;
     } else if (action === 'DELIVER') {
       requireValue(state.status === 'DISPATCHED', 'FULFILLMENT_TRANSITION');
       domainId(evidence.deliveryProofRef, 'evidence identifier', contextFor(tx));

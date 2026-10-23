@@ -1,11 +1,13 @@
 import { readFile } from 'node:fs/promises';
-import { createMarketplaceHttpHandler } from './http.mjs';
+import { createMarketplaceHttpHandler,MAX_MARKETPLACE_PROOF_BYTES } from './http.mjs';
 import { requireValue } from './contract.mjs';
 import { createMarketplaceHostCheck } from './host-boundary.mjs';
 
 const assets=new Map([
   ['',['workspace.html','text/html']],
   ['app.mjs',['app.mjs','text/javascript']],
+  ['physical-evidence.mjs',['physical-evidence.mjs','text/javascript']],
+  ['parcel-presets.mjs',['parcel-presets.mjs','text/javascript']],
   ['stripe-payment.mjs',['stripe-payment.mjs','text/javascript']],
   ['view.mjs',['view.mjs','text/javascript']],
   ['report-link.mjs',['report-link.mjs','text/javascript']],
@@ -38,7 +40,8 @@ export function createMarketplaceNodeHandler(options={}) {
         return send(200,bytes,{'Content-Type':type+'; charset=utf-8','Content-Security-Policy':MARKETPLACE_CSP});
       }
       const webhook=url.pathname===apiPath+'/provider/webhook';
-      const maxBytes=webhook?262144:16384;
+      const proofUpload=request.method==='POST'&&url.pathname.startsWith(apiPath+'/proofs/upload/')&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(url.pathname.slice((apiPath+'/proofs/upload/').length));
+      const maxBytes=webhook?262144:proofUpload?MAX_MARKETPLACE_PROOF_BYTES:16384;
       requireValue(!request.headers['content-length']||Number(request.headers['content-length'])<=maxBytes,'BODY_TOO_LARGE');
       let length=0; const chunks=[];
       for await(const chunk of request) {length+=chunk.length;requireValue(length<=maxBytes,'BODY_TOO_LARGE');chunks.push(chunk);}

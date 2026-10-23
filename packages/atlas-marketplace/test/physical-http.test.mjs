@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {fixture,image,buyer,staff,seller,stranger,digest} from './proof-fixtures.mjs';
+import {createMarketplacePilot} from '../src/service.mjs';
+import {createMarketplaceNodeHandler} from '../src/runtime-node.mjs';
+
+test('real bounded binary HTTP retains the exact original; private reads, roles, CSRF, schema and cross-order access fail closed',async t=>{
+  const f=fixture(t),csrf='c'.repeat(64);let actor=buyer;
+  const service=createMarketplacePilot({enabled:true,environment:'SYNTHETIC_LOCAL',store:f.store,proofIntake:f.intake});
+  const server=createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`,api='/account/marketplace/api';
+  const node=createMarketplaceNodeHandler({enabled:true,origin,apiPath:api,mountPath:'/account/marketplace/',service,clock:()=>f.now,resolveSession:async()=>({actor,authenticated:true,expiresAt:f.now+60000,sessionId:'isolated_session'}),verifyCsrf:async({token})=>token===csrf,issueCsrf:async()=>csrf,admitRequest:async()=>true});server.on('request',node.listener);
+  t.after(async()=>{node.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
+  const call=(path,input,headers={})=>fetch(origin+api+path,{method:input===undefined?'GET':'POST',headers:{origin,'content-type':Buffer.isBuffer(input)?'application/octet-stream':'application/json','x-atlas-csrf':csrf,...headers},...(input===undefined?{}:{body:Buffer.isBuffer(input)?input:JSON.stringify(input)})});
+  const bytes=await image(),input={requestId:'demo_http_proof',orderId:'demo_order',purpose:'RETURN_REQUEST',declaredType:'image/png',byteCount:bytes.length,sha256:digest(bytes)};
+  assert.equal((await call('/proofs/prepare',input,{'x-atlas-csrf':'wrong'})).status,403);
+  assert.equal((await call('/proofs/prepare',{...input,actor:staff})).status,409);
+  actor=seller;assert.equal((await call('/proofs/prepare',input)).status,403);actor=buyer;
+  const prepared=await (await call('/proofs/prepare',input)).json();assert.equal(prepared.status,'PREPARED');
+  assert.equal((await call('/proofs/upload/'+prepared.uploadId,bytes,{'content-type':'image/png'})).status,409);
+  const retained=await (await call('/proofs/upload/'+prepared.uploadId,bytes)).json();assert.equal(retained.status,'RETAINED');
+  assert.equal((await (await call('/proofs/recover',{uploadId:prepared.uploadId})).json()).proofId,retained.proofId);
+  const read=await call('/proofs/objects/'+retained.proofId);assert.equal(read.status,200);assert.equal(read.headers.get('content-type'),'image/png');assert.equal(read.headers.get('cache-control'),'no-store');assert.match(read.headers.get('content-security-policy'),/sandbox/);assert.deepEqual(Buffer.from(await read.arrayBuffer()),bytes);
+  const listed=await (await call('/proofs?orderId=demo_order')).json();assert.equal(listed.proofs.length,1);assert.doesNotMatch(JSON.stringify(listed),/objectKey|encryption|manifest|demo_reviewer|demo_seller/);
+  actor=stranger;assert.equal((await call('/proofs/objects/'+retained.proofId)).status,403);assert.equal((await call('/proofs?orderId=demo_order')).status,403);
+  actor=buyer;assert.equal((await call('/proofs/review',{requestId:'demo_review',proofId:retained.proofId,decision:'APPROVE',reviewRef:'demo_review_ref'})).status,403);
+  assert.equal((await call('/staff/shipping?orderId=demo_order')).status,403);
+  assert.equal((await call('/proofs?orderId=demo_order&orderId=demo_order_two')).status,409);
+  actor=staff;assert.equal((await call('/proofs/objects/'+retained.proofId)).status,200);
+  f.reviewerAllowed=false;assert.equal((await call('/proofs/review',{requestId:'demo_review',proofId:retained.proofId,decision:'APPROVE',reviewRef:'demo_review_ref'})).status,403);
+  assert.equal((await call('/proofs/prepare',Buffer.alloc(17000))).status,413);
+  assert.equal((await call('/proofs/upload/'+prepared.uploadId,Buffer.alloc(10485761))).status,413);
+  const module=await fetch(origin+'/account/marketplace/physical-evidence.mjs');assert.equal(module.status,200);assert.match(await module.text(),/createPhysicalEvidenceController/);
+  const presets=await fetch(origin+'/account/marketplace/parcel-presets.mjs');assert.equal(presets.status,200);assert.match(await presets.text(),/ESTIMATE_ONLY/);
+});

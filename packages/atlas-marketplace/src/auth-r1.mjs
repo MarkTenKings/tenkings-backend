@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 import { hash, requireValue } from './contract.mjs';
 
 export const R1_SESSION_ACCESS_ACTION = 'marketplace_session_access';
@@ -11,7 +11,7 @@ const unavailable = value => requireValue(value, 'AUTH_BOUNDARY_UNAVAILABLE');
 const signedIn = value => requireValue(value, 'SIGN_IN_REQUIRED');
 const time = value => value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(value);
 const configPin = config => JSON.stringify([config.mode,config.origin,config.deploymentId,config.releaseSha,config.configHash,config.binding??null,config.cookies,config.basePath??null,config.deploymentHost??null]);
-const requestPin = req => JSON.stringify([req.method,req.url,Object.entries(req.headers??{}).sort(([a],[b])=>a.localeCompare(b)),req.body??null,req.rawBody??null,req.socket?.remoteAddress??null]);
+const requestPin = req => JSON.stringify([req.method,req.url,Object.entries(req.headers??{}).sort(([a],[b])=>a.localeCompare(b)),req.body??null,Buffer.isBuffer(req.rawBody)?[req.rawBody.length,createHash('sha256').update(req.rawBody).digest('hex')]:req.rawBody??null,req.socket?.remoteAddress??null]);
 const sameToken = (a,b) => typeof a==='string' && typeof b==='string' && HASH.test(a) && HASH.test(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
 /** Inert R1 composition only. Canonical classes/instances come from trusted R1
@@ -145,7 +145,8 @@ export function createR1MarketplaceAuthBridge(options={}) {
         // Provider/service work must never hold R1's authority row locks or its
         // five-second Prisma transaction. A later denial withholds the response
         // but cannot attest rollback of a separately committed effect.
-        const output=await work(principal.actor);
+        const authority=Object.freeze({authorizeCommit:()=>{exactPrincipal(value);return true;},refreshAuthorization:async()=>{exactPrincipal(value);if(isStaff)await revalidateStaffBoundary();await readAccess();exactPrincipal(value);return true;}});
+        const output=await work(principal.actor,authority);
         if(isStaff) await revalidateStaffBoundary();
         await readAccess(); return output;
       },

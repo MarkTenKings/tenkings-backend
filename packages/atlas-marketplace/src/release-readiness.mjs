@@ -2,6 +2,7 @@ import {isIP} from 'node:net';
 import {hash} from './contract.mjs';
 import {R1_MARKETPLACE_ROUTES} from './routes-r1.mjs';
 
+export const MARKETPLACE_PHYSICAL_RELEASE_SCHEMA='atlas-marketplace-owned-host-v2';
 export const MARKETPLACE_RELEASE_SCHEMA='atlas-marketplace-owned-host-v1';
 export const MARKETPLACE_EXTERNAL_GATES=Object.freeze({
   routing:'R1 owner must qualify the actual mounted gateways, TLS/proxy and unchanged grading routes.',
@@ -36,14 +37,15 @@ export function inspectMarketplaceReleaseManifest(manifest) {
     for(const key of keys)if(!Object.hasOwn(value,key))add(`${path}.${key}`,'FIELD_REQUIRED');
     return true;
   }
-  if(closed(manifest,['schema','environment','origin','platformAccountId','sourceRevision','releaseRef','bootstrapApprovalRef','networkApprovalRef','hostConfigHash','financeConfigHash','commerceConfigHash','marketplaceBindingHash','listeners','limits','externalEvidence'],'manifest')) {
-    if(manifest.schema!==MARKETPLACE_RELEASE_SCHEMA)add('manifest.schema','SCHEMA_MISMATCH');
+  const physical=manifest?.schema===MARKETPLACE_PHYSICAL_RELEASE_SCHEMA;
+  if(closed(manifest,[...(physical?['physicalConfigHash']:[]),'schema','environment','origin','platformAccountId','sourceRevision','releaseRef','bootstrapApprovalRef','networkApprovalRef','hostConfigHash','financeConfigHash','commerceConfigHash','marketplaceBindingHash','listeners','limits','externalEvidence'],'manifest')) {
+    if(![MARKETPLACE_RELEASE_SCHEMA,MARKETPLACE_PHYSICAL_RELEASE_SCHEMA].includes(manifest.schema))add('manifest.schema','SCHEMA_MISMATCH');
     if(!['PROVIDER_SANDBOX','PRODUCTION'].includes(manifest.environment))add('manifest.environment','ENVIRONMENT_REQUIRED');
     if(manifest.origin!=='https://atlasgrading.com')add('manifest.origin','CANONICAL_ORIGIN_REQUIRED');
     if(typeof manifest.platformAccountId!=='string'||!/^acct_[A-Za-z0-9]+$/.test(manifest.platformAccountId))add('manifest.platformAccountId','PLATFORM_ACCOUNT_REQUIRED');
     if(typeof manifest.sourceRevision!=='string'||!/^([a-f0-9]{40}|[a-f0-9]{64})$/.test(manifest.sourceRevision))add('manifest.sourceRevision','EXACT_REVISION_REQUIRED');
     for(const key of ['releaseRef','bootstrapApprovalRef','networkApprovalRef'])if(!reference(manifest[key]))add(`manifest.${key}`,'NONSECRET_REFERENCE_REQUIRED');
-    for(const key of ['hostConfigHash','financeConfigHash','commerceConfigHash','marketplaceBindingHash'])if(!digest(manifest[key]))add(`manifest.${key}`,'CONFIGURATION_DIGEST_REQUIRED');
+    for(const key of [...(physical?['physicalConfigHash']:[]),'hostConfigHash','financeConfigHash','commerceConfigHash','marketplaceBindingHash'])if(!digest(manifest[key]))add(`manifest.${key}`,'CONFIGURATION_DIGEST_REQUIRED');
     if(closed(manifest.listeners,surfaces,'manifest.listeners')) {
       const ports=new Set();
       for(const surface of surfaces) {
@@ -100,6 +102,12 @@ export function inspectMarketplaceHostInputs(options) {
   need(!market?.quoteProvider&&!market?.destinations&&!market?.taxLifecycle,'host.marketplace','AMBIGUOUS_COMMERCE_PORTS');
   need(safeHash(market?.commerceConfig)===manifest?.commerceConfigHash&&market?.createCommercePorts?.binding?.configHash===manifest?.commerceConfigHash,'host.marketplace.commerceConfig','CONFIGURATION_DIGEST_MISMATCH');
   need(market?.createCommercePorts?.binding?.environment===manifest?.environment&&market?.createCommercePorts?.binding?.platformAccountId===manifest?.platformAccountId,'host.marketplace.createCommercePorts','ENVIRONMENT_BINDING_MISMATCH');
+  if(manifest?.schema===MARKETPLACE_PHYSICAL_RELEASE_SCHEMA) {
+    need(typeof market?.createPhysicalPorts==='function'&&market.createPhysicalPorts.binding?.schema==='atlas-marketplace-physical-factory-v1','host.marketplace.createPhysicalPorts','DURABLE_PHYSICAL_FACTORY_REQUIRED');
+    need(!market?.proofIntake&&!market?.shippingLifecycle,'host.marketplace','AMBIGUOUS_PHYSICAL_PORTS');
+    need(safeHash(market?.physicalConfig)===manifest.physicalConfigHash&&market?.createPhysicalPorts?.binding?.configHash===manifest.physicalConfigHash,'host.marketplace.physicalConfig','CONFIGURATION_DIGEST_MISMATCH');
+    need(market?.createPhysicalPorts?.binding?.environment===manifest.environment,'host.marketplace.createPhysicalPorts','ENVIRONMENT_BINDING_MISMATCH');
+  } else need(!market?.createPhysicalPorts&&!market?.physicalConfig&&!market?.proofIntake&&!market?.shippingLifecycle,'host.marketplace','PHYSICAL_RELEASE_MANIFEST_REQUIRED');
   need(safeHash(market?.runtimeApproval?.binding)===manifest?.marketplaceBindingHash,'host.marketplace.runtimeApproval','CONFIGURATION_DIGEST_MISMATCH');
   for(const name of ['acceptsAccount','getIdentity','getAccount','create','retrieve','discover','getPaymentCollection','createOnboardingLink','getAccountSnapshot','listBalanceTransactions','listRelatedObjects','retrieveDispute'])need(typeof market?.provider?.[name]==='function',`host.marketplace.provider.${name}`);
   need(finance?.enabled===true,'finance.enabled','EXPLICIT_ENABLEMENT_REQUIRED');

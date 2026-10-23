@@ -1,5 +1,13 @@
 # ATLAS R2 parallel lead handoff — concrete integration candidate
 
+## Current successor — 2026-10-23
+
+Continue from branch `codex/atlas-r2-successor` in `/Users/markthomas/.codex/worktrees/atlas-r2-successor/ten-kings-mystery-packs-clean`. Its source starts at verified `aff4470c`; old checkout disappeared before changes. Exactly two Astra/xHigh specialists completed private original proof and original carrier tracking, and reviewed root's service/auth/HTTP/UI/host joins. Current source/evidence/additive package hashes are in `/Users/markthomas/.codex/atlas-handoffs/atlas-r2-successor-20261023/qualification.json`. Read [the successor audit](../atlas/audits/2026-10-23/r2-physical-evidence-shipping.md) before historical sections below.
+
+New concrete features: encrypted immutable original PNG/JPEG intake/full decode/private views, separate suitability and business review, original-only interrupted recovery, actual carrier timestamps and approved return tracking, retained requirements that survive omitted-port restart, canonical request expiry/refresh guards, FedEx size comparisons with explicit per-order weight, missing-scan cues and same-store v2 physical host composition. Actual provider/authority/physical facts remain missing; master ID27 is still open. No provider replay, deployment, shared schema/control effect or grading/Ten Kings change.
+
+Master reports accepted R1 serving `03b075f94191030856f029a4f6ec6e5fdcad402b`; additive label `ce3e2de0bb50b86abbfe6622e1ebe6bc930cfc09` was supplied only as an immutable preliminary selective-apply target and is not claimed accepted/deployed. Wait for master's exact accepted label refs before shared integration. Package-only source plus R2-owned docs and a narrow lockfile importer are the reviewable increment; do not deploy/merge this foundation branch wholesale. Claims/history and pricing guidance remain OFF. Fingerprint plus genuine separate title/consignment/custody authority remains required.
+
 ## Current additive increment after 5f9f71f6
 
 The prior core checkpoint did not finish the concrete integrations. This increment implements encrypted buyer addresses and retained delivery snapshots, concrete ShipStation rates and Stripe Tax calculation/reporting, staff tax recovery and delivery-address controls, and owned host bootstrap with offline release validation. Exactly the same two Astra/xHigh specialists worked complementary lanes; root integrated the service, HTTP, privacy, lifecycle and release boundaries. No additional agents or shared production operations.

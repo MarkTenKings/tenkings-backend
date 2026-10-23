@@ -1,5 +1,7 @@
 # ATLAS R2 marketplace pilot
 
+Current successor (2026-10-23) adds private encrypted original photo intake, full PNG/JPEG decoding, separate artifact/business review, original ShipStation carrier tracking, actual-delivery and durable release/transfer holds, authenticated physical controls and a versioned owned physical host factory. See the [successor audit](../../docs/atlas/audits/2026-10-23/r2-physical-evidence-shipping.md), [proof interface](PROOF_INTAKE.md) and [shipping interface](SHIPPING_LIFECYCLE_READINESS.md). Published FedEx sizes are selectable planning estimates; packed weight is order-specific. Actual account/coverage/tax/authority/host/physical qualification remains explicit. Claims/history and pricing guidance remain disabled; master owns production. Earlier checkpoint sections below are retained history.
+
 Default-off, isolated implementation of an ATLAS-held fixed-price marketplace. Importing or constructing this package does not register routes, apply shared migrations, read grading credentials, start jobs or change grading/Ten Kings. Hosted recovery requires separate approval and an explicit start. Ownership claims and customer ownership history remain disabled pending Fingerprint and separate authority/policy approval.
 
 ## Local preview and tests

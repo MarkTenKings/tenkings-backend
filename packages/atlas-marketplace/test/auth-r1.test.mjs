@@ -120,3 +120,24 @@ test('clock rollback, deadline jumps and revoked sessions cannot reuse a clock-s
   const f=fixture({maxDatabaseClockSkewMs:2000}),ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);f.control.revoked=true;
   await assert.rejects(ctx.withAuthorized(principal,()=>assert.fail('revoked')),{code:'SIGN_IN_REQUIRED'});
 });
+
+
+test('scoped commit capability rejects expiry/abort and detects in-place binary mutation without holding R1 locks',async()=>{
+  for(const mutation of ['expiry','abort','bytes']){
+    const f=fixture({role:'STAFF',method:'POST'});f.request.rawBody=Buffer.alloc(1048576,3);
+    const ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);await f.csrf(ctx,principal);
+    await assert.rejects(ctx.withAuthorized(principal,async(actor,capability)=>{
+      assert.equal(capability.authorizeCommit(),true);assert.equal(f.control.boundaryActive,false);
+      await capability.refreshAuthorization();assert.equal(f.control.boundaryActive,false);
+      if(mutation==='expiry')f.control.now+=30000;else if(mutation==='abort')f.request.aborted=true;else f.request.rawBody[0]=4;
+      capability.authorizeCommit();assert.fail('expired/changed request committed');
+    }),{code:mutation==='bytes'?'AUTH_BOUNDARY_UNAVAILABLE':'SIGN_IN_REQUIRED'});
+    ctx.close();
+  }
+});
+test('scoped refresh rereads revoked canonical customer and staff access before publication',async()=>{
+  for(const role of ['BUYER','STAFF']){const f=fixture({role}),ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);
+    await assert.rejects(ctx.withAuthorized(principal,async(_actor,capability)=>{f.control.revoked=true;await capability.refreshAuthorization();assert.fail('revoked access committed');}),{code:'SIGN_IN_REQUIRED'});
+    assert.equal(f.control.boundaryActive,false);ctx.close();
+  }
+});

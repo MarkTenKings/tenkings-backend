@@ -1,5 +1,6 @@
 import { renderApp, parsePrice } from './view.mjs';
 import { createStripePaymentSession } from './stripe-payment.mjs';
+import {createPhysicalEvidenceController} from './physical-evidence.mjs';
 
 const root = document.getElementById('app');
 const localDemo = root.dataset?.runtime === 'LOCAL_DEMO';
@@ -38,7 +39,7 @@ function closePayment() {
   paymentSurface.session?.destroy(); paymentSurface.dialog.remove(); paymentSurface = null;
 }
 globalThis.addEventListener?.('pagehide', closePayment);
-const ui = { evidencePathPrefix:apiPath+'/evidence/', side: 'front', price: localDemo ? '125.00' : '', quote: null, selectedListingId: null, notice: null, busy: false, uncertain: false };
+const ui = { apiPath, evidencePathPrefix:apiPath+'/evidence/', side: 'front', price: localDemo ? '125.00' : '', quote: null, selectedListingId: null, notice: null, busy: false, uncertain: false };
 const requests = new Map();
 let readAt = Date.now(), serverNow = readAt, expiryTimer;
 function requestId(key) {
@@ -59,8 +60,9 @@ function scheduleExpiry() {
 async function readState() {
   ui.deliveryAddresses={};
   const response = await fetch(statePath, { cache: 'no-store', credentials: 'same-origin' });
-  if (!response.ok) { if (!localDemo && [401,403].includes(response.status)) data = null; throw new Error(localDemo ? 'Saved local state is unavailable.' : 'Authenticated workspace unavailable. Sign in with the required account and refresh.'); }
-  data = await response.json();
+  if (!response.ok) { if (!localDemo && [401,403].includes(response.status)) {data = null;ui.proofOrders={};ui.shippingOrders={};ui.returnProofs={};ui.parcelEstimates={};ui.missingScanOrders={};requests.clear();} throw new Error(localDemo ? 'Saved local state is unavailable.' : 'Authenticated workspace unavailable. Sign in with the required account and refresh.'); }
+  const priorScope=data?.scope;data = await response.json();
+  if(priorScope?.actorId!==data?.scope?.actorId||priorScope?.role!==data?.scope?.role){ui.proofOrders={};ui.shippingOrders={};ui.returnProofs={};ui.parcelEstimates={};ui.missingScanOrders={};requests.clear();}
   if (localDemo ? data.mode !== 'SYNTHETIC_LOCAL' : data.schema !== 'atlas-marketplace-workspace-v1' || !['SYNTHETIC_LOCAL','PROVIDER_SANDBOX','PRODUCTION'].includes(data.environment) || !['BUYER','SELLER','STAFF'].includes(data.scope?.role) || typeof data.csrfToken !== 'string' || !data.csrfToken) { data = null; throw new Error('The workspace contract is unavailable.'); }
   data.runtime = localDemo ? 'LOCAL_DEMO' : 'AUTHENTICATED';
   readAt = Date.now(); serverNow = Number.isSafeInteger(data.now) ? data.now : readAt;
@@ -110,6 +112,8 @@ async function mutate(endpoint, body, success, requestKey,applyResult) {
   } finally { ui.busy = false; render(); }
 }
 
+const physicalController=createPhysicalEvidenceController({getData:()=>data,ui,apiPath,render,readState,requestId});
+
 root.addEventListener('input', (event) => {
   if (event.target.id === 'instant-amount') {
     ui.instantAmount = event.target.value; ui.instantQuote = null;
@@ -139,6 +143,7 @@ root.addEventListener('submit', async (event) => {
   if (form.dataset?.form) {
     event.preventDefault();
     if (ui.busy || ui.uncertain) return;
+    if(await physicalController.submit(form))return;
     const values = new FormData(form), orderId = form.dataset.order, caseId = form.dataset.case;
     if (form.dataset.form === 'destination') {
       if(localDemo||data?.scope?.role!=='BUYER'||!data.destinationsEnabled)return;
@@ -281,6 +286,7 @@ root.addEventListener('submit', async (event) => {
 root.addEventListener('click', async (event) => {
   const target = event.target.closest('button[data-action]');
   if (!target || target.disabled) return;
+  if(await physicalController.click(target))return;
   const action = target.dataset.action;
   if (action === 'side') { ui.side = target.dataset.side; render(); root.querySelector(`[data-action="side"][data-side="${ui.side}"]`)?.focus(); return; }
   if (action === 'refresh') { await refresh(); return; }

@@ -1,8 +1,17 @@
+import {withMarketplaceRequestAuthority} from './request-authority.mjs';
 import { requireValue } from './contract.mjs';
 import { createMarketplaceHostCheck } from './host-boundary.mjs';
 import { projectBuyerQuote } from './projections.mjs';
 
+export const MAX_MARKETPLACE_PROOF_BYTES=10*1024*1024;
+const proofIdPattern=/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const commands = Object.freeze({
+  '/proofs/prepare':['BUYER,STAFF','prepareProof',['requestId','orderId','purpose','declaredType','byteCount','sha256']],
+  '/proofs/recover':['BUYER,STAFF','recoverProof',['uploadId']],
+  '/proofs/review':['STAFF','reviewProof',['requestId','proofId','decision','reviewRef','facts']],
+  '/staff/shipping/retain':['STAFF','retainIssuedShipment',['requestId','orderId','direction','caseId','labelId','shipmentId','trackingNumber','externalShipmentId','issuanceEvidenceRef','coverageEvidenceRef','measurementRef']],
+  '/staff/shipping/sync':['STAFF','syncShipmentTracking',['shipmentKey']],
+  '/staff/shipping/milestone':['STAFF','recordCarrierMilestone',['requestId','orderId','action']],
   '/staff/tax/resume':['STAFF','resumeTax',['operationId']],
   '/staff/tax/sale':['STAFF','recordTaxSale',['orderId']],
   '/staff/tax/refund':['STAFF','recordTaxRefund',['refundIntentId','itemTaxCents','shippingTaxCents','reviewRef']],
@@ -69,6 +78,22 @@ export function createMarketplaceHttpHandler({ enabled=false, origin, acceptedHo
         requireValue(!request.rawBody?.length,'INVALID_REQUEST');
         if(path==='/workspace') { requireValue(url.search==='','INVALID_REQUEST'); requireValue(typeof auth.issueCsrf==='function','AUTH_BOUNDARY_UNAVAILABLE'); const csrfToken=await auth.issueCsrf(principal); requireValue(typeof csrfToken==='string'&&csrfToken.length>=32,'AUTH_BOUNDARY_UNAVAILABLE'); return result(200,{...await service.workspace(actor),csrfToken}); }
         if(path==='/catalog') return result(200,await service.catalog(actor,parseCatalogFilters(url.searchParams)));
+        if(path==='/proofs'||path==='/staff/shipping') {
+          requireValue([...url.searchParams.keys()].length===1&&url.searchParams.has('orderId'),'INVALID_REQUEST');
+          requireValue((path==='/proofs'?['BUYER','STAFF']:['STAFF']).includes(actor.role),'FORBIDDEN');
+          const orderId=url.searchParams.get('orderId');requireValue(proofIdPattern.test(orderId),'INVALID_REQUEST');
+          return result(200,await service[path==='/proofs'?'listProofs':'shipmentStatus'](actor,{orderId}));
+        }
+        if(path.startsWith('/proofs/objects/')) {
+          requireValue(['BUYER','STAFF'].includes(actor.role),'FORBIDDEN');
+          const proofId=path.slice('/proofs/objects/'.length);requireValue(!url.search&&proofIdPattern.test(proofId),'INVALID_REQUEST');
+          const evidence=await service.readProof(actor,{proofId});
+          requireValue(evidence?.authorized===true&&Buffer.isBuffer(evidence.bytes)&&evidence.bytes.length<=MAX_MARKETPLACE_PROOF_BYTES&&['image/png','image/jpeg'].includes(evidence.contentType),'EVIDENCE_UNAVAILABLE');
+          return {status:200,headers:{...baseHeaders,'Content-Type':evidence.contentType,'Content-Security-Policy':"default-src 'none'; sandbox",'Content-Disposition':'inline'},body:evidence.bytes};
+        }
+        if(path==='/staff/shipping/missing-scans') {
+          requireValue(actor.role==='STAFF'&&!url.search,'FORBIDDEN');return result(200,await service.missingShipmentScans(actor,{limit:50}));
+        }
         if(path.startsWith('/evidence/')) {
           requireValue(!url.search,'INVALID_REQUEST');
           const evidence=await service.evidence(actor,url.pathname);
@@ -81,13 +106,19 @@ export function createMarketplaceHttpHandler({ enabled=false, origin, acceptedHo
         requireValue(false,'NOT_FOUND');
       }
       requireValue(method==='POST','METHOD_NOT_ALLOWED');
+      if(path.startsWith('/proofs/upload/')) {
+        const uploadId=path.slice('/proofs/upload/'.length);
+        requireValue(['BUYER','STAFF'].includes(actor.role),'FORBIDDEN');
+        requireValue(!url.search&&proofIdPattern.test(uploadId)&&headers['content-type']==='application/octet-stream'&&Buffer.isBuffer(request.rawBody)&&request.rawBody.length>0&&request.rawBody.length<=MAX_MARKETPLACE_PROOF_BYTES,'INVALID_REQUEST');
+        return result(200,await service.uploadProof(actor,{uploadId,bytes:request.rawBody}));
+      }
       requireValue(url.search===''&&headers['content-type']?.split(';')[0]==='application/json'&&Buffer.isBuffer(request.rawBody)&&request.rawBody.length<=16384,'INVALID_REQUEST');
       let input; try {input=JSON.parse(request.rawBody.toString('utf8'));}catch{requireValue(false,'INVALID_JSON');}
       const command=commands[path]; requireValue(command,'NOT_FOUND');
       const [roles,name,keys]=command; requireValue(roles.split(',').includes(actor.role),'FORBIDDEN');
       requireValue(input&&Object.getPrototypeOf(input)===Object.prototype&&Object.keys(input).every(key=>keys.includes(key)),'INVALID_REQUEST');
       const output=await service[name](actor,input);
-      if(['saveDestination','removeDestination','deliveryDestination'].includes(name))return result(200,output);
+      if(['prepareProof','recoverProof','reviewProof','retainIssuedShipment','syncShipmentTracking','saveDestination','removeDestination','deliveryDestination'].includes(name))return result(200,output);
       if(name==='quote')return result(200,projectBuyerQuote(output));
       if(name==='previewListingFee')return result(200,output);
       if(name==='quoteWithdrawal')return result(200,Object.fromEntries(['quoteId','method','currency','externalAccountId','amountCents','sellerFeeCents','totalDebitCents','timingDisclosure','feeDisclosure','expiresAt'].map(key=>[key,output[key]])));
@@ -95,7 +126,8 @@ export function createMarketplaceHttpHandler({ enabled=false, origin, acceptedHo
       if(name==='paymentCollection'||name==='onboard'||name==='reconcileFinance') return result(200,output);
       return result(200,Object.fromEntries(['id','orderId','reservationId','alertId','generation','status','version','bindingHash','outcome','kind','confirmed'].filter(key=>output?.[key]!==undefined).map(key=>[key,output[key]])));
       };
-      return typeof auth.withAuthorized==='function'?await auth.withAuthorized(principal,dispatch):await dispatch();
+      const scoped=(actor=principal.actor,capability)=>withMarketplaceRequestAuthority(actor,capability??{authorizeCommit:()=>{requireValue(!request.aborted&&principal.expiresAt>clock(),'SIGN_IN_REQUIRED');return true;}},()=>dispatch(actor));
+      return typeof auth.withAuthorized==='function'?await auth.withAuthorized(principal,scoped):await scoped();
     }catch(error){
       const code=error.code??'REQUEST_FAILED';
       const status=code==='SIGN_IN_REQUIRED'?401:code==='NOT_FOUND'?404:code==='METHOD_NOT_ALLOWED'?405:code==='RATE_LIMITED'?429:/REFUSED|FORBIDDEN/.test(code)?403:/UNAVAILABLE|DISABLED/.test(code)?503:409;

@@ -24,7 +24,7 @@ export function createMarketplaceHostBootstrap(options={}) {
   const hostPin=pin(hostOptions),financePin=pin(financeOptions);
   const originals=Object.fromEntries(surfaces.map(surface=>[surface,existingHandlers[surface]]));
   const binding=immutable({schema:manifest.schema,operation:'OWNED_MARKETPLACE_HOST',environment:manifest.environment,platformAccountId:manifest.platformAccountId,manifestHash,
-    sourceRevision:manifest.sourceRevision,hostConfigHash:manifest.hostConfigHash,financeConfigHash:manifest.financeConfigHash,commerceConfigHash:manifest.commerceConfigHash,marketplaceBindingHash:manifest.marketplaceBindingHash});
+    sourceRevision:manifest.sourceRevision,...(manifest.physicalConfigHash?{physicalConfigHash:manifest.physicalConfigHash}:{}),hostConfigHash:manifest.hostConfigHash,financeConfigHash:manifest.financeConfigHash,commerceConfigHash:manifest.commerceConfigHash,marketplaceBindingHash:manifest.marketplaceBindingHash});
   let phase='CREATED',lastCode=null,stopping=false,preparePromise=null,startPromise=null,stopPromise=null,disposePromise=null;
   const servers=new Map(),sockets=new Set(),work=new Set();
   const sync=(fn,value)=>{const result=fn(clone(value));if(result&&typeof result.then==='function')void Promise.resolve(result).catch(()=>{});requireValue(result===true,'HOST_RELEASE_UNQUALIFIED');};
@@ -34,6 +34,7 @@ export function createMarketplaceHostBootstrap(options={}) {
       &&matches(hostOptions,hostPin)&&matches(financeOptions,financePin)&&surfaces.every(surface=>existingHandlers[surface]===originals[surface]),'HOST_BOOTSTRAP_CHANGED');
     requireValue(hash(hostOptions.config)===manifest.hostConfigHash&&hash(financeOptions.config)===manifest.financeConfigHash,'HOST_BOOTSTRAP_CHANGED');
     requireValue(hash(hostOptions.marketplace.commerceConfig)===manifest.commerceConfigHash&&hash(hostOptions.marketplace.runtimeApproval.binding)===manifest.marketplaceBindingHash,'HOST_BOOTSTRAP_CHANGED');
+    if(manifest.physicalConfigHash)requireValue(hash(hostOptions.marketplace.physicalConfig)===manifest.physicalConfigHash,'HOST_BOOTSTRAP_CHANGED');
     sync(assertReleaseReady,binding);
   }
   // Wrapping the existing host gate confines revocation to marketplace routes.
