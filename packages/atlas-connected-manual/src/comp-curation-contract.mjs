@@ -2,6 +2,7 @@
 // has no acquisition capability. The service supplies verified saved artifacts;
 // caller-provided prices, policy, time or hashes never become evidence.
 import { canonical, digest, object, requireThat, uuid as strictUuid } from '@atlas/manual-service/contract';
+import { isStaffInventoryResearchImageUrl } from '@tenkings/card-research-core/contract';
 export const COMP_CURATION_METHOD = 'selected-sold-price-arithmetic-mean-v1';
 export const COMP_EVIDENCE_SELECTION_METHOD = 'private-saved-sold-evidence-v1';
 const check = (condition, code = 'COMP_CURATION_INVALID') => requireThat(condition, 400, code);
@@ -31,8 +32,9 @@ function reportBinding(value) {
   return { publicToken: value.publicToken, version: value.version, publicHash: value.publicHash };
 }
 
-export function parseSavedCompSource(source, expected, { asOf, recencyDays, evidenceOnly = false } = {}) {
+export function parseSavedCompSource(source, expected, { asOf, recencyDays, evidenceOnly = false, designationReviewsEnabled = false } = {}) {
   const now = instant(asOf);
+  check(typeof designationReviewsEnabled === 'boolean' && (!designationReviewsEnabled || evidenceOnly), 'COMP_DESIGNATION_REVIEW_DISABLED');
   check(typeof evidenceOnly === 'boolean' && now !== null && (evidenceOnly ? recencyDays === null
     : Number.isSafeInteger(recencyDays) && recencyDays >= 1 && recencyDays <= 3650), 'COMP_POLICY_REQUIRED');
   check(source?.schema === 'atlas-saved-comp-source-v1' && uuid(source.cardId) && uuid(source.approvalActionId)
@@ -89,6 +91,27 @@ export function parseSavedCompSource(source, expected, { asOf, recencyDays, evid
   const listingIdentity = row => row.listingUrl?.match(/\/itm\/(?:[^/]+\/)?(\d+)(?:\/|$)/)?.[1] ?? null;
   for (const row of candidates) if (row.listingUrl) { const id = listingIdentity(row); listingCounts.set(id, (listingCounts.get(id) ?? 0) + 1); }
   for (const row of candidates) if (listingCounts.get(listingIdentity(row)) > 1) { row.eligible = false; row.reasonCodes.push('DUPLICATE_LISTING'); }
+  if (designationReviewsEnabled && preview.version === 'atlas-market-preview-v2' && preview.responsePolicy === 'ATLAS_SLAB_V1') {
+    for (const row of candidates) {
+      if (row.reasonCodes.length !== 1 || row.reasonCodes[0] !== 'GRADE_DESIGNATION_UNCONFIRMED') continue;
+      const original = preview.candidates.find(value => value.sale.id === row.id), sale = original.sale, reading = original.slabReading;
+      const labelText = sale.labelText;
+      if (row.raw || sale.designation !== null || sale.evidenceKind !== 'SLABBED' || reading?.evidenceKind !== 'SLABBED'
+        || reading.rowId !== row.id || reading.identityMatch !== 'MATCH' || reading.gradingCompany !== row.grader
+        || reading.numericGrade !== row.grade || !hash(reading.sha256) || reading.imageUrl !== sale.imageUrl
+        || !isStaffInventoryResearchImageUrl(reading.imageUrl) || typeof labelText !== 'string' || !labelText.trim()
+        || labelText.length > 6000 || /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/.test(labelText)) continue;
+      const labelTextHash = digest(labelText), allowedDesignations = ['STANDARD'];
+      if (row.grade === 10 && row.grader === 'BGS') allowedDesignations.push('BLACK_LABEL', 'PRISTINE');
+      if (row.grade === 10 && row.grader === 'CGC') allowedDesignations.push('PRISTINE', 'PERFECT');
+      const proof = { version: 'atlas-comp-designation-proof-v1', cardId: source.cardId, approvalActionId: source.approvalActionId,
+        report: expectedReport, previewId: source.previewId, previewHash: source.sourceHash, id: row.id,
+        grader: row.grader, grade: row.grade, sourceDesignation: null, photoSha256: reading.sha256,
+        imageUrl: reading.imageUrl, labelTextHash };
+      row.designationReview = { version: proof.version, proofHash: digest(canonical(proof)), photoSha256: reading.sha256,
+        labelText, labelTextHash, allowedDesignations };
+    }
+  }
   return { schema: 'atlas-curation-preview-v1', binding: { cardId: source.cardId, approvalActionId: source.approvalActionId, report: expectedReport },
     source: { previewId: source.previewId, sourceHash: source.sourceHash, observedAt: new Date(observed).toISOString() },
     policy: { asOf: new Date(now).toISOString(), recencyDays,
@@ -97,11 +120,27 @@ export function parseSavedCompSource(source, expected, { asOf, recencyDays, evid
 
 /** No selection changes an approval or its report. Exactly one comparison
  * group/currency is allowed; missing prices never become zero. */
-export function curateSoldComps(source, expected, { outcome, selectedIds = [], reviewedIds = [], asOf, recencyDays, evidenceOnly = false } = {}) {
-  const preview = parseSavedCompSource(source, expected, { asOf, recencyDays, evidenceOnly });
+export function curateSoldComps(source, expected, { outcome, selectedIds = [], reviewedIds = [], asOf, recencyDays, evidenceOnly = false,
+  designationReviewsEnabled = false, designationReviews, actorId } = {}) {
+  const preview = parseSavedCompSource(source, expected, { asOf, recencyDays, evidenceOnly, designationReviewsEnabled });
   check(['SELECTED', 'SKIP', 'NO_SUITABLE_COMPS'].includes(outcome) && Array.isArray(selectedIds)
     && Array.isArray(reviewedIds) && new Set(selectedIds).size === selectedIds.length && new Set(reviewedIds).size === reviewedIds.length);
   check(selectedIds.every(id => text(id, 180)) && reviewedIds.every(id => selectedIds.includes(id)));
+  if (designationReviews !== undefined) {
+    check(designationReviewsEnabled && evidenceOnly && outcome === 'SELECTED' && uuid(actorId), 'COMP_DESIGNATION_REVIEW_DISABLED');
+    const reviews = parseDesignationReviews(designationReviews, selectedIds);
+    for (const review of reviews.rows) {
+      const row = preview.candidates.find(value => value.id === review.id), proof = row?.designationReview;
+      check(proof && proof.proofHash === review.proofHash && proof.photoSha256 === review.photoSha256
+        && proof.allowedDesignations.includes(review.designation), 'COMP_DESIGNATION_REVIEW_MISMATCH');
+      row.designation = review.designation; row.group = `${row.grader} / ${row.grade} / ${row.designation}`;
+      row.eligible = true; row.reasonCodes = [];
+      row.designationEvidence = { version: 'atlas-comp-designation-review-v1', authority: 'HUMAN_REVIEWED',
+        previewId: source.previewId, previewHash: source.sourceHash, photoSha256: proof.photoSha256,
+        labelTextHash: proof.labelTextHash, proofHash: proof.proofHash, sourceDesignation: null,
+        designation: review.designation, actorId, reviewedAt: asOf };
+    }
+  }
   if (outcome !== 'SELECTED') {
     check(selectedIds.length === 0 && reviewedIds.length === 0, 'COMP_SELECTION_OUTCOME_CONFLICT');
     return { schema: 'atlas-curation-decision-v1', binding: preview.binding, source: preview.source, policy: preview.policy,
@@ -111,7 +150,9 @@ export function curateSoldComps(source, expected, { outcome, selectedIds = [], r
   check(selectedIds.length === reviewedIds.length && selectedIds.every(id => reviewedIds.includes(id)), 'COMP_HUMAN_REVIEW_REQUIRED');
   const selected = selectedIds.map(id => {
     const row = preview.candidates.find(candidate => candidate.id === id);
-    check(row?.eligible === true, 'COMP_SELECTION_INELIGIBLE'); return { ...row, reasonCodes: [] };
+    check(row?.eligible === true, 'COMP_SELECTION_INELIGIBLE');
+    const { designationReview: _proof, ...facts } = row;
+    return { ...facts, reasonCodes: [] };
   }).sort((a, b) => (instant(b.soldAt) ?? 0) - (instant(a.soldAt) ?? 0) || a.id.localeCompare(b.id));
   check(new Set(selected.map(row => row.group)).size === 1, 'COMP_GRADE_GROUP_MIXED');
   check(new Set(selected.map(row => row.currency)).size === 1, 'COMP_CURRENCY_MIXED');
@@ -150,8 +191,25 @@ export function compEvidenceSelectionPolicy(value) {
     && value.rightsStatus === 'UNRESOLVED', 'COMP_POLICY_REQUIRED');
   const policy = JSON.parse(canonical(value)); return { policy, hash: digest(canonical(policy)) };
 }
-export function compCurationInput(input) {
-  object(input, ['requestId', 'approvalActionId', 'expectedSelectionRevision', 'previewId', 'expectedPreviewHash', 'outcome', 'selectedIds', 'reviewedIds', 'expectedPolicyHash']);
+function parseDesignationReviews(value, selectedIds) {
+  object(value, ['version', 'rows']);
+  check(value.version === 'atlas-comp-designation-reviews-v1' && Array.isArray(value.rows) && value.rows.length >= 1 && value.rows.length <= 5,
+    'COMP_DESIGNATION_REVIEW_INVALID');
+  const seen = new Set();
+  const rows = value.rows.map(row => {
+    object(row, ['id', 'designation', 'photoSha256', 'proofHash']);
+    check(text(row.id, 180) && selectedIds.includes(row.id) && !seen.has(row.id)
+      && ['STANDARD', 'BLACK_LABEL', 'PRISTINE', 'PERFECT'].includes(row.designation)
+      && hash(row.photoSha256) && hash(row.proofHash), 'COMP_DESIGNATION_REVIEW_INVALID');
+    seen.add(row.id); return { ...row };
+  }).sort((a, b) => a.id.localeCompare(b.id));
+  return { version: value.version, rows };
+}
+export function compCurationInput(input, { designationReviewsEnabled = false } = {}) {
+  const hasReviews = input && Object.hasOwn(input, 'designationReviews');
+  check(typeof designationReviewsEnabled === 'boolean' && (!hasReviews || designationReviewsEnabled), 'COMP_DESIGNATION_REVIEW_DISABLED');
+  object(input, ['requestId', 'approvalActionId', 'expectedSelectionRevision', 'previewId', 'expectedPreviewHash', 'outcome', 'selectedIds', 'reviewedIds', 'expectedPolicyHash',
+    ...(hasReviews ? ['designationReviews'] : [])]);
   strictUuid(input.requestId); strictUuid(input.approvalActionId);
   check(Number.isSafeInteger(input.expectedSelectionRevision) && input.expectedSelectionRevision >= 0 && input.expectedSelectionRevision < 2147483646);
   check(['SELECTED', 'SKIP', 'NO_SUITABLE_COMPS'].includes(input.outcome));
@@ -165,13 +223,15 @@ export function compCurationInput(input) {
     && input.selectedIds.length === input.reviewedIds.length && input.selectedIds.every(id => input.reviewedIds.includes(id))
     : input.selectedIds.length === 0 && input.reviewedIds.length === 0, 'COMP_SELECTION_OUTCOME_CONFLICT');
   // ID order is not a second decision. Canonicalize to make exact retries stable.
-  return { ...input, selectedIds: [...input.selectedIds].sort(), reviewedIds: [...input.reviewedIds].sort() };
+  if (hasReviews) check(input.outcome === 'SELECTED', 'COMP_DESIGNATION_REVIEW_INVALID');
+  return { ...input, selectedIds: [...input.selectedIds].sort(), reviewedIds: [...input.reviewedIds].sort(),
+    ...(hasReviews ? { designationReviews: parseDesignationReviews(input.designationReviews, input.selectedIds) } : {}) };
 }
 export function compCurationReadInput(input) {
   object(input, ['approvalActionId', 'previewId']); strictUuid(input.approvalActionId);
   if (input.previewId !== null) strictUuid(input.previewId); return { ...input };
 }
-export function evaluateCompCuration(source, binding, configuredPolicy, asOf, input) {
+export function evaluateCompCuration(source, binding, configuredPolicy, asOf, input, { designationReviewsEnabled = false, actorId } = {}) {
   requireThat(instant(asOf) !== null, 503, 'COMP_CURATION_CLOCK_INVALID');
   if (input.outcome !== 'SELECTED') return { selected: [], guidance: null };
   requireThat(configuredPolicy && configuredPolicy.hash === input.expectedPolicyHash, 409, 'COMP_POLICY_CHANGED');
@@ -179,6 +239,7 @@ export function evaluateCompCuration(source, binding, configuredPolicy, asOf, in
     report: { publicToken: binding.publicToken, version: binding.publicVersion, publicHash: binding.publicHash } }, {
     outcome: input.outcome, selectedIds: input.selectedIds, reviewedIds: input.reviewedIds, asOf, recencyDays: configuredPolicy.policy.recencyDays,
     evidenceOnly: configuredPolicy.policy.version === 'atlas-comp-evidence-selection-policy-v1',
+    designationReviewsEnabled, designationReviews: input.designationReviews, actorId,
   });
   return { selected: decision.selected, guidance: decision.guidance === null ? null
     : { ...decision.guidance, visibility: 'PRIVATE_INTERNAL', rightsStatus: 'UNRESOLVED', listingPrice: null } };

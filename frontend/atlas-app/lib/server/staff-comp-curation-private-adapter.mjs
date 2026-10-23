@@ -13,7 +13,7 @@ export function createStaffCompCurationPrivateAdapter(options = {}) {
   const { native, key } = options, publicOrigin = origin(options.origin);
   configured(native && Buffer.isBuffer(key) && key.length === 32);
   const nonceStore = options.nonceStore ?? createPrivateManualNonceStore(), consume = nonceStore.consume, keyCopy = Buffer.from(key);
-  const nativeKeys = ['environment', 'auth', 'boundary', 'approved', 'artifacts', 'validateAccess', 'selectionPolicy', 'archiveCompAccess'];
+  const nativeKeys = ['environment', 'auth', 'boundary', 'approved', 'artifacts', 'validateAccess', 'selectionPolicy', 'archiveCompAccess', 'designationReviewsEnabled'];
   const nativePins = Object.fromEntries(nativeKeys.map(name => [name, native[name]]));
   const nonceInput = options.nonceStore; let closed = false;
   const current = () => configured(!closed && options.enabled === true && options.native === native && options.key === key && key.equals(keyCopy)

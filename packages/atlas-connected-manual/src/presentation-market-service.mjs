@@ -1,4 +1,4 @@
-import { digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
+import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
 import { marketHasRetiredReclassification, marketJobStatus } from './market-job-store.mjs';
 import { createPresentationMarket, marketPreviewHash, MARKET_UNAVAILABLE_REASONS } from './presentation-market.mjs';
 import { projectRetrievedMarketPool } from './market-retrieved-pool.mjs';
@@ -13,7 +13,7 @@ export function createPresentationMarketService({ repository, approved, artifact
     requireThat(jobs?.archiveSearch === archiveSearch, 500, 'MARKET_ARCHIVE_CONFIGURATION_INVALID');
   }
   const market = createPresentationMarket();
-  async function saved(staff, cardId, requestId, readRepository = repository) {
+  async function saved(staff, cardId, requestId, readRepository = repository, archiveImage = false) {
     const row = await readRepository.market(staff, cardId, requestId);
     const binding = { approvalActionId: row.input.approvalActionId };
     if (row.state === 'STARTED') return { ...binding, state: 'PENDING', previewId: requestId };
@@ -24,10 +24,11 @@ export function createPresentationMarketService({ repository, approved, artifact
     const preview = await artifacts.read(record.ref, { cardId, kind: 'MARKET_PREVIEW', sourceHash: record.artifactHash });
     requireThat(digest(JSON.stringify(preview)) === record.artifactHash && marketPreviewHash(preview) === record.sourceHash, 503, 'MARKET_PREVIEW_CORRUPT');
     await readRepository.market(staff, cardId, requestId);
-    return { ...binding, state: 'READY', previewId: requestId, preview, sourceHash: record.sourceHash, ref: record.ref, input: row.input };
+    return { ...binding, state: 'READY', previewId: requestId, preview, sourceHash: record.sourceHash, ref: record.ref, input: row.input,
+      ...(archiveImage ? { archiveReadBinding: row.archiveReadBinding } : {}) };
   }
   const publicPreview = value => {
-    const { sourceHash, ref, input, ...publicValue } = value; return publicValue;
+    const { sourceHash, ref, input, archiveReadBinding, ...publicValue } = value; return publicValue;
   };
   async function activeStatus(staff, cardId, job) {
     const status = marketJobStatus(job);
@@ -46,6 +47,34 @@ export function createPresentationMarketService({ repository, approved, artifact
       const photo = await readPhoto(candidate.slabReading.imageUrl, sha256);
       requireThat(photo?.bytes && digest(photo.bytes) === sha256, 503, 'MARKET_IMAGE_CORRUPT');
       await repository.market(staff, cardId, previewId);
+      return { bytes: photo.bytes, contentType: photo.mimeType };
+    },
+    async archiveImage(staff, cardId, previewId, sha256) {
+      requireThat(archiveSearch, 503, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED');
+      assertMarketArchiveSearchCapability(archiveSearch, { artifacts });
+      uuid(cardId); uuid(previewId);
+      requireThat(/^[a-f0-9]{64}$/.test(sha256) && typeof readPhoto === 'function', 404, 'MARKET_IMAGE_NOT_FOUND');
+      // This capability reads only the current published approval under the
+      // reviewer's own archive ACL. Never borrow the searcher's/owner's authority.
+      const value = await saved(staff, cardId, previewId, archiveSearch.repository, true);
+      requireThat(value.state === 'READY' && value.preview?.version === 'atlas-market-preview-v2'
+        && value.preview.responsePolicy === 'ATLAS_SLAB_V1', 404, 'MARKET_IMAGE_NOT_FOUND');
+      const candidate = value.preview.candidates?.find(row => row.slabReading?.sha256 === sha256);
+      requireThat(candidate?.slabReading?.imageUrl, 404, 'MARKET_IMAGE_NOT_FOUND');
+      // Composition supplies readSavedListingPhoto: an exact retained-cache
+      // read, with no fetch, acquisition, cache write or provider fallback.
+      const photo = await readPhoto(candidate.slabReading.imageUrl, sha256);
+      requireThat(Buffer.isBuffer(photo?.bytes) && photo.bytes.length > 0 && photo.bytes.length <= 4 * 1024 * 1024
+        && ['image/jpeg', 'image/png', 'image/webp'].includes(photo.mimeType)
+        && digest(photo.bytes) === sha256, 503, 'MARKET_IMAGE_CORRUPT');
+      const current = await archiveSearch.repository.market(staff, cardId, previewId);
+      requireThat(current.state === 'READY' && current.saved?.state === 'READY'
+        && canonical(current.archiveReadBinding) === canonical(value.archiveReadBinding)
+        && canonical(current.input) === canonical(value.input)
+        && canonical(current.saved.ref) === canonical(value.ref)
+        && current.saved.sourceHash === value.sourceHash
+        && current.saved.artifactHash === digest(JSON.stringify(value.preview)), 409, 'MARKET_PREVIEW_STALE');
+      assertMarketArchiveSearchCapability(archiveSearch, { artifacts });
       return { bytes: photo.bytes, contentType: photo.mimeType };
     },
     async status(staff, cardId) {

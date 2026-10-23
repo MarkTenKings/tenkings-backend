@@ -59,7 +59,7 @@ export async function curationFixture() {
   return { ...f, staff, hooks, principal, card, rows, market, preview, savePreview, calls, options, service, input, previewId, packet };
 }
 
-export async function httpFixture({ policyDisabled = false, selectionPolicy = null } = {}) {
+export async function httpFixture({ policyDisabled = false, selectionPolicy = null, designationReviewsEnabled = false } = {}) {
   const f = await curationFixture();
   let actor = f.staff, authCalls = 0, guardCalls = 0;
   const auth = { async authenticate(cookie, csrf) {
@@ -68,8 +68,8 @@ export async function httpFixture({ policyDisabled = false, selectionPolicy = nu
     if (csrf !== undefined) requireThat(csrf === 'fixture-csrf', 403, 'CSRF_REQUIRED');
     return actor;
   } };
-  const service = policyDisabled || selectionPolicy !== null ? createCompCurationService({ ...f.options, policy: null, selectionPolicy }) : f.service;
-  const options = { auth, service, origin: 'http://127.0.0.1:4318', assertRequest() { guardCalls++; f.hooks.ingress?.(); } };
+  const service = policyDisabled || selectionPolicy !== null ? createCompCurationService({ ...f.options, policy: null, selectionPolicy, designationReviewsEnabled }) : f.service;
+  const options = { auth, service, designationReviewsEnabled, origin: 'http://127.0.0.1:4318', assertRequest() { guardCalls++; f.hooks.ingress?.(); } };
   const handler = createStaffCompCurationHandler(options);
   const exchanges = [];
   async function request({ method, path, body, signal }, change = {}) {

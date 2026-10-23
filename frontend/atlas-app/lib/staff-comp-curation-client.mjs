@@ -1,3 +1,4 @@
+import { assertDesignationProof, assertDesignationEvidence, parseDesignationReviews } from './staff-comp-designation-review.mjs';
 // Inert browser adapter. A reviewed caller must supply transport; no fetch,
 // route registration, market acquisition, storage or operational policy lives here.
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -28,7 +29,7 @@ export function curationReadInput(value) {
   return { ...value };
 }
 export function curationDecisionInput(v) {
-  check(shape(v, ['requestId', 'approvalActionId', 'expectedSelectionRevision', 'previewId', 'expectedPreviewHash', 'outcome', 'selectedIds', 'reviewedIds', 'expectedPolicyHash'])
+  check(shape(v, ['requestId', 'approvalActionId', 'expectedSelectionRevision', 'previewId', 'expectedPreviewHash', 'outcome', 'selectedIds', 'reviewedIds', 'expectedPolicyHash', ...(Object.hasOwn(v ?? {}, 'designationReviews') ? ['designationReviews'] : [])])
     && uuid(v.requestId) && uuid(v.approvalActionId) && integer(v.expectedSelectionRevision, 0, 2147483645) && outcomes.includes(v.outcome)
     && (v.previewId === null ? v.expectedPreviewHash === null : uuid(v.previewId) && hash(v.expectedPreviewHash))
     && (v.expectedPolicyHash === null || hash(v.expectedPolicyHash)), 'COMP_REQUEST_INVALID');
@@ -37,7 +38,8 @@ export function curationDecisionInput(v) {
   check(v.outcome === 'SELECTED' ? v.previewId !== null && v.expectedPolicyHash !== null && v.selectedIds.length > 0
     && v.selectedIds.length === v.reviewedIds.length && v.selectedIds.every(id => v.reviewedIds.includes(id))
     : v.selectedIds.length === 0 && v.reviewedIds.length === 0, 'COMP_REQUEST_INVALID');
-  return { ...v, selectedIds: [...v.selectedIds].sort(), reviewedIds: [...v.reviewedIds].sort() };
+  return { ...v, selectedIds: [...v.selectedIds].sort(), reviewedIds: [...v.reviewedIds].sort(),
+    ...(Object.hasOwn(v, 'designationReviews') ? { designationReviews: parseDesignationReviews(v.designationReviews, v) } : {}) };
 }
 function binding(v, expected) {
   check(shape(v, ['cardId', 'approvalActionId', 'sourceRevision', 'sourceHash', 'reportHash', 'publicToken', 'publicVersion', 'publicHash', 'mode'])
@@ -65,8 +67,9 @@ function listing(v) {
     && /^(?:www\.)?ebay\.(?:com|ca|co\.uk|com\.au|de|fr|it|es|ie|nl|at|be|ch|pl)$/.test(u.hostname)
     && /^\/itm\/(?:[^/]+\/)?\d+(?:\/|$)/.test(u.pathname); } catch { return false; }
 }
-function candidate(v) {
-  check(shape(v, ['id', 'title', 'listingUrl', 'soldAt', 'priceMinor', 'priceBasis', 'currency', 'raw', 'grader', 'grade', 'designation', 'group', 'eligible', 'reasonCodes'])
+function candidate(v, { proof = false, receipt = null } = {}) {
+  const extra = Object.hasOwn(v ?? {}, 'designationReview') ? ['designationReview'] : Object.hasOwn(v ?? {}, 'designationEvidence') ? ['designationEvidence'] : [];
+  check(shape(v, ['id', 'title', 'listingUrl', 'soldAt', 'priceMinor', 'priceBasis', 'currency', 'raw', 'grader', 'grade', 'designation', 'group', 'eligible', 'reasonCodes', ...extra])
     && text(v.id, 180) && text(v.title, 500) && listing(v.listingUrl) && (v.soldAt === null || date(v.soldAt))
     && (v.priceMinor === null || integer(v.priceMinor, 1, 2147483647)) && ['sold', 'accepted_offer_unknown', 'unknown'].includes(v.priceBasis)
     && (v.priceBasis === 'sold' ? v.priceMinor !== null : v.priceMinor === null)
@@ -76,6 +79,8 @@ function candidate(v) {
     && (v.designation === null || text(v.designation, 80)) && text(v.group, 180) && typeof v.eligible === 'boolean'
     && Array.isArray(v.reasonCodes) && v.reasonCodes.length <= reasons.size && v.reasonCodes.every(r => reasons.has(r))
     && new Set(v.reasonCodes).size === v.reasonCodes.length && v.eligible === (v.reasonCodes.length === 0));
+  if (extra[0] === 'designationReview') { check(proof); assertDesignationProof(v); }
+  if (extra[0] === 'designationEvidence') { check(receipt); assertDesignationEvidence(v, receipt); }
   if (v.eligible) check(v.listingUrl !== null && v.soldAt !== null && v.priceMinor !== null && v.currency !== null
     && (v.raw ? v.grader === null && v.grade === null && v.designation === null && v.group === 'RAW / condition unverified'
       : v.grader !== null && v.grade !== null && (v.designation === 'STANDARD' || v.grade === 10
@@ -103,7 +108,7 @@ export function parseCurationReceipt(v, expected) {
     && date(v.asOf) && v.reportSnapshotUnaffected === true && Array.isArray(v.selected) && v.selected.length <= 5);
   binding(v.binding, expected); source(v.source); policy(v.policy, v.policyHash);
   check(v.sourceStatus === (v.source === null ? 'NO_SAVED_POOL' : 'SAVED_POOL'));
-  v.selected.forEach(candidate); check(new Set(v.selected.map(c => c.id)).size === v.selected.length);
+  v.selected.forEach(row => candidate(row, { receipt: v })); check(new Set(v.selected.map(c => c.id)).size === v.selected.length);
   if (v.outcome === 'SELECTED') {
     check(v.source !== null && v.policy !== null && v.selected.length > 0 && v.selected.every(c => c.eligible)
       && new Set(v.selected.map(c => c.group)).size === 1 && new Set(v.selected.map(c => c.currency)).size === 1);
@@ -131,7 +136,7 @@ export function parseCurationState(v, expected) {
       && p.source.sourceHash === v.source.previewHash && date(p.source.observedAt)
       && shape(p.policy, ['asOf', 'recencyDays', 'method', 'status']) && date(p.policy.asOf) && p.policy.recencyDays === v.policy.recencyDays
       && p.policy.method === v.policy.method && p.policy.status === 'LOCAL_PROPOSAL' && Array.isArray(p.candidates) && p.candidates.length <= 1000);
-    p.candidates.forEach(candidate); check(new Set(p.candidates.map(c => c.id)).size === p.candidates.length);
+    p.candidates.forEach(row => candidate(row, { proof: evidencePolicy(v.policy) })); check(new Set(p.candidates.map(c => c.id)).size === p.candidates.length);
   }
   return copy(v);
 }

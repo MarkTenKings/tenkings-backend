@@ -271,3 +271,111 @@ test('inert evidence guard proposal retains SQL011 and its entire legacy priced 
   assert(proposal.includes(canonical(selectionPolicy)));
   assert.doesNotMatch(proposal, /\b(?:GRANT|REVOKE|CREATE TABLE|CREATE TRIGGER|INSERT INTO|UPDATE atlas_manual)\b/);
 });
+
+async function designationFixture() {
+  const f = await fixture(), source = { packet: f.packet, publicHash: f.row.public_hash }, context = publishedMarketQuery(source);
+  const items = [0, 1].map(i => ({ id: `saved-designation:${i}`, title: 'SYNTHETIC local sale only',
+    listingUrl: `https://www.ebay.com/itm/${123456789700 + i}`, imageUrl: `https://i.ebayimg.com/images/g/fixture${i}/s-l1600.jpg`,
+    soldDate: '2026-10-19', soldPriceCents: 1000 + i, currency: 'USD', priceBasis: 'EXACT' }));
+  const projected = createPresentationMarket().project(source, { responsePolicy: 'ATLAS_SLAB_V1', source: 'EBAY_SOLD',
+    engineVersion: 'ebay-sold-comps-v2.3.0', query: context.query, retrievedAt: '2026-10-20T12:00:00.000Z', items,
+    acquisitionDiagnostics: { returnedItemCount: 2 }, imageMatch: { policy: 'atlas-market-slab-label-v1', counts: {},
+      readings: items.map((item, i) => ({ rowId: item.id, imageUrl: item.imageUrl, sha256: String(i + 1).repeat(64),
+        evidenceKind: 'SLABBED', identityMatch: 'MATCH', numericGrade: 9, gradingCompany: 'PSA',
+        labelText: 'SYNTHETIC saved label\nPSA MINT 9', reason: 'SYNTHETIC qualification only' })) } });
+  for (const key of Object.keys(f.preview)) delete f.preview[key]; Object.assign(f.preview, projected.preview); f.savePreview();
+  const options = { ...f.options, policy: null, selectionPolicy, designationReviewsEnabled: true };
+  const service = createCompCurationService(options);
+  const read = () => service.read(f.staff, f.cardId, { approvalActionId: f.actionId, previewId: f.previewId });
+  const input = (state, overrides = {}) => f.input({ expectedPolicyHash: state.policyHash,
+    designationReviews: { version: 'atlas-comp-designation-reviews-v1', rows: state.preview.candidates.map(row => ({
+      id: row.id, designation: 'STANDARD', photoSha256: row.designationReview.photoSha256, proofHash: row.designationReview.proofHash })) }, ...overrides });
+  return { ...f, service, read, reviewInput: input, reviewOptions: options };
+}
+
+test('designation review remains default-off and cannot be composed with pricing or null policy', async () => {
+  const f = await designationFixture(), state = await f.read(), input = f.reviewInput(state);
+  for (const options of [{ ...f.options, policy: null, selectionPolicy }, { ...f.options, policy: null }, f.options]) {
+    const service = createCompCurationService(options), result = await service.read(f.staff, f.cardId, { approvalActionId: f.actionId, previewId: f.previewId });
+    assert(!result.preview || result.preview.candidates.every(row => !Object.hasOwn(row, 'designationReview')));
+    await assert.rejects(service.decide(f.staff, f.cardId, input), { code: 'COMP_DESIGNATION_REVIEW_DISABLED' });
+  }
+  for (const options of [{ ...f.options, designationReviewsEnabled: true }, { ...f.options, policy: null, designationReviewsEnabled: true }])
+    assert.throws(() => createCompCurationService(options), { code: 'COMP_CURATION_CONFIGURATION_INVALID' });
+  assert.equal(f.rows.length, 0);
+});
+
+test('designation review appends exact human provenance and null guidance without altering old Skip or saved evidence; exact replay', async () => {
+  const f = await designationFixture();
+  const skip = await f.service.decide(f.staff, f.cardId, f.input({ outcome: 'SKIP', selectedIds: [], reviewedIds: [], expectedPolicyHash: null }));
+  const oldRow = canonical(f.rows[0]), before = canonical({ preview: f.preview, market: f.market, publication: f.row, packet: f.packet });
+  const state = await f.read(), row = state.preview.candidates[0], proof = row.designationReview;
+  assert.equal(row.designation, null); assert.equal(row.eligible, false);
+  assert.equal(proof.labelText, 'SYNTHETIC saved label\nPSA MINT 9'); assert.equal(proof.labelTextHash, digest(proof.labelText));
+  assert.deepEqual(proof.allowedDesignations, ['STANDARD']);
+  const input = f.reviewInput(state), result = await f.service.decide(f.staff, f.cardId, input);
+  assert.equal(result.revision, 2); assert.equal(skip.revision, 1); assert.equal(result.guidance, null);
+  for (const selected of result.selected) {
+    assert.equal(selected.designation, 'STANDARD'); assert.equal(selected.eligible, true); assert.equal(selected.group, 'PSA / 9 / STANDARD');
+    assert(!Object.hasOwn(selected, 'designationReview'));
+    assert.deepEqual(selected.designationEvidence, { version: 'atlas-comp-designation-review-v1', authority: 'HUMAN_REVIEWED',
+      previewId: f.previewId, previewHash: marketPreviewHash(f.preview), photoSha256: state.preview.candidates.find(v => v.id === selected.id).designationReview.photoSha256,
+      labelTextHash: proof.labelTextHash, proofHash: state.preview.candidates.find(v => v.id === selected.id).designationReview.proofHash,
+      sourceDesignation: null, designation: 'STANDARD', actorId: f.actorId, reviewedAt: now });
+  }
+  assert.equal(canonical(f.rows[0]), oldRow); assert.equal(canonical({ preview: f.preview, market: f.market, publication: f.row, packet: f.packet }), before);
+  const reads = f.calls.artifact;
+  assert.deepEqual(await f.service.decide(f.staff, f.cardId, { ...input, designationReviews: { ...input.designationReviews, rows: [...input.designationReviews.rows].reverse() } }), result);
+  assert.equal(f.calls.artifact, reads); assert.equal(f.rows.length, 2);
+  const changed = structuredClone(input); changed.designationReviews.rows[0].designation = 'PRISTINE';
+  await assert.rejects(f.service.decide(f.staff, f.cardId, changed), { code: 'COMP_REQUEST_CONFLICT' });
+  assert.deepEqual((await f.read()).selection, result);
+});
+
+test('designation review refuses forged proof, photo, choice, authority, duplicate rows and nonselection extensions', async () => {
+  const f = await designationFixture(), state = await f.read();
+  for (const alter of [v => { v.rows[0].proofHash = 'a'.repeat(64); }, v => { v.rows[0].photoSha256 = 'b'.repeat(64); },
+    v => { v.rows[0].designation = 'PRISTINE'; }, v => { v.rows[0].actorId = f.actorId; }, v => { v.rows[0].reviewedAt = now; },
+    v => { v.rows.push(v.rows[0]); }, v => { v.rows[0].id = 'other-row'; }, v => { v.version = 'other'; }, v => { v.rows = []; }]) {
+    const input = f.reviewInput(state); alter(input.designationReviews);
+    await assert.rejects(f.service.decide(f.staff, f.cardId, input));
+  }
+  for (const outcome of ['SKIP', 'NO_SUITABLE_COMPS']) await assert.rejects(f.service.decide(f.staff, f.cardId,
+    f.reviewInput(state, { outcome, selectedIds: [], reviewedIds: [] })), { code: 'COMP_DESIGNATION_REVIEW_INVALID' });
+  assert.equal(f.rows.length, 0);
+});
+
+test('designation review cannot override any other exclusion or missing/inconsistent retained proof', async () => {
+  for (const alter of [c => { c.match = 'UNCERTAIN'; }, c => { c.sale.identityStatus = 'UNKNOWN'; }, c => { c.sale.grade = null; },
+    c => { c.sale.soldAt = '2026-10-22T12:00:00.000Z'; }, c => { c.sale.priceBasis = 'accepted_offer_unknown'; },
+    c => { c.sale.title = 'SYNTHETIC two card lot'; }, c => { c.sale.labelText = null; }, c => { c.slabReading.sha256 = null; },
+    c => { c.slabReading.numericGrade = 7; }, c => { c.slabReading.imageUrl += '?different'; }, c => { c.sale.designation = 'STANDARD'; },
+    c => { c.sale.raw = true; }, c => { c.sale.listingUrl = 'https://invalid.example/itm/1'; }]) {
+    const f = await designationFixture(), before = await f.read(), input = f.reviewInput(before);
+    alter(f.preview.candidates[0]); f.savePreview(); input.expectedPreviewHash = marketPreviewHash(f.preview);
+    const after = await f.read(); assert(!after.preview.candidates.find(v => v.id === f.preview.candidates[0].sale.id).designationReview);
+    await assert.rejects(f.service.decide(f.staff, f.cardId, input), { code: 'COMP_DESIGNATION_REVIEW_MISMATCH' });
+    assert.equal(f.rows.length, 0);
+  }
+  const f = await designationFixture(); f.preview.candidates[1].sale.listingUrl = f.preview.candidates[0].sale.listingUrl; f.savePreview();
+  assert((await f.read()).preview.candidates.every(v => !v.designationReview && v.reasonCodes.includes('DUPLICATE_LISTING')));
+});
+
+test('designation review proof binds source and literal label bytes, retains group boundaries and current actor/revision', async () => {
+  const f = await designationFixture(), state = await f.read(), input = f.reviewInput(state);
+  f.preview.candidates[0].sale.labelText += '\nVISIBLE EXTRA'; f.savePreview();
+  await assert.rejects(f.service.decide(f.staff, f.cardId, input), { code: 'COMP_SOURCE_CHANGED' });
+  await assert.rejects(f.service.decide(f.staff, f.cardId, { ...input, expectedPreviewHash: marketPreviewHash(f.preview) }), { code: 'COMP_DESIGNATION_REVIEW_MISMATCH' });
+  const current = await f.read();
+  await assert.rejects(f.service.decide(f.staff, f.cardId, f.reviewInput(current, { expectedSelectionRevision: 3 })), { code: 'COMP_SELECTION_REVISION_STALE' });
+  f.hooks.artifact = () => { f.principal.id = randomUUID(); };
+  await assert.rejects(f.service.decide(f.staff, f.cardId, f.reviewInput(current)), { code: 'MANUAL_CARD_NOT_FOUND' });
+  for (const field of ['grade', 'currency']) {
+    const other = await designationFixture(), c = other.preview.candidates[0];
+    if (field === 'grade') { c.sale.grade = '7'; c.slabReading.numericGrade = 7; } else c.sale.currency = 'CAD';
+    other.savePreview();
+    await assert.rejects(other.service.decide(other.staff, other.cardId, other.reviewInput(await other.read())),
+      { code: field === 'grade' ? 'COMP_GRADE_GROUP_MIXED' : 'COMP_CURRENCY_MIXED' });
+    assert.equal(other.rows.length, 0);
+  }
+});

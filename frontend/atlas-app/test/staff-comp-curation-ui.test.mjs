@@ -8,6 +8,7 @@ import { requireThat } from '@atlas/manual-service/contract';
 import * as controller from '../lib/staff-comp-curation-controller.mjs';
 import * as entry from '../lib/staff-comp-curation-entry.mjs';
 import * as client from '../lib/staff-comp-curation-client.mjs';
+import * as designation from '../lib/staff-comp-designation-review.mjs';
 import { compUIFixture, realSavedV2, deferred, flush } from './staff-comp-curation-ui-fixture.mjs';
 const require = createRequire(new URL('../package.json', import.meta.url)), babel = require('next/dist/compiled/babel/core');
 const code = babel.transformSync(readFileSync(new URL('../components/StaffCompCuration.jsx', import.meta.url), 'utf8'), {
@@ -36,6 +37,8 @@ function harness() {
     if (name.endsWith('/staff-comp-curation-controller.mjs')) return controller;
     if (name.endsWith('/staff-comp-curation-entry.mjs')) return entry;
     if (name.endsWith('/staff-comp-curation-client.mjs')) return client;
+    if (name.endsWith('/staff-comp-designation-review.mjs')) return designation;
+    if (name === './StaffCompDesignationReview.jsx') return { __esModule: true, default: 'designation-review' };
     return require(name);
   } });
   return { render(props, runEffects = true) { cursor = 0; const tree = exports.default(props); if (runEffects) this.effects(); return tree; },
