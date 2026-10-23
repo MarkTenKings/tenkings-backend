@@ -32,11 +32,19 @@ separate exact-owner operation without changing the original ledger. Runtime06's
 explicit poll boundaries let the next 10 MiB original reach worker SUCCESS, but
 `ops/functional-corpus-04` failed during cleanup with a 267,486,195 ns stale pulse.
 This new job remains held at CLEANUP revision5 with no persisted exit/REMOVE or
-finalized cleanup. The stopped guard and empty/frozen parent contain it; its
-exited container remains pending separate reconciliation. The cleanup handoff
-now has explicit poll boundaries followed by the same lease/ownership/original
-and cleanup deadline checks, plus bounded phase timing diagnostics. This repair's
-target verification is pending. Successful observations retain their
+finalized cleanup. Its exited container was separately removed without changing that held ledger.
+The cleanup handoff now has explicit poll boundaries followed by the same
+lease/ownership/original and cleanup deadline checks, plus bounded phase timing
+diagnostics. Runtime07 in `ops/functional-corpus-05` completed the 10 MiB original
+with SUCCESS and FINALIZED cleanup, refused 10 MiB+1 before submission, and
+completed INVALID_IMAGE with finalized cleanup for16M+1 pixels and compressed-
+pixel/CRC/chunk-length PNG corruption. The next truncated PNG stopped at
+DECODER_NATIVE_INPUT_OBSERVATION before any worker-input byte. That sixth broker
+job remains RUNNING revision4 with CREATE/START known and cleanup unknown; one
+exited container remains for exact-owner inspection. The later guard failure was
+LIVENESS with78.495028ms pulse age, not a stale-pulse report. All ten prior ledger
+sets remained unchanged. The cleanup diagnostic array in this failure predates
+the current job and describes its predecessor; it is not current cleanup evidence. Successful observations retain their
 original source/profile scope; they do not qualify the changed runtime wholesale.
 The remaining broker corpus/fault variants and hostile probes below remain open.
 These partial observations do not constitute qualification or publication
@@ -160,10 +168,10 @@ outside this lane and disabled pending Fingerprint PLUS genuine ownership author
 
 | Case ID | Evidence lane and required variants | Status |
 | --- | --- | --- |
-| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: small/alpha/16M genuine broker submissions completed under their original pins; byte-boundary and final-runtime qualification pending |
+| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: small/alpha/16M completed under original pins;10MiB accepted with FINALIZED cleanup in corpus05; full final-runtime evidence binding pending |
 | `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | INCOMPLETE: three genuine broker submissions completed in corpus02; full variant/evidence binding to final runtime pending |
-| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE: 16M accepted; latest 10 MiB decoded successfully but cleanup failed; remaining bounds not yet completed |
-| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: prior invalid-CRC diagnostic retained; remaining prepared-client corpus not yet completed |
+| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE:16M accepted earlier; corpus05 accepted10MiB with FINALIZED cleanup, refused+1byte before submission and rejected16M+1pixel with FINALIZED cleanup; count/hash/MIME variants remain |
+| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: compressed-pixel/CRC/chunk-length PNG rejection finalized in corpus05; next truncated case hit native input observation failure; other variants remain |
 | `FORGED_DUPLICATE_OR_TRAILING_OUTPUT` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Distinct malicious-output probe emits wrong request/hash, early one-byte stdout prefix, duplicate/trailing/oversize/partial PDW1 and stderr flood. Actual broker refusal/hold; never claim this is normal worker output. | NOT_RUN |
 | `EXTERNAL_NETWORK_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: AF_INET/INET6, raw, AF_PACKET, AF_ALG, VSOCK and AF_UNIX socket attempts; seccomp/AA denial and net namespace lo-only/no ports. No external packets need be transmitted. | NOT_RUN |
 | `HOST_SECRET_PROOF_DOCKER_ACCESS_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Dedicated nonsecret absent/unmounted canaries and exact Docker/guard/broker path open attempts; kernel mount/namespace evidence. No real secrets enumerated/read; distinguish ENOENT absence from policy EACCES/EPERM. | NOT_RUN |
