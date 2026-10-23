@@ -1,4 +1,4 @@
-import { createR1MarketplaceAuthBridge } from './auth-r1.mjs';
+import { createR1MarketplaceAuthBridge, assertMarketplaceSignedTarget } from './auth-r1.mjs';
 import { createPostgresStore } from './store-postgres.mjs';
 import { createMarketplacePilot } from './service.mjs';
 import { createMarketplaceNodeHandler } from './runtime-node.mjs';
@@ -170,7 +170,7 @@ export async function createR1MarketplaceHost(options={}) {
               // bridge performs the sole admission on API requests separately.
               const state=role==='staff'?staffState:customerState;
               check(typeof state.assertRequest==='function');const admitted=state.assertRequest(req);
-              if(admitted&&typeof admitted.then==='function'){void Promise.resolve(admitted).catch(()=>{});check(false);}check(admitted===undefined);current();
+              if(admitted&&typeof admitted.then==='function'){void Promise.resolve(admitted).catch(()=>{});check(false);}check(admitted===undefined);assertMarketplaceSignedTarget(req,{mode:state.auth.config.mode});current();
             }
             return node.listener(req,res);
           } catch {return send(res,503,{error:'R1_HOST_UNAVAILABLE'});}

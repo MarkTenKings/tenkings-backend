@@ -12,6 +12,8 @@ import { SANDBOX_PLATFORM, SANDBOX_SELLER, validateSandboxPlan } from './qualify
 const mountPath = '/account/marketplace/';
 const apiPath = mountPath + 'api';
 const assets = new Map([
+  ['physical-evidence.mjs', ['physical-evidence.mjs', 'text/javascript']],
+  ['parcel-presets.mjs', ['parcel-presets.mjs', 'text/javascript']],
   ['', ['workspace.html', 'text/html']], ['app.mjs', ['app.mjs', 'text/javascript']],
   ['view.mjs', ['view.mjs', 'text/javascript']], ['stripe-payment.mjs', ['stripe-payment.mjs', 'text/javascript']],
   ['styles.css', ['styles.css', 'text/css']],

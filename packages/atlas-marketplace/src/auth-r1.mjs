@@ -14,6 +14,16 @@ const configPin = config => JSON.stringify([config.mode,config.origin,config.dep
 const requestPin = req => JSON.stringify([req.method,req.url,Object.entries(req.headers??{}).sort(([a],[b])=>a.localeCompare(b)),req.body??null,Buffer.isBuffer(req.rawBody)?[req.rawBody.length,createHash('sha256').update(req.rawBody).digest('hex')]:req.rawBody??null,req.socket?.remoteAddress??null]);
 const sameToken = (a,b) => typeof a==='string' && typeof b==='string' && HASH.test(a) && HASH.test(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
+/** After canonical HMAC/method/zone admission, marketplace requests retain their
+ * full mounted raw target. Never accept Next aliases or normalize query bytes. */
+export function assertMarketplaceSignedTarget(request,{mode}={}) {
+  const headers=request.headers??{},keys=['x-atlas-route-target','x-atlas-route-issued','x-atlas-route-proof'];
+  if(mode==='LOCAL_FIXTURE'&&keys.every(key=>headers[key]===undefined))return true;
+  requireValue(['PRODUCTION','LOCAL_FIXTURE'].includes(mode)&&keys.every(key=>typeof headers[key]==='string'&&headers[key].length>0)
+    &&typeof request.url==='string'&&headers['x-atlas-route-target']===request.url,'SIGNED_TARGET_REFUSED');
+  return true;
+}
+
 /** Inert R1 composition only. Canonical classes/instances come from trusted R1
  * imports, never request input. This module imports no R1 runtime or credentials.
  * The proposed customer gateway action does not exist in current R1: unavailable
@@ -70,7 +80,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
     current();
     const admission=guard.call(state,req);
     if(admission&&typeof admission.then==='function') { void Promise.resolve(admission).catch(()=>{}); unavailable(false); }
-    unavailable(admission===undefined); current();
+    unavailable(admission===undefined); assertMarketplaceSignedTarget(req,{mode:config.mode}); current();
     function exactPrincipal(value) { current(); signedIn(principal&&value===principal&&principal.expiresAt>now()); }
     function sameAccess(access) {
       if(originalAccess) signedIn(access.id===originalAccess.id&&access.sessionHash===originalAccess.sessionHash&&access.browserHash===originalAccess.browserHash&&access.sourceRole===originalAccess.sourceRole&&access.accessVersion===originalAccess.accessVersion);
