@@ -4,6 +4,8 @@ Current successor (2026-10-23) adds private encrypted original photo intake, ful
 
 Follow-on integration work fixes both browser module allowlists and exact signed-target agreement at private marketplace seams. A [finite isolated host qualifier](ISOLATED_HOST_QUALIFICATION.md) now exercises three private listeners, real owned PostgreSQL durability and canonical methods with synthetic authority, without starting finance or external operations. See the [46-test ingress correction](../../docs/atlas/audits/2026-10-23/r2-browser-ingress-correction.md) and [local runner qualification](../../docs/atlas/audits/2026-10-23/r2-isolated-host-qualification.md). These receipts do not establish target proxy/gateway, decoder containment, genuine provider or physical acceptance.
 
+[Decoder isolation preparation](DECODER_ISOLATION.md) adds an explicitly unqualified Unix-socket protocol client and pure launch-plan/evidence contracts. These modules cannot satisfy the existing proof validator brand or authorize execution; worker/supervisor/watchdog implementation and actual target qualification remain separate gates. Existing physical interfaces, original proof keys and production wiring are unchanged. See the [preparation audit](../../docs/atlas/audits/2026-10-23/r2-decoder-protocol-preparation.md).
+
 Default-off, isolated implementation of an ATLAS-held fixed-price marketplace. Importing or constructing this package does not register routes, apply shared migrations, read grading credentials, start jobs or change grading/Ten Kings. Hosted recovery requires separate approval and an explicit start. Ownership claims and customer ownership history remain disabled pending Fingerprint and separate authority/policy approval.
 
 ## Local preview and tests
