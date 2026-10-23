@@ -309,3 +309,35 @@ test('fresh pool reload waits for chosen or unresolved selection and rejects a s
   old({ previewId: 'stale-pool', approvalActionId: action }); f.render(); assert.equal(curation().refreshToken, before + 1);
   f.dispose();
 });
+
+
+test('staff history offers closed native audit details with exact references and no new request', async () => {
+  const f = harness(); await f.flush(); const count = f.calls.length, data = fixture(), event = data.history.events[0];
+  event.occurredAt = '2026-10-20T00:00:00.123456Z'; event.recordedAt = '2026-10-20T00:05:00.654321Z';
+  event.source = { type: 'PUBLICATION', cardId, approvalActionId: action, reportHash: 'a'.repeat(64),
+    publicHash: 'b'.repeat(64), manifestHash: 'c'.repeat(64), unrelated: 'PRIVATE_NOT_FOR_DISPLAY' };
+  const tree = f.component('HistoryTimeline', { data });
+  const details = findNode(tree, node => node.type === 'details');
+  assert.ok(details); assert.equal(details.props.open, undefined); assert.equal(details.props.onToggle, undefined);
+  assert.equal(findNode(details, node => node.type === 'summary').props['aria-label'], 'Record details: Report version 2 · ATLAS 8.5');
+  const text = JSON.stringify(details);
+  for (const expected of [event.eventId, action, '2026-10-20 00:00:00.123456 UTC', '2026-10-20 00:05:00.654321 UTC', 'c'.repeat(64)]) assert.ok(text.includes(expected));
+  assert.doesNotMatch(text, /PRIVATE_NOT_FOR_DISPLAY/);
+  assert.equal(findNode(details, node => node.type === 'a' || node.type === 'button'), null, 'audit values do not become URLs or mutations');
+  const sparse = fixture();
+  const missing = JSON.stringify(f.component('HistoryTimeline', { data: sparse }));
+  assert.match(missing, /Source details were not recorded/); assert.match(missing, /Not recorded/);
+  assert.equal(f.calls.length, count); f.dispose();
+});
+
+test('overview distinguishes last recorded physical handoff from an unknown current holder', async () => {
+  const f = harness(); await f.flush();
+  const custody = { status: 'RECORDED', currentPhysicalHolder: 'UNKNOWN', latestRecorded: {
+    eventId: `custody:${randomUUID()}`, kind: 'ATLAS_RECEIVED', sequence: 3,
+    occurredAt: '2026-10-20T00:00:00.123456Z', recordedAt: '2026-10-20T00:05:00.654321Z' } };
+  const text = JSON.stringify(f.component('CardOverview', { card: fixture().card, custody, orderLinks: false }));
+  assert.match(text, /Current physical holder/); assert.match(text, /Unknown/);
+  assert.match(text, /Last recorded handoff/); assert.match(text, /Atlas Received · 2026-10-20 00:00:00.123456 UTC/);
+  assert.match(text, /A recorded handoff does not confirm present custody/);
+  assert.doesNotMatch(text, /Currently at|Verified owner/); f.dispose();
+});

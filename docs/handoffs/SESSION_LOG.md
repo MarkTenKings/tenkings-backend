@@ -46919,3 +46919,8 @@ be refreshed before effects; no consumed release plan is reusable.
 
 Source selection, hashes and receipt: `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/candidate-01`.
 Retained bounded implementation/database evidence lives in sibling `database-qualification`.
+
+
+### 2026-10-22 R1 — selective archive administration candidate
+
+Composed only the reviewed15-path archive CSV, browser-local saved filters and read-only audit details delta over accepted production8070. Prior local component, scoped-test and Chrome download acceptance is reused (root acceptance8b535163). Production slab viewport/image-window CSS is preserved by selective hunks; all other production source, native image/code, customer, grading and provider behavior is unchanged. This is a local candidate only, with no deployment, database, runtime, search or business-record effect. Fresh build and coordinated release qualification remain.

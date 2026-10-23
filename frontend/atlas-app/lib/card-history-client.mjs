@@ -58,18 +58,29 @@ function checkedEvent(event, card, snapshot) {
       && event.eventId.startsWith(published ? 'publication:' : 'approval:')
       && positive(report?.version) && report.version <= card.report.version && score(report.finalGrade) && report.finalGrade >= 1
       && (published ? historyReportPath(event, card.report.publicToken) : report.path == null));
-    if (event.source) {
+    if (event.source != null) {
+      check(typeof event.source === 'object' && !Array.isArray(event.source));
       check(event.source.cardId === card.cardId && event.source.type === (published ? 'PUBLICATION' : 'APPROVAL')
         && historyCardId(event.source.approvalActionId) && event.eventId === `${published ? 'publication' : 'approval'}:${event.source.approvalActionId}`
         && hash(event.source.reportHash));
+      for (const key of published ? ['publicHash', 'manifestHash'] : ['sourceHash'])
+        if (event.source[key] !== undefined) check(hash(event.source[key]));
+      if (!published && event.source.sourceRevision !== undefined) check(positive(event.source.sourceRevision));
       if (event.source.approvalActionId === card.approvalActionId) check(report.version === card.report.version && report.finalGrade === card.finalGrade
         && event.source.reportHash === card.report.reportHash && (!published || card.report.state === 'PUBLISHED' && event.source.publicHash === card.report.publicHash));
     }
   } else {
     check(event.category === 'CUSTODY' && event.eventId.startsWith('custody:') && custodyKinds.includes(event.kind)
       && event.verification === (event.kind === 'DEPOSIT_DECLARED' ? 'SUBMITTER_REPORTED' : 'VERIFIED_RECORD') && positive(event.sequence));
-    if (event.source) check(event.source.cardId === card.cardId && event.source.type === 'CUSTODY'
-      && historyCardId(event.source.eventId) && event.eventId === `custody:${event.source.eventId}`);
+    if (event.source != null) {
+      check(typeof event.source === 'object' && !Array.isArray(event.source));
+      check(event.source.cardId === card.cardId && event.source.type === 'CUSTODY'
+        && historyCardId(event.source.eventId) && event.eventId === `custody:${event.source.eventId}`);
+      for (const key of ['submissionCardId', 'receivedEventId'])
+        if (event.source[key] !== undefined) check(historyCardId(event.source[key]));
+      if (event.source.inputHash !== undefined) check(hash(event.source.inputHash));
+      if (event.source.linkedAt !== undefined) check(instant(event.source.linkedAt) && event.source.linkedAt <= snapshot);
+    }
   }
 }
 
@@ -97,6 +108,15 @@ export function readCardHistory(value, cardId) {
       || event.occurredAt != null && (typeof event.occurredAt !== 'string' || !Number.isFinite(Date.parse(event.occurredAt))))
     || !(value.history.nextCursor === null || typeof value.history.nextCursor === 'string' && CURSOR.test(value.history.nextCursor))) throw invalid();
   cardDetails(value.card, value.history.snapshot);
+  const latest = value.custody.latestRecorded;
+  if (latest != null) {
+    check(value.custody.status === 'RECORDED' && typeof latest.eventId === 'string'
+      && latest.eventId.startsWith('custody:') && historyCardId(latest.eventId.slice(8))
+      && custodyKinds.includes(latest.kind) && !['DEPOSIT_DECLARED', 'DELAY_REPORTED', 'DELAY_RESOLVED'].includes(latest.kind)
+      && positive(latest.sequence) && instant(latest.occurredAt) && instant(latest.recordedAt) && latest.recordedAt <= value.history.snapshot);
+    const matching = value.history.events.find(event => event.eventId === latest.eventId);
+    if (matching) check(['kind', 'sequence', 'occurredAt', 'recordedAt'].every(key => matching[key] === latest[key]));
+  }
   const seen = new Set(); let previous = null;
   for (const event of value.history.events) {
     checkedEvent(event, value.card, value.history.snapshot);
@@ -144,4 +164,26 @@ export function historyEventDetail(event) {
     return `Report version ${event.report?.version ?? 'not recorded'}${grade}`;
   }
   return typeof event.kind === 'string' ? event.kind.toLowerCase().split('_').map(word => word[0]?.toUpperCase() + word.slice(1)).join(' ') : 'Recorded handling event';
+}
+
+// Present only reader-authorized, explicitly named fields. Unknown optional
+// fields stay unavailable; arbitrary event/source JSON is never rendered.
+export const historyAuditTime = value => instant(value) ? `${value.slice(0, 10)} ${value.slice(11, -1)} UTC` : null;
+export function historyAuditRows(event) {
+  const rows = [
+    ['Event reference', event.eventId],
+    ['Occurred (UTC)', historyAuditTime(event.occurredAt)],
+    ['Recorded (UTC)', historyAuditTime(event.recordedAt)],
+    ...(event.category === 'CUSTODY' ? [['Custody sequence', event.sequence]] : []),
+  ];
+  const source = event.source;
+  if (!source) return rows;
+  const fields = event.category === 'CUSTODY'
+    ? [['Submission card reference', 'submissionCardId'], ['Receipt event reference', 'receivedEventId'], ['Saved input hash', 'inputHash']]
+    : [['Approval reference', 'approvalActionId'], ['Saved report hash', 'reportHash'],
+      ...(event.kind === 'REPORT_PUBLISHED' ? [['Public report hash', 'publicHash'], ['Publication manifest hash', 'manifestHash']]
+        : [['Source revision', 'sourceRevision'], ['Approval source hash', 'sourceHash']])];
+  for (const [label, key] of fields) rows.push([label, source[key] ?? null]);
+  if (event.category === 'CUSTODY') rows.push(['Linked to this card (UTC)', historyAuditTime(source.linkedAt)]);
+  return rows;
 }

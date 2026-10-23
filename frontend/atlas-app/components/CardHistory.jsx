@@ -8,7 +8,7 @@ import { api } from '../lib/client';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { orderDeskPagePath } from '../lib/order-desk-client.mjs';
 import { approvedDate, approvedReportPath, archiveAccessFailure, gradedCardSubtitle, gradedCardTitle, gradedCardVariation, recordedGrade, submissionOrigin } from '../lib/graded-cards-client.mjs';
-import { cardHistoryPath, historyEventDetail, historyEventTitle, historyReportPath, mergeCardHistory, readCardHistory } from '../lib/card-history-client.mjs';
+import { cardHistoryPath, historyAuditRows, historyAuditTime, historyEventDetail, historyEventTitle, historyReportPath, mergeCardHistory, readCardHistory } from '../lib/card-history-client.mjs';
 import { ATLAS_SPORTS_ATTRIBUTE_LABELS as sportsLabels } from '@atlas/grading-core/identity';
 import { groupSoldReferences, saleAmountLabel, saleDateLabel, saleGradeLabel } from '@atlas/manual-workspace/sold-references';
 import { rememberCardDetailReportClick } from '@atlas/site-router/report-entry';
@@ -59,7 +59,9 @@ export function CardOverview({ card, custody, orderLinks }) {
       <section className={styles.provenanceSummary} aria-labelledby="ownership-heading"><h3 id="ownership-heading">Ownership &amp; custody</h3>
         <Facts rows={[
           ['Ownership', 'Not recorded'], ['Custody history', custody.status === 'RECORDED' ? 'Handling events recorded' : 'Not recorded'],
-        ]}/><p className={styles.note}>A verified owner and current physical holder have not been established in this record.</p>
+          ['Current physical holder', 'Unknown'],
+          ...(custody.latestRecorded ? [['Last recorded handoff', `${historyEventDetail(custody.latestRecorded)} · ${historyAuditTime(custody.latestRecorded.occurredAt)}`]] : []),
+        ]}/><p className={styles.note}>A verified owner and current physical holder have not been established in this record. A recorded handoff does not confirm present custody.</p>
       </section>
     </div>
   </div>;
@@ -124,6 +126,11 @@ export function HistoryTimeline({ data }) {
       <div className={styles.eventTop}><time dateTime={event.occurredAt || event.recordedAt}>{approvedDate(event.occurredAt || event.recordedAt)}</time><span className={styles.recordType}>{event.verification === 'SUBMITTER_REPORTED' ? 'Submitter reported' : 'Verified record'}</span></div>
       <h3>{historyEventTitle(event)}</h3><p>{historyEventDetail(event)}</p>
       {event.occurredAt && event.occurredAt.slice(0, 10) !== event.recordedAt.slice(0, 10) && <p className={styles.recordedAt}>Recorded {approvedDate(event.recordedAt)}</p>}
+      <details className={styles.auditDetails}>
+        <summary aria-label={`Record details: ${historyEventDetail(event)}`}>Record details</summary>
+        <dl className={styles.auditFacts}>{historyAuditRows(event).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value ?? 'Not recorded'}</dd></div>)}</dl>
+        {!event.source && <p className={styles.auditNote}>Source details were not recorded in this history response.</p>}
+      </details>
       {path && <a className={styles.reportLink} href={path} referrerPolicy="no-referrer" rel="noreferrer" onClick={event => rememberCardDetailReportClick(event, path, data.card.cardId)}>View this report version <span aria-hidden="true">↗</span></a>}
     </li>; })}</ol>
     {!data.history.events.length && <p className={styles.unavailableNote}>No recorded events are available for this card.</p>}

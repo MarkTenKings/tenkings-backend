@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import * as archive from '../lib/graded-cards-client.mjs';
+import * as archiveExport from '../lib/graded-cards-export.mjs';
 import * as routes from '../lib/routes.mjs';
 import * as orders from '../lib/order-desk-client.mjs';
 
@@ -37,7 +38,7 @@ function harness() {
     certificateNumber: 'ATLAS-ABCDEF123456', finalGrade: 8.5, approvedAt: '2026-10-20T00:00:00.000Z',
     report: { state: 'PUBLISHED', publicToken: token, version: 1, path: `/reports/${token}?v=1` },
     submission: { orderId: randomUUID(), reference: 'PRIVATE-ORDER', customer: { name: 'Private old customer' }, channel: 'MAIL_IN' } };
-  const f = { staff, card, calls, session: { staff }, hold: null, result: { schemaVersion: 1, cards: [card], nextCursor: 'older-page' } };
+  const f = { staff, card, calls, downloads: [], session: { staff }, sessionHold: null, sessionError: null, hold: null, result: { schemaVersion: 1, cards: [card], nextCursor: 'older-page' } };
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], value => {
       const next = typeof value === 'function' ? value(slots[index]) : value;
@@ -52,7 +53,7 @@ function harness() {
   };
   const request = async (path, options) => {
     calls.push({ path, options }); assert.equal(options.method, undefined);
-    if (path === 'session') return f.session;
+    if (path === 'session') { if (f.sessionError) throw f.sessionError; return f.sessionHold ? f.sessionHold.promise : f.session; }
     return f.hold ? f.hold.promise : structuredClone(f.result);
   };
   const exports = {};
@@ -63,8 +64,10 @@ function harness() {
     if (name === 'next/link') return 'a';
     if (name === './Shell') return { __esModule: true, default: 'Shell' };
     if (name === './ApprovedCardMedia') return { __esModule: true, default: 'ApprovedCardMedia' };
+    if (name === './GradedCardsSavedFilters') return { __esModule: true, default: 'GradedCardsSavedFilters' };
     if (name.endsWith('/client')) return { api: request };
     if (name.endsWith('/graded-cards-client.mjs')) return archive;
+    if (name.endsWith('/graded-cards-export.mjs')) return { ...archiveExport, downloadGradedCardsCsv: csv => f.downloads.push(csv) };
     if (name.endsWith('/routes.mjs')) return routes;
     if (name.endsWith('/order-desk-client.mjs')) return orders;
     if (name.endsWith('.css')) return {};
@@ -118,4 +121,75 @@ test('access loss still clears same-scope rows and prevents a late page from res
   f.button('Load more cards').props.onClick(); await f.flush(); f.event('atlas:verified-image-access-ended');
   assert.doesNotMatch(f.text(), /Private old card|ATLAS-ABCDEF123456/); assert.match(f.text(), /Sign in again/);
   held.resolve(f.result); await f.flush(); assert.equal(f.find(node => node.type === 'ApprovedCardMedia').length, 0); f.close();
+});
+
+test('loaded-card export rechecks the session and downloads only the displayed snapshot without paging', async () => {
+  for (const view of ['Gallery', 'Table']) {
+    const f = harness(); assert.equal(f.button('Export loaded cards (CSV)').props.disabled, true);
+    await f.flush(); f.button(view).props.onClick(); f.render();
+    const before = f.calls.length;
+    f.button('Export loaded cards (CSV)').props.onClick(); await f.flush();
+    assert.deepEqual(f.calls.slice(before).map(call => call.path), ['session']);
+    assert.equal(f.downloads.length, 1); assert.match(f.downloads[0], /Private old card/);
+    assert.match(f.downloads[0], /Private old customer/); assert.doesNotMatch(f.downloads[0], /older-page/);
+    assert.equal(f.downloads[0].split('\r\n').length, 3);
+    assert.ok(f.button('Load more cards')); f.close();
+  }
+});
+
+test('export refuses changed or expired staff access, clears private rows, and never downloads', async () => {
+  for (const change of [{ id: randomUUID() }, { role: 'OBSERVER' }, { mode: 'OTHER_FIXTURE' }, { status: 401 }, { status: 403 }]) {
+    const f = harness(); await f.flush();
+    if (change.status) f.sessionError = change; else f.session = { staff: { ...f.staff, ...change } };
+    f.button('Export loaded cards (CSV)').props.onClick(); await f.flush();
+    assert.equal(f.downloads.length, 0); assert.doesNotMatch(f.text(), /Private old card|Private old customer/);
+    assert.match(f.text(), /Sign in again/); assert.equal(f.button('Export loaded cards (CSV)').props.disabled, true); f.close();
+  }
+});
+
+test('a late export session reply cannot download the prior scope even before teardown effects run', async () => {
+  const f = harness(); await f.flush(); const pending = deferred(); f.sessionHold = pending;
+  f.button('Export loaded cards (CSV)').props.onClick(); await f.flush();
+  f.staff = { ...f.staff, id: randomUUID() }; f.renderBeforeEffects();
+  pending.resolve(f.session); await new Promise(setImmediate); f.renderBeforeEffects();
+  assert.equal(f.downloads.length, 0); assert.doesNotMatch(f.text(), /Private old card/); f.close();
+});
+
+test('filter edits, refresh, pagination, pagehide, access loss and unmount cancel a pending export', async () => {
+  for (const action of ['filter', 'refresh', 'pagination', 'pagehide', 'access', 'unmount']) {
+    const f = harness(); await f.flush(); const pending = deferred(); f.sessionHold = pending;
+    f.button('Export loaded cards (CSV)').props.onClick(); await f.flush();
+    const read = f.calls.at(-1);
+    if (action === 'filter') f.find(node => node.type === 'input' && node.props.name === 'q')[0].props.onChange({ target: { value: 'Another card' } });
+    if (action === 'refresh') f.button('Refresh archive ↻').props.onClick();
+    if (action === 'pagination') f.button('Load more cards').props.onClick();
+    if (action === 'pagehide') f.event('pagehide');
+    if (action === 'access') f.event('atlas:verified-image-access-ended');
+    if (action === 'unmount') f.close();
+    assert.equal(read.options.signal.aborted, true, action);
+    pending.resolve(f.session); await new Promise(setImmediate);
+    assert.equal(f.downloads.length, 0, action); f.close();
+  }
+});
+
+test('an unavailable session produces no CSV and a fresh explicit retry can succeed', async () => {
+  const f = harness(); await f.flush(); f.sessionError = new Error('network unavailable');
+  f.button('Export loaded cards (CSV)').props.onClick(); await f.flush();
+  assert.equal(f.downloads.length, 0); assert.match(f.text(), /export could not be prepared/);
+  assert.match(f.text(), /Private old card/); f.sessionError = null;
+  f.button('Export loaded cards (CSV)').props.onClick(); await f.flush();
+  assert.equal(f.downloads.length, 1); f.close();
+});
+
+test('applying a saved filter uses the existing archive read and cancels a pending CSV', async () => {
+  const f = harness(); await f.flush(); const pending = deferred(); f.sessionHold = pending;
+  f.button('Export loaded cards (CSV)').props.onClick(); await f.flush(); const exportRead = f.calls.at(-1);
+  const saved = f.find(node => node.type === 'GradedCardsSavedFilters')[0];
+  const filters = { q: 'Saved card', category: 'SPORTS', from: '2026-10-01', to: '2026-10-22' };
+  saved.props.onApply(filters, 'table'); assert.equal(exportRead.options.signal.aborted, true);
+  f.sessionHold = null; pending.resolve(f.session); await f.flush();
+  assert.equal(f.downloads.length, 0); assert.equal(f.button('Table').props['aria-pressed'], true);
+  const query = new URLSearchParams(f.calls.filter(call => call.path !== 'session').at(-1).path.split('?')[1]);
+  for (const [key, value] of Object.entries(filters)) assert.equal(query.get(key), value);
+  assert.equal(query.has('cursor'), false); f.close();
 });
