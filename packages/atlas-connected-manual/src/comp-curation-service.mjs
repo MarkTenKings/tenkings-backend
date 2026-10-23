@@ -3,7 +3,8 @@
 import { canonical, digest, requireThat, uuid } from '@atlas/manual-service/contract';
 import { marketPreviewHash, publishedMarketQuery } from './presentation-market.mjs';
 import { publishedResearchQuery } from './research-market-query.mjs';
-import { compCurationInput, compCurationReadInput, compCurationPolicy, evaluateCompCuration, parseSavedCompSource } from './comp-curation-contract.mjs';
+import { compCurationInput, compCurationReadInput, compCurationPolicy, compEvidenceSelectionPolicy, evaluateCompCuration, parseSavedCompSource } from './comp-curation-contract.mjs';
+import { assertCompCurationArchiveCapability } from './comp-curation-archive.mjs';
 
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const document = (value, maxBytes) => { const text = canonical(value, { maxBytes }); return { text, hash: digest(text) }; };
@@ -31,11 +32,20 @@ export function compCurationGrantSQL(role) {
   // Existing manual role/read grants and boundary remain separate prerequisites.
   return `GRANT SELECT,INSERT ON atlas_manual.comp_curation TO "${role}";`;
 }
-export function createCompCurationService({ boundary, approved, artifacts, validateAccess, policy = null }) {
+export function createCompCurationService({ boundary, approved, artifacts, validateAccess, policy = null, selectionPolicy = null, archiveCapability = null }) {
   requireThat(typeof boundary?.transaction === 'function' && typeof approved?.loadPacket === 'function'
     && typeof artifacts?.read === 'function' && typeof validateAccess === 'function', 500, 'COMP_CURATION_CONFIGURATION_INVALID');
-  const configuredPolicy = compCurationPolicy(policy);
+  requireThat(policy === null || selectionPolicy === null, 500, 'COMP_CURATION_CONFIGURATION_INVALID');
+  // Explicit opt-in only: SQL011 alone rejects evidence-only SELECTED receipts.
+  // Its additive guard replacement must be qualified before runtime activation.
+  const configuredPolicy = compCurationPolicy(policy) ?? compEvidenceSelectionPolicy(selectionPolicy);
+  if (archiveCapability !== null) {
+    requireThat(policy === null, 500, 'COMP_CURATION_CONFIGURATION_INVALID');
+    assertCompCurationArchiveCapability(archiveCapability, { boundary, artifacts, validateAccess });
+  }
+  const approvedReader = archiveCapability ?? approved;
   async function authorize(context, card, expectedActor) {
+    if (archiveCapability !== null) return archiveCapability.authorize(context, card, expectedActor);
     const current = await context.refresh();
     requireThat(current.principal.id === expectedActor, 401, 'SIGN_IN_REQUIRED');
     requireThat(card && (card.owner_id === current.principal.id || card.approvers.includes(current.principal.id)), 404, 'MANUAL_CARD_NOT_FOUND');
@@ -74,7 +84,7 @@ export function createCompCurationService({ boundary, approved, artifacts, valid
   const sameSnapshot = (before, after) => requireThat(before.actorId === after.actorId && same(before.binding, after.binding)
     && same(before.source, after.source), 409, 'COMP_SOURCE_CHANGED');
   async function evidence(staff, snapshot) {
-    const b = snapshot.binding, loaded = await approved.loadPacket(staff, b.cardId, b.approvalActionId);
+    const b = snapshot.binding, loaded = await approvedReader.loadPacket(staff, b.cardId, b.approvalActionId);
     requireThat(loaded?.row && same(binding(loaded.row), b) && loaded.row.state === 'PUBLISHED'
       && loaded.publicHash === b.publicHash && digest(JSON.stringify(loaded.packet)) === b.publicHash
       && loaded.packet.publicToken === b.publicToken && loaded.packet.approvalVersion === b.publicVersion
@@ -109,7 +119,8 @@ export function createCompCurationService({ boundary, approved, artifacts, valid
         const { now } = await authorize(context, after.card, after.actorId);
         const preview = source && configuredPolicy ? parseSavedCompSource(source, { cardId, approvalActionId: input.approvalActionId,
           report: { publicToken: after.binding.publicToken, version: after.binding.publicVersion, publicHash: after.binding.publicHash } },
-        { asOf: now.toISOString(), recencyDays: configuredPolicy.policy.recencyDays }) : null;
+        { asOf: now.toISOString(), recencyDays: configuredPolicy.policy.recencyDays,
+          evidenceOnly: configuredPolicy.policy.version === 'atlas-comp-evidence-selection-policy-v1' }) : null;
         return { schema: 'atlas-comp-curation-state-v1', status: 'LOCAL_PROPOSAL', visibility: 'PRIVATE_INTERNAL', binding: after.binding,
           revision: after.revision, selection: receipt(after.previous), source: after.source, policy: configuredPolicy?.policy ?? null,
           policyHash: configuredPolicy?.hash ?? null, availability: source ? configuredPolicy ? 'READY' : 'POLICY_REQUIRED' : 'NO_SAVED_POOL', preview };

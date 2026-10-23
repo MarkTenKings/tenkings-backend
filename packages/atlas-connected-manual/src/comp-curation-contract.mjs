@@ -3,6 +3,7 @@
 // caller-provided prices, policy, time or hashes never become evidence.
 import { canonical, digest, object, requireThat, uuid as strictUuid } from '@atlas/manual-service/contract';
 export const COMP_CURATION_METHOD = 'selected-sold-price-arithmetic-mean-v1';
+export const COMP_EVIDENCE_SELECTION_METHOD = 'private-saved-sold-evidence-v1';
 const check = (condition, code = 'COMP_CURATION_INVALID') => requireThat(condition, 400, code);
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -30,9 +31,10 @@ function reportBinding(value) {
   return { publicToken: value.publicToken, version: value.version, publicHash: value.publicHash };
 }
 
-export function parseSavedCompSource(source, expected, { asOf, recencyDays } = {}) {
+export function parseSavedCompSource(source, expected, { asOf, recencyDays, evidenceOnly = false } = {}) {
   const now = instant(asOf);
-  check(now !== null && Number.isSafeInteger(recencyDays) && recencyDays >= 1 && recencyDays <= 3650, 'COMP_POLICY_REQUIRED');
+  check(typeof evidenceOnly === 'boolean' && now !== null && (evidenceOnly ? recencyDays === null
+    : Number.isSafeInteger(recencyDays) && recencyDays >= 1 && recencyDays <= 3650), 'COMP_POLICY_REQUIRED');
   check(source?.schema === 'atlas-saved-comp-source-v1' && uuid(source.cardId) && uuid(source.approvalActionId)
     && uuid(source.previewId) && hash(source.sourceHash));
   check(source.cardId === expected?.cardId && source.approvalActionId === expected?.approvalActionId, 'COMP_APPROVAL_MISMATCH');
@@ -63,7 +65,7 @@ export function parseSavedCompSource(source, expected, { asOf, recencyDays } = {
     if (!currency) reasons.push('CURRENCY_UNAVAILABLE');
     if (soldTime === null) reasons.push('SALE_DATE_UNAVAILABLE');
     else if (soldTime > observed || soldTime > now) reasons.push('SALE_DATE_IN_FUTURE');
-    else if (now - soldTime > recencyDays * DAY) reasons.push('SALE_OUTSIDE_RECENCY_WINDOW');
+    else if (recencyDays !== null && now - soldTime > recencyDays * DAY) reasons.push('SALE_OUTSIDE_RECENCY_WINDOW');
     const raw = sale.raw === true && (!sale.evidenceKind || sale.evidenceKind === 'RAW');
     const grader = !raw && ['PSA', 'BGS', 'SGC', 'CGC', 'ATLAS'].includes(sale.grader) ? sale.grader : null;
     const numericGrade = !raw && typeof sale.grade === 'string' && /^(?:[1-9](?:\.5)?|10)$/.test(sale.grade) ? Number(sale.grade) : null;
@@ -89,13 +91,14 @@ export function parseSavedCompSource(source, expected, { asOf, recencyDays } = {
   for (const row of candidates) if (listingCounts.get(listingIdentity(row)) > 1) { row.eligible = false; row.reasonCodes.push('DUPLICATE_LISTING'); }
   return { schema: 'atlas-curation-preview-v1', binding: { cardId: source.cardId, approvalActionId: source.approvalActionId, report: expectedReport },
     source: { previewId: source.previewId, sourceHash: source.sourceHash, observedAt: new Date(observed).toISOString() },
-    policy: { asOf: new Date(now).toISOString(), recencyDays, method: COMP_CURATION_METHOD, status: 'LOCAL_PROPOSAL' }, candidates };
+    policy: { asOf: new Date(now).toISOString(), recencyDays,
+      method: evidenceOnly ? COMP_EVIDENCE_SELECTION_METHOD : COMP_CURATION_METHOD, status: 'LOCAL_PROPOSAL' }, candidates };
 }
 
 /** No selection changes an approval or its report. Exactly one comparison
  * group/currency is allowed; missing prices never become zero. */
-export function curateSoldComps(source, expected, { outcome, selectedIds = [], reviewedIds = [], asOf, recencyDays } = {}) {
-  const preview = parseSavedCompSource(source, expected, { asOf, recencyDays });
+export function curateSoldComps(source, expected, { outcome, selectedIds = [], reviewedIds = [], asOf, recencyDays, evidenceOnly = false } = {}) {
+  const preview = parseSavedCompSource(source, expected, { asOf, recencyDays, evidenceOnly });
   check(['SELECTED', 'SKIP', 'NO_SUITABLE_COMPS'].includes(outcome) && Array.isArray(selectedIds)
     && Array.isArray(reviewedIds) && new Set(selectedIds).size === selectedIds.length && new Set(reviewedIds).size === reviewedIds.length);
   check(selectedIds.every(id => text(id, 180)) && reviewedIds.every(id => selectedIds.includes(id)));
@@ -112,6 +115,10 @@ export function curateSoldComps(source, expected, { outcome, selectedIds = [], r
   }).sort((a, b) => (instant(b.soldAt) ?? 0) - (instant(a.soldAt) ?? 0) || a.id.localeCompare(b.id));
   check(new Set(selected.map(row => row.group)).size === 1, 'COMP_GRADE_GROUP_MIXED');
   check(new Set(selected.map(row => row.currency)).size === 1, 'COMP_CURRENCY_MIXED');
+  // Evidence selection is not a valuation method. In particular, removing an
+  // age cutoff here must never make older saved sales enter price guidance.
+  if (evidenceOnly) return { schema: 'atlas-curation-decision-v1', binding: preview.binding, source: preview.source, policy: preview.policy,
+    outcome, selected, guidance: null, persistence: 'PREVIEW_ONLY', approvalUnaffected: true };
   const sumMinor = selected.reduce((total, row) => total + row.priceMinor, 0), count = selected.length;
   check(Number.isSafeInteger(sumMinor));
   const quotient = Math.floor(sumMinor / count), remainder = sumMinor % count;
@@ -132,6 +139,14 @@ export function compCurationPolicy(value) {
   object(value, ['version', 'status', 'method', 'recencyDays', 'rightsStatus']);
   check(value.version === 'atlas-comp-curation-policy-v1' && value.status === 'LOCAL_PROPOSAL'
     && value.method === COMP_CURATION_METHOD && Number.isInteger(value.recencyDays) && value.recencyDays >= 1 && value.recencyDays <= 3650
+    && value.rightsStatus === 'UNRESOLVED', 'COMP_POLICY_REQUIRED');
+  const policy = JSON.parse(canonical(value)); return { policy, hash: digest(canonical(policy)) };
+}
+export function compEvidenceSelectionPolicy(value) {
+  if (value === null) return null;
+  object(value, ['version', 'status', 'method', 'recencyDays', 'rightsStatus']);
+  check(value.version === 'atlas-comp-evidence-selection-policy-v1' && value.status === 'LOCAL_PROPOSAL'
+    && value.method === COMP_EVIDENCE_SELECTION_METHOD && value.recencyDays === null
     && value.rightsStatus === 'UNRESOLVED', 'COMP_POLICY_REQUIRED');
   const policy = JSON.parse(canonical(value)); return { policy, hash: digest(canonical(policy)) };
 }
@@ -163,6 +178,8 @@ export function evaluateCompCuration(source, binding, configuredPolicy, asOf, in
   const decision = curateSoldComps(source, { cardId: binding.cardId, approvalActionId: binding.approvalActionId,
     report: { publicToken: binding.publicToken, version: binding.publicVersion, publicHash: binding.publicHash } }, {
     outcome: input.outcome, selectedIds: input.selectedIds, reviewedIds: input.reviewedIds, asOf, recencyDays: configuredPolicy.policy.recencyDays,
+    evidenceOnly: configuredPolicy.policy.version === 'atlas-comp-evidence-selection-policy-v1',
   });
-  return { selected: decision.selected, guidance: { ...decision.guidance, visibility: 'PRIVATE_INTERNAL', rightsStatus: 'UNRESOLVED', listingPrice: null } };
+  return { selected: decision.selected, guidance: decision.guidance === null ? null
+    : { ...decision.guidance, visibility: 'PRIVATE_INTERNAL', rightsStatus: 'UNRESOLVED', listingPrice: null } };
 }

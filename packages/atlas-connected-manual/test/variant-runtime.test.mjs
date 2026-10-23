@@ -13,8 +13,10 @@ const env = { ATLAS_MANUAL_ENABLED: 'true', ATLAS_MANUAL_VARIANT_REVIEW_ENABLED:
 test('variant configuration is cold, explicit and isolates the one-connection worker role', () => {
   assert.equal(variantReviewSettings({}), null);
   assert.equal(variantWorkerSettings(env).concurrency, 1);
-  const isolated = variantWorkerEnvironment({ ...env, ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED: 'true', ATLAS_MANUAL_BATCH_ENABLED: 'true' }, variantWorkerSettings(env));
+  const isolated = variantWorkerEnvironment({ ...env, ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED: 'true', ATLAS_MANUAL_BATCH_ENABLED: 'true',
+    ATLAS_STAFF_ARCHIVE_COMP_SEARCH: '1' }, variantWorkerSettings(env));
   assert.equal(isolated.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED, 'false'); assert.equal(isolated.ATLAS_MANUAL_BATCH_ENABLED, 'false');
+  assert.equal(isolated.ATLAS_STAFF_ARCHIVE_COMP_SEARCH, '0');
   assert.equal(isolated.ATLAS_MANUAL_DATABASE_URL, env.ATLAS_VARIANT_DATABASE_URL);
   assert.equal(isolated.ATLAS_MANUAL_DEFECT_MEMORY_ENABLED, 'true');
   assert.equal(variantReviewSettings({ ...env, ATLAS_VARIANT_SCRYDEX_API_KEY: 'ignored-ambient-key' }).scrydex, null);

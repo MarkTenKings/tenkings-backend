@@ -28,13 +28,15 @@ function money(row) {
  * and an explicitly configured same-origin Response transport (cookies/CSRF).
  * No route, fetch fallback, acquisition, report edit or asking-price writer.
  * Host access loss must set accessState=ENDED immediately, before logout I/O. */
-export default function StaffCompCuration({ staff, card, enabled = false, accessState = 'READY', request, onAccessLost }) {
+export default function StaffCompCuration({ staff, card, enabled = false, accessState = 'READY', request, onAccessLost,
+  refreshToken = 0, onPendingChange }) {
   const [view, setView] = useState(null), [draft, setDraft] = useState(null), [reload, setReload] = useState(0);
   const live = useRef(null), owner = useRef(null), closed = useRef(null);
   const key = signature(staff, card);
-  live.current = { staff, card, key, request, enabled, accessState, onAccessLost, reload };
+  live.current = { staff, card, key, request, enabled, accessState, onAccessLost, reload, refreshToken, onPendingChange };
   useEffect(() => {
-    const context = { staff, card, key, request, reload, abort: new AbortController(), cancelled: false, control: null };
+    const context = { staff, card, key, request, reload, refreshToken: live.current.refreshToken,
+      abort: new AbortController(), cancelled: false, control: null, selectedIds: [], page: 0, blocked: false };
     owner.current = context;
     const current = () => {
       const now = live.current;
@@ -43,7 +45,17 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
         && key !== null && now.key === key && signature(staff, card) === key;
     };
     context.current = current;
-    context.stop = () => { if (context.cancelled) return; context.cancelled = true; context.abort.abort(); context.control?.dispose(); };
+    context.block = value => {
+      if (!current() || context.blocked === value) return;
+      context.blocked = value; live.current.onPendingChange?.(value);
+    };
+    context.publish = value => {
+      if (!current()) return;
+      if (value.phase === 'CONFIRMED') { context.selectedIds = []; setDraft(null); }
+      context.block(Boolean(context.selectedIds.length || value.pending || ['LOADING', 'SAVING', 'RECONCILING'].includes(value.phase)));
+      setView({ context, ...value });
+    };
+    context.stop = () => { if (context.cancelled) return; context.block(false); context.cancelled = true; context.abort.abort(); context.control?.dispose(); };
     const endAccess = () => {
       if (!current()) return;
       closed.current = staff; context.stop(); setDraft(null); setView({ context, ...empty('ENDED') }); live.current.onAccessLost?.();
@@ -53,11 +65,11 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
     window.addEventListener('pagehide', pagehide);
     if (accessState !== 'READY') closed.current = staff;
     if (enabled && typeof request === 'function' && key && current()) {
-      setDraft(null); setView({ context, ...empty('LOADING') });
+      setDraft(null); context.publish(empty('LOADING'));
       const binding = compCurationCard(card), actor = curationStaff(staff);
       void createSavedCompEntryReader({ request })({ staff, card, signal: context.abort.signal }).then(entry => {
         if (!current()) { context.stop(); return; }
-        if (!entry.input) { setView({ context, ...empty('POOL_NOT_READY') }); return; }
+        if (!entry.input) { context.publish(empty('POOL_NOT_READY')); return; }
         context.control = createStaffCompCurationController({ staff, cardId: binding.cardId, input: entry.input, request,
           onAccessLost: endAccess,
           onChange(value) {
@@ -65,7 +77,7 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
             try {
               if (value.state) assertCompCurationBinding(value.state, binding, actor.mode);
               if (value.receipt) assertCompCurationBinding(value.receipt, binding, actor.mode);
-              setView({ context, ...value });
+              context.publish(value);
             } catch { context.stop(); setDraft(null); setView({ context, ...empty('CHANGED') }); }
           },
         });
@@ -73,11 +85,19 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
       }).catch(error => {
         if (!current()) return;
         if (error.code === 'COMP_ACCESS_ENDED') endAccess();
-        else setView({ context, ...empty(error.code === 'COMP_ENTRY_CHANGED' ? 'CHANGED' : 'UNAVAILABLE') });
+        else context.publish(empty(error.code === 'COMP_ENTRY_CHANGED' ? 'CHANGED' : 'UNAVAILABLE'));
       });
     }
     return () => { window.removeEventListener('pagehide', pagehide); context.stop(); };
   }, [staff, card, key, request, enabled, accessState, reload]);
+
+  // A newly saved search pool must not replace an unsaved choice or the
+  // original request used to reconcile an uncertain save.
+  useEffect(() => {
+    const context = owner.current;
+    if (!context?.current() || context.refreshToken === refreshToken || context.blocked || context.control?.snapshot().pending) return;
+    context.refreshToken = refreshToken; setReload(value => value + 1);
+  }, [refreshToken, view, draft]);
 
   const context = view?.context;
   const ended = accessState !== 'READY' || closed.current === staff;
@@ -94,25 +114,30 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
   const selected = rows.filter(row => selectedIds.includes(row.id)), first = selected[0];
   function act(work) {
     if (!context?.current() || context.control && !context.control.assertScope(staff)) { context?.stop(); return; }
-    void Promise.resolve().then(() => { if (context.current()) return work(); }).catch(() => {
-      if (context.current()) setView({ context, ...context.control?.snapshot(), error: 'COMP_ACTION_UNAVAILABLE' });
-    });
+    const failed = () => {
+      if (context.current()) context.publish({ ...context.control?.snapshot(), error: 'COMP_ACTION_UNAVAILABLE' });
+    };
+    // Run admission synchronously so another retained button handler cannot
+    // start a search between the click and React's next render.
+    try { void Promise.resolve(work()).catch(failed); } catch { failed(); }
   }
   function toggle(row) {
     act(() => {
       if (context.control.snapshot().phase !== 'READY' || !row.eligible) return;
-      setDraft(previous => {
-        const ids = previous?.context === context ? previous.selectedIds : [];
-        if (ids.includes(row.id)) return { context, page, selectedIds: ids.filter(id => id !== row.id) };
-        const prior = rows.find(candidate => ids.includes(candidate.id));
-        if (ids.length >= 5 || prior && (prior.group !== row.group || prior.currency !== row.currency)) return previous;
-        return { context, page, selectedIds: [...ids, row.id] };
-      });
+      const ids = context.selectedIds, prior = rows.find(candidate => ids.includes(candidate.id));
+      if (!ids.includes(row.id) && (ids.length >= 5 || prior && (prior.group !== row.group || prior.currency !== row.currency))) return;
+      context.selectedIds = ids.includes(row.id) ? ids.filter(id => id !== row.id) : [...ids, row.id];
+      context.block(context.selectedIds.length > 0);
+      setDraft({ context, page: context.page, selectedIds: context.selectedIds });
     });
   }
+  function movePage(direction) { act(() => {
+    context.page = Math.max(0, Math.min(pages - 1, context.page + direction));
+    setDraft({ context, page: context.page, selectedIds: context.selectedIds });
+  }); }
   function decide(outcome) { act(() => context.control.decide({ requestId: crypto.randomUUID(), outcome,
-    selectedIds: outcome === 'SELECTED' ? selectedIds : [], reviewedIds: outcome === 'SELECTED' ? selectedIds : [] })); }
-  const refresh = () => act(() => { if (!context.control?.snapshot().pending) setReload(value => value + 1); });
+    selectedIds: outcome === 'SELECTED' ? context.selectedIds : [], reviewedIds: outcome === 'SELECTED' ? context.selectedIds : [] })); }
+  const refresh = () => act(() => { if (!context.blocked && !context.control?.snapshot().pending) setReload(value => value + 1); });
   const busy = ['LOADING', 'SAVING', 'RECONCILING'].includes(phase);
   return <section className={styles.panel} aria-label="Private comp selection">
     <header className={styles.header}><div><p className={styles.eyebrow}>Optional · Staff only</p><h3>Private comp selection</h3></div><span className={styles.badge}>Local proposal</span></header>
@@ -133,7 +158,9 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
             : state.availability === 'POLICY_REQUIRED' ? <p className={styles.notice}>Comp review policy is unavailable. You can skip or record no suitable comps; sales cannot be selected.</p>
             : <>
               <div className={styles.summary}><strong>{selectedIds.length} of 5 selected</strong><span>Keep one grade group and currency per decision.</span></div>
-              <p className={styles.small}>Saved evidence observed {state.preview.source.observedAt.slice(0, 10)}. Review window: {state.policy.recencyDays} days, evaluated {state.preview.policy.asOf.slice(0, 10)}.</p>
+              <p className={styles.small}>Saved evidence observed {state.preview.source.observedAt.slice(0, 10)}. {state.policy.recencyDays === null
+                ? 'Recorded sale dates are shown below; no age cutoff is applied to this private evidence.'
+                : `Review window: ${state.policy.recencyDays} days, evaluated ${state.preview.policy.asOf.slice(0, 10)}.`}</p>
               {rows.length === 0 && <p className={styles.notice}>The saved pool contains no listings.</p>}
               <ol className={styles.sales} start={page * 20 + 1}>{rows.slice(page * 20, page * 20 + 20).map((row, index) => {
                 const checked = selectedIds.includes(row.id), incompatible = first && (first.group !== row.group || first.currency !== row.currency);
@@ -146,7 +173,7 @@ export default function StaffCompCuration({ staff, card, enabled = false, access
                   <p id={help} className={styles.reason}>{row.reasonCodes.map(reason => reasons[reason]).join(' ') || (incompatible ? 'Choose the same grade group and currency as your selection.' : !checked && selectedIds.length >= 5 ? 'Five sales selected. Remove one to choose this sale.' : 'Review the listing before selecting it.')}</p>
                 </li>;
               })}</ol>
-              {pages > 1 && <nav className={styles.pagination} aria-label="Saved sale pages"><button disabled={page === 0} onClick={() => act(() => setDraft({ context, selectedIds, page: page - 1 }))}>Previous sales</button><span>Page {page + 1} of {pages}</span><button disabled={page + 1 >= pages} onClick={() => act(() => setDraft({ context, selectedIds, page: page + 1 }))}>Next sales</button></nav>}
+              {pages > 1 && <nav className={styles.pagination} aria-label="Saved sale pages"><button disabled={page === 0} onClick={() => movePage(-1)}>Previous sales</button><span>Page {page + 1} of {pages}</span><button disabled={page + 1 >= pages} onClick={() => movePage(1)}>Next sales</button></nav>}
             </>}
           <div className={styles.actions}><button className={styles.primary} disabled={selectedIds.length === 0 || state.availability !== 'READY'} onClick={() => decide('SELECTED')}>Save private selection</button><button onClick={() => decide('SKIP')}>Skip for now</button><button onClick={() => decide('NO_SUITABLE_COMPS')}>No suitable comps</button></div>
         </>}

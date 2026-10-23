@@ -11,9 +11,9 @@ import { createNativeCompCurationRuntime } from '../../src/comp-curation-runtime
 
 // Synthetic catalog/transaction/auth rows only. Actual SQL/role behavior remains
 // the prior disposable-PG proof, not something this fixture can establish.
-async function catalog(role, owner) {
+async function catalog(role, owner, evidenceSelection = false) {
   const baseline = await readFile(new URL('../../../atlas-standalone-database/sql/baseline.sql', import.meta.url), 'utf8');
-  const proposal = await readFile(new URL('../../sql/comp-curation-proposal.sql', import.meta.url), 'utf8');
+  const proposal = await readFile(new URL(evidenceSelection ? '../../sql/comp-evidence-selection-guard-proposal.sql' : '../../sql/comp-curation-proposal.sql', import.meta.url), 'utf8');
   const functions = ['atlas_manual.authenticate', 'atlas_manual.card_revision', 'atlas_manual.immutable', 'atlas_manual_intake.card_guard']
     .map(name => ({ name, owner, source: baseline.match(new RegExp(`CREATE OR REPLACE FUNCTION ${name.replaceAll('.', '\\.')}\\(.*?AS \\$function\\$(.*?)\\$function\\$;`, 's'))[1] }));
   functions.push({ name: 'atlas_manual.comp_curation_guard', owner, source: proposal.match(/AS \$\$(.*?)\$\$;/s)[1] });
@@ -29,9 +29,9 @@ export function response() {
   return { statusCode: 200, headers: {}, setHeader(key, value) { this.headers[key] = value; },
     status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
 }
-export async function nativeCompRuntimeFixture({ runtimeFactory = createNativeCompCurationRuntime } = {}) {
+export async function nativeCompRuntimeFixture({ runtimeFactory = createNativeCompCurationRuntime, evidenceSelection = false, archiveCompAccess = false } = {}) {
   const f = await curationFixture(), hooks = {}, trace = [], counts = { create: 0, disconnect: 0, auth: 0, artifact: 0, transaction: 0 };
-  const role = 'atlas_synthetic_comp', schemaOwner = 'atlas_synthetic_owner', data = await catalog(role, schemaOwner);
+  const role = 'atlas_synthetic_comp', schemaOwner = 'atlas_synthetic_owner', data = await catalog(role, schemaOwner, evidenceSelection);
   const config = makeAccessConfig({ mode: 'LOCAL_FIXTURE', origin: 'http://127.0.0.1:4318', basePath: '/admin',
     deploymentId: 'synthetic-native', releaseSha: 'a'.repeat(40), databaseUrl: 'postgresql://atlas_synthetic_staff:never-used@127.0.0.1:5432/synthetic?schema=atlas_staff',
     sessionKey: randomBytes(32), phoneKey: randomBytes(32), routerKey: randomBytes(32),
@@ -42,6 +42,7 @@ export async function nativeCompRuntimeFixture({ runtimeFactory = createNativeCo
   const session = { tokenHash: digest(token), browserHash: digest(browser), identityId: identity.id, identity,
     revokedAt: null, expiresAt: new Date('2099-01-01'), controlRevision: 1, accessVersion: 1,
     browser: { controlRevision: 1, expiresAt: new Date('2099-01-01') } };
+  if (archiveCompAccess) { f.card.owner_id = '11111111-1111-4111-8111-111111111111'; f.card.approvers = []; f.card.readers = [identity.id]; }
   const state = { expired: false, discarded: false, failCreate: false };
   const staffDatabase = { client: {}, async transaction(work) {
     counts.auth++; await hooks.auth?.();
@@ -60,6 +61,9 @@ export async function nativeCompRuntimeFixture({ runtimeFactory = createNativeCo
   }, async $queryRawUnsafe(sql, ...args) {
     trace.push(sql); const key = sql.match(/comp-db:([a-z]+)/)?.[1];
     if (key) return structuredClone(data[key]);
+    if (sql.includes('curation-archive:card')) return [structuredClone(f.card)];
+    if (sql.includes('curation-archive:active')) return state.discarded ? [] : [{id:f.cardId}];
+    if (sql.includes('curation-archive:publication')) return [structuredClone(f.row)];
     if (sql.includes('curation:')) return serviceTx.$queryRawUnsafe(sql, ...args);
     if (sql.startsWith('SELECT r.rolsuper')) return [{ unsafe: false }];
     if (sql.startsWith('SELECT * FROM atlas_manual.authenticate')) {
@@ -80,7 +84,9 @@ export async function nativeCompRuntimeFixture({ runtimeFactory = createNativeCo
   }, async $disconnect() { counts.disconnect++; } };
   const options = { enabled: true, environment: {}, auth, staffConfig: config,
     settings: { databaseUrl: `postgresql://${role}:never-used@127.0.0.1:5432/synthetic?schema=atlas_manual`, role, schemaOwner, schemaSha256,
-      origin: config.origin, transportKey: randomBytes(32) }, nonceStore: createPrivateManualNonceStore(),
+      origin: config.origin, transportKey: randomBytes(32),
+      ...(evidenceSelection ? {guardVersion:'EVIDENCE_SELECTION_V1',selectionPolicy:{version:'atlas-comp-evidence-selection-policy-v1',status:'LOCAL_PROPOSAL',method:'private-saved-sold-evidence-v1',recencyDays:null,rightsStatus:'UNRESOLVED'}} : {}),
+      ...(archiveCompAccess ? {archiveCompAccess:true} : {}) }, nonceStore: createPrivateManualNonceStore(),
     createClient(value) { counts.create++; assert.deepEqual(value, { databaseUrl: options.settings.databaseUrl });
       if (state.failCreate) throw Error('Synthetic constructor failure'); return owned; },
     artifactReader: { async read(ref, expected, { signal }) {

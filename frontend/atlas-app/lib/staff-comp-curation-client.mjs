@@ -3,6 +3,8 @@
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const METHOD = 'selected-sold-price-arithmetic-mean-v1';
+const EVIDENCE_METHOD = 'private-saved-sold-evidence-v1';
+const evidencePolicy = v => v?.version === 'atlas-comp-evidence-selection-policy-v1';
 const outcomes = ['SELECTED', 'SKIP', 'NO_SUITABLE_COMPS'];
 export const curationError = (code, status) => Object.assign(new Error(code), { code, ...(status ? { status } : {}) });
 const check = (ok, code = 'COMP_RESPONSE_INVALID') => { if (!ok) throw curationError(code); };
@@ -49,8 +51,9 @@ function source(v) {
 }
 function policy(v, policyHash) {
   check(v === null ? policyHash === null : shape(v, ['version', 'status', 'method', 'recencyDays', 'rightsStatus'])
-    && v.version === 'atlas-comp-curation-policy-v1' && v.status === 'LOCAL_PROPOSAL' && v.method === METHOD
-    && integer(v.recencyDays, 1, 3650) && v.rightsStatus === 'UNRESOLVED' && hash(policyHash));
+    && v.status === 'LOCAL_PROPOSAL' && v.rightsStatus === 'UNRESOLVED' && hash(policyHash)
+    && (evidencePolicy(v) ? v.method === EVIDENCE_METHOD && v.recencyDays === null
+      : v.version === 'atlas-comp-curation-policy-v1' && v.method === METHOD && integer(v.recencyDays, 1, 3650)));
 }
 const reasons = new Set(['IDENTITY_NOT_CONFIRMED', 'MATCH_EVIDENCE_UNRESOLVED', 'MULTI_CARD_OR_REPRODUCTION', 'LISTING_SOURCE_UNAVAILABLE',
   'ACCEPTED_OFFER_UNDISCLOSED', 'SOLD_AMOUNT_UNAVAILABLE', 'CURRENCY_UNAVAILABLE', 'SALE_DATE_UNAVAILABLE', 'SALE_DATE_IN_FUTURE',
@@ -101,7 +104,12 @@ export function parseCurationReceipt(v, expected) {
   binding(v.binding, expected); source(v.source); policy(v.policy, v.policyHash);
   check(v.sourceStatus === (v.source === null ? 'NO_SAVED_POOL' : 'SAVED_POOL'));
   v.selected.forEach(candidate); check(new Set(v.selected.map(c => c.id)).size === v.selected.length);
-  if (v.outcome === 'SELECTED') { check(v.source !== null && v.policy !== null); guidance(v.guidance, v.selected); }
+  if (v.outcome === 'SELECTED') {
+    check(v.source !== null && v.policy !== null && v.selected.length > 0 && v.selected.every(c => c.eligible)
+      && new Set(v.selected.map(c => c.group)).size === 1 && new Set(v.selected.map(c => c.currency)).size === 1);
+    if (evidencePolicy(v.policy)) check(v.guidance === null);
+    else guidance(v.guidance, v.selected);
+  }
   else check(v.selected.length === 0 && v.guidance === null);
   return copy(v);
 }
@@ -122,7 +130,7 @@ export function parseCurationState(v, expected) {
       && shape(p.source, ['previewId', 'sourceHash', 'observedAt']) && p.source.previewId === v.source.previewId
       && p.source.sourceHash === v.source.previewHash && date(p.source.observedAt)
       && shape(p.policy, ['asOf', 'recencyDays', 'method', 'status']) && date(p.policy.asOf) && p.policy.recencyDays === v.policy.recencyDays
-      && p.policy.method === METHOD && p.policy.status === 'LOCAL_PROPOSAL' && Array.isArray(p.candidates) && p.candidates.length <= 1000);
+      && p.policy.method === v.policy.method && p.policy.status === 'LOCAL_PROPOSAL' && Array.isArray(p.candidates) && p.candidates.length <= 1000);
     p.candidates.forEach(candidate); check(new Set(p.candidates.map(c => c.id)).size === p.candidates.length);
   }
   return copy(v);

@@ -50,6 +50,11 @@
       "version": "atlas-standalone-011-comp-curation",
       "file": "sql/011-comp-curation.sql",
       "sqlSha256": "aa19879134c9ad6261fa33ad96ed0f5be6ee2e498b601c3e2f12deee407fe36a"
+    },
+    {
+      "version": "atlas-standalone-012-optional-comp-archive",
+      "file": "sql/012-optional-comp-archive.sql",
+      "sqlSha256": "b2da5f767389d07a3b2afa76b69c8443b0a9304a2ff431e6f2b7e0ee54a284c8"
     }
   ]
 }

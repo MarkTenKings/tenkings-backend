@@ -198,3 +198,54 @@ test('observed deferred controller reads and committed saves are fenced across a
     assert.equal(f.h.afterUnmount, 0); assert.equal(f.f.traffic.filter(r => r.method === 'POST').length, phase === 'save' ? 1 : 0); f.h.unmount();
   }
 });
+
+test('evidence-only panel shows dates without a fictional review window and saves no guidance', async () => {
+  const f = await setup({ selectionPolicy: { version: 'atlas-comp-evidence-selection-policy-v1', status: 'LOCAL_PROPOSAL',
+    method: 'private-saved-sold-evidence-v1', recencyDays: null, rightsStatus: 'UNRESOLVED' } });
+  let tree = await f.ready(); assert.match(words(tree), /no age cutoff/); assert.doesNotMatch(words(tree), /Review window:/);
+  checks(tree)[0].props.onChange(); tree = f.render(); click(tree, 'Save private selection'); await flush();
+  assert.match(words(f.render()), /Private selection saved/); assert.equal(JSON.parse(f.f.rows[0].receipt).guidance, null);
+  assert.equal(f.f.traffic.filter(r => r.method === 'POST').length, 1); f.h.unmount();
+});
+
+test('chosen draft blocks search synchronously and defers a fresh-pool refresh until cleared', async () => {
+  const f = await setup(), blocked = []; f.props.onPendingChange = value => blocked.push(value);
+  let tree = await f.ready(); assert.equal(blocked.at(-1), false);
+  const before = f.f.traffic.filter(r => r.path === f.f.statusPath).length;
+  checks(tree)[0].props.onChange(); assert.equal(blocked.at(-1), true);
+  f.props.refreshToken = 1; tree = f.render(); await flush(); tree = f.render();
+  assert.match(words(tree), /1 of 5 selected/); assert.equal(f.f.traffic.filter(r => r.path === f.f.statusPath).length, before);
+  checks(tree)[0].props.onChange(); assert.equal(blocked.at(-1), false);
+  f.render(); f.render(); await flush(); tree = f.render();
+  assert.equal(f.f.traffic.filter(r => r.path === f.f.statusPath).length, before + 1);
+  assert.match(words(tree), /0 of 5 selected/); assert.equal(f.f.calls.insert, 0); f.h.unmount();
+});
+
+test('Skip locks search before returning and pool refresh cannot discard its uncertain original request', async () => {
+  const f = await setup(), blocked = []; f.props.onPendingChange = value => blocked.push(value);
+  let tree = await f.ready();
+  f.f.hooks.response = ({ method }) => { if (method === 'POST') throw new Error('synthetic lost response'); };
+  click(tree, 'Skip for now'); assert.equal(blocked.at(-1), true);
+  await flush(); tree = f.render(); assert.match(words(tree), /Save outcome not confirmed/);
+  const before = f.f.traffic.filter(r => r.path === f.f.statusPath).length;
+  f.props.refreshToken = 2; tree = f.render(); await flush(); tree = f.render();
+  assert.match(words(tree), /Save outcome not confirmed/); assert.equal(blocked.at(-1), true);
+  assert.equal(f.f.traffic.filter(r => r.path === f.f.statusPath).length, before);
+  click(tree, 'Check recorded decision'); await flush(); assert.equal(blocked.at(-1), false);
+  f.render(); f.render(); await flush(); tree = f.render();
+  assert.match(words(tree), /Previously recorded: skipped for now/);
+  assert.equal(f.f.traffic.filter(r => r.method === 'POST').length, 1); assert.equal(f.f.calls.insert, 1); f.h.unmount();
+});
+
+test('same-turn pagination preserves the choice displayed and sent by the next save', async () => {
+  const f = await setup(), first = structuredClone(f.f.preview.candidates[0]);
+  f.f.preview.candidates = Array.from({ length: 21 }, (_, i) => ({ ...structuredClone(first), sale: { ...first.sale,
+    id: `page:${String(i).padStart(2, '0')}`, listingUrl: `https://www.ebay.com/itm/${123456781000 + i}` } })); f.f.savePreview();
+  let tree = await f.ready();
+  const next = button(tree, 'Next sales').props.onClick;
+  checks(tree)[0].props.onChange(); next(); tree = f.render();
+  assert.match(words(tree), /1 of 5 selected/); assert.match(words(tree), /Page 2 of 2/);
+  click(tree, 'Previous sales'); tree = f.render(); assert.equal(checks(tree)[0].props.checked, true);
+  click(tree, 'Save private selection'); await flush();
+  assert.deepEqual(JSON.parse(f.f.rows[0].receipt).selected.map(row => row.id), ['page:00']); f.h.unmount();
+});

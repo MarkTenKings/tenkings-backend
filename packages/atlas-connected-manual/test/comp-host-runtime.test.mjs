@@ -5,7 +5,7 @@ import { canonical, digest } from '@atlas/manual-service/contract';
 import { createServingCompCuration } from '../scripts/comp-runtime.mjs';
 import { nativeCompRuntimeFixture, deferred } from './fixtures/comp-curation-runtime-fixture.mjs';
 
-async function fixture() {
+async function fixture({ evidenceSelection = false, archiveCompAccess = false } = {}) {
   let env, source, f; const dbInputs = [], storageInputs = [], commands = []; let destroyed = 0;
   class Get { constructor(input) { this.input = input; } }
   class Storage {
@@ -18,13 +18,15 @@ async function fixture() {
     }
     destroy() { destroyed++; }
   }
-  f = await nativeCompRuntimeFixture({ runtimeFactory(options) {
+  f = await nativeCompRuntimeFixture({ evidenceSelection, archiveCompAccess, runtimeFactory(options) {
     source = options;
     env = { ATLAS_STAFF_COMP_CURATION: '1', ATLAS_COMP_DATABASE_URL: options.settings.databaseUrl,
       ATLAS_COMP_DATABASE_ROLE: options.settings.role, ATLAS_COMP_SCHEMA_OWNER: options.settings.schemaOwner,
       ATLAS_COMP_SCHEMA_SHA256: options.settings.schemaSha256, ATLAS_MANUAL_SERVICE_KEY: options.settings.transportKey.toString('base64'),
       ATLAS_COMP_STORAGE_ENDPOINT: 'https://objects.invalid', ATLAS_COMP_STORAGE_REGION: 'synthetic', ATLAS_COMP_STORAGE_BUCKET: 'synthetic-comp',
       ATLAS_COMP_STORAGE_PREFIX: 'atlas-manual-artifacts/v1', ATLAS_COMP_STORAGE_ACCESS_KEY: 'comp-read-access', ATLAS_COMP_STORAGE_SECRET_KEY: 'comp-read-secret-value',
+      ...(evidenceSelection ? {ATLAS_COMP_GUARD_VERSION:'EVIDENCE_SELECTION_V1',ATLAS_COMP_EVIDENCE_SELECTION:'1'} : {}),
+      ...(archiveCompAccess ? {ATLAS_COMP_ARCHIVE_ACCESS:'1'} : {}),
       ATLAS_MANUAL_STORAGE_ACCESS_KEY: 'different-manual', ATLAS_MANUAL_STORAGE_SECRET_KEY: 'different-manual-secret' };
     class Client { constructor(input) {
       dbInputs.push(input); return options.createClient({ databaseUrl: options.settings.databaseUrl });
@@ -76,4 +78,30 @@ test('reusing grading storage credentials is refused before constructing a clien
   assert.throws(() => createServingCompCuration({ env, auth: f.auth, staffConfig: f.config,
     Client() { assert.fail('client must remain uncreated'); }, nonceStore: f.source.nonceStore }), { code: 'COMP_NOT_CONFIGURED' });
   assert.equal(f.dbInputs.length, 0); assert.equal(f.storageInputs.length, 0);
+});
+
+
+test('explicit evidence/archive host flags forward the exact private candidate policy through signed transport', async () => {
+  const f=await fixture({evidenceSelection:true,archiveCompAccess:true});
+  try {
+    const read=await f.request();assert.equal(read.statusCode,200);assert.equal(read.body.result.policy.recencyDays,null);
+    const request=f.input({expectedPolicyHash:read.body.result.policyHash}), saved=await f.request(request);
+    assert.equal(saved.statusCode,200);assert.equal(saved.body.result.guidance,null);assert.equal(f.rows.length,1);
+    assert.deepEqual((await f.request(request)).body,saved.body);
+  } finally {await f.runtime.close();}
+});
+
+test('host opt-ins reject malformed flags/missing candidate guard and remain pinned across waits', async () => {
+  const f=await fixture();await f.runtime.close();
+  for(const patch of [{ATLAS_COMP_EVIDENCE_SELECTION:'true'},{ATLAS_COMP_ARCHIVE_ACCESS:'true'},
+    {ATLAS_COMP_EVIDENCE_SELECTION:'1'}, {ATLAS_COMP_EVIDENCE_SELECTION:'1',ATLAS_COMP_GUARD_VERSION:'SQL011'}]) {
+    assert.throws(()=>createServingCompCuration({env:{...f.env,...patch},auth:f.auth,staffConfig:f.config,
+      Client(){assert.fail('No client');},nonceStore:f.source.nonceStore}),{code:'COMP_NOT_CONFIGURED'});
+  }
+  for(const name of ['ATLAS_COMP_GUARD_VERSION','ATLAS_COMP_EVIDENCE_SELECTION','ATLAS_COMP_ARCHIVE_ACCESS']) {
+    const g=await fixture({evidenceSelection:true,archiveCompAccess:true}),entered=deferred(),resume=deferred();
+    g.hooks.transaction=async()=>{entered.resolve();await resume.promise;};
+    const pending=g.request();await entered.promise;g.env[name]='0';resume.resolve();
+    assert.equal((await pending).statusCode,503);assert.equal(g.rows.length,0);await g.runtime.close();
+  }
 });

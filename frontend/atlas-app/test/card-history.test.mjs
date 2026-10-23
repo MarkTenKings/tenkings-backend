@@ -72,6 +72,7 @@ function harness(extraProps = {}) {
     if (name === './Shell') return { __esModule: true, default: 'Shell' };
     if (name === './ApprovedCardMedia') return { __esModule: true, default: 'ApprovedCardMedia' };
     if (name === './StaffCompCuration') return { __esModule: true, default: 'StaffCompCuration' };
+    if (name === './StaffCompSearch') return { __esModule: true, default: 'StaffCompSearch' };
     if (name === '@atlas/manual-workspace/sold-references') return soldReferences;
     if (name === '@atlas/grading-core/identity') return identity;
     if (name === '@atlas/site-router/report-entry') return { ...reportEntry, rememberCardDetailReportClick: (...args) => f.reportEntries.push(args) };
@@ -290,4 +291,21 @@ test('replaced staff, transport, disabled curation and departed tab refuse stale
     f.render(); old(); f.render();
     assert.match(f.text(), /ATLAS-ABCDEF123456/, change); assert.doesNotMatch(f.text(), /Sign in again/, change); f.dispose();
   }
+});
+
+test('fresh pool reload waits for chosen or unresolved selection and rejects a stale search callback', async () => {
+  const request = () => assert.fail('Parent does not dispatch');
+  const f = harness({ compCurationEnabled: true, compCurationRequest: request, compSearchEnabled: true, compSearchRequest: request }); await f.flush();
+  assert.equal(f.find(node => node.type === 'StaffCompSearch'), null);
+  f.find(node => node.props?.id === 'card-tab-comps').props.onClick(); f.render();
+  const search = () => f.find(node => node.type === 'StaffCompSearch').props;
+  const curation = () => f.find(node => node.type === 'StaffCompCuration').props;
+  const before = curation().refreshToken;
+  curation().onPendingChange(true); f.render(); assert.equal(search().isSelectionPending(), true);
+  search().onReady({ previewId: 'new-pool', approvalActionId: action }); f.render(); assert.equal(curation().refreshToken, before);
+  curation().onPendingChange(false); f.render(); assert.equal(curation().refreshToken, before + 1); assert.equal(search().isSelectionPending(), false);
+  search().onReady({ previewId: 'new-pool', approvalActionId: action }); f.render(); assert.equal(curation().refreshToken, before + 1);
+  const old = search().onReady; f.props.compSearchRequest = () => assert.fail('Replaced transport'); f.render();
+  old({ previewId: 'stale-pool', approvalActionId: action }); f.render(); assert.equal(curation().refreshToken, before + 1);
+  f.dispose();
 });

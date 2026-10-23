@@ -2,6 +2,7 @@ import {createVariantJobStore} from './variant-job-store.mjs';
 import {createVariantReviewService} from './variant-service.mjs';
 import { createMarketJobStore, recordApprovalMarket } from './market-job-store.mjs';
 import { createMarketWorker } from './market-worker.mjs';
+import { createMarketArchiveSearchCapability } from './market-archive-search.mjs';
 import { createReportImageStore } from './report-image-store.mjs';
 import { createReportImages } from './report-images.mjs';
 import { createReportImageRetry } from './report-image-retry.mjs';
@@ -67,7 +68,7 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
   };
 }
 export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,marketLabeler=null,marketAutomaticEnabled=false,marketConcurrency=2,variantReviewEnabled=false,variantReadReferenceImage=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,orderDesk=null,orderDeskInbox=null,gradedCards=null,cardProvenance=null,reportImageProvider=null,reportImageConcurrency=2,readOnlyGradingImages=false,
-  labelStorage=null,processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
+  labelStorage=null,archiveMarketSearch=false,processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null,variantReview=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const autonomous=batchEnabled&&typeof boundary.machineTransaction==='function';
@@ -121,13 +122,15 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix,validateAccess}):null;
   const presentation=presentationEnabled?createPresentationService({repository:presentationRepository,storage,processPhoto:photoProcessor,keyPrefix,run:limited}):null;
   requireThat(!marketAutomaticEnabled || presentationEnabled && marketProvider && typeof boundary.machineTransaction==='function',503,'MARKET_AUTOMATIC_CONFIGURATION_INVALID');
-  const marketJobs=marketAutomaticEnabled?createMarketJobStore({boundary,validateAccess}):null;
+  requireThat(typeof archiveMarketSearch==='boolean' && (!archiveMarketSearch || marketAutomaticEnabled),503,'MARKET_ARCHIVE_CONFIGURATION_INVALID');
+  const archiveSearch=archiveMarketSearch?createMarketArchiveSearchCapability({boundary,artifacts,validateAccess}):null;
+  const marketJobs=marketAutomaticEnabled?createMarketJobStore({boundary,validateAccess,archiveSearch}):null;
   const marketWorker=marketJobs?createMarketWorker({store:marketJobs,approved:finishing,publication,artifacts,provider:marketProvider,concurrency:marketConcurrency,
-    labelMarket:marketLabeler,
+    labelMarket:marketLabeler,archiveSearch,
     authorityFor:job=>boundary.machineOwner({ownerId:job.actor_id,accessVersion:job.access_version}),onError:onWorkerError}):null;
   const market=presentationEnabled?createPresentationMarketService({repository:presentationRepository,approved:finishing,artifacts,provider:marketProvider,
     readPhoto:variantJobs?(url,sha)=>readSavedListingPhoto(url,sha,{cache:variantJobs.cache}):null,
-    run:limited,jobs:marketJobs,worker:marketWorker}):null;
+    run:limited,jobs:marketJobs,worker:marketWorker,archiveSearch}):null;
   requireThat(!researchConfig || presentationEnabled && marketProvider,503,'RESEARCH_PRESENTATION_REQUIRED');
   const dealerOffers=presentationEnabled?createDealerOfferService({repository:presentationRepository,approved:finishing,loadConfiguration:dealerConfiguration}):null;
   const research=researchConfig?createAtlasResearchService({boundary,repository:presentationRepository,approved:finishing,intake,storage,artifacts,receiptClient,validateAccess,config:researchConfig,run:limited}):null;

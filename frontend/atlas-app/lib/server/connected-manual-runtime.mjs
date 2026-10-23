@@ -18,7 +18,8 @@ import { createApprovedManualReader } from '@atlas/connected-manual/publication-
 import { createInspectionAlphaPreviewResolver } from '@atlas/connected-manual/inspection-alpha-preview';
 import { createSoldReferenceProvider } from '@atlas/connected-manual/presentation-market-provider';
 import { createStationSigner } from '@atlas/connected-manual/finishing-station-protocol';
-import { manualResearchSettings, manualDealerConfigurationLoader } from './market-runtime-settings.mjs';
+import { manualArchiveMarketSearchSettings, manualResearchSettings, manualDealerConfigurationLoader } from './market-runtime-settings.mjs';
+import { assertArchiveMarketSearchDatabase } from '../../../../packages/atlas-connected-manual/src/market-archive-database.mjs';
 import { createDealerStaffService } from '../../../../packages/atlas-connected-manual/src/dealer-operations.mjs';
 import { variantReviewSettings, validateVariantRuntimeConfiguration } from './variant-runtime-settings.mjs';
 import { createVariantCatalogService } from '../../../../packages/atlas-connected-manual/src/variant-catalog.mjs';
@@ -85,12 +86,14 @@ export async function validateLearningRuntimeConfiguration({memoryEnabled,learni
   }
 }
 
-export async function validateMarketRuntimeConfiguration({marketAutomaticEnabled,client}) {
+export async function validateMarketRuntimeConfiguration({marketAutomaticEnabled,client,archiveSearchSettings=null}) {
+  requireThat(!archiveSearchSettings || marketAutomaticEnabled,503,'MARKET_ARCHIVE_CONFIGURATION_INVALID');
   if(!marketAutomaticEnabled)return;
   const [installed]=await client.$queryRawUnsafe("SELECT to_regclass('atlas_manual_connected.market_job') IS NOT NULL AS installed");
   requireThat(installed?.installed===true,503,'MARKET_QUEUE_SCHEMA_REQUIRED');
   const [grants]=await client.$queryRawUnsafe("SELECT has_table_privilege(current_user,'atlas_manual_connected.market_job','SELECT') AND has_table_privilege(current_user,'atlas_manual_connected.market_job','INSERT') AND (SELECT bool_and(has_column_privilege(current_user,'atlas_manual_connected.market_job',c,'UPDATE')) FROM unnest(ARRAY['state','attempts','recoveries','claim_id','lease_until','dispatch_id','public_hash','response','response_hash','code','available_at','updated_at','audit']) c) AS allowed");
   requireThat(grants?.allowed===true,503,'MARKET_QUEUE_GRANTS_REQUIRED');
+  if(archiveSearchSettings)await assertArchiveMarketSearchDatabase(client,{schemaSha256:archiveSearchSettings.expectedSchemaSha256});
 }
 
 // Runtime roles deliberately cannot read the schema-owner migration ledger.
@@ -160,6 +163,7 @@ export async function validateLabelRuntimeConfiguration({enabled,client}) {
  * independently restricted manual DB role on every short transaction. */
 export function createServingConnectedManual({env,auth,staffConfig,Client,assertRequest,onWorkerError=()=>{}}) {
   const settings=manualRuntimeSettings(env,staffConfig);if(!settings)return null;
+  const archiveSearchSettings=manualArchiveMarketSearchSettings(env);
   const manualClient=new Client({datasources:{db:{url:settings.databaseUrl}},errorFormat:'minimal'});
   const boundary=createMachineStaffBoundary({auth,manualClient,boundary:createDurableStaffBoundary({auth,manualClient})});
   const client=new S3Client({region:settings.region,endpoint:settings.endpoint,maxAttempts:1,
@@ -231,7 +235,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const marketConcurrency=Number(env.ATLAS_MANUAL_MARKET_CONCURRENCY??2);
   requireThat(!marketAutomaticEnabled||Number.isInteger(marketConcurrency)&&marketConcurrency>=1&&marketConcurrency<=16,503,'MARKET_WORKER_CONFIG_INVALID');
   const connected=createConnectedManual({orderDesk,orderDeskInbox,gradedCards,cardProvenance,variantReviewEnabled:Boolean(variantConfig),variantReadReferenceImage:variantCatalog?.readImage,marketAutomaticEnabled,marketConcurrency,marketLabeler,displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
-    labelStorage,readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
+    labelStorage,archiveMarketSearch:Boolean(archiveSearchSettings),readOnlyGradingImages:env.ATLAS_VARIANT_WORKER_ENABLED==='true',processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.
@@ -247,7 +251,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     await validateReportImageRuntimeConfiguration({enabled:Boolean(reportImageSettings),client:manualClient});
     await validateOrderDeskConfiguration({enabled:Boolean(orderDesk),client:manualClient});
     await validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
-    await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient});
+    await validateMarketRuntimeConfiguration({marketAutomaticEnabled,client:manualClient,archiveSearchSettings});
     await validateLabelRuntimeConfiguration({enabled:labelSheetsEnabled,client:manualClient});
     await validateVariantRuntimeConfiguration({enabled:Boolean(variantConfig),client:manualClient,worker:env.ATLAS_VARIANT_WORKER_ENABLED==='true'});
   };

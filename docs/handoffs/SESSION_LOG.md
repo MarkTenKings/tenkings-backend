@@ -46899,3 +46899,23 @@ The combined staff suite passed 947 of 948 tests; its isolated approved-label pa
 ### 2026-10-22 — R1 source composed after slab release
 
 Local candidate on actual released 20b747badb8ad34c510673c446cf326396bdeeac; 148 exact R1 paths from a0f4951fb7adc34a92ea1cd67d6bd6d4271cb3e1, six reviewed managed-role runtime/test paths from f4ffeedf52fb761f0a28dc0fdab5cad664063c01, and native package-list integration. All successor grading/slab/photo/label paths preserved. Claims/history off, comp policy null. No deployment, migration, grants or runtime binding. Fresh combined qualification remains.
+
+
+### October22,2026 — Optional archive comps isolated successor prepared
+
+Local preparation only. Parent is last-observed live source `a537f922c567795b2a568048c78f595ff8853731`.
+Only57 optional-comp implementation/test/SQL paths are selected from foundation `d0db05e2eeb5f27746e8986b008040bb865f45d6`,
+relative to pre-optional source `433d262c8f467cd862119fe57dbc6a5ae47b00e1`.56 share identical parent bytes or absence.
+The sole runtime overlap was merged while preserving the accepted parent's alpha-preview wiring.
+
+All other production code, assets, package metadata and lockfile are unchanged.
+Grading, Review Queue, approved labels/slab/report behavior, public homepage and customer code
+are exact parent sources. Claims/history and pricing guidance remain disabled.
+
+SQL012 is locally registered and qualified but has not been applied in production.
+No paid search, new title, environment change, runtime restart or deployment occurred.
+Builds and fresh production preflight/release/acceptance remain. Current parent identity must
+be refreshed before effects; no consumed release plan is reusable.
+
+Source selection, hashes and receipt: `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/candidate-01`.
+Retained bounded implementation/database evidence lives in sibling `database-qualification`.

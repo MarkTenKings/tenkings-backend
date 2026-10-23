@@ -7,9 +7,10 @@ import { publicationFixture } from './publication-fixture.mjs';
 import { publishedResearchQuery } from '../src/research-market-query.mjs';
 import { createPresentationMarket, marketPreviewHash, publishedMarketQuery } from '../src/presentation-market.mjs';
 import { createCompCurationService, compCurationGrantSQL } from '../src/comp-curation-service.mjs';
-import { COMP_CURATION_METHOD, compCurationInput, compCurationPolicy } from '../src/comp-curation-contract.mjs';
+import { COMP_CURATION_METHOD, COMP_EVIDENCE_SELECTION_METHOD, compCurationInput, compCurationPolicy, compEvidenceSelectionPolicy } from '../src/comp-curation-contract.mjs';
 
 const policy = { version: 'atlas-comp-curation-policy-v1', status: 'LOCAL_PROPOSAL', method: COMP_CURATION_METHOD, recencyDays: 90, rightsStatus: 'UNRESOLVED' };
+const selectionPolicy = { version: 'atlas-comp-evidence-selection-policy-v1', status: 'LOCAL_PROPOSAL', method: COMP_EVIDENCE_SELECTION_METHOD, recencyDays: null, rightsStatus: 'UNRESOLVED' };
 const now = '2026-10-21T12:00:00.000Z';
 async function fixture() {
   const f = await publicationFixture(); await f.publication.publish({}, f.cardId, f.actionId);
@@ -191,4 +192,82 @@ test('proposal SQL grants no runtime or public exposure and protects append-only
   assert.match(sql, /Curation saved source mismatch/);
   assert.match(sql, /BEFORE UPDATE OR DELETE/); assert.match(sql, /BEFORE TRUNCATE/); assert.match(sql, /REVOKE ALL ON atlas_manual.comp_curation FROM PUBLIC/);
   assert.doesNotMatch(sql, /GRANT|UPDATE atlas_manual\.(?:publication|presentation|presentation_market)|INSERT INTO atlas_manual\.(?:publication|presentation_market)/);
+});
+
+test('evidence-only selection has explicit no-cutoff policy, truthful dates and no valuation or protected mutation', async () => {
+  const f = await fixture(); f.preview.candidates[0].sale.soldAt = '2020-01-01T00:00:00.000Z'; f.savePreview();
+  const service = createCompCurationService({ ...f.options, policy: null, selectionPolicy });
+  const before = canonical({ publication: f.row, market: f.market, packet: f.packet });
+  const state = await service.read(f.staff, f.cardId, { approvalActionId: f.actionId, previewId: f.previewId });
+  assert.equal(state.availability, 'READY'); assert.deepEqual(state.policy, selectionPolicy);
+  assert.equal(state.preview.policy.recencyDays, null); assert.equal(state.preview.policy.method, COMP_EVIDENCE_SELECTION_METHOD);
+  assert(state.preview.candidates.every(c => c.eligible));
+  const input = f.input({ expectedPolicyHash: state.policyHash });
+  const receipt = await service.decide(f.staff, f.cardId, input);
+  assert.equal(receipt.guidance, null); assert.equal(receipt.selected.length, 3);
+  assert.equal(receipt.selected.at(-1).soldAt, '2020-01-01T00:00:00.000Z');
+  assert.equal(receipt.policyHash, digest(canonical(selectionPolicy))); assert.equal(receipt.policy.rightsStatus, 'UNRESOLVED');
+  assert.equal(canonical({ publication: f.row, market: f.market, packet: f.packet }), before);
+  assert.equal(f.rows.length, 1);
+  await assert.rejects(f.service.decide(f.staff, f.cardId, f.input()), { code: 'COMP_SELECTION_INELIGIBLE' });
+});
+
+test('evidence-only mode preserves old receipts and exact retries, then appends a later null-guidance revision', async () => {
+  const f = await fixture(), originalInput = f.input(), original = await f.service.decide(f.staff, f.cardId, originalInput);
+  const originalRow = canonical(f.rows[0]), service = createCompCurationService({ ...f.options, policy: null, selectionPolicy });
+  const state = await service.read(f.staff, f.cardId, { approvalActionId: f.actionId, previewId: f.previewId });
+  assert.deepEqual(state.selection, original); assert.equal(state.selection.guidance.meanMinor, 2000);
+  const artifactReads = f.calls.artifact;
+  assert.deepEqual(await service.decide(f.staff, f.cardId, originalInput), original);
+  assert.equal(f.calls.artifact, artifactReads);
+  const input = f.input({ expectedPolicyHash: state.policyHash }), saved = await service.decide(f.staff, f.cardId, input);
+  assert.equal(saved.revision, 2); assert.equal(saved.guidance, null); assert.equal(canonical(f.rows[0]), originalRow);
+  const reads = f.calls.artifact;
+  assert.deepEqual(await service.decide(f.staff, f.cardId, input), saved); assert.equal(f.calls.artifact, reads);
+  await assert.rejects(service.decide(f.staff, f.cardId, { ...input, selectedIds: input.selectedIds.slice(0, 1), reviewedIds: input.reviewedIds.slice(0, 1) }), { code: 'COMP_REQUEST_CONFLICT' });
+  assert.equal(f.rows.length, 2);
+});
+
+test('evidence-only mode retains source/date/identity/designation/price/lot exclusions and group boundaries', async () => {
+  for (const alter of [p => { p.candidates[0].sale.soldAt = '2026-10-22T12:00:00.000Z'; },
+    p => { p.candidates[0].sale.soldAt = null; }, p => { p.candidates[0].match = 'UNKNOWN'; },
+    p => { p.candidates[0].sale.designation = null; }, p => { p.candidates[0].sale.priceBasis = 'accepted_offer_unknown'; },
+    p => { p.candidates[0].sale.title = 'Fixture multi card lot'; }, p => { p.candidates[0].sale.listingUrl = 'https://example.invalid/itm/123'; },
+    p => { p.candidates[1].sale.listingUrl = p.candidates[0].sale.listingUrl; }]) {
+    const f = await fixture(); alter(f.preview); f.savePreview();
+    const service = createCompCurationService({ ...f.options, policy: null, selectionPolicy });
+    await assert.rejects(service.decide(f.staff, f.cardId, f.input({ expectedPolicyHash: compEvidenceSelectionPolicy(selectionPolicy).hash })), { code: 'COMP_SELECTION_INELIGIBLE' });
+    assert.equal(f.rows.length, 0);
+  }
+  for (const [field, value, code] of [['grader', 'SGC', 'COMP_GRADE_GROUP_MIXED'], ['currency', 'CAD', 'COMP_CURRENCY_MIXED']]) {
+    const f = await fixture(); f.preview.candidates[0].sale[field] = value; f.savePreview();
+    const service = createCompCurationService({ ...f.options, policy: null, selectionPolicy });
+    await assert.rejects(service.decide(f.staff, f.cardId, f.input({ expectedPolicyHash: compEvidenceSelectionPolicy(selectionPolicy).hash })), { code });
+    assert.equal(f.rows.length, 0);
+  }
+});
+
+test('evidence-only policy is explicit and cannot adopt pricing, rights, recency or stale source/revision', async () => {
+  const f = await fixture();
+  assert.throws(() => createCompCurationService({ ...f.options, selectionPolicy }), { code: 'COMP_CURATION_CONFIGURATION_INVALID' });
+  for (const extra of [{ method: COMP_CURATION_METHOD }, { rightsStatus: 'LICENSED' }, { recencyDays: 90 }, { valuation: true }])
+    assert.throws(() => compEvidenceSelectionPolicy({ ...selectionPolicy, ...extra }));
+  const service = createCompCurationService({ ...f.options, policy: null, selectionPolicy });
+  const hash = compEvidenceSelectionPolicy(selectionPolicy).hash;
+  for (const [extra, code] of [[{ expectedPolicyHash: 'a'.repeat(64) }, 'COMP_POLICY_CHANGED'],
+    [{ expectedPreviewHash: 'b'.repeat(64) }, 'COMP_SOURCE_CHANGED'], [{ expectedSelectionRevision: 5 }, 'COMP_SELECTION_REVISION_STALE']])
+    await assert.rejects(service.decide(f.staff, f.cardId, f.input({ expectedPolicyHash: hash, ...extra })), { code });
+  assert.equal(f.rows.length, 0);
+});
+
+test('inert evidence guard proposal retains SQL011 and its entire legacy priced branch; no registration or grants', async () => {
+  const original = await readFile(new URL('../../atlas-standalone-database/sql/011-comp-curation.sql', import.meta.url), 'utf8');
+  assert.equal(digest(original), 'aa19879134c9ad6261fa33ad96ed0f5be6ee2e498b601c3e2f12deee407fe36a');
+  const proposal = await readFile(new URL('../sql/comp-evidence-selection-guard-proposal.sql', import.meta.url), 'utf8');
+  const from = original.indexOf(" IF d->>'outcome'='SELECTED' THEN"), to = original.indexOf('CREATE TRIGGER curation_guard');
+  assert(proposal.includes(original.slice(from, to).replace(" IF d->>'outcome'='SELECTED' THEN", " ELSIF d->>'outcome'='SELECTED' THEN")));
+  assert(proposal.includes(original.slice(original.indexOf('CREATE FUNCTION'), from).replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION')));
+  assert.match(proposal, /r->'guidance' IS DISTINCT FROM 'null'::jsonb/);
+  assert(proposal.includes(canonical(selectionPolicy)));
+  assert.doesNotMatch(proposal, /\b(?:GRANT|REVOKE|CREATE TABLE|CREATE TRIGGER|INSERT INTO|UPDATE atlas_manual)\b/);
 });

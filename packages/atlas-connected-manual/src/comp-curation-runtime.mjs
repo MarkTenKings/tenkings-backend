@@ -7,13 +7,16 @@ import { DurableStaffAuth } from '../../../frontend/atlas-app/lib/server/access/
 import { createStaffCompCurationPrivateAdapter } from '../../../frontend/atlas-app/lib/server/staff-comp-curation-private-adapter.mjs';
 import { compTransportRoute } from '../../../frontend/atlas-app/lib/staff-comp-curation-transport-contract.mjs';
 import { failure } from '../../../frontend/atlas-app/lib/server/staff-comp-curation-transport-boundary.mjs';
-import { createCompCurationDatabase } from './comp-curation-database.mjs';
+import { compEvidenceSelectionPolicy } from './comp-curation-contract.mjs';
+import { createCompCurationDatabase, COMP_EVIDENCE_GUARD_VERSION } from './comp-curation-database.mjs';
 import { createPublicationRepository } from './publication-repository.mjs';
 import { createManualFinishing } from './finishing.mjs';
 
 const refuse = ok => requireThat(ok, 503, 'COMP_NOT_CONFIGURED');
 const keys = ['enabled', 'environment', 'auth', 'staffConfig', 'settings', 'createClient', 'artifactReader', 'nonceStore'];
 const settingKeys = ['databaseUrl', 'role', 'schemaOwner', 'schemaSha256', 'origin', 'transportKey'];
+const optionalSettingKeys = ['guardVersion', 'selectionPolicy', 'archiveCompAccess'];
+const allSettingKeys = [...settingKeys, ...optionalSettingKeys];
 const name = value => typeof value === 'string' && /^[a-z][a-z0-9_]{0,62}$/.test(value) && value !== 'public' && !value.startsWith('pg_');
 const exactKeys = (value, allowed) => value && Object.getPrototypeOf(value) === Object.prototype
   && Reflect.ownKeys(value).every(key => allowed.includes(key));
@@ -38,10 +41,17 @@ export function createNativeCompCurationRuntime(options = {}) {
   const authNames = ['authenticate', 'maybeAuthenticate', 'current', 'actor', 'digest', 'jar'];
   refuse(authNames.every(key => auth[key] === DurableStaffAuth.prototype[key]));
   refuse(['sessionKey', 'phoneKey', 'routerKey'].every(key => Buffer.isBuffer(staffConfig[key]) && staffConfig[key].length === 32));
-  refuse(exactKeys(settings, settingKeys) && settingKeys.every(key => Object.hasOwn(settings, key))
+  refuse(exactKeys(settings, allSettingKeys) && settingKeys.every(key => Object.hasOwn(settings, key))
     && name(settings.role) && name(settings.schemaOwner) && settings.role !== settings.schemaOwner
     && /^[a-f0-9]{64}$/.test(settings.schemaSha256 ?? ''));
   const { databaseUrl, role, schemaOwner, schemaSha256, origin, transportKey } = settings;
+  const guardVersion = settings.guardVersion === undefined ? 'SQL011' : settings.guardVersion;
+  const selectionPolicy = settings.selectionPolicy === undefined ? null : settings.selectionPolicy;
+  const archiveCompAccess = settings.archiveCompAccess === undefined ? false : settings.archiveCompAccess;
+  refuse(['SQL011', COMP_EVIDENCE_GUARD_VERSION].includes(guardVersion) && typeof archiveCompAccess === 'boolean');
+  const selection = compEvidenceSelectionPolicy(selectionPolicy);
+  refuse(selection === null || guardVersion === COMP_EVIDENCE_GUARD_VERSION);
+  const optionalPins = optionalSettingKeys.map(key => [key, settings[key]]), policyText = JSON.stringify(selectionPolicy);
   let dbUrl, authUrl, publicUrl;
   try { dbUrl = new URL(databaseUrl); authUrl = new URL(staffConfig.databaseUrl); publicUrl = new URL(origin); } catch { refuse(false); }
   refuse(['postgres:', 'postgresql:'].includes(dbUrl.protocol) && ['postgres:', 'postgresql:'].includes(authUrl.protocol)
@@ -72,8 +82,9 @@ export function createNativeCompCurationRuntime(options = {}) {
       && auth.config === staffConfig && auth.actors === actors && auth.database === database
       && database.client === authClient && database.transaction === dbTransaction && database.readTransaction === dbRead
       && authMethods.every(([key, fn]) => auth[key] === fn) && configCurrent()
-      && options.settings === settings && exactKeys(settings, settingKeys)
+      && options.settings === settings && exactKeys(settings, allSettingKeys)
       && settings.databaseUrl === databaseUrl && settings.role === role && settings.schemaOwner === schemaOwner
+      && optionalPins.every(([key,value]) => settings[key] === value) && JSON.stringify(selectionPolicy) === policyText
       && settings.schemaSha256 === schemaSha256 && settings.origin === origin && settings.transportKey === transportKey && transportKey.equals(keyCopy)
       && options.createClient === createClient && options.artifactReader === artifactReader && artifactReader.read === readArtifact
       && exactKeys(artifactReader, ['read']) && options.nonceStore === nonceStore && nonceStore.consume === consume
@@ -90,7 +101,7 @@ export function createNativeCompCurationRuntime(options = {}) {
     }
     refuse(client === value && typeof transaction === 'function'); current(); return value;
   }).catch(error => { initializationFailed = true; throw error; });
-  const db = createCompCurationDatabase({ role, schemaOwner, schemaSha256, client: Object.freeze({
+  const db = createCompCurationDatabase({ role, schemaOwner, schemaSha256, guardVersion, client: Object.freeze({
     async $transaction(work, transactionOptions) {
       current(); const value = await owned(); current();
       const result = await Reflect.apply(transaction, value, [async tx => {
@@ -114,7 +125,7 @@ export function createNativeCompCurationRuntime(options = {}) {
   const adapter = createStaffCompCurationPrivateAdapter({ enabled: true, key: keyCopy, origin, nonceStore,
     native: { environment, auth: Object.freeze({ async authenticate(...args) {
       current(); const value = await Reflect.apply(authMethods[0][1], auth, args); current(); return value;
-    } }), boundary, approved: Object.freeze({ loadPacket: finishing.loadPacket }), artifacts, validateAccess } });
+    } }), boundary, approved: Object.freeze({ loadPacket: finishing.loadPacket }), artifacts, validateAccess, selectionPolicy, archiveCompAccess } });
   current();
   return Object.freeze({
     get configuredForDisplay() { try { current(); return !closing; } catch { return false; } },

@@ -26,6 +26,11 @@ const SOURCE_PINS = Object.freeze({
   "atlas_manual.comp_curation_guard": "81f9eb9b687a761d3d9777eb1d65c6351ed218cfff38e07701040d1c33273cfb"
 });
 
+// Explicit candidate contract; absence keeps the deployed SQL011 source pin.
+export const COMP_EVIDENCE_GUARD_VERSION = 'EVIDENCE_SELECTION_V1';
+const evidenceGuardSha256 = '8d2b7e0da7e1309334cce43a3c7382fdb4c63e48d771b95971aa23833a410e51';
+const validGuardVersion = value => value === 'SQL011' || value === COMP_EVIDENCE_GUARD_VERSION;
+
 /** Read-only catalog material for an OFFLINE, reviewed installation receipt.
  * Not an activation helper: this never accepts its own output as trusted. */
 export async function inspectCompCurationSchema(tx) {
@@ -63,8 +68,8 @@ export async function inspectCompCurationSchema(tx) {
   return { tables, functions, sha256: sha(stable(normalized)) };
 }
 
-export async function assertCompCurationDatabase(tx, { role, schemaOwner, schemaSha256 }) {
-  deny(validName(role) && validName(schemaOwner) && role !== schemaOwner && /^[a-f0-9]{64}$/.test(schemaSha256));
+export async function assertCompCurationDatabase(tx, { role, schemaOwner, schemaSha256, guardVersion = 'SQL011' }) {
+  deny(validGuardVersion(guardVersion) && validName(role) && validName(schemaOwner) && role !== schemaOwner && /^[a-f0-9]{64}$/.test(schemaSha256));
   const roles = await tx.$queryRawUnsafe(`/* comp-db:role */ SELECT current_user AS name,session_user AS session_name,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('role',pg_get_userbyid(m.roleid),'member',pg_get_userbyid(m.member),
       'admin',m.admin_option,'inherit',m.inherit_option,'set',m.set_option,'grantorSuperuser',g.rolsuper))
@@ -122,7 +127,8 @@ export async function assertCompCurationDatabase(tx, { role, schemaOwner, schema
     && table.triggers.every(trigger => trigger.enabled === 'O') && table.constraints.every(c => c.validated)
     && table.indexes.every(i => i.valid && i.ready));
   for (const fn of schema.functions) deny(fn.owner === schemaOwner);
-  for (const [name, hash] of Object.entries(SOURCE_PINS)) {
+  for (const [name, legacyHash] of Object.entries(SOURCE_PINS)) {
+    const hash = name === 'atlas_manual.comp_curation_guard' && guardVersion === COMP_EVIDENCE_GUARD_VERSION ? evidenceGuardSha256 : legacyHash;
     const found = schema.functions.filter(fn => fn.name === name); deny(found.length === 1 && sha(found[0].source) === hash);
   }
   return schema.sha256;
@@ -134,12 +140,13 @@ export async function assertCompCurationDatabase(tx, { role, schemaOwner, schema
  * disconnects a caller-owned client or promises a committed action rolled back.
  */
 export function createCompCurationDatabase(options) {
-  const keys = ['client', 'role', 'schemaOwner', 'schemaSha256'];
+  const keys = ['client', 'role', 'schemaOwner', 'schemaSha256', 'guardVersion'];
   deny(options && Object.getPrototypeOf(options) === Object.prototype && Reflect.ownKeys(options).every(key => keys.includes(key)));
-  const { client, role, schemaOwner, schemaSha256 } = options, transaction = client?.$transaction;
-  deny(typeof transaction === 'function' && validName(role) && validName(schemaOwner) && role !== schemaOwner && /^[a-f0-9]{64}$/.test(schemaSha256));
+  const { client, role, schemaOwner, schemaSha256, guardVersion = 'SQL011' } = options, transaction = client?.$transaction;
+  deny(validGuardVersion(guardVersion) && typeof transaction === 'function' && validName(role) && validName(schemaOwner) && role !== schemaOwner && /^[a-f0-9]{64}$/.test(schemaSha256));
   let closed = false;
   const current = () => deny(!closed && options.client === client && client.$transaction === transaction
+    && (options.guardVersion ?? 'SQL011') === guardVersion && options.guardVersion !== null
     && options.role === role && options.schemaOwner === schemaOwner && options.schemaSha256 === schemaSha256
     && Reflect.ownKeys(options).every(key => keys.includes(key)));
   return Object.freeze({
@@ -150,9 +157,9 @@ export function createCompCurationDatabase(options) {
         await tx.$executeRawUnsafe("SET LOCAL search_path=pg_catalog");
         await tx.$executeRawUnsafe("SET LOCAL lock_timeout='1500ms'");
         await tx.$executeRawUnsafe("SET LOCAL statement_timeout='3000ms'");
-        await assertCompCurationDatabase(tx, { role, schemaOwner, schemaSha256 }); current();
+        await assertCompCurationDatabase(tx, { role, schemaOwner, schemaSha256, guardVersion }); current();
         const result = await work(tx); current();
-        await assertCompCurationDatabase(tx, { role, schemaOwner, schemaSha256 }); current();
+        await assertCompCurationDatabase(tx, { role, schemaOwner, schemaSha256, guardVersion }); current();
         await tx.$executeRawUnsafe('SET CONSTRAINTS ALL IMMEDIATE');
         return result;
       }, { maxWait: 3000, timeout: 8000 }]);
