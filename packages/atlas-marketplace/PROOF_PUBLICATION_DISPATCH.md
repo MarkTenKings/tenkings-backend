@@ -126,7 +126,19 @@ Separate `complete` and `unknown` modes accept one root-supplied public original
 emit the exact durable REGISTERED identity, and wait for bounded `SUBMIT\n`
 before calling the actual client. Root owns the real broker/fault setup. No fake
 peer, observer, outcome, receipt or synthetic positive capability is available.
-Unknown outcomes retain the fixture lock. No target execution is claimed until
-root records the actual run; passing older worker/C1 cases is not evidence for
-this new join. D2 retention settlement and the genuine C0/qualified physical
+Unknown outcomes retain the fixture lock. The complete/unknown modes have not
+been executed; passing older worker/C1 cases is not evidence for this new join. D2 retention settlement and the genuine C0/qualified physical
 composition remain unimplemented in this tranche.
+
+Root executed the frozen `8b37c773` metadata closure on the isolated Linux target
+with native addon `e7eed62c5b791660dec2a595dec74a626a3fa8e04c66bcdb6fb535f8ab03ea03`.
+All three owned commands exited 0; publisher UID65530 metadata cases completed
+in 5.579 seconds. The twelve prior ledger sets, installed runtime/control pins
+and earlier publisher fixture metadata stayed unchanged; the guard remained
+stopped and the parent empty/frozen. No Engine or cgroup mutation occurred.
+Evidence: target-proposal packet `ops/publication-dispatch-metadata-01/receipt.json`,
+outer stdout SHA256 `8956ed990f31777b3e9c9384013899476eddceb2f2602919d9c0fd1cc249ca99`,
+remote receipt SHA256 `205e18d517f2d45c8109345cab6f5eadc42536ccb141caaa8187d06cdca25aea`.
+This establishes the new metadata/storage and genuine prepared-discard boundary
+only. Actual decoder `COMPLETE_CLEAN`/`UNKNOWN` settlement, power loss, canonical
+authority and physical admission remain NOT_RUN or unimplemented as stated above.
