@@ -464,46 +464,96 @@ static bool worker_fd_stat(int dir,const char *name,struct stat *st,uint64_t *mo
 
 static void execute_worker(napi_env env,void *data) {
   (void)env;worker_work *work=data;worker_record *w=work->record;worker_snapshot *s=w->snapshot;
-  work->error="DECODER_NATIVE_INPUT_OBSERVATION";
+  /* Closed phase codes disclose no observed path, descriptor contents or errno.
+   * They identify the refused check, not a cause or permission to retry. */
+  work->error="DECODER_NATIVE_INPUT_IDENTITY_INITIAL";
   if(!worker_identity(w))return;
+  work->error="DECODER_NATIVE_INPUT_HOST_NAMESPACES";
   int host=open("/proc/1",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);
   if(host<0)return;
   bool host_ok=worker_namespaces(w,host,s->host_ns);close(host);if(!host_ok)return;
-  if(!worker_link(w,w->proc_fd,"exe",s->executable,sizeof(s->executable))||!worker_text(w,w->proc_fd,"cmdline",s->command,sizeof(s->command),&s->command_size)||
-    !worker_text(w,w->proc_fd,"mountinfo",s->mounts,sizeof(s->mounts),NULL)||!worker_text(w,w->proc_fd,"limits",s->limits,sizeof(s->limits),NULL))return;
+  work->error="DECODER_NATIVE_INPUT_EXECUTABLE_READ";
+  if(!worker_link(w,w->proc_fd,"exe",s->executable,sizeof(s->executable)))return;
+  work->error="DECODER_NATIVE_INPUT_COMMAND_READ";
+  if(!worker_text(w,w->proc_fd,"cmdline",s->command,sizeof(s->command),&s->command_size))return;
+  work->error="DECODER_NATIVE_INPUT_MOUNTS_READ";
+  if(!worker_text(w,w->proc_fd,"mountinfo",s->mounts,sizeof(s->mounts),NULL))return;
+  work->error="DECODER_NATIVE_INPUT_LIMITS_READ";
+  if(!worker_text(w,w->proc_fd,"limits",s->limits,sizeof(s->limits),NULL))return;
+  work->error="DECODER_NATIVE_INPUT_NETWORK_READ";
   int net=worker_directory(w->proc_fd,"net");if(net<0)return;bool net_ok=worker_text(w,net,"dev",s->network,sizeof(s->network),NULL);close(net);if(!net_ok)return;
+  work->error="DECODER_NATIVE_INPUT_RESOURCES_READ";
   for(size_t i=0;i<7;i++)if(!worker_text(w,w->scope_fd,worker_resources[i],s->resources[i],sizeof(s->resources[i]),NULL))return;
   int numbers[WORKER_TASKS],again[WORKER_TASKS];size_t count=0,count_again=0;
+  work->error="DECODER_NATIVE_INPUT_TASK_ENUMERATE";
   if(!worker_numbers(w,w->proc_fd,"task",numbers,WORKER_TASKS,&count)||count<1)return;
+  work->error="DECODER_NATIVE_INPUT_TASK_DIRECTORY";
   int tasks=worker_directory(w->proc_fd,"task");if(tasks<0)return;bool task_ok=true;
   for(size_t i=0;i<count;i++){
     worker_task *t=&s->tasks[i];t->tid=numbers[i];char name[32];snprintf(name,sizeof(name),"%d",t->tid);int fd=worker_directory(tasks,name);
-    if(fd<0){task_ok=false;break;}int attr=worker_directory(fd,"attr");
-    task_ok=attr>=0&&worker_text(w,fd,"status",t->status,sizeof(t->status),NULL)&&worker_text(w,attr,"current",t->apparmor,sizeof(t->apparmor),NULL)&&worker_namespaces(w,fd,t->ns);
+    if(fd<0){work->error=errno==ENOENT?"DECODER_NATIVE_INPUT_TASK_GONE":"DECODER_NATIVE_INPUT_TASK_OPEN";task_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_TASK_ATTR_OPEN";
+    int attr=worker_directory(fd,"attr");task_ok=attr>=0;
+    if(task_ok){work->error="DECODER_NATIVE_INPUT_TASK_STATUS_READ";task_ok=worker_text(w,fd,"status",t->status,sizeof(t->status),NULL);}
+    if(task_ok){work->error="DECODER_NATIVE_INPUT_TASK_APPARMOR_READ";task_ok=worker_text(w,attr,"current",t->apparmor,sizeof(t->apparmor),NULL);}
+    if(task_ok){work->error="DECODER_NATIVE_INPUT_TASK_NAMESPACES";task_ok=worker_namespaces(w,fd,t->ns);}
     if(attr>=0)close(attr);
     close(fd);if(!task_ok)break;
   }close(tasks);if(!task_ok)return;s->task_count=count;
   int fds[WORKER_FDS],fds_again[WORKER_FDS];size_t fd_count=0,fd_count_again=0;
+  work->error="DECODER_NATIVE_INPUT_FD_ENUMERATE";
   if(!worker_numbers(w,w->proc_fd,"fd",fds,WORKER_FDS,&fd_count)||fd_count<3)return;
+  work->error="DECODER_NATIVE_INPUT_FD_DIRECTORY";
   int fd_dir=worker_directory(w->proc_fd,"fd"),info_dir=worker_directory(w->proc_fd,"fdinfo");
   if(fd_dir<0||info_dir<0){if(fd_dir>=0)close(fd_dir);if(info_dir>=0)close(info_dir);return;}bool fd_ok=true;
   for(size_t i=0;i<fd_count;i++){
     worker_fd *f=&s->fds[i];f->number=fds[i];char name[32];snprintf(name,sizeof(name),"%d",f->number);
     uint64_t flags,ino,mount,after_flags,after_ino,after_mount,final_mount;struct stat final_stat;
-    if(!worker_link(w,fd_dir,name,f->target,sizeof(f->target))||!worker_fd_target(f->target)||
-      !worker_text(w,info_dir,name,f->info,sizeof(f->info),NULL)||!worker_fd_fields(f->info,&flags,&ino,&mount)||
-      !worker_fd_stat(fd_dir,name,&f->st,&f->mount_id)||ino!=f->st.st_ino||mount!=f->mount_id){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_LINK_READ";
+    if(!worker_link(w,fd_dir,name,f->target,sizeof(f->target))){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_TARGET";
+    if(!worker_fd_target(f->target)){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_INFO_READ";
+    if(!worker_text(w,info_dir,name,f->info,sizeof(f->info),NULL)){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_INFO_FIELDS";
+    if(!worker_fd_fields(f->info,&flags,&ino,&mount)){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_STAT_READ";
+    if(!worker_fd_stat(fd_dir,name,&f->st,&f->mount_id)){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_IDENTITY_MATCH";
+    if(ino!=f->st.st_ino||mount!=f->mount_id){fd_ok=false;break;}
     if(S_ISREG(f->st.st_mode)||S_ISCHR(f->st.st_mode))f->root_match=worker_regular_matches(w,f->target,&f->st);
     char after[4096],after_info[4096];
-    if(!worker_link(w,fd_dir,name,after,sizeof(after))||strcmp(after,f->target)!=0||
-      !worker_text(w,info_dir,name,after_info,sizeof(after_info),NULL)||!worker_fd_fields(after_info,&after_flags,&after_ino,&after_mount)||
-      flags!=after_flags||ino!=after_ino||mount!=after_mount||!worker_fd_stat(fd_dir,name,&final_stat,&final_mount)||final_mount!=mount||
+    work->error="DECODER_NATIVE_INPUT_FD_LINK_REREAD";
+    if(!worker_link(w,fd_dir,name,after,sizeof(after))){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_TARGET_CHANGED";
+    if(strcmp(after,f->target)!=0){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_INFO_REREAD";
+    if(!worker_text(w,info_dir,name,after_info,sizeof(after_info),NULL)){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_INFO_REPARSE";
+    if(!worker_fd_fields(after_info,&after_flags,&after_ino,&after_mount)){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_FIELDS_CHANGED";
+    if(flags!=after_flags||ino!=after_ino||mount!=after_mount){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_STAT_REREAD";
+    if(!worker_fd_stat(fd_dir,name,&final_stat,&final_mount)){fd_ok=false;break;}
+    work->error="DECODER_NATIVE_INPUT_FD_STAT_CHANGED";
+    if(final_mount!=mount||
       final_stat.st_dev!=f->st.st_dev||final_stat.st_ino!=f->st.st_ino||final_stat.st_mode!=f->st.st_mode||
       final_stat.st_uid!=f->st.st_uid||final_stat.st_gid!=f->st.st_gid||final_stat.st_rdev!=f->st.st_rdev){fd_ok=false;break;}
   }close(fd_dir);close(info_dir);if(!fd_ok)return;s->fd_count=fd_count;
-  if(!worker_numbers(w,w->proc_fd,"task",again,WORKER_TASKS,&count_again)||count!=count_again||memcmp(numbers,again,count*sizeof(int))||
-    !worker_numbers(w,w->proc_fd,"fd",fds_again,WORKER_FDS,&fd_count_again)||fd_count!=fd_count_again||memcmp(fds,fds_again,fd_count*sizeof(int))||!worker_identity(w))return;
-  char final_exe[512];if(!worker_link(w,w->proc_fd,"exe",final_exe,sizeof(final_exe))||strcmp(final_exe,s->executable))return;
+  work->error="DECODER_NATIVE_INPUT_TASK_REENUMERATE";
+  if(!worker_numbers(w,w->proc_fd,"task",again,WORKER_TASKS,&count_again))return;
+  work->error="DECODER_NATIVE_INPUT_TASK_SET_CHANGED";
+  if(count!=count_again||memcmp(numbers,again,count*sizeof(int)))return;
+  work->error="DECODER_NATIVE_INPUT_FD_REENUMERATE";
+  if(!worker_numbers(w,w->proc_fd,"fd",fds_again,WORKER_FDS,&fd_count_again))return;
+  work->error="DECODER_NATIVE_INPUT_FD_SET_CHANGED";
+  if(fd_count!=fd_count_again||memcmp(fds,fds_again,fd_count*sizeof(int)))return;
+  work->error="DECODER_NATIVE_INPUT_IDENTITY_FINAL";
+  if(!worker_identity(w))return;
+  char final_exe[512];work->error="DECODER_NATIVE_INPUT_EXECUTABLE_REREAD";
+  if(!worker_link(w,w->proc_fd,"exe",final_exe,sizeof(final_exe)))return;
+  work->error="DECODER_NATIVE_INPUT_EXECUTABLE_CHANGED";
+  if(strcmp(final_exe,s->executable))return;
   work->error=NULL;
 }
 static napi_status worker_string(napi_env env,napi_value object,const char *name,const char *text){napi_value value;napi_status s=napi_create_string_utf8(env,text,NAPI_AUTO_LENGTH,&value);return s==napi_ok?napi_set_named_property(env,object,name,value):s;}

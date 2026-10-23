@@ -91,8 +91,10 @@ export function createProofDecoderTargetEngineExecutor(options={}) {
                 inputBarrierObserved:state.inputControls!==null};
             }catch{} // A diagnostic failure must not replace the original hold.
           }
+          const cleanupState=cleanup.status();
           lastFailure=decoderFreeze({classification:'UNQUALIFIED',jobId:run.jobId,requestId:initialRow.identity.requestId,
-            code:failure,workerOutcome:workerReport?.outcome??null,guard:guard.status().failure,transfer,cleanup:cleanup.status()});
+            code:failure,workerOutcome:workerReport?.outcome??null,guard:guard.status().failure,transfer,
+            cleanup:cleanupState.jobId===run.jobId?cleanupState:null});
           poison(run.jobId);
         }finally{
           session?.close();original.fill(0);seccomp.fill(0);run.signal?.removeEventListener('abort',abort);

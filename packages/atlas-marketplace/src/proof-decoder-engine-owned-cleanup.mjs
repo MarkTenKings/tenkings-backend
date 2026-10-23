@@ -298,14 +298,15 @@ async function controlRequest(c,row,operation,deadline) {
 export function createProofDecoderOwnedEngineCleanup(options={}) {
   const input=engineDataOptions(options,[],['enabled','plan','targetRegistry','parentController','targetBinding','socketPath','apiVersion','linuxObserver']);
   if(input.enabled!==true)return null;
-  const c=context(input);let active=false,closed=false,phases=[];
+  const c=context(input);let active=false,closed=false,phases=[],phaseJobId=null;
   // Bounded timing observations only; never used as a lease or permission.
   function note(phase){try{if(phases.length<16)phases.push({phase,atBootNs:String(now(c.controller))});}catch{}}
   async function finish(jobId,probe){
     const jobs=probe?probeJobs:decodedJobs;
-      check(!active&&!closed,'ENGINE_CLEANUP_UNAVAILABLE');active=true;phases=[];note('ENTRY');
+      check(!active&&!closed,'ENGINE_CLEANUP_UNAVAILABLE');active=true;phases=[];phaseJobId=null;note('ENTRY');
       try{
         let row=current(c,jobId);
+        phaseJobId=row.identity.jobId;
         const saved=jobs.get(c.registry)?.get(jobId);
         check(saved?.complete&&same(saved.identity,row.identity)&&saved.waitExitCode!==undefined,probe?'ENGINE_CLEANUP_PROBE_REQUIRED':'ENGINE_CLEANUP_DECODE_REQUIRED');
         if(probe){assertProofDecoderControlProbeRequest(row.requestPlan);check(c.plan.profile.image===PROOF_DECODER_CONTROL_PROBE_IMAGE&&saved.waitExitCode===0,'ENGINE_CLEANUP_PROBE_REQUIRED');}
@@ -354,7 +355,7 @@ export function createProofDecoderOwnedEngineCleanup(options={}) {
   return Object.freeze({...MARKERS,
     finishSettledJob(jobId){return finish(jobId,false);},
     finishSettledControlProbe(jobId){return finish(jobId,true);},
-    status(){return decoderFreeze({...MARKERS,active,closed,phases:[...phases]});},
+    status(){return decoderFreeze({...MARKERS,active,closed,jobId:phaseJobId,phases:[...phases]});},
     stopKnownJob(jobId){
       const row=current(c,jobId);
       // No competing Engine intent is appended over unknown CREATE/START.
