@@ -14,7 +14,7 @@ import {assertProofDecoderTargetEngineExecutor} from './proof-decoder-engine-tar
 import {TARGET_BROKER_SCHEMA,TARGET_BROKER_SOCKET,TARGET_BROKER_CHUNK,brokerNanoseconds,encodeTargetBrokerFrame,createTargetBrokerFrameReader,createTargetBrokerInputCollector} from './proof-decoder-target-broker-protocol.mjs';
 
 const MARKERS=Object.freeze({classification:'UNQUALIFIED',executionAllowed:false,freshPublicationAllowed:false});
-const owners=new WeakSet(),DIRECTORY=dirname(TARGET_BROKER_SOCKET),POLL_MS=25;
+const owners=new WeakSet(),targetClients=new WeakMap(),DIRECTORY=dirname(TARGET_BROKER_SOCKET),POLL_MS=25;
 const check=(value,code='DECODER_BROKER_INVALID')=>requireValue(value,code);
 const error=code=>Object.assign(new Error(code),{code,...MARKERS});
 const stamp=st=>`${st.dev}:${st.ino}`;
@@ -142,6 +142,18 @@ export async function startProofDecoderTargetBroker(options={}){
   });
 }
 
+/** Source-owned origin checks only. No caller method, JSON receipt or fresh
+ * admission capability is accepted. Historical outcomes need no renewed lease. */
+export function assertProofDecoderTargetBrokerClient(value){check(targetClients.has(value),'DECODER_BROKER_CLIENT_REQUIRED');return value;}
+export function assertProofDecoderPreparedSubmission(value,options){
+  const {client}=engineDataOptions(options,['client']),owner=targetClients.get(assertProofDecoderTargetBrokerClient(client)),record=owner.handles.get(value);
+  check(record&&!record.claimed&&record.state==='PREPARED','DECODER_BROKER_PREPARED_HANDLE');return record.report;
+}
+export function assertProofDecoderClientOutcome(value,options){
+  const {client}=engineDataOptions(options,['client']),owner=targetClients.get(assertProofDecoderTargetBrokerClient(client)),observation=owner.outcomes.get(value);
+  check(observation,'DECODER_BROKER_DISPOSITION_REQUIRED');return decoderFreeze({...observation,completion:observation.disposition==='COMPLETE_CLEAN'?value:null});
+}
+
 /** Nonroot application-side transport only. No Engine socket, registry, guard,
  * qualification constructor, proof publication or fresh capability is exposed. */
 export function createProofDecoderTargetBrokerClient(options={}){
@@ -252,5 +264,5 @@ export function createProofDecoderTargetBrokerClient(options={}){
       });return job.done;
     },
     async close(){closed=true;if(prepared)retire(prepared,error('DECODER_BROKER_CLOSED'));const job=active;job?.cancel?.();if(job)try{await job.done;}catch{}return this.status();}
-  });return client;
+  });targetClients.set(client,{handles,outcomes});return client;
 }

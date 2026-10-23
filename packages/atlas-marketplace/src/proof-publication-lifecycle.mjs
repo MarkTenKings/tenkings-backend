@@ -1,6 +1,7 @@
 import {canonicalJSON,hash,requireValue} from './contract.mjs';
 import {decoderContractData,decoderExact,decoderFreeze} from './proof-decoder-profile.mjs';
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
+import {assertProofDecoderPlan,assertProofDecoderValidation} from './proof-decoder-protocol.mjs';
 
 // Internal data rules, not authority, authentication or a receipt brand. The
 // concrete owned store uses these same rules for writes and historical reads.
@@ -14,7 +15,7 @@ const positive=(v,max)=>integer(v,max)&&v>0;
 const same=(a,b)=>canonicalJSON(a)===canonicalJSON(b);
 const decimal=v=>typeof v==='string'&&/^(0|[1-9][0-9]{0,19})$/.test(v)&&BigInt(v)<=9223372036854775807n;
 const boot=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
-const kinds=['SESSION_OPEN','SESSION_DRAIN','SESSION_CLOSE','PUBLICATION','SCOPE_BARRIER','SCOPE_SETTLE','EXTERNAL_HOLD'];
+const kinds=['SESSION_OPEN','SESSION_DRAIN','SESSION_CLOSE','PUBLICATION','SCOPE_BARRIER','SCOPE_SETTLE','EXTERNAL_HOLD','DECODE_DISPATCH','DECODE_SETTLE','DECODE_UNKNOWN'];
 export const PUBLICATION_DRAIN_REASONS=Object.freeze(['OPERATOR_REVOKED','SERVICE_STOP','ADMISSION_REVOKED']);
 export function publicationData(input,keys){const v=decoderContractData(input);decoderExact(v,keys);check(Buffer.byteLength(canonicalJSON(v))<=L.recordBytes);if(keys.includes('expectedRevision'))check(integer(v.expectedRevision,L.events-1));if(keys.includes('operationId'))check(uuid(v.operationId));return v;}
 export function publicationSessionBinding(input){const v=publicationData(input,['installationId','qualificationSessionId','qualificationEvidenceHash','sourceClosureHash','policyHash','intakeBindingHash']);check(uuid(v.installationId)&&uuid(v.qualificationSessionId));for(const k of ['qualificationEvidenceHash','sourceClosureHash','policyHash','intakeBindingHash'])check(digest(v[k]));return decoderFreeze(v);}
@@ -34,9 +35,9 @@ export function publicationLifecycleState(input){
   const v=publicationData(input,['revision','latestSessionId','lastCloseHash','sessionCount','operationCount','objectCount','originalBytes','heldOperationId','externalHoldCount','unsettledBarrierCount']);
   check(integer(v.revision,L.events-1)&&(v.latestSessionId===null||uuid(v.latestSessionId))&&digest(v.lastCloseHash)&&integer(v.sessionCount,L.sessions)&&integer(v.operationCount,L.operations)&&integer(v.objectCount,L.objects)&&integer(v.originalBytes,L.originalBytes)&&(v.heldOperationId===null||uuid(v.heldOperationId))&&integer(v.externalHoldCount,L.operations)&&integer(v.unsettledBarrierCount,L.operations));return decoderFreeze(v);
 }
-export function publicationCapacity(state,{newSession=false,newObjectBytes=0,maintenance=false}={}){
-  publicationLifecycleState(state);check(typeof newSession==='boolean'&&typeof maintenance==='boolean'&&integer(newObjectBytes,10485760));
-  check(state.operationCount<L.operations-(maintenance?0:L.reserveOperations+state.unsettledBarrierCount)&&state.revision+3<L.events-(maintenance?0:L.reserveEvents+state.unsettledBarrierCount),'PUBLICATION_STORE_FULL');
+export function publicationCapacity(state,{newSession=false,newObjectBytes=0,maintenance=false,pendingDispatches=0}={}){
+  publicationLifecycleState(state);check(typeof newSession==='boolean'&&typeof maintenance==='boolean'&&integer(newObjectBytes,10485760)&&integer(pendingDispatches,1));
+  check(state.operationCount<L.operations-(maintenance?0:L.reserveOperations+state.unsettledBarrierCount+pendingDispatches)&&state.revision+3<L.events-(maintenance?0:L.reserveEvents+state.unsettledBarrierCount),'PUBLICATION_STORE_FULL');
   if(newSession)check(state.sessionCount<L.sessions,'PUBLICATION_STORE_FULL');
   if(newObjectBytes)check(state.objectCount<L.objects&&state.originalBytes+newObjectBytes<=L.originalBytes,'PUBLICATION_STORE_FULL');
 }
@@ -64,6 +65,8 @@ export function publicationOperation(input){
   else if(v.kind==='SESSION_CLOSE'){decoderExact(r,['sessionId']);check(uuid(r.sessionId));}
   else if(v.kind==='SCOPE_BARRIER'){decoderExact(r,['sessionId','canonicalMutationId','barrierId','barrierRevision','scope']);check(uuid(r.sessionId)&&uuid(r.canonicalMutationId)&&uuid(r.barrierId)&&positive(r.barrierRevision,Number.MAX_SAFE_INTEGER));publicationScope(r.scope);check(r.barrierRevision>r.scope.revision);}
   else if(v.kind==='SCOPE_SETTLE'){decoderExact(r,['barrierId']);check(uuid(r.barrierId));}
+  else if(v.kind==='DECODE_DISPATCH'){decoderExact(r,['identityHash','identity']);publicationDecoderIdentity(r.identity);check(digest(r.identityHash)&&r.identityHash===hash(r.identity));}
+  else if(['DECODE_SETTLE','DECODE_UNKNOWN'].includes(v.kind)){decoderExact(r,['dispatchOperationId','identityHash','outcomeHash']);check(uuid(r.dispatchOperationId)&&digest(r.identityHash)&&digest(r.outcomeHash));}
   else {decoderExact(r,['sessionId','kind','identityHash']);check(uuid(r.sessionId)&&['DECODE','RETAIN'].includes(r.kind)&&digest(r.identityHash));}
   check(v.kind==='PUBLICATION'||v.phase==='COMPLETED');
   return decoderFreeze(v);
@@ -91,3 +94,47 @@ const sql={
 for(const table of ['metadata','operations','events'])for(const verb of ['INSERT','UPDATE','DELETE']){const name=`legacy_${table}_no_${verb.toLowerCase()}`;sql[name]=`CREATE TRIGGER ${name} BEFORE ${verb} ON ${table} BEGIN SELECT RAISE(ABORT,'frozen legacy'); END`;}
 for(const table of ['lifecycle_operations','publisher_sessions','scope_generations','scope_barriers','publication_v2','external_holds']){const name=`${table}_no_delete`;sql[name]=`CREATE TRIGGER ${name} BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'retained history'); END`;}
 export const PUBLICATION_LIFECYCLE_SQL=Object.freeze(sql);
+
+
+// v3 stores genuine producer observations only after the owning IO module has
+// checked private origin. These exported parsers are data rules, never brands.
+export function publicationPreparedReport(input){
+  const v=publicationData(input,['schema','classification','executionAllowed','freshPublicationAllowed','requestId','deadlineBootNs','plan','bootId','epoch','bindingHash','profileHash','limitsHash']);
+  check(v.schema==='atlas-proof-decoder-prepared-request-v1'&&v.classification==='UNQUALIFIED'&&v.executionAllowed===false&&v.freshPublicationAllowed===false&&uuid(v.requestId)&&boot(v.bootId)&&decimal(v.deadlineBootNs)&&BigInt(v.deadlineBootNs)>0n&&typeof v.epoch==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v.epoch));
+  for(const k of ['bindingHash','profileHash','limitsHash'])check(digest(v[k]));assertProofDecoderPlan(v.plan);return decoderFreeze(v);
+}
+export function publicationDecoderIdentity(input){
+  const v=publicationData(input,['schema','ledgerId','sessionId','binding','stageBinding','prepared']);
+  check(v.schema==='atlas-proof-publication-decoder-identity-v1'&&uuid(v.ledgerId)&&uuid(v.sessionId));const b=publicationSessionBinding(v.binding),s=publicationStageBinding(v.stageBinding,b),p=publicationPreparedReport(v.prepared);
+  check(p.bootId===s.bootId&&p.deadlineBootNs===s.deadlineBootNs,'PUBLICATION_DISPATCH_BINDING');return decoderFreeze(v);
+}
+export function publicationDecoderOutcome(input){
+  const v=publicationData(input,['schema','classification','executionAllowed','freshPublicationAllowed','disposition','request','completion']);
+  check(v.schema==='atlas-proof-decoder-client-disposition-v1'&&v.classification==='UNQUALIFIED'&&v.executionAllowed===false&&v.freshPublicationAllowed===false&&['COMPLETE_CLEAN','KNOWN_NO_START_SENT','UNKNOWN'].includes(v.disposition));const p=publicationPreparedReport(v.request);
+  if(v.disposition!=='COMPLETE_CLEAN')check(v.completion===null);
+  else{
+    const c=v.completion;decoderExact(c,['schema','classification','executionAllowed','freshPublicationAllowed','requestId','nonce','bindingHash','jobId','outcome','reportedCleanup','validation','bootId','epoch']);
+    check(c.schema==='atlas-proof-decoder-target-broker-v2'&&c.classification==='UNQUALIFIED'&&c.executionAllowed===false&&c.freshPublicationAllowed===false&&uuid(c.jobId)&&digest(c.nonce)&&c.requestId===p.requestId&&c.bindingHash===p.bindingHash&&c.bootId===p.bootId&&c.epoch===p.epoch&&['SUCCESS','INVALID_IMAGE'].includes(c.outcome)&&c.reportedCleanup==='OBSERVED');
+    if(c.outcome==='SUCCESS'){assertProofDecoderValidation(c.validation);check(c.validation.sha256===p.plan.sha256&&c.validation.byteCount===p.plan.byteCount&&c.validation.contentType===p.plan.declaredType);}else check(c.validation===null);
+  }
+  return decoderFreeze(v);
+}
+export function publicationDecoderDispatch(input){
+  const v=publicationData(input,['operationId','sessionId','identityHash','identity','revision']);const i=publicationDecoderIdentity(v.identity);
+  check(uuid(v.operationId)&&v.sessionId===i.sessionId&&v.identityHash===hash(i)&&positive(v.revision,L.events-1));return decoderFreeze(v);
+}
+export function publicationDecoderSettlement(input){
+  const v=publicationData(input,['operationId','dispatchOperationId','sessionId','identityHash','outcomeHash','outcome','revision']);const o=publicationDecoderOutcome(v.outcome);
+  check(uuid(v.operationId)&&uuid(v.dispatchOperationId)&&uuid(v.sessionId)&&digest(v.identityHash)&&v.outcomeHash===hash(o)&&positive(v.revision,L.events-1));return decoderFreeze(v);
+}
+export function publicationDispatchMigration(input){
+  const v=publicationData(input,['schema','migrationId','priorRevision','priorHeadHash','priorStateHash','revision']);
+  check(v.schema==='atlas-proof-publication-dispatch-migration-v3'&&uuid(v.migrationId)&&positive(v.priorRevision,L.events-2)&&digest(v.priorHeadHash)&&digest(v.priorStateHash)&&v.revision===v.priorRevision+1);return decoderFreeze(v);
+}
+const dispatchSQL={
+ decoder_dispatches:'CREATE TABLE decoder_dispatches(id TEXT PRIMARY KEY,request_id TEXT UNIQUE NOT NULL,stage_id TEXT UNIQUE NOT NULL,revision INTEGER NOT NULL,record TEXT NOT NULL)',
+ decoder_settlements:'CREATE TABLE decoder_settlements(id TEXT PRIMARY KEY,dispatch_id TEXT UNIQUE NOT NULL,revision INTEGER NOT NULL,record TEXT NOT NULL)',
+ decoder_dispatch_migration:'CREATE TABLE decoder_dispatch_migration(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,record TEXT NOT NULL)'
+};
+for(const table of ['decoder_dispatches','decoder_settlements','decoder_dispatch_migration'])for(const verb of ['UPDATE','DELETE'])dispatchSQL[`${table}_no_${verb.toLowerCase()}`]=`CREATE TRIGGER ${table}_no_${verb.toLowerCase()} BEFORE ${verb} ON ${table} BEGIN SELECT RAISE(ABORT,'immutable decoder dispatch'); END`;
+export const PUBLICATION_DISPATCH_SQL=Object.freeze(dispatchSQL);
