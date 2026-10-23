@@ -7,6 +7,7 @@ import { descriptorSha256, parseDecodedFrame, parseDerivative } from '@atlas/pho
 import { applyPreparedFrame, geometryBase, parseGeometryWorkspace, preparationBase } from '@atlas/manual-workspace/geometry-actions';
 import { aborted, PreparationError, runPreparationWorker } from './process.mjs';
 import { hashOwnedBytes } from './hash-bytes.mjs';
+import { clipMaterialContourToCard } from './material-contour.mjs';
 import { PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, sameEncoder, readInspectionPreview } from './encoding.mjs';
 export { describePreparationPreview, PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, INSPECTION_PREVIEW_POLICY } from './encoding.mjs';
 
@@ -86,8 +87,14 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
     const contour = state.sides[side].physical.materialContour;
     if (contour) {
       const [a,b,c,d,e,f,g,h,i] = prepared.sourceToRectified;
-      prepared.materialContour = contour.map(p => { const x=p.x*dimensions.width, y=p.y*dimensions.height, w=g*x+h*y+i;
-        return { x: Math.max(0,Math.min(1,(a*x+b*y+c)/w/1269)), y: Math.max(0,Math.min(1,(d*x+e*y+f)/w/1777)) }; });
+      const denominators = [];
+      const projected = contour.map(p => { const x=p.x*dimensions.width, y=p.y*dimensions.height, w=g*x+h*y+i;
+        denominators.push(w);
+        return { x: (a*x+b*y+c)/w/1269, y: (d*x+e*y+f)/w/1777 }; });
+      requireThat(denominators.every(w => Number.isFinite(w) && w > 0)
+        || denominators.every(w => Number.isFinite(w) && w < 0), 'PREPARATION_OUTPUT_INVALID');
+      requireThat(projected.every(p => Number.isFinite(p.x) && Number.isFinite(p.y)), 'PREPARATION_OUTPUT_INVALID');
+      prepared.materialContour = clipMaterialContourToCard(projected);
     }
     // Validate the actual warp against the captured source quad before returning
     // an adoptable frame. This does not persist or change the supplied workspace.
