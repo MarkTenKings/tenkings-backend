@@ -291,7 +291,11 @@ function failRefund(tx, intent, evidence) {
   }
 }
 function postReversal(tx, intent, evidence) {
-  const bt = balanceTransaction(evidence, intent.amountCents, intent.objectId); check(bt.feeCents === 0, 'UNSUPPORTED_REVERSAL_FEE');
+  // Stripe's reversal balance transaction names the parent transfer as source.
+  // evidenceCheck already binds that exact parent; the adapter retrieves this
+  // transaction by the original reversal's balance_transaction reference.
+  const platformSource = intent.policy.environment === 'synthetic' ? intent.objectId : intent.parentObjectId;
+  const bt = balanceTransaction(evidence, intent.amountCents, platformSource); check(bt.feeCents === 0, 'UNSUPPORTED_REVERSAL_FEE');
   identifier(evidence.destinationPaymentRefundId);
   const connected = balanceTransaction(evidence, -intent.amountCents, evidence.destinationPaymentRefundId, { connected: true });
   check(connected.feeCents === 0, 'UNSUPPORTED_REVERSAL_FEE');

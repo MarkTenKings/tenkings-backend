@@ -48073,3 +48073,88 @@ Planned closeout: capture read-only receipts for retained demo03 funding-shortfa
 ### 2026-10-22 — R2 continuation shutdown observed
 
 Owned preview PID82731 exited0; exact old PID77677 and PID82731 absence verified. Retained demo03 hash370eeec37d79fd366c01e3580386f40de11a5f3cce23248bbabd17d9566767c2 preserves one paid order and pending insufficient-cash refund; demo04 hashf6ae7b82e94f2e835585be7e09c5db770ecbc09235af1958b8bde7bbc503e3a0 preserves one active catalog listing and zero orders/journals. Read-only receipt continuation/r2-continuation-local-receipts.json. PostgreSQL QA remained stopped. Scoped credential-pattern scan found no potential real credential; all30 master IDs present; git diff check clean. Ready to commit isolated continuation; actual sandbox payment remains blocked only at restored dashboard access and subsequent qualification, not claimed complete.
+
+
+### 2026-10-22 — Stripe qualification resumed
+
+Owner restored dashboard sign-in to exact ATLAS R2 Marketplace QA sandbox. Planned owned loopback-only private credential capture service in external continuation/private-stripe,0600 files, no credential output or live-key acceptance; stop it immediately after capture. Then GET-only exact provider identity/capability/bank bootstrap before any test financial action. No production configuration or shared service operation.
+
+Credential capture submitted but validation refused; no saved credential files. Planned restart only owned capture PID86170 with sanitized validation diagnostics (length/prefix booleans only) to identify transport/input issue. No key values or provider calls.
+
+Capture remained refused at request-origin guard before credential parsing. Planned restart only owned PID86339 on its same loopback61129, preserving this capture token, using same-origin referrer policy so the HTML form sends its exact local origin. No relaxed Host/Origin/token check and no saved keys/API calls.
+
+### 2026-10-22 — Private sandbox capture and browser fixture
+
+Owned capture PID86594 on loopback61129 saved existing sandbox test credentials outside Git into explicit0600 files, then stopped with exit0. Same-origin referrer policy resolved form Origin:null refusal without weakening exact Host/Origin/token guards. Browser password-save declined; local capture tab closed. No production keys or API calls involved.
+
+Added inert dependency-injected loopback Stripe browser qualification fixture and focused test. No CLI credential loading, environment discovery, provider creates/server confirms, R1 routes, card authority, or sale/fulfillment writes. Uses real account-mounted workspace/app/Stripe session with synthetic QA banner and exact original plan-bound pending payment. Existing payment collection/reconciliation wrappers,127.0.0.1-only listener, exact Host/Origin/random CSRF, bounded JSON, no-store/no-referrer and existing Stripe CSP; plan expiry stops further calls. Specialist Node22 test/stripe-browser-qualification.test.mjs:2 passed, zero skipped (actual local HTTP, mocked provider only). Actual iframe/3DS/full-page return still unobserved.
+
+### 2026-10-22 — Actual sandbox preflight and provider correction
+
+Actual GET scoped identity and synthetic seller show active transfers, payouts enabled, clear requirements and one USD standard-eligible Stripe test bank. Explicit sandbox-only account payout schedule updated to manual and re-read successfully. Both account opening balances are zero, unsupported buckets empty. Test API version pinned2025-03-31.basil. No live setting changed.
+
+Actual API exposed refund_and_dispute_prefunding as nullable object with available/pending arrays, not the mocked array assumption. Corrected normalization preserves separate buckets: nonzero prefunding remains unsupported, never ordinary spendable cash; malformed currency/amount/shape/duplicates refuse. Provider-focused tests12/12 pass. Actual GET now passes; normalized receipt continuation/r2-stripe-bootstrap.json retained.
+
+Explicit synthetic plan r2qa_20261022_browser_finance_01 hash bd411426cfce22fa2a51ee797273ef5314add7695adf093fb804ea6c08f3cfff:10000c purchase,2000c QA fee,8000c seller transfer,1000c after-transfer seller refund/reversal,7000c standard payout. These amounts and QA references are not production commercial approvals or custody authority. Planned owned loopback browser fixture start after original payment preparation, with original same-plan durable store and sandbox provider only.
+
+Actual opening reconciliation found an API-latency defect: the inventory exclusive end was the next second, which elapsed before the final balance snapshot. Both cash balances remained0, inventory empty and payment undispatched. Added bounded end covering the retained freshness allowance; freshness, completeness and balance mismatch checks remain intact. Focused reconciliation tests9/9 pass, including actual advancing-clock boundary and over-budget refusal. Exact QA-only WINDOW exception explicitly reviewed against two fresh zero snapshots per account and complete empty inventories, then resolved using retained review hash; no automatic exception resolution added. Same original plan/store preserved.
+
+Official @stripe/cli1.55.1 installed only in external continuation/stripe-cli for sandbox forwarded-webhook qualification. Existing test credentials passed privately to subprocess; webhook signing secret saved0600 without output. No production webhook endpoint or shared service was changed.
+
+Opening rerun on exact original store succeeded: both accounts RECONCILED with difference0. One10000c payment was created, dispatchCount1, pending/unconfirmed, no cash journal. Owned browser PID87243 loopback61887 launched against this exact payment. Real Stripe.js loaded, but Payment Element remains blank with no ready event after120s; confirmation stays disabled and no payment attempted. Investigating and adding bounded form-readiness recovery.
+
+Added separate dependency-injected raw webhook QA fixture; specialist focused HTTP tests2/2 pass. Planned owned webhook listener61541 and official CLI test-only forwarding with scoped event filters; retain safe receipts, no raw payload/keys. This qualifies CLI-forwarded sandbox delivery, not production endpoint registration.
+
+Actual native Chrome Payment Element and3DS challenge worked with unchanged native dialog; the automation-controlled profile's iframe documents stalled. Temporary nonmodal diagnosis did not fix stall and was fully reverted. Added20-second ready timeout with original-payment recovery guidance; UI6/6 tests pass. Actual3DS cancellation generated signed CLI-forwarded requires_action/payment_failed events, both200; same original PI remains pending, unconfirmed, dispatch1, journal0. Forged redirect_status=succeeded was stripped and never confirmed payment.
+
+Actual Element offered Link Bank/Klarna funding despite exact card-only PI. Disabled documented wallets.link UI option and added provider validation of exact card-only configuration plus non-Link card funding details before settlement. Provider14 + sandbox harness7 focused tests pass; same-original unknown recovery remains intact. No hidden funding/product support assumed. Planned restart only owned browser PID87243 and webhook PID87580 to load corrected provider before actual successful charge; retain exact ports61887/61541, original plan/store, native UI and existing CLI test-only forwarding.
+
+Owned old browser/webhook PIDs exited; replacements88547/88548 listen only127.0.0.1:61887/61541 against original plan/store. Original payment GET confirms pending/unpaid; exact card configuration ['card'], automatic methods null, automatic capture/confirmation. Native browser and private read verified publishable-key binding to exact original PI. CLI-forwarded signed test events persist durably; original canceled3DS has no cash journal.
+
+Actual native browser original payment succeeded using documented test card ending0077 after prior canceled3DS on samePI. LinkBank/Klarna offers absent with wallets.link=never. Chrome card-save declined. Signed payment_intent.succeeded forwarded and independently retrieved; journal posted once, original dispatch1. Provider observed charge10000c, processing fee320c, net9680c available. Transfer8000c succeeded/available with both platform and connected balance transaction evidence; seller available8000c, no open exceptions. Proceeding original planned refund/reversal/payout; no live money.
+
+Actual1000c reversal was created once but settlement refused because Stripe's platform balance transaction source is the exact parent transfer, not the reversal ID. Provider evidence retained unchanged. Corrected only Stripe reversal ledger binding to retained parent; synthetic historical semantics retained. Finance14/provider14/harness8 focused tests36/36 pass, including foreign-source/charge/refund rejection and same-object recovery without a second POST. Original trr_1UTWk2KDyZHjIV6pNS5XIUed and one webhook review exception retained. Payout remained refused/undispatched. Planned original GET recovery, explicit exception review, and restart only owned webhook88548 before payout.
+
+
+### 2026-10-22 — Original sandbox reversal recovered; payout response binding
+
+Original reversal GET recovered the existing object with dispatchCount1; journal6, seller recoveryDue0. Explicit review matched complete platform/connected transaction inventories and current cash and resolved only the known parent-source exception; review hash ccf4ac208b062e923ac5fba3d9804ed87847b2c7d664a419b16ec9e85b2759d3. Historical failed webhook inbox/delivery receipts remain retained, not rewritten as successful delivery. Owned webhook88548 exited; replacement89056 remains loopback61541.
+
+Fresh two-account reports reconciled with difference0 before payout. Original7000c payout po_1UTWokKDyZ4wwGG0L2AUiB2A was created once. Actual pinned GET reports paid, test mode, standard manual bank payout to exact test bank; the provider omits empty order metadata. Existing strict comparator refused settlement as STRIPE_INTENT_BINDING_MISMATCH and retained two webhook exceptions. Safe response receipt continuation/r2-stripe-payout-shape.json confirms exact intent/binding metadata and absent order key. Correcting only null-order payout metadata semantics, then recovering original GET; no replacement payout, metadata mutation or hidden adjustment.
+
+
+### 2026-10-22 — Original sandbox payout and full money flow reconciled
+
+Fixed empty payout-order metadata using one exact shared matcher for retrieval/discovery. Only null-order PAYOUT accepts absent or historical empty order; wrong/null/foreign metadata refuses. New payout creates omit the empty key. Provider15 plus sandbox harness9 focused tests24/24 pass, including same paid object after lost response/reopen without a second POST.
+
+Original payout GET now SUCCEEDED/confirmed with dispatchCount1. Explicit review resolved exactly its two metadata exceptions against complete fresh inventories and matching ledger cash; evidence hash7586bef855f5019b33a2f218e24f73ba3260e5e7e604b38c397b37479323acc5. No automatic clearing, data reset or successful-delivery claim for historical409 events. Final same-run reconciliation: all five original actions succeeded once, journal9, seller paidOut7000c with all other buckets0, platform1680c/connected0c; both account reports RECONCILED/difference0 and zero OPEN exceptions. Final state72e708adf58e6a6111fd2070dcca79684a2c181b447a0965237b41795d1c2dfb.
+
+Planned owned transition: preserve final Plan01 receipt and stop only browser88547/webhook89056. Create separate bounded100c successful3DS payment-only Plan02; establish explicit reviewed1680c platform/0c connected opening, no transfer/refund/payout permission. Restart owned loopback fixtures on61887/61541 for exact new plan; existing sandbox CLI forwarding remains. This is a separate scenario after resolved originals, not replacement recovery or a production operation.
+
+
+### 2026-10-22 — SCA fixture authorization refusal retained
+
+Plan02 preflight/opening and one100c unconfirmed payment succeeded, but browser startup correctly refused SANDBOX_EXECUTION_NOT_AUTHORIZED because the lead's payment-only stage list accidentally omitted confirm. No UI confirmation, seller cash or sale occurred; only the reviewed1680c opening journal exists. No guard or immutable plan will be relaxed/rebound. Planned exact test-only cancellation of original pi_3UTWyKKDyZHjIV6p04MxqiFA after fresh GET proves requires_payment_method/unconfirmed, then original reconciliation and preserved receipt. A separate explicitly confirm-authorized SCA scenario may follow only once this unused payment is demonstrably canceled. Owned webhook90039 will stop; browser90038 already exited1, old88547/89056 exited.
+
+
+Original Plan02 unused payment canceled only after pinned GET proved requires_payment_method, latest_charge null and exact binding; re-retrieved CANCELED, dispatch1, no payment cash journal, seller balances0 and both reports difference0. Retained state540c8a3024aa504b317fe59e50e885b147ae07ba61bbd3b828c5c2ca387befcf and r2-stripe-sca02-canceled.json. Plan02 immutable source/store retained. Owned90039 stopped. Plan03 explicitly permits confirm (browser only intended; server-confirm CLI not invoked), forbids transfer/refund/reversal/payout stages, hash a4beebf21db63a98fd4cdeb01569e37af331911fd827d21906c119ab9879aac8. Planned exact owned browser/webhook startup on61887/61541 for this independent100c SCA scenario.
+
+
+Plan03 opening verified platform1680c/connected0c and difference0; original100c pi_3UTX0LKDyZHjIV6p1v4gH3jf created once, pending/unconfirmed. Owned browser90118/webhook90119 listen only127.0.0.1:61887/61541 with exact plan hash; native QA tab reloaded to100c fixture. Existing official CLI test-forwarder retained. All prior plan receipts/stores preserved.
+
+
+### 2026-10-22 — Successful actual 3DS and final package verification
+
+Native Chrome completed Stripe's actual3DS challenge for Plan03 original100c pi_3UTX0LKDyZHjIV6p1v4gH3jf. Pinned GET records succeeded, paid charge, authenticated/challenge/version2.1.0; r2-stripe-sca-evidence.json raw hashc5767fc3540c7d56146a664755627fd53082dd59b26c5405d7b8140e7b0f247a. Signed CLI-forwarded requires_action and succeeded events both processed, independently retrieved, and posted only one payment journal. Screenshot r2-stripe-sca-success.png. Final Plan03 state384f3b4b92ad82b066fe6f0c0ae4279b493fe0237bbddd2fe755eef6cd12b585:2journals including reviewed opening, dispatch1, sellerpending80c, both account reports difference0, no exceptions. This separate payment-only scenario grants no transfer/payout permission and stays retained; no automatic full-page provider redirect observed. Browser fixtures create no physical order/title evidence.
+
+Final Node22 package aggregate:163 tests across137 top-level groups, zero failures/cancellations/skips; continuation/r2-provider-qualification-tests.tap. Reused prior PostgreSQL restart/privilege-drift and R1 preservation evidence within unchanged source bounds. No repeated broad R1 checks or production operations. Exactly two original Astra/xHigh specialists completed provider/recovery and UI/qualification documentation tasks.
+
+Planned shutdown: preserve Plan03 final receipt; stop only owned loopback browser90118/webhook90119 and official sandbox CLI wrapper87587/child87588. Close only agent-owned QA tabs, preserve all private0600 credentials, stores and evidence outside Git. No grading/Ten Kings runtime, live account, shared DB or release operation.
+
+
+### 2026-10-22 — Provider qualification closeout observed
+
+Exact owned PIDs90118/90119/87587/87588 and earlier90039/88547/89056 are absent after shutdown; no shared process was targeted. Both owned QA tabs closed; prior R1 account window restored without interaction with its data. Private credentials and all three immutable QA stores retained outside Git. Actual flow and SCA evidence, original exceptions/reviews and canceled unused plan remain documented distinctly. Updated master R2 rows and complete lead/specialist handoffs; all30 scope IDs retained and ID27 real acceptance stays open. Preparing isolated additive provider-qualification commit with frozen source/artifact manifest; no shared deploy/restart/migration or live provider change.
+
+
+Closeout verification: all three retained QA SQLite stores pass read-only quick_check. Exact captured secret/signing values were absent from marketplace source, updated handoff/audits/master/log and every QA database. All four private credential/config files are0600. Master IDs01–30 present exactly once; git diff check clean. No additional source changes after the163-test aggregate; later edits are documentation only.

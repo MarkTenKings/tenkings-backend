@@ -3,8 +3,29 @@ import { financeAssert as check, integerCents as cents, identifier, safeSum } fr
 
 const OBJECTS = { PAYMENT: 'payment_intent', TRANSFER: 'transfer', REFUND: 'refund', REVERSAL: 'transfer_reversal', PAYOUT: 'payout' };
 function id(value) { const result = typeof value === 'object' && value ? value.id : value; identifier(result); check(/^[a-z]+_[A-Za-z0-9]+$/.test(result), 'INVALID_STRIPE_ID'); return result; }
-function metadata(intent) { return { atlas_marketplace_intent: intent.id, atlas_marketplace_order: intent.orderId ?? '', atlas_marketplace_binding: intent.bindingHash }; }
+function metadata(intent) {
+  return { atlas_marketplace_intent: intent.id, ...(intent.kind === 'PAYOUT' && intent.orderId === null ? {} : { atlas_marketplace_order: intent.orderId }), atlas_marketplace_binding: intent.bindingHash };
+}
+function metadataMatches(intent, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.atlas_marketplace_intent !== intent.id || value.atlas_marketplace_binding !== intent.bindingHash) return false;
+  // Stripe unsets metadata keys given an empty value. Only a retained null-order
+  // payout can omit this key; its allocation binding and intent remain exact.
+  if (intent.kind === 'PAYOUT' && intent.orderId === null) return !Object.hasOwn(value, 'atlas_marketplace_order') || value.atlas_marketplace_order === '';
+  return typeof intent.orderId === 'string' && intent.orderId.length > 0 && value.atlas_marketplace_order === intent.orderId;
+}
 function objectCheck(object, type, expectedId) { check(object?.object === type && object.id === expectedId, 'STRIPE_OBJECT_MISMATCH'); }
+function cardPaymentScope(object) {
+  const automatic = object.automatic_payment_methods;
+  check(Array.isArray(object.payment_method_types) && object.payment_method_types.length === 1 && object.payment_method_types[0] === 'card' &&
+    (automatic == null || typeof automatic === 'object' && !Array.isArray(automatic) && automatic.enabled === false), 'STRIPE_PAYMENT_METHOD_SCOPE_MISMATCH');
+}
+function cardChargeScope(charge) {
+  const details = charge.payment_method_details, card = details?.card;
+  // Since 2024-11-20.acacia, card-only Link can carry non-card funding.
+  // Stripe identifies that funding with brand/network `link`; type alone is insufficient.
+  check(details?.type === 'card' && card && typeof card.brand === 'string' && card.brand.length > 0 && card.brand !== 'link' &&
+    (card.network === null || typeof card.network === 'string' && card.network.length > 0 && card.network !== 'link'), 'STRIPE_PAYMENT_METHOD_SCOPE_MISMATCH');
+}
 function bt(raw) {
   check(raw?.object === 'balance_transaction' && raw.currency === 'usd', 'STRIPE_BALANCE_TRANSACTION_MISMATCH');
   check(Number.isSafeInteger(raw.amount) && Number.isSafeInteger(raw.net), 'INVALID_CENTS'); cents(raw.fee);
@@ -117,7 +138,8 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
       intentScope(intent); check(intent.kind === 'PAYMENT' && intent.accountId === platformAccountId && validPublishableKey(), 'STRIPE_PAYMENT_COLLECTION_NOT_CONFIGURED');
       await scope(); const object = await request('GET', `/v1/payment_intents/${id(intent.objectId)}`, platformAccountId);
       objectCheck(object, 'payment_intent', intent.objectId);
-      check(object.livemode === live && object.amount === intent.amountCents && object.currency === 'usd' && Object.entries(metadata(intent)).every(([key, value]) => object.metadata?.[key] === value), 'STRIPE_INTENT_BINDING_MISMATCH');
+      check(object.livemode === live && object.amount === intent.amountCents && object.currency === 'usd' && metadataMatches(intent, object.metadata), 'STRIPE_INTENT_BINDING_MISMATCH');
+      cardPaymentScope(object);
       check(['requires_payment_method', 'requires_confirmation', 'requires_action'].includes(object.status) && object.amount_received === 0 && object.capture_method === 'automatic' && object.confirmation_method === 'automatic', 'PAYMENT_NOT_COLLECTIBLE');
       check(typeof object.client_secret === 'string' && object.client_secret.startsWith(`${intent.objectId}_secret_`), 'STRIPE_CLIENT_SECRET_MISMATCH');
       return { strategy: 'stripe-payment-element', paymentIntentId: object.id, clientSecret: object.client_secret, publishableKey, amountCents: object.amount, currency: 'USD' };
@@ -166,16 +188,27 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
       await scope(); check(allowed.has(accountId), 'STRIPE_ACCOUNT_SCOPE_MISMATCH');
       const value = await request('GET', '/v1/balance', accountId);
       check(value.object === 'balance' && value.livemode === live && Array.isArray(value.available) && Array.isArray(value.pending), 'STRIPE_BALANCE_MISMATCH');
-      const amount = entries => {
-        const matches = entries.filter(row => row.currency === 'usd'); check(matches.length <= 1, 'STRIPE_BALANCE_MISMATCH');
-        const result = matches[0]?.amount ?? 0; check(Number.isSafeInteger(result), 'INVALID_CENTS'); return result;
-      };
-      const availableCents = amount(value.available), pendingCents = amount(value.pending);
       const unsupported = [];
-      for (const bucket of ['available', 'pending', 'connect_reserved', 'refund_and_dispute_prefunding']) {
-        const rows = value[bucket] ?? []; check(Array.isArray(rows), 'STRIPE_BALANCE_MISMATCH');
-        for (const row of rows) if (row.amount !== 0 && (row.currency !== 'usd' || !['available', 'pending'].includes(bucket))) unsupported.push({ bucket, currency: row.currency, amountCents: row.amount });
+      const inspect = (bucket, rows, ordinary = false) => {
+        check(Array.isArray(rows), 'STRIPE_BALANCE_MISMATCH');
+        const currencies = new Set();
+        for (const row of rows) {
+          check(row && typeof row === 'object' && !Array.isArray(row) && Number.isSafeInteger(row.amount) && /^[a-z]{3}$/.test(row.currency ?? '') && !currencies.has(row.currency), 'STRIPE_BALANCE_MISMATCH');
+          currencies.add(row.currency);
+          if (row.amount !== 0 && (!ordinary || row.currency !== 'usd')) unsupported.push({ bucket, currency: row.currency, amountCents: row.amount });
+        }
+      };
+      inspect('available', value.available, true); inspect('pending', value.pending, true);
+      inspect('connect_reserved', value.connect_reserved ?? []);
+      // Stripe documents prefunding as a separate nullable object containing
+      // available/pending arrays. It never becomes ordinary payout cash here.
+      const prefunding = value.refund_and_dispute_prefunding;
+      if (prefunding != null) {
+        check(typeof prefunding === 'object' && !Array.isArray(prefunding) && Object.keys(prefunding).sort().join(',') === 'available,pending', 'STRIPE_BALANCE_MISMATCH');
+        for (const bucket of ['available', 'pending']) inspect(`refund_and_dispute_prefunding.${bucket}`, prefunding[bucket]);
       }
+      const amount = rows => rows.find(row => row.currency === 'usd')?.amount ?? 0;
+      const availableCents = amount(value.available), pendingCents = amount(value.pending);
       return { provider: 'stripe', accountId, livemode: live, currency: 'USD', availableCents, pendingCents, totalCents: safeSum(availableCents, pendingCents), unsupported, observedAt: clock(), rawHash: rawHashes.get(value) };
     },
     async listBalanceTransactions({ accountId, fromMs, toMs, maxPages = 20 }) {
@@ -192,7 +225,9 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
       intentScope(intent); await scope();
       if (intent.objectId) return { objectId: intent.objectId, complete: true };
       const result = await list(pathFor(intent), intent.accountId, { maxPages });
-      const matches = result.data.filter(object => Object.entries(metadata(intent)).every(([key, value]) => object.metadata?.[key] === value));
+      const matches = result.data.filter(object => object.metadata?.atlas_marketplace_intent === intent.id);
+      // A conflicting original is not evidence that no action exists.
+      check(matches.every(object => metadataMatches(intent, object.metadata)), 'STRIPE_INTENT_BINDING_MISMATCH');
       check(matches.length <= 1, 'MULTIPLE_PROVIDER_OBJECTS');
       // Incomplete discovery cannot establish uniqueness; no result permits a second POST.
       if (!result.complete) return { objectId: null, complete: false };
@@ -235,16 +270,17 @@ export function createStripeProvider({ authorization, secretKey, publishableKey,
       intentScope(intent);
       await scope(); if (!objectId) return null; // Unknown original IDs need explicit operator discovery, never another POST.
       const object = await request('GET', pathFor(intent, objectId), intent.accountId); objectCheck(object, OBJECTS[intent.kind], objectId);
-      const expectedMetadata = metadata(intent);
-      check(Object.entries(expectedMetadata).every(([key, value]) => object.metadata?.[key] === value) && object.amount === intent.amountCents && object.currency === 'usd', 'STRIPE_INTENT_BINDING_MISMATCH');
+      check(metadataMatches(intent, object.metadata) && object.amount === intent.amountCents && object.currency === 'usd', 'STRIPE_INTENT_BINDING_MISMATCH');
       if (['PAYMENT', 'TRANSFER', 'PAYOUT'].includes(intent.kind)) check(object.livemode === live, 'STRIPE_MODE_MISMATCH');
       const evidence = { provider: 'stripe', rawHash: rawHashes.get(object), accountId: intent.accountId, livemode: live, kind: intent.kind, objectId, intentId: intent.id, orderId: intent.orderId, bindingHash: intent.bindingHash, currency: 'USD', amountCents: object.amount, observedAt: clock(), status: object.status ?? 'succeeded' };
       if (intent.kind === 'PAYMENT') {
+        cardPaymentScope(object);
         evidence.amountReceivedCents = object.amount_received;
         evidence.chargePaid = false; evidence.chargeCapturedCents = 0;
         if (object.latest_charge) {
           const chargeId = id(object.latest_charge); const charge = await request('GET', `/v1/charges/${chargeId}`, intent.accountId); objectCheck(charge, 'charge', chargeId);
           check(charge.livemode === live && id(charge.payment_intent) === objectId && charge.amount === intent.amountCents && charge.currency === 'usd', 'STRIPE_CHARGE_MISMATCH');
+          cardChargeScope(charge);
           evidence.chargeRawHash = rawHashes.get(charge); evidence.chargeId = chargeId; evidence.chargePaid = charge.paid === true; evidence.chargeCapturedCents = charge.amount_captured; evidence.chargeAmountCents = charge.amount; evidence.chargeCurrency = 'USD'; evidence.balanceTransaction = await getTransaction(charge.balance_transaction, intent.accountId);
         }
       } else if (intent.kind === 'TRANSFER') {

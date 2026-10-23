@@ -42,6 +42,42 @@ test('incomplete inventory and moving provider snapshots never qualify an accoun
   await assert.rejects(f.transferred(), { code: 'ORDER_FUNDS_RESTRICTED' });
 });
 
+test('network reconciliation spans second boundaries inside its bounded freshness window without retrying or resolving earlier exceptions', async t => {
+  let now = NOW + 900;
+  const f = financeFixture({ clock: () => now }); t.after(() => f.store.close()); opening(f); await f.paid();
+  let snapshots = 0, inventories = 0, beforeAt, queriedEnd;
+  const provider = {
+    getAccountSnapshot: async () => { now += 750; snapshots++; if (snapshots === 1) beforeAt = now; return snapshot(1010900, now); },
+    listBalanceTransactions: async ({ fromMs, toMs }) => { now += 1300; inventories++; queriedEnd = toMs; return { ...inventory(f), fromMs, toMs, observedAt: now }; }
+  };
+  const result = await reconcileAccount({ store: f.store, provider, accountId: 'acct_platform', platformAccountId: 'acct_platform', reportId: 'network_roundtrips', maxEvidenceAgeMs: 60000, enabled: true });
+  assert.equal(result.status, 'RECONCILED'); assert.equal(result.differenceCents, 0);
+  assert.ok(result.observedAt > Math.floor(beforeAt / 1000) * 1000 + 1000);
+  assert.ok(queriedEnd > result.observedAt && queriedEnd > beforeAt + 60000 && queriedEnd <= beforeAt + 61000);
+  assert.equal(queriedEnd % 1000, 0); assert.equal(snapshots, 2); assert.equal(inventories, 1);
+  assert.equal(f.store.read().financeExceptions, undefined);
+  const { recordFinanceException } = await import('../src/reconciliation.mjs');
+  const { digest } = await import('../src/ledger.mjs');
+  f.store.transaction(tx => recordFinanceException(tx, { exceptionId: 'previous_window_failure', accountId: 'acct_platform', code: 'ACCOUNT_RECONCILIATION_REVIEW', evidenceHash: digest('prior-failed-window') }));
+  const next = await reconcileAccount({ store: f.store, provider, accountId: 'acct_platform', platformAccountId: 'acct_platform', reportId: 'network_after_prior_failure', maxEvidenceAgeMs: 60000, enabled: true });
+  assert.equal(next.status, 'EXCEPTIONS'); assert.ok(next.exceptions.some(item => item.code === 'OPEN_OPERATIONAL_EXCEPTION'));
+  assert.equal(f.store.read().financeExceptions.previous_window_failure.status, 'OPEN');
+});
+
+test('network reads beyond the approved freshness allowance remain unavailable instead of extending the evidence lifetime', async t => {
+  let now = NOW;
+  const f = financeFixture({ clock: () => now }); t.after(() => f.store.close()); opening(f); await f.paid();
+  let snapshots = 0;
+  const provider = {
+    getAccountSnapshot: async () => { if (++snapshots === 2) now += 1500; return snapshot(1010900, now); },
+    listBalanceTransactions: async ({ fromMs, toMs }) => ({ ...inventory(f), fromMs, toMs, observedAt: now })
+  };
+  const result = await reconcileAccount({ store: f.store, provider, accountId: 'acct_platform', platformAccountId: 'acct_platform', reportId: 'slow_network', maxEvidenceAgeMs: 1000, enabled: true });
+  assert.equal(result.status, 'UNAVAILABLE'); assert.equal(result.code, 'STALE_PROVIDER_EVIDENCE');
+  assert.equal(snapshots, 2);
+  assert.equal(f.store.read().financeExceptions['reconciliation-unavailable:slow_network'].status, 'OPEN');
+});
+
 test('async store wrappers preserve single dispatch and unknown recovery only retrieves the original object', async t => {
   const f = financeFixture(); t.after(() => f.store.close());
   const store = { read: async fn => f.store.read(fn), transaction: async fn => f.store.transaction(fn) };

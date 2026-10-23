@@ -12,8 +12,8 @@ function fixture(overrides = {}) {
     '/v1/account': { object: 'account', id: 'acct_platform' },
     '/v1/balance': { object: 'balance', livemode: false, available: [{ currency: 'usd', amount: 100000 }] },
     '/v1/payment_intents': { object: 'payment_intent', id: 'pi_test1' },
-    '/v1/payment_intents/pi_test1': { object: 'payment_intent', id: 'pi_test1', amount: 10000, amount_received: 10000, currency: 'usd', livemode: false, status: 'succeeded', latest_charge: 'ch_test1', metadata },
-    '/v1/charges/ch_test1': { object: 'charge', id: 'ch_test1', livemode: false, payment_intent: 'pi_test1', amount: 10000, amount_captured: 10000, currency: 'usd', paid: true, balance_transaction: 'txn_test1' },
+    '/v1/payment_intents/pi_test1': { object: 'payment_intent', id: 'pi_test1', amount: 10000, amount_received: 10000, currency: 'usd', livemode: false, status: 'succeeded', latest_charge: 'ch_test1', metadata, payment_method_types: ['card'], automatic_payment_methods: null },
+    '/v1/charges/ch_test1': { object: 'charge', id: 'ch_test1', livemode: false, payment_intent: 'pi_test1', amount: 10000, amount_captured: 10000, currency: 'usd', paid: true, balance_transaction: 'txn_test1', payment_method_details: { type: 'card', card: { brand: 'visa', network: 'visa' } } },
     '/v1/balance_transactions/txn_test1': { object: 'balance_transaction', id: 'txn_test1', source: 'ch_test1', currency: 'usd', amount: 10000, fee: 300, net: 9700, status: 'available', available_on: NOW / 1000 },
     ...overrides,
   };
@@ -36,6 +36,7 @@ test('sandbox adapter is explicitly authorized, test-key-only, account pinned an
   assert.equal(request.options.headers['Idempotency-Key'], 'durable-original-key');
   const body = new URLSearchParams(request.options.body);
   assert.equal(body.get('amount'), '10000'); assert.equal(body.get('metadata[atlas_marketplace_intent]'), 'intent1');
+  assert.deepEqual(body.getAll('payment_method_types[]'), ['card']); assert.equal(body.has('automatic_payment_methods[enabled]'), false);
   assert.equal(body.get('transfer_data[destination]'), null); assert.equal(body.get('application_fee_amount'), null);
   const evidence = await f.provider.retrieve(f.intent, { objectId: result.objectId });
   assert.equal(evidence.chargeCapturedCents, 10000); assert.equal(evidence.balanceTransaction.feeCents, 300); assert.equal(evidence.livemode, false);
@@ -44,7 +45,7 @@ test('sandbox adapter is explicitly authorized, test-key-only, account pinned an
 });
 
 test('adapter refuses live objects, changed intent metadata and mismatched charge without falling back or retrying', async () => {
-  for (const mutation of [object => { object.livemode = true; }, object => { object.metadata.atlas_marketplace_intent = 'other'; }]) {
+  for (const mutation of [object => { object.livemode = true; }, object => { object.metadata.atlas_marketplace_intent = 'other'; }, object => { delete object.metadata.atlas_marketplace_order; }]) {
     const f = fixture(); mutation(f.objects['/v1/payment_intents/pi_test1']);
     await assert.rejects(f.provider.retrieve(f.intent, { objectId: 'pi_test1' }));
     assert.equal(f.calls.filter(call => call.options.method === 'POST').length, 0);
@@ -66,7 +67,7 @@ test('Stripe-shaped refund, transfer, reversal and failed payout bind both accou
     '/v1/charges/py_test1': { object: 'charge', id: 'py_test1', livemode: false, amount: 10000, currency: 'usd', source_transfer: 'tr_test1', balance_transaction: 'txn_connected' },
     '/v1/balance_transactions/txn_connected': transaction('txn_connected', 'py_test1', 10000),
     '/v1/transfers/tr_test1/reversals/trr_test1': { object: 'transfer_reversal', id: 'trr_test1', amount: 10000, currency: 'usd', metadata, transfer: 'tr_test1', destination_payment_refund: 'pyr_test1', balance_transaction: 'txn_reversal' },
-    '/v1/balance_transactions/txn_reversal': transaction('txn_reversal', 'trr_test1', 10000),
+    '/v1/balance_transactions/txn_reversal': transaction('txn_reversal', 'tr_test1', 10000),
     '/v1/refunds/pyr_test1': { object: 'refund', id: 'pyr_test1', amount: 10000, currency: 'usd', charge: 'py_test1', balance_transaction: 'txn_connectedrev' },
     '/v1/balance_transactions/txn_connectedrev': transaction('txn_connectedrev', 'pyr_test1', -10000),
     '/v1/payouts/po_test1': { object: 'payout', id: 'po_test1', amount: 10000, currency: 'usd', metadata: { ...metadata, atlas_marketplace_order: '' }, livemode: false, status: 'failed', automatic: false, method: 'standard', type: 'bank_account', destination: 'ba_test1', balance_transaction: 'txn_payout', failure_balance_transaction: 'txn_return' },
@@ -78,6 +79,7 @@ test('Stripe-shaped refund, transfer, reversal and failed payout bind both accou
   const transfer = await f.provider.retrieve({ ...f.intent, kind: 'TRANSFER', parentObjectId: 'ch_test1' }, { objectId: 'tr_test1' });
   assert.equal(transfer.connectedBalanceTransaction.netCents, 10000);
   const reversal = await f.provider.retrieve({ ...f.intent, kind: 'REVERSAL', parentObjectId: 'tr_test1' }, { objectId: 'trr_test1' });
+  assert.equal(reversal.parentObjectId, 'tr_test1'); assert.equal(reversal.balanceTransaction.source, 'tr_test1'); assert.equal(reversal.objectId, 'trr_test1');
   assert.equal(reversal.connectedBalanceTransaction.netCents, -10000);
   const payout = await f.provider.retrieve({ ...f.intent, kind: 'PAYOUT', accountId: 'acct_seller', externalAccountId: 'ba_test1', orderId: null }, { objectId: 'po_test1' });
   assert.equal(payout.failureBalanceTransaction.netCents, 10000);
@@ -98,6 +100,74 @@ test('payment collection exposes only the exact original test PaymentIntent capa
   f.objects['/v1/payment_intents/pi_test1'].amount_received = 0;
   f.objects['/v1/payment_intents/pi_test1'].client_secret = 'pi_other_secret_wrong';
   await assert.rejects(provider.getPaymentCollection(intent), { code: 'STRIPE_CLIENT_SECRET_MISMATCH' });
+});
+
+test('null-order payout metadata omits the unset key while retrieval and discovery retain exact intent and allocation binding', async () => {
+  const f = fixture(), intent = { ...f.intent, kind: 'PAYOUT', accountId: 'acct_seller', orderId: null, externalAccountId: 'ba_test1' };
+  const exact = { atlas_marketplace_intent: intent.id, atlas_marketplace_binding: intent.bindingHash };
+  const payout = { object: 'payout', id: 'po_test1', amount: intent.amountCents, currency: 'usd', metadata: exact, livemode: false, status: 'pending', automatic: false, method: 'standard', type: 'bank_account', destination: 'ba_test1', balance_transaction: null, failure_balance_transaction: null };
+  f.objects['/v1/payouts'] = payout; f.objects['/v1/payouts/po_test1'] = payout;
+  assert.deepEqual(await f.provider.create(intent), { objectId: 'po_test1' });
+  const post = f.calls.find(call => call.options.method === 'POST'), params = new URLSearchParams(post.options.body);
+  assert.equal(params.has('metadata[atlas_marketplace_order]'), false);
+  assert.equal(params.get('metadata[atlas_marketplace_intent]'), intent.id); assert.equal(params.get('metadata[atlas_marketplace_binding]'), intent.bindingHash);
+  f.objects['/v1/payouts'] = { object: 'list', data: [payout], has_more: false };
+  for (const value of [exact, { ...exact, atlas_marketplace_order: '' }]) {
+    payout.metadata = value;
+    assert.equal((await f.provider.retrieve(intent, { objectId: payout.id })).orderId, null);
+    assert.deepEqual(await f.provider.discover(intent), { objectId: payout.id, complete: true });
+  }
+  for (const value of [{ ...exact, atlas_marketplace_order: 'foreign_order' }, { ...exact, atlas_marketplace_order: null }, { ...exact, atlas_marketplace_binding: 'foreign_binding' }, { atlas_marketplace_intent: intent.id }, { ...exact, atlas_marketplace_order: false }]) {
+    payout.metadata = value;
+    await assert.rejects(f.provider.retrieve(intent, { objectId: payout.id }), { code: 'STRIPE_INTENT_BINDING_MISMATCH' });
+    await assert.rejects(f.provider.discover(intent), { code: 'STRIPE_INTENT_BINDING_MISMATCH' });
+  }
+  payout.metadata = { ...exact, atlas_marketplace_intent: 'foreign_intent' };
+  await assert.rejects(f.provider.retrieve(intent, { objectId: payout.id }), { code: 'STRIPE_INTENT_BINDING_MISMATCH' });
+  assert.deepEqual(await f.provider.discover(intent), { objectId: null, complete: true });
+  payout.metadata = exact;
+  await assert.rejects(f.provider.retrieve({ ...intent, orderId: 'required_order' }, { objectId: payout.id }), { code: 'STRIPE_INTENT_BINDING_MISMATCH' });
+  await assert.rejects(f.provider.retrieve({ ...intent, orderId: undefined }, { objectId: payout.id }), { code: 'STRIPE_INTENT_BINDING_MISMATCH' });
+  f.objects['/v1/payouts'].data.push({ ...payout, id: 'po_duplicate' });
+  await assert.rejects(f.provider.discover(intent), { code: 'MULTIPLE_PROVIDER_OBJECTS' });
+  assert.equal(f.calls.filter(call => call.options.method === 'POST').length, 1);
+});
+
+test('collection and reconciliation refuse widened or ambiguous original payment method scope without another create', async () => {
+  const mutations = [
+    ...[undefined, null, [], 'card', ['card', 'link'], ['card', 'klarna'], ['us_bank_account'], ['card', 'card']].map(value => object => { object.payment_method_types = value; }),
+    ...[true, [], {}, { enabled: true }, { enabled: 'false' }].map(value => object => { object.automatic_payment_methods = value; }),
+  ];
+  for (const mutate of mutations) {
+    const f = fixture(), object = f.objects['/v1/payment_intents/pi_test1'];
+    Object.assign(object, { status: 'requires_payment_method', amount_received: 0, latest_charge: null, capture_method: 'automatic', confirmation_method: 'automatic', client_secret: 'pi_test1_secret_mock' }); mutate(object);
+    const provider = createStripeSandboxProvider({ ...f.config, publishableKey: 'pk_test_ExplicitMock' });
+    await assert.rejects(provider.getPaymentCollection({ ...f.intent, objectId: object.id }), { code: 'STRIPE_PAYMENT_METHOD_SCOPE_MISMATCH' });
+    await assert.rejects(provider.retrieve(f.intent, { objectId: object.id }), { code: 'STRIPE_PAYMENT_METHOD_SCOPE_MISMATCH' });
+    assert.ok(f.calls.every(call => call.options.method === 'GET'));
+  }
+  for (const automatic of [undefined, null, { enabled: false }]) {
+    const f = fixture(); f.objects['/v1/payment_intents/pi_test1'].automatic_payment_methods = automatic;
+    assert.equal((await f.provider.retrieve(f.intent, { objectId: 'pi_test1' })).chargePaid, true);
+  }
+});
+
+test('card-only intents still refuse non-card Link funding and unsupported charge types before settlement evidence', async () => {
+  const unsupported = [null, {}, { type: 'klarna' }, { type: 'us_bank_account' }, { type: 'link' },
+    { type: 'card', card: { brand: 'link', network: 'link' } }, { type: 'card', card: { brand: 'link', network: null } },
+    { type: 'card', card: { brand: 'visa', network: 'link' } }, { type: 'card', card: { network: 'visa' } },
+    { type: 'card', card: { brand: 'visa' } }, { type: 'card', card: { brand: 'visa', network: 1 } }];
+  for (const details of unsupported) {
+    const f = fixture(); f.objects['/v1/charges/ch_test1'].payment_method_details = details;
+    await assert.rejects(f.provider.retrieve(f.intent, { objectId: 'pi_test1' }), { code: 'STRIPE_PAYMENT_METHOD_SCOPE_MISMATCH' });
+    assert.ok(f.calls.every(call => call.options.method === 'GET'));
+    assert.equal(f.calls.some(call => call.path.startsWith('/v1/balance_transactions/')), false);
+  }
+  // Stripe documents the processed card network as nullable, including unsuccessful attempts.
+  const f = fixture(); Object.assign(f.objects['/v1/payment_intents/pi_test1'], { status: 'requires_payment_method', amount_received: 0 });
+  Object.assign(f.objects['/v1/charges/ch_test1'], { paid: false, amount_captured: 0, balance_transaction: null, payment_method_details: { type: 'card', card: { brand: 'visa', network: null } } });
+  const evidence = await f.provider.retrieve(f.intent, { objectId: 'pi_test1' });
+  assert.equal(evidence.chargePaid, false); assert.equal(evidence.chargeCapturedCents, 0); assert.equal(evidence.status, 'requires_payment_method');
 });
 
 test('hosted onboarding requires explicit account policy and HTTPS return origins, with no invented account/controller settings', async () => {
@@ -170,6 +240,40 @@ test('balance inventory is paginated and mode-scoped, with exact amount/source a
   f.objects['/v1/balance_transactions'].data[0].created = NOW / 1000 - 1;
   await assert.rejects(f.provider.listBalanceTransactions({ accountId: 'acct_platform', fromMs: NOW, toMs: NOW + 1000 }), { code: 'STRIPE_TRANSACTION_WINDOW_MISMATCH' });
   assert.ok(f.calls.every(call => call.options.method === 'GET'));
+});
+
+test('Basil prefunding uses nested available/pending arrays and never increases ordinary payout cash', async () => {
+  const f = fixture();
+  const provider = createStripeSandboxProvider({ ...f.config, apiVersion: '2025-03-31.basil' });
+  const balance = f.objects['/v1/balance']; balance.pending = [{ currency: 'usd', amount: 300 }];
+  for (const prefunding of [undefined, null, { available: [], pending: [] }, { available: [{ currency: 'usd', amount: 0 }], pending: [{ currency: 'usd', amount: 0 }] }]) {
+    if (prefunding === undefined) delete balance.refund_and_dispute_prefunding; else balance.refund_and_dispute_prefunding = prefunding;
+    for (const accountId of ['acct_platform','acct_seller']) {
+      const result = await provider.getAccountSnapshot(accountId);
+      assert.equal(result.accountId, accountId); assert.equal(result.totalCents, 100300); assert.deepEqual(result.unsupported, []);
+    }
+  }
+  balance.refund_and_dispute_prefunding = { available: [{ currency: 'usd', amount: 500 }, { currency: 'eur', amount: 25 }], pending: [{ currency: 'usd', amount: -100 }] };
+  const result = await provider.getAccountSnapshot('acct_platform');
+  assert.equal(result.availableCents, 100000); assert.equal(result.pendingCents, 300); assert.equal(result.totalCents, 100300);
+  assert.deepEqual(result.unsupported, [
+    { bucket: 'refund_and_dispute_prefunding.available', currency: 'usd', amountCents: 500 },
+    { bucket: 'refund_and_dispute_prefunding.available', currency: 'eur', amountCents: 25 },
+    { bucket: 'refund_and_dispute_prefunding.pending', currency: 'usd', amountCents: -100 },
+  ]);
+  assert.ok(f.calls.every(call => call.options.method === 'GET' && call.options.headers['Stripe-Version'] === '2025-03-31.basil'));
+});
+
+test('prefunding malformed shapes and ambiguous/noninteger currency rows fail closed', async () => {
+  const malformed = [[], [{ currency: 'usd', amount: 0 }], 0, 'zero', {}, { available: [] }, { available: [], pending: null }, { available: {}, pending: [] },
+    { available: [], pending: [], extra: [] }, { available: [null], pending: [] },
+    ...[{ currency: 'usd', amount: '0' }, { currency: 'usd', amount: 0.5 }, { currency: 'usd', amount: Number.MAX_SAFE_INTEGER + 1 }, { amount: 0 }, { currency: 'USD', amount: 0 }].map(row => ({ available: [row], pending: [] })),
+    { available: [{ currency: 'usd', amount: 0 }, { currency: 'usd', amount: 0 }], pending: [] }];
+  for (const prefunding of malformed) {
+    const f = fixture(); Object.assign(f.objects['/v1/balance'], { pending: [], refund_and_dispute_prefunding: prefunding });
+    await assert.rejects(f.provider.getAccountSnapshot('acct_platform'), { code: 'STRIPE_BALANCE_MISMATCH' });
+    assert.ok(f.calls.every(call => call.options.method === 'GET'));
+  }
 });
 
 test('external payout-bank eligibility uses documented new status and account permission, without claiming ownership verification', async () => {

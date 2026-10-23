@@ -32,17 +32,19 @@ export function assertPaymentCollection(collection, expected) {
   return { reservationId: expected.reservationId, intentId: expected.intentId, amountCents: expected.amountCents, currency: 'USD' };
 }
 
-export function createStripePaymentSession({ collection, expected, mountNode, submitButton, noticeNode, origin, returnPath='/marketplace/', onConfirmStart = () => {}, onReconcile, load = loadStripeJs }) {
+export function createStripePaymentSession({ collection, expected, mountNode, submitButton, noticeNode, origin, returnPath='/marketplace/', onConfirmStart = () => {}, onReconcile, load = loadStripeJs, timers = globalThis }) {
   const binding = assertPaymentCollection(collection, expected);
   check(/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\/$/.test(returnPath), 'Payment return path is unavailable.');
   const returnURL = new URL(returnPath, origin);
   check(returnURL.origin === origin && ['https:', 'http:'].includes(returnURL.protocol) && (returnURL.protocol === 'https:' || ['localhost','127.0.0.1'].includes(returnURL.hostname)), 'Payment return location is unavailable.');
   let clientSecret = collection.clientSecret, publishableKey = collection.publishableKey;
   collection = null;
-  let disposed = false, submitting = false, ready = false, stripe, elements, paymentElement;
+  let disposed = false, submitting = false, ready = false, stripe, elements, paymentElement, readyTimer;
+  const clearReadyTimer = () => { if (readyTimer !== undefined) { timers.clearTimeout(readyTimer); readyTimer = undefined; } };
   const notice = text => { if (!disposed) noticeNode.textContent = text; };
   const destroy = () => {
     disposed = true; ready = false; clientSecret = null; publishableKey = null;
+    clearReadyTimer();
     submitButton.disabled = true;
     paymentElement?.destroy(); paymentElement = null; elements = null; stripe = null;
   };
@@ -54,9 +56,14 @@ export function createStripePaymentSession({ collection, expected, mountNode, su
       stripe = stripeInstances.get(publishableKey);
       elements = stripe.elements({ clientSecret, appearance: { theme: 'stripe', variables: { colorPrimary: '#047857', colorBackground: '#ffffff', colorText: '#17221e', borderRadius: '3px' } } });
       clientSecret = null;
-      paymentElement = elements.create('payment', { layout: 'tabs' });
-      paymentElement.on('ready', () => { if (!disposed) { ready = true; submitButton.disabled = false; notice('Enter your payment details securely with Stripe. Your order is confirmed only after server reconciliation.'); } });
+      paymentElement = elements.create('payment', { layout: 'tabs', wallets: { link: 'never' } });
+      paymentElement.on('ready', () => { if (!disposed) { clearReadyTimer(); ready = true; submitButton.disabled = false; notice('Enter your payment details securely with Stripe. Your order is confirmed only after server reconciliation.'); } });
       paymentElement.on('loaderror', () => { notice('The Stripe form could not load. Close it and reconcile the original payment.'); destroy(); });
+      readyTimer = timers.setTimeout(() => {
+        if (disposed || ready) return;
+        notice('The Stripe form did not become ready. Close it and reconcile the original payment before reopening payment details. No payment was submitted by this form.');
+        destroy();
+      }, 20000);
       paymentElement.mount(mountNode);
     } catch {
       notice('Payment collection is unavailable. Close this form and reconcile the original payment.'); destroy();

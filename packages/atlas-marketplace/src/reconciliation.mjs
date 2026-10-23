@@ -116,13 +116,21 @@ export function recordAccountReport(tx, { reportId, accountId, platformAccountId
 export async function reconcileAccount({ store, provider, accountId, platformAccountId, reportId, maxEvidenceAgeMs, enabled = false }) {
   check(enabled === true && provider?.getAccountSnapshot && provider?.listBalanceTransactions, 'ACCOUNT_RECONCILIATION_DISABLED');
   identifier(reportId); identifier(accountId); identifier(platformAccountId);
+  check(Number.isSafeInteger(maxEvidenceAgeMs) && maxEvidenceAgeMs > 0 && maxEvidenceAgeMs <= 300000, 'INVALID_RECONCILIATION_FRESHNESS');
   const opening = await store.read(state => state.financeOpenings?.[accountId]);
   try {
     const identity = provider.getIdentity ? await provider.getIdentity() : { livemode: false, platformAccountId };
     check(identity.platformAccountId === platformAccountId && typeof identity.livemode === 'boolean', 'ACCOUNT_RECONCILIATION_SCOPE_MISMATCH');
     const expectedLivemode = identity.livemode;
     const before = await provider.getAccountSnapshot(accountId);
-    const inventory = await provider.listBalanceTransactions({ accountId, fromMs: opening?.cutoffMs ?? 0, toMs: Math.floor(before.observedAt / 1000) * 1000 + 1000 });
+    check(Number.isSafeInteger(before.observedAt) && before.observedAt >= 0, 'STALE_PROVIDER_EVIDENCE');
+    // The final snapshot is retrieved after the inventory round trips. Bound
+    // the exclusive query end beyond the entire permitted observation age,
+    // not just the next second. Existing freshness checks still reject slow
+    // reads; querying a future end does not assert that future events exist.
+    const lastFreshObservation = safeSum(before.observedAt, maxEvidenceAgeMs);
+    const toMs = safeSum(Math.floor(lastFreshObservation / 1000) * 1000, 1000);
+    const inventory = await provider.listBalanceTransactions({ accountId, fromMs: opening?.cutoffMs ?? 0, toMs });
     const after = await provider.getAccountSnapshot(accountId);
     return await store.transaction(tx => recordAccountReport(tx, { reportId, accountId, platformAccountId, before, after, inventory, maxEvidenceAgeMs, expectedLivemode }));
   } catch (error) {
