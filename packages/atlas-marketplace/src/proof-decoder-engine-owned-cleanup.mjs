@@ -8,12 +8,13 @@ import {compileProofDecoderEngineRequest} from './proof-decoder-engine-request.m
 import {projectProofDecoderEngineResponse} from './proof-decoder-engine-response.mjs';
 import {assertProofDecoderFixedParentBinding,assertProofDecoderFixedParentReport} from './proof-decoder-engine-target-binding.mjs';
 import {createProofDecoderEngineTransport} from './proof-decoder-engine-transport.mjs';
+import {assertProofDecoderControlProbeLaunchPlan,createProofDecoderEngineControlProbeTransport,assertProofDecoderControlProbeRequest,PROOF_DECODER_CONTROL_PROBE_IMAGE,PROOF_DECODER_CONTROL_PROBE_CLEANUP} from './proof-decoder-engine-control-probe-transport.mjs';
 import {assertProofDecoderTargetRegistry} from './proof-decoder-target-registry.mjs';
 import {assertProofDecoderLinuxCgroupController} from './proof-decoder-linux-cgroup.mjs';
 import {assertProofDecoderKernelGuardClient} from './proof-decoder-kernel-guard.mjs';
 import {createProofDecoderEngineTargetEndpoint} from './proof-decoder-engine-target-endpoint.mjs';
 
-const effectReceipts=new WeakMap(),exitObservations=new WeakMap(),cleanupReceipts=new WeakMap(),decodedJobs=new WeakMap();
+const effectReceipts=new WeakMap(),exitObservations=new WeakMap(),cleanupReceipts=new WeakMap(),decodedJobs=new WeakMap(),probeJobs=new WeakMap();
 const MARKERS={classification:'UNQUALIFIED',executionAllowed:false};
 const check=(value,code='ENGINE_TARGET_INVALID')=>requireValue(value,code);
 const fault=code=>Object.assign(new Error(code),{code});
@@ -147,6 +148,64 @@ export function createProofDecoderTargetEffectSession(options={}) {
   });
 }
 
+/** Separate same-process producer for the finite C probe. Neither its output nor
+ * its completion state enters decodedJobs or the worker validation parser. */
+export function createProofDecoderTargetControlProbeSession(options={}){
+  const input=engineDataOptions(options,[],['enabled','plan','targetRegistry','parentController','targetBinding','guardClient','guardLease',
+    'socketPath','apiVersion','jobId','seccompBytes','headerTimeoutMs','signal','linuxObserver']);
+  if(input.enabled!==true)return null;
+  check(process.platform==='linux'&&process.getuid()===0&&process.getgid()===0,'ENGINE_PROBE_ROOT');
+  const c=context(input),initial=current(c,input.jobId);healthy(c,initial);
+  assertProofDecoderControlProbeLaunchPlan(c.plan);
+  const challenge=assertProofDecoderControlProbeRequest(initial.requestPlan);
+  check(initial.phase==='RESERVED'&&initial.identity.containerId===null,'ENGINE_TARGET_PHASE');
+  const guard=assertProofDecoderKernelGuardClient(input.guardClient,{controller:c.controller,bindingHash:c.bindingHash});
+  const lease=guard.assertLive(input.guardLease);
+  check(same(lease.identity,initial.identity)&&lease.deadlineBootNs===initial.deadlineAtNs&&lease.bindingHash===c.bindingHash,'ENGINE_TARGET_LEASE');
+  let jobs=probeJobs.get(c.registry);if(!jobs){jobs=new Map();probeJobs.set(c.registry,jobs);}
+  check(!jobs.has(input.jobId)&&jobs.size<128,'ENGINE_TARGET_REPLAY');
+  check(Buffer.isBuffer(input.seccompBytes)&&input.seccompBytes.length<=65536);
+  const seccomp=Buffer.from(input.seccompBytes);let transport;
+  try{transport=createProofDecoderEngineControlProbeTransport({enabled:true,plan:c.plan,job:initial.identity,challenge,
+    seccompBytes:seccomp,socketPath:c.socketPath,apiVersion:c.apiVersion,
+    deadlineMono:performance.now()+Math.min(c.plan.profile.limits.timeoutMs,Number(BigInt(initial.deadlineAtNs)-now(c.controller))/1e6),
+    headerTimeoutMs:input.headerTimeoutMs,signal:input.signal,targetBinding:c.targetBinding,
+    targetRuntime:{controller:c.controller,guardClient:guard,lease:input.guardLease,bindingHash:c.bindingHash,deadlineBootNs:initial.deadlineAtNs,linuxObserver:c.linuxObserver}});
+  }catch(error){seccomp.fill(0);throw error;}
+  const saved={identity:initial.identity,complete:false,wait:null,guardClient:guard,guardLease:input.guardLease};jobs.set(input.jobId,saved);
+  let closed=false,ran=false;
+  function live(){check(!closed,'ENGINE_TARGET_CLOSED');guard.assertLive(input.guardLease);healthy(c,current(c,input.jobId));}
+  async function request(operation){
+    live();const before=current(c,input.jobId);let intent=null,compiled=null;
+    if(operation==='CREATE'||operation==='START'){
+      compiled=compileProofDecoderEngineRequest({apiVersion:c.apiVersion,plan:c.plan,job:before.identity,operation,targetBinding:c.targetBinding,...(operation==='CREATE'?{seccompBytes:seccomp}:{})});
+      intent=c.registry.beginEffect(input.jobId,before.revision,{operation,requestHash:requestHash(compiled)});live();
+    }
+    const report=await transport.request(operation);live();
+    if(intent){const receipt=mintEffect(c,before,intent,operation,compiled,report);c.registry.observeEffect(input.jobId,intent.revision,{operationId:intent.operationId,receipt});saved.identity=current(c,input.jobId).identity;}
+    if(operation==='IMAGE_INSPECT')saved.imageId=report.data.imageId;
+    if(operation==='INSPECT'&&report.data?.state?.running)saved.startedAt=report.data.state.startedAt;
+    if(operation==='WAIT')saved.wait=report;
+    return report;
+  }
+  return Object.freeze({...MARKERS,evidenceKind:'PROBE_ONLY',freshPublicationAllowed:false,runtimeQualified:false,
+    async run(){
+      try{
+        check(!ran,'ENGINE_TARGET_REPLAY');ran=true;live();
+        for(const operation of ['IMAGE_INSPECT','CREATE','INSPECT','ATTACH','START','INSPECT'])await request(operation);
+        await transport.sendChallenge();live();
+        await request('WAIT');const output=await transport.outputComplete();live();
+        const report=output.probeReport;
+        check(!['MEMORY_OOM','CPU_DEADLINE'].includes(challenge.mode)&&report.state==='ENDED'&&report.final?.completion==='COMPLETE'&&report.final?.reason==='NORMAL'&&saved.wait?.kind==='WAIT_REPORTED'&&saved.wait.data.exitCode===0,'ENGINE_PROBE_INCOMPLETE_HOLD');
+        saved.complete=true;saved.waitExitCode=0;
+        return decoderFreeze({...MARKERS,evidenceKind:'PROBE_ONLY',probeReport:report,inputControls:transport.status().inputControls,workerValidation:null,freshPublicationAllowed:false,runtimeQualified:false});
+      }catch(error){poison(c,input.jobId);throw error;}
+    },
+    status(){return transport.status();},
+    close(){if(!closed){closed=true;if(!saved.complete)poison(c,input.jobId);seccomp.fill(0);transport.close();}}
+  });
+}
+
 function headersOf(raw) {
   check(Array.isArray(raw)&&raw.length<=64,'ENGINE_CLEANUP_HEADERS');const values={};let bytes=0;
   for(let i=0;i<raw.length;i+=2){
@@ -230,13 +289,14 @@ export function createProofDecoderOwnedEngineCleanup(options={}) {
   const input=engineDataOptions(options,[],['enabled','plan','targetRegistry','parentController','targetBinding','socketPath','apiVersion','linuxObserver']);
   if(input.enabled!==true)return null;
   const c=context(input);let active=false,closed=false;
-  return Object.freeze({...MARKERS,
-    async finishSettledJob(jobId){
+  async function finish(jobId,probe){
+    const jobs=probe?probeJobs:decodedJobs;
       check(!active&&!closed,'ENGINE_CLEANUP_UNAVAILABLE');active=true;
       try{
         let row=current(c,jobId);
-        const saved=decodedJobs.get(c.registry)?.get(jobId);
-        check(saved?.complete&&same(saved.identity,row.identity)&&saved.waitExitCode!==undefined,'ENGINE_CLEANUP_DECODE_REQUIRED');
+        const saved=jobs.get(c.registry)?.get(jobId);
+        check(saved?.complete&&same(saved.identity,row.identity)&&saved.waitExitCode!==undefined,probe?'ENGINE_CLEANUP_PROBE_REQUIRED':'ENGINE_CLEANUP_DECODE_REQUIRED');
+        if(probe){assertProofDecoderControlProbeRequest(row.requestPlan);check(c.plan.profile.image===PROOF_DECODER_CONTROL_PROBE_IMAGE&&saved.waitExitCode===0,'ENGINE_CLEANUP_PROBE_REQUIRED');}
         c.guardClient=saved.guardClient;c.guardLease=saved.guardLease;healthy(c,row);
         const effect=operation=>row.effects.find(item=>item.operation===operation);
         check(row.phase==='RUNNING'&&row.effects.every(item=>item.receipt!==null)&&
@@ -266,16 +326,19 @@ export function createProofDecoderOwnedEngineCleanup(options={}) {
         check(absent.kind==='NOT_FOUND_REPORTED','ENGINE_CLEANUP_ABSENCE_UNCERTAIN');
         healthy(c,row);
         const remove=row.effects.find(item=>item.operation==='REMOVE');
-        const receipt=decoderFreeze({schema:'atlas-proof-decoder-owned-engine-cleanup-v1',classification:'UNQUALIFIED',identity:row.identity,
+        const receipt=decoderFreeze({schema:probe?PROOF_DECODER_CONTROL_PROBE_CLEANUP:'atlas-proof-decoder-owned-engine-cleanup-v1',classification:'UNQUALIFIED',identity:row.identity,
           bindingHash:c.bindingHash,barrierId:row.barrierId,lastRemoveAtNs:remove.receipt.observedAtNs,observedAtNs:now(c.controller).toString(),
           createOperationId:effect('CREATE').operationId,startOperationId:effect('START').operationId,removeOperationId:remove.operationId,
           waitExitCode:saved.waitExitCode,absentAfterRemove:true,settled:true});
         cleanupReceipts.set(receipt,receipt);
         const nativeEmpty=c.controller.observeEmpty();
         const final=c.registry.finalize(jobId,row.revision,{settledCleanup:receipt,nativeEmpty});
-        decodedJobs.get(c.registry).delete(jobId);return decoderFreeze({...MARKERS,record:final,cleanup:receipt});
+        jobs.get(c.registry).delete(jobId);return decoderFreeze({...MARKERS,record:final,cleanup:receipt});
       }catch(error){poison(c,jobId);throw error;}finally{c.guardClient=null;c.guardLease=null;active=false;}
-    },
+  }
+  return Object.freeze({...MARKERS,
+    finishSettledJob(jobId){return finish(jobId,false);},
+    finishSettledControlProbe(jobId){return finish(jobId,true);},
     stopKnownJob(jobId){
       const row=current(c,jobId);
       // No competing Engine intent is appended over unknown CREATE/START.

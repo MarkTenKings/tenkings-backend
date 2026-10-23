@@ -145,17 +145,62 @@ export function createProofDecoderTargetBrokerClient(options={}){
   const plan=launch(input.plan),observer=assertProofDecoderLinuxObserver(input.observer),ipc=plan.profile.ipc;
   check(process.getuid()===ipc.clientUid&&process.getgid()===ipc.clientGid,'DECODER_BROKER_CLIENT_IDENTITY');
   check(typeof input.expectedBootId==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.expectedBootId)&&typeof input.expectedEpoch==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(input.expectedEpoch)&&typeof input.expectedBindingHash==='string'&&/^[a-f0-9]{64}$/.test(input.expectedBindingHash),'DECODER_BROKER_CONFIGURATION');
-  let active=null,closed=false,quarantined=false,requests=0;
+  let prepared=null,active=null,preparing=false,closed=false,quarantined=false,requests=0;
+  const handles=new WeakMap(),outcomes=new WeakMap();
+  const aborted=signal=>signal!==undefined&&Reflect.apply(Object.getOwnPropertyDescriptor(AbortSignal.prototype,'aborted').get,signal,[]);
+  const listen=(signal,callback,add)=>{if(signal)Reflect.apply(EventTarget.prototype[add?'addEventListener':'removeEventListener'],signal,['abort',callback,...(add?[{once:true}]:[])]);};
+  function observe(value,disposition,record=null){
+    outcomes.set(value,decoderFreeze({schema:'atlas-proof-decoder-client-disposition-v1',...MARKERS,disposition,request:record?.report??null}));return value;
+  }
+  function wipe(record){record.original?.fill(0);record.original=null;}
+  function releasePrepared(record){clearInterval(record.poll);listen(record.signal,record.abort,false);if(prepared===record)prepared=null;}
+  function retire(record,value){releasePrepared(record);wipe(record);record.state='RETIRED';record.outcome=observe(value,'KNOWN_NO_START_SENT',record);return record.outcome;}
+  function unclaimed(handle){const record=handles.get(handle);check(record&&!record.claimed,'DECODER_BROKER_PREPARED_HANDLE');return record;}
   const client=Object.freeze({...MARKERS,
-    status(){return decoderFreeze({...MARKERS,closed,quarantined,active:active?1:0,occupiedSlots:active||quarantined?1:0,requests});},
-    async request(options){
-      const began=time(observer),deadline=began+BigInt(plan.profile.limits.timeoutMs)*1000000n;
-      check(!closed&&!quarantined&&!active&&requests<128,'DECODER_BROKER_UNAVAILABLE');
-      const value=engineDataOptions(options,['bytes','plan'],['signal']);check(Buffer.isBuffer(value.bytes)&&value.bytes.length>0&&value.bytes.length<=plan.profile.limits.maxObjectBytes,'DECODER_BROKER_SOURCE');
-      const original=Buffer.from(value.bytes);let requestPlan;
-      try{requestPlan=decoderFreeze(decoderContractData(value.plan));assertProofDecoderPlan(requestPlan);check(original.length===requestPlan.byteCount&&engineBytesHash(original)===requestPlan.sha256,'DECODER_BROKER_SOURCE');check(value.signal===undefined||value.signal instanceof AbortSignal,'DECODER_BROKER_CONFIGURATION');check(!value.signal?.aborted,'DECODER_BROKER_CANCELLED');check(time(observer)<deadline,'DECODER_BROKER_DEADLINE');}catch(cause){original.fill(0);throw cause;}
-      const requestId=randomUUID();requests++;
-      const job={cancel:null,done:null};active=job;
+    status(){return decoderFreeze({...MARKERS,closed,quarantined,prepared:prepared?1:0,active:active?1:0,occupiedSlots:preparing||prepared||active||quarantined?1:0,retainedOriginalBytes:prepared?.original?.length??active?.record.original?.length??0,requests});},
+    prepareRequest(options){
+      let original=null,record=null,ownsPreparation=false;
+      try{
+        check(!closed&&!quarantined&&!preparing&&!prepared&&!active&&requests<128,'DECODER_BROKER_UNAVAILABLE');
+        preparing=true;ownsPreparation=true;
+        const began=time(observer),deadline=began+BigInt(plan.profile.limits.timeoutMs)*1000000n;
+        check(deadline<=18446744073709551615n,'DECODER_BROKER_CLOCK');
+        const value=engineDataOptions(options,['bytes','plan'],['signal']);
+        check(Buffer.isBuffer(value.bytes)&&value.bytes.length>0&&value.bytes.length<=plan.profile.limits.maxObjectBytes,'DECODER_BROKER_SOURCE');
+        original=Buffer.from(value.bytes);
+        const requestPlan=decoderFreeze(decoderContractData(value.plan));assertProofDecoderPlan(requestPlan);
+        check(original.length===requestPlan.byteCount&&engineBytesHash(original)===requestPlan.sha256,'DECODER_BROKER_SOURCE');
+        check(value.signal===undefined||value.signal instanceof AbortSignal,'DECODER_BROKER_CONFIGURATION');
+        check(!aborted(value.signal),'DECODER_BROKER_CANCELLED');check(time(observer)<deadline,'DECODER_BROKER_DEADLINE');
+        check(!closed&&!quarantined&&!prepared&&!active,'DECODER_BROKER_UNAVAILABLE');
+        const report=decoderFreeze({schema:'atlas-proof-decoder-prepared-request-v1',...MARKERS,requestId:randomUUID(),deadlineBootNs:String(deadline),plan:requestPlan,bootId:input.expectedBootId,epoch:input.expectedEpoch,bindingHash:input.expectedBindingHash,profileHash:plan.profileHash,limitsHash:plan.limitsHash});
+        const handle=Object.freeze({report});record={report,original,signal:value.signal,deadline,state:'PREPARED',claimed:false,poll:null,abort:null,outcome:null};
+        record.abort=()=>{if(record.state==='PREPARED')retire(record,error('DECODER_BROKER_CANCELLED'));};
+        handles.set(handle,record);prepared=record;requests++;
+        listen(record.signal,record.abort,true);
+        record.poll=setInterval(()=>{if(record.state!=='PREPARED')return;try{check(!aborted(record.signal),'DECODER_BROKER_CANCELLED');check(time(observer)<deadline,'DECODER_BROKER_DEADLINE');}catch{retire(record,error('DECODER_BROKER_PREPARED_EXPIRED'));}},POLL_MS);record.poll.unref();
+        return handle;
+      }catch{const failure=error('DECODER_BROKER_PREPARATION');if(record)throw retire(record,failure);original?.fill(0);throw observe(failure,'KNOWN_NO_START_SENT');}
+      finally{if(ownsPreparation)preparing=false;}
+    },
+    discardPrepared(handle){
+      const record=unclaimed(handle);record.claimed=true;
+      if(record.state==='RETIRED')throw record.outcome;
+      check(record.state==='PREPARED'&&prepared===record,'DECODER_BROKER_PREPARED_HANDLE');
+      return retire(record,decoderFreeze({schema:'atlas-proof-decoder-discarded-request-v1',...MARKERS,requestId:record.report.requestId}));
+    },
+    lookupDisposition(value){const observation=outcomes.get(value);check(observation,'DECODER_BROKER_DISPOSITION_REQUIRED');return observation;},
+    async request(options){return client.submitPrepared(client.prepareRequest(options));},
+    async submitPrepared(handle){
+      const record=unclaimed(handle);record.claimed=true;
+      if(record.state==='RETIRED')throw record.outcome;
+      check(record.state==='PREPARED'&&prepared===record,'DECODER_BROKER_PREPARED_HANDLE');
+      try{check(!closed&&!quarantined&&!active,'DECODER_BROKER_UNAVAILABLE');check(!aborted(record.signal),'DECODER_BROKER_CANCELLED');check(time(observer)<record.deadline,'DECODER_BROKER_DEADLINE');}
+      catch{throw retire(record,error('DECODER_BROKER_NOT_SUBMITTED'));}
+      releasePrepared(record);record.state='ACTIVE';
+      const {original,signal}=record,{requestId,plan:requestPlan}=record.report,deadline=record.deadline;
+
+      const job={cancel:null,done:null,record};active=job;
       job.done=new Promise((resolve,reject)=>{
         let socket,peer,directoryStamp,socketStamp,nonce=null,jobId=null,stage='HELLO',sentStart=false,inputEndSent=false,terminal=null,settled=false,localClosed=false,final=null,poll,sending=null,cancelReason=null;
         const reader=createTargetBrokerFrameReader({allowedTypes:['HELLO','ACCEPT','TERMINAL'],maxFrames:3,maxTotalBytes:8192,onFrame(type,message){
@@ -174,10 +219,10 @@ export function createProofDecoderTargetBrokerClient(options={}){
             }
           }
         }});
-        function live(){check(!settled&&!cancelReason&&time(observer)<deadline,'DECODER_BROKER_DEADLINE');check(directory(plan)===directoryStamp&&endpoint(plan)===socketStamp,'DECODER_BROKER_SOCKET');check(peer,'DECODER_BROKER_PEER');peer.assertAlive();}
+        function live(){check(!settled&&!cancelReason&&!aborted(signal)&&time(observer)<deadline,'DECODER_BROKER_DEADLINE');check(directory(plan)===directoryStamp&&endpoint(plan)===socketStamp,'DECODER_BROKER_SOCKET');check(peer,'DECODER_BROKER_PEER');peer.assertAlive();}
         function complete(){if(!final||!localClosed)return;const outcome=final;final=null;active=null;outcome.cause?reject(outcome.cause):resolve(outcome.report);}
         function finish(cause,report){
-          if(settled)return;settled=true;clearInterval(poll);value.signal?.removeEventListener('abort',abort);if(cause&&sentStart)quarantined=true;original.fill(0);reader.close();final={cause,report};socket?.destroy();peer?.close();if(!socket)localClosed=true;complete();
+          if(settled)return;settled=true;clearInterval(poll);listen(signal,abort,false);if(cause&&sentStart)quarantined=true;wipe(record);record.state='DONE';reader.close();if(cause)observe(cause,sentStart?'UNKNOWN':'KNOWN_NO_START_SENT',record);else observe(report,'COMPLETE_CLEAN',record);final={cause,report};socket?.destroy();peer?.close();if(!socket)localClosed=true;complete();
         }
         async function sendOriginal(){
           for(let at=0;at<original.length;at+=TARGET_BROKER_CHUNK){live();await write(socket,'DATA',original.subarray(at,Math.min(original.length,at+TARGET_BROKER_CHUNK)));}
@@ -188,7 +233,7 @@ export function createProofDecoderTargetBrokerClient(options={}){
           if(!sentStart){finish(error(cancelReason));return;}
           quarantined=true;void write(socket,'CANCEL',{requestId,nonce}).finally(()=>finish(error(cancelReason))).catch(()=>{});
         }
-        const abort=()=>cancel('DECODER_BROKER_CANCELLED');job.cancel=()=>cancel('DECODER_BROKER_CLOSED');value.signal?.addEventListener('abort',abort,{once:true});
+        const abort=()=>cancel('DECODER_BROKER_CANCELLED');job.cancel=()=>cancel('DECODER_BROKER_CLOSED');listen(signal,abort,true);
         try{
           directoryStamp=directory(plan);socketStamp=endpoint(plan);
           socket=createConnection({path:TARGET_BROKER_SOCKET,allowHalfOpen:true});
@@ -197,10 +242,10 @@ export function createProofDecoderTargetBrokerClient(options={}){
           socket.on('end',()=>{void(async()=>{try{live();reader.end();check(terminal,'DECODER_BROKER_TRUNCATED');if(sending)await sending;live();check(terminal.outcome!=='QUARANTINED','DECODER_BROKER_CLEANUP_UNKNOWN');finish(null,decoderFreeze({...terminal,bootId:input.expectedBootId,epoch:input.expectedEpoch}));}catch{finish(error('DECODER_BROKER_UNCERTAIN'));}})();});
           socket.on('error',()=>finish(error('DECODER_BROKER_TRANSPORT')));
           socket.on('close',()=>{localClosed=true;if(!settled)finish(error('DECODER_BROKER_UNCERTAIN'));else complete();});
-          poll=setInterval(()=>{try{check(!cancelReason&&time(observer)<deadline,'DECODER_BROKER_DEADLINE');if(peer)live();}catch{finish(error(cancelReason??'DECODER_BROKER_DEADLINE'));}},POLL_MS);
+          poll=setInterval(()=>{try{if(aborted(signal))cancel('DECODER_BROKER_CANCELLED');check(!cancelReason&&time(observer)<deadline,'DECODER_BROKER_DEADLINE');if(peer)live();}catch{finish(error(cancelReason??'DECODER_BROKER_DEADLINE'));}},POLL_MS);
         }catch{finish(error('DECODER_BROKER_TRANSPORT'));}
       });return job.done;
     },
-    async close(){closed=true;const job=active;job?.cancel?.();if(job)try{await job.done;}catch{}return this.status();}
+    async close(){closed=true;if(prepared)retire(prepared,error('DECODER_BROKER_CLOSED'));const job=active;job?.cancel?.();if(job)try{await job.done;}catch{}return this.status();}
   });return client;
 }
