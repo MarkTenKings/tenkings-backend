@@ -1,0 +1,43 @@
+# ATLAS R2 candidate: source only, unapplied and unqualified.
+# Parser 4.0.1; ABI 4.0 sha256 e510bb8f6788b45e48de2f859a6f94a7b8416cbac5a1051814cfce925fa911bd.
+# Only this pinned ABI is included; no host abstractions or tunables.
+abi <abi/4.0>,
+profile @@NAME@@ flags=(mediate_deleted) {
+  # Exact immutable image inventory. Only Node may execute.
+@@INVENTORY_RULES@@
+
+  # Private temporary mounts; no executable mappings or execution are granted.
+  owner /tmp/ rw,
+  owner /tmp/** rwk,
+  /dev/shm/ rw,
+  owner /dev/shm/** rwk,
+  /dev/null rw,
+  /dev/zero rw,
+  /dev/random r,
+  /dev/urandom r,
+
+  # Limited runtime introspection within the private PID namespace.
+  owner /proc/{self,thread-self,[0-9]*}/{stat,status,statm,maps,auxv,limits,cgroup} r,
+  owner /proc/self/exe r,
+  /proc/{meminfo,cpuinfo,stat,loadavg} r,
+  /sys/devices/system/cpu/online r,
+
+  # Host labels observed in security-profile-facts-01. Broker label is a later gate.
+  signal (receive) peer=unconfined,
+  signal (send, receive) peer=@@NAME@@,
+  ptrace (readby) peer=unconfined,
+  deny ptrace (read, trace, tracedby),
+
+  # Explicit denials complement default-deny; none grants a new host path.
+  deny network,
+  deny capability,
+  deny mount,
+  deny umount,
+  deny pivot_root,
+  deny /{etc,home,root,run,mnt,media}/** rwklmx,
+  deny /var/{run,lib}/** rwklmx,
+  deny /proc/{self,thread-self,[0-9]*}/{environ,mem,root,fd}{,/**} rwklmx,
+  deny /sys/fs/cgroup{,/**} rwklmx,
+  deny /sys/** wklmx,
+  deny /opt/atlas-proof-decoder/** wkl,
+}
