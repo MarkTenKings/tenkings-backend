@@ -1,9 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
-import { manualResearchSettings, manualDealerConfigurationLoader, readDealerOfferFile } from '../lib/server/market-runtime-settings.mjs';
+import { manualArchiveMarketSearchSettings, manualResearchSettings, manualDealerConfigurationLoader, readDealerOfferFile } from '../lib/server/market-runtime-settings.mjs';
 const directory = {version:'atlas-dealer-directory-v1',updatedAt:null,dealers:[]};
 const enabled = {ATLAS_MANUAL_PRESENTATION_ENABLED:'true',ATLAS_MANUAL_MARKET_ENABLED:'true',ATLAS_MANUAL_RESEARCH_ENABLED:'true',ATLAS_MANUAL_OPENAI_KEY:'fixture-openai-key',ATLAS_MANUAL_SOLD_COMPS_API_KEY:'fixture-sold-key-long'};
+test('archive search native opt-in requires its reviewed schema and existing durable acquisition configuration', () => {
+  const env = { ATLAS_STAFF_ARCHIVE_COMP_SEARCH:'1', ATLAS_MANUAL_ENABLED:'true', ATLAS_MANUAL_PRESENTATION_ENABLED:'true',
+    ATLAS_MANUAL_MARKET_ENABLED:'true', ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED:'true', ATLAS_ARCHIVE_MARKET_SCHEMA_SHA256:'a'.repeat(64) };
+  for (const flag of [undefined, '0', 'true', true]) assert.equal(manualArchiveMarketSearchSettings({ATLAS_STAFF_ARCHIVE_COMP_SEARCH:flag}),null);
+  assert.deepEqual(manualArchiveMarketSearchSettings(env), {expectedSchemaSha256:'a'.repeat(64)});
+  for (const key of ['ATLAS_MANUAL_ENABLED','ATLAS_MANUAL_PRESENTATION_ENABLED','ATLAS_MANUAL_MARKET_ENABLED',
+    'ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED','ATLAS_ARCHIVE_MARKET_SCHEMA_SHA256'])
+    assert.throws(()=>manualArchiveMarketSearchSettings({...env,[key]:undefined}),{code:'MARKET_ARCHIVE_CONFIGURATION_INVALID'});
+  for (const change of [{VERCEL:'1'},{AWS_LAMBDA_FUNCTION_NAME:'fixture'},{ATLAS_VARIANT_WORKER_ENABLED:'true'},
+    {ATLAS_ARCHIVE_MARKET_SCHEMA_SHA256:'A'.repeat(64)}])
+    assert.throws(()=>manualArchiveMarketSearchSettings({...env,...change}),{code:'MARKET_ARCHIVE_CONFIGURATION_INVALID'});
+});
 test('research stays cold and requires its presentation, provider settings without retired catalog credentials', () => {
   assert.equal(manualResearchSettings({}),null);
   assert.equal(Object.hasOwn(manualResearchSettings(enabled),'catalogToken'),false);

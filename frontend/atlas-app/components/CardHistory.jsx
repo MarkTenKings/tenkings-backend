@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Shell from './Shell';
 import ApprovedCardMedia from './ApprovedCardMedia';
+import StaffCompCuration from './StaffCompCuration';
+import StaffCompSearch from './StaffCompSearch';
 import { api } from '../lib/client';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { orderDeskPagePath } from '../lib/order-desk-client.mjs';
@@ -16,6 +18,8 @@ import styles from './CardHistory.module.css';
 const sections = [['overview', 'Overview'], ['report', 'Grade report'], ['comps', 'Sold comps'], ['history', 'History']];
 const categories = { SPORTS: 'Sports', POKEMON: 'Pokémon' };
 const gradeCategories = [['centering', 'Centering'], ['corners', 'Corners'], ['edges', 'Edges'], ['surface', 'Surface']];
+const compCardKey = card => JSON.stringify([card?.cardId, card?.approvalActionId, card?.sourceRevision, card?.sourceHash, card?.mode,
+  card?.report?.publicToken, card?.report?.version, card?.report?.publicHash, card?.report?.reportHash]);
 const scoreLabel = (value, exact = false) => Number.isFinite(value) && value >= 0 && value <= 10
   ? exact ? String(value) : new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value) : 'Not recorded';
 
@@ -126,11 +130,13 @@ export function HistoryTimeline({ data }) {
   </section>;
 }
 
-export default function CardHistory({ staff, cardId, request = api }) {
+export default function CardHistory({ staff, cardId, request = api, compCurationEnabled = false, compCurationRequest, compSearchEnabled = false, compSearchRequest }) {
   const [data, setData] = useState(null), [loading, setLoading] = useState(true), [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(''), [accessLost, setAccessLost] = useState(false), [refresh, setRefresh] = useState(0);
   const [section, setSection] = useState('overview'), [dataScope, setDataScope] = useState('');
-  const generation = useRef(0), current = useRef(null), mounted = useRef(false), load = useRef(null);
+  const [compRefresh, setCompRefresh] = useState(0), [, setCompBlocked] = useState(false);
+  const compSelection = useRef({ key: null, pending: false, queued: null, lastReady: null });
+  const generation = useRef(0), current = useRef(null), mounted = useRef(false), load = useRef(null), compContext = useRef(null);
   const scope = `${staff.id}:${staff.role}:${staff.mode}:${cardId}`;
   async function read(cursor) {
     const token = ++generation.current;
@@ -168,6 +174,37 @@ export default function CardHistory({ staff, cardId, request = api }) {
   useEffect(() => { setSection('overview'); }, [scope]);
   useEffect(() => { void load.current(); }, [scope, refresh]);
   const visible = dataScope === scope ? data : null, card = visible?.card, report = approvedReportPath(card);
+  const compOwner = { generation: generation.current, staff, actor: `${staff.id}:${staff.role}:${staff.mode}`, card, cardKey: compCardKey(card),
+    request: compCurationRequest, searchRequest: compSearchRequest, enabled: compCurationEnabled || compSearchEnabled, section };
+  compContext.current = compOwner;
+  const selectionKey = `${scope}:${compOwner.cardKey}`;
+  if (compSelection.current.key !== selectionKey) compSelection.current = { key: selectionKey, pending: false, queued: null, lastReady: null };
+  function compCurrent() {
+    const now = compContext.current;
+    return !(!mounted.current || generation.current !== compOwner.generation || now.staff !== compOwner.staff || now.actor !== compOwner.actor
+      || `${staff.id}:${staff.role}:${staff.mode}` !== compOwner.actor || now.card !== compOwner.card || compCardKey(card) !== compOwner.cardKey
+      || now.cardKey !== compOwner.cardKey || now.request !== compOwner.request || now.searchRequest !== compOwner.searchRequest || now.enabled !== true || now.section !== 'comps');
+  }
+  function endCompAccess() {
+    if (!compCurrent()) return;
+    generation.current++; current.current?.abort(); setData(null); setLoading(false); setLoadingMore(false); setAccessLost(true);
+    setError('Your staff access needs to be checked. Sign in again to open this card.');
+  }
+  function flushCompPool() {
+    const selection = compSelection.current;
+    if (!compCurrent() || selection.key !== selectionKey || selection.pending || !selection.queued) return;
+    selection.lastReady = selection.queued; selection.queued = null; setCompRefresh(value => value + 1);
+  }
+  function compPoolReady(value) {
+    if (!compCurrent() || value.approvalActionId !== card?.approvalActionId) return;
+    const selection = compSelection.current;
+    if (selection.key !== selectionKey || selection.lastReady === value.previewId) return;
+    selection.queued = value.previewId; flushCompPool();
+  }
+  function compPendingChanged(value) {
+    if (!compCurrent() || compSelection.current.key !== selectionKey) return;
+    compSelection.current.pending = value === true; setCompBlocked(value === true); flushCompPool();
+  }
   function selectWithKeyboard(event, index) {
     const next = event.key === 'ArrowRight' ? (index + 1) % sections.length : event.key === 'ArrowLeft' ? (index + sections.length - 1) % sections.length : event.key === 'Home' ? 0 : event.key === 'End' ? sections.length - 1 : null;
     if (next === null) return;
@@ -196,7 +233,14 @@ export default function CardHistory({ staff, cardId, request = api }) {
         {sections.map(([id]) => <div key={id} id={`card-panel-${id}`} role="tabpanel" aria-labelledby={`card-tab-${id}`} hidden={section !== id} tabIndex={0} className={styles.panel}>
           {section === id && (id === 'overview' ? <CardOverview card={card} custody={visible.custody} orderLinks={staff.customerOperationsEnabled === true}/>
             : id === 'report' ? <GradeSummary card={card} report={report}/>
-              : id === 'comps' ? <SavedComparables key={card.approvalActionId} card={card}/>
+              : id === 'comps' ? <><SavedComparables key={card.approvalActionId} card={card}/>
+                {compSearchEnabled === true && typeof compSearchRequest === 'function' && <StaffCompSearch
+                  key={`search:${card.cardId}:${card.approvalActionId}`} staff={staff} card={card} enabled request={compSearchRequest}
+                  accessState={accessLost ? 'ENDED' : 'READY'} isSelectionPending={() => !compCurrent() || compSelection.current.pending}
+                  onReady={compPoolReady} onAccessLost={endCompAccess}/>}
+                {compCurationEnabled === true && typeof compCurationRequest === 'function' && <StaffCompCuration
+                  key={`${card.cardId}:${card.approvalActionId}`} staff={staff} card={card} enabled accessState={accessLost ? 'ENDED' : 'READY'}
+                  request={compCurationRequest} onAccessLost={endCompAccess} refreshToken={compRefresh} onPendingChange={compPendingChanged}/>}</>
                 : <><HistoryTimeline data={visible}/>{visible.history.nextCursor && !accessLost && <div className={styles.loadMore}><button className={archive.primary} type="button" disabled={loadingMore} onClick={() => void read(visible.history.nextCursor)}>{loadingMore ? 'Loading history…' : 'Load earlier events'}</button></div>}</>)}
         </div>)}
         <p className={styles.recordNote}>This archive preserves recorded approvals and their evidence. Ownership, physical custody and later transactions require their own records.</p>

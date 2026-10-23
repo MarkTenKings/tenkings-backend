@@ -4,9 +4,9 @@ import { createPrivateManualRequestVerifier, createPrivateManualNonceStore, isMa
   MANUAL_TRANSPORT_LIMITS, ManualTransportError, manualPrivateHeaders, manualResponsePolicy,
   sendManualTransportError } from '../src/transport.mjs';
 
-async function readBody(req) {
+async function readBody(req, limit = MANUAL_TRANSPORT_LIMITS.requestBytes) {
   const size = req.headers['content-length'];
-  if (size !== undefined && (!/^\d+$/.test(size) || Number(size) > MANUAL_TRANSPORT_LIMITS.requestBytes))
+  if (size !== undefined && (!/^\d+$/.test(size) || Number(size) > limit))
     throw new ManualTransportError(413, 'REQUEST_TOO_LARGE');
   return new Promise((resolve, reject) => {
     const chunks = []; let length = 0;
@@ -17,7 +17,7 @@ async function readBody(req) {
     const end = () => { cleanup(); resolve(Buffer.concat(chunks, length)); };
     const data = chunk => {
       length += chunk.length;
-      if (length > MANUAL_TRANSPORT_LIMITS.requestBytes) {
+      if (length > limit) {
         // Pause without destroying the response socket so the caller receives
         // the explicit refusal. The error handler drains without retaining any
         // more bytes; the server request timeout still bounds a slow sender.
@@ -48,10 +48,11 @@ function adaptResponse(req, res) {
  * Bind/listen and lifecycle ownership belong to the caller. Inject a shared
  * atomic nonceStore when routing requests among multiple private processes. */
 export function createPrivateManualServer({ connected, boundary, origin, key,
-  nonceStore = createPrivateManualNonceStore(), maxSkewMs = 60000, publicHandler = null, customerHandler = null }) {
+  nonceStore = createPrivateManualNonceStore(), maxSkewMs = 60000, publicHandler = null, customerHandler = null, compHandler = null }) {
   if (!connected || typeof boundary?.authenticate !== 'function') throw new ManualTransportError(500, 'MANUAL_TRANSPORT_CONFIG_INVALID');
   if(publicHandler!==null&&typeof publicHandler!=='function')throw new ManualTransportError(500,'MANUAL_TRANSPORT_CONFIG_INVALID');
   if(customerHandler!==null&&typeof customerHandler!=='function')throw new ManualTransportError(500,'MANUAL_TRANSPORT_CONFIG_INVALID');
+  if(compHandler!==null&&typeof compHandler!=='function')throw new ManualTransportError(500,'MANUAL_TRANSPORT_CONFIG_INVALID');
   const verify = createPrivateManualRequestVerifier({ key, origin, nonceStore, maxSkewMs });
   const verified = new WeakSet();
   const handler = createConnectedHandler({ connected, boundary, origin, assertRequest(req) {
@@ -75,6 +76,15 @@ export function createPrivateManualServer({ connected, boundary, origin, key,
     }
     const res = adaptResponse(req, nativeRes); manualPrivateHeaders(res);
     try {
+      // This reserved family has a separate restricted client and its own
+      // signature verifier. Never consume its nonce in the grading verifier,
+      // or let a disabled/malformed comp request fall through to grading.
+      if (typeof req.url === 'string' && /^\/api\/staff\/manual-connected\/cards\/[^/?]+\/comp-curation(?:\/|\?|$)/.test(req.url)) {
+        if (!compHandler) throw new ManualTransportError(503, 'COMP_NOT_CONFIGURED');
+        req.rawBody = await readBody(req, 4096);
+        if (await compHandler(req, res) !== true) throw new ManualTransportError(404, 'NOT_FOUND');
+        return;
+      }
       if (!isManualServicePath(req.url)) throw new ManualTransportError(404, 'NOT_FOUND');
       req.rawBody = await readBody(req);
       await verify(req);

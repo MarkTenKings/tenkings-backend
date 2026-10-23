@@ -38,7 +38,7 @@ const staticRequired=new Set(['package.json','pnpm-lock.yaml','pnpm-workspace.ya
   'packages/atlas-measurement-runtime/engine-source.json',
   'packages/atlas-photo-runtime/native/heif.cc','packages/atlas-photo-runtime/scripts/build-native.mjs',
   ...CPU_SOURCES.map(name=>'backend/ai-grader-speedster-service/'+name),
-  ...['serve','serve-variants','private-server','analysis-worker','variant-workers','customer-runtime','customer-database']
+  ...['serve','serve-variants','private-server','analysis-worker','variant-workers','customer-runtime','customer-database','comp-runtime']
     .map(name=>'packages/atlas-connected-manual/scripts/'+name+'.mjs')]);
 const excluded=/(?:^|\/)(?:node_modules|dist|\.next|\.generated|\.git|\.vercel|__pycache__|test|tests|test-fixtures|fixtures|sql|migrations|docs|archive|evidence|screenshots)(?:\/|$)|(?:^|\/)\.env(?:\.|$)|\.(?:pyc|pyo|node|log|pem|key|sqlite|dump|bak)$/;
 

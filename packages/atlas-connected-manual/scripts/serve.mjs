@@ -7,6 +7,8 @@ import {createPrivateManualServer} from './private-server.mjs';
 import {createAnalysisWorker} from './analysis-worker.mjs';
 import {createManualPublicHandler} from '../src/publication-reader.mjs';
 import {createServingCustomerService} from './customer-runtime.mjs';
+import {createServingCompCuration} from './comp-runtime.mjs';
+import {createPrivateManualNonceStore} from '../src/transport.mjs';
 import {safeTransactionDiagnostic} from '@atlas/manual-service/contract';
 
 const env=process.env,config=privateManualAccessConfig(env);
@@ -27,7 +29,11 @@ if(!runtime)throw new Error('Manual runtime is disabled');
 await runtime.validateConfiguration();
 const publicHandler=publicKey?createManualPublicHandler({key:publicKey,reader:runtime.approvedManualReader}):null;
 const customerRuntime=createServingCustomerService({env,Client:PrismaClient,onEvent:event=>console.log(JSON.stringify(event))});
-const server=createPrivateManualServer({connected:runtime.connected,boundary:runtime.boundary,origin:config.origin,key,publicHandler,customerHandler:customerRuntime?.handler??null});
+const nonceStore=createPrivateManualNonceStore();
+let compRuntime=null;
+try{compRuntime=createServingCompCuration({env,auth,staffConfig:config,Client:PrismaClient,nonceStore});}
+catch{console.error(JSON.stringify({event:'COMP_CURATION_UNAVAILABLE'}));}
+const server=createPrivateManualServer({connected:runtime.connected,boundary:runtime.boundary,origin:config.origin,key,nonceStore,publicHandler,customerHandler:customerRuntime?.handler??null,compHandler:compRuntime?.handler??null});
 const analysisWorker=runtime.analysisReconciler?createAnalysisWorker({reconciler:runtime.analysisReconciler,batchSize:10,concurrency:4,intervalMs:2000,
   onEvent:event=>console.log(JSON.stringify(event))}):null;
 server.listen(Number(env.PORT??4319),'0.0.0.0',()=>{
@@ -46,6 +52,7 @@ async function stop(){
  const reportImagesStopped=runtime.connected.reportImages?.stop();
  const learningStopped=runtime.connected.learning?.stop();
  const customerStopped=customerRuntime?.stopWorkers();
+ const compStopped=compRuntime?.close().catch(()=>console.error(JSON.stringify({event:'COMP_CURATION_SHUTDOWN_FAILED'})));
  const deadline=setTimeout(()=>server.closeAllConnections(),215000);deadline.unref();
  await new Promise(resolve=>server.close(resolve));clearTimeout(deadline);
  await workerStopped;
@@ -57,6 +64,7 @@ async function stop(){
  await labelsStopped;
  await learningStopped;
  await customerStopped;
+ await compStopped;
  await Promise.all([runtime.close(),client.$disconnect(),customerRuntime?.close()]);
 }
 process.once('SIGTERM',()=>void stop());process.once('SIGINT',()=>void stop());

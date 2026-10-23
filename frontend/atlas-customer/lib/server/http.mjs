@@ -2,15 +2,41 @@ import { BoundaryError, deny, keys, privateHeaders, profile, UUID } from './poli
 import { cardInput, createInput, identityInput, revision, CustomerIntakeError } from '@atlas/customer-intake/contract';
 import { CustomerServiceError } from '@atlas/service-bridge/customer-service';
 import {dealerRoute} from './dealer.mjs';
+import { createOwnershipReadHandler } from './ownership-read.mjs';
+import { isCollectionDisplayPath } from './collection-display-composition.mjs';
+
+// Each delegated handler validates the full original URL, method, body and
+// customer proof. Dispatch here must not consume signed ingress a second time.
+const collectionPreferencePath = /^\/api\/customer\/collection\/(?:preferences|cards\/[a-f0-9-]{36}\/preferences|preference-requests\/[a-f0-9-]{36})$/;
 
 export function createHandler(resolveRuntime) {
     return async (req, res) => {
         privateHeaders(res);
         try {
             const state = typeof resolveRuntime === 'function' ? await resolveRuntime() : resolveRuntime;
-            state.assertRequest(req);
             const path = (req.url ?? '').split('?')[0], method = req.method;
+            // This exact handler owns its one original ingress admission and
+            // final request/runtime checks; do not consume admission twice.
+            if (path === '/api/customer/collection') return createOwnershipReadHandler(state)(req, res);
+            if (collectionPreferencePath.test(path)) {
+                if (typeof state.collectionPreferences?.handler !== 'function') deny(503, 'PREFERENCES_UNAVAILABLE');
+                return await state.collectionPreferences.handler(req, res);
+            }
+            if (isCollectionDisplayPath(path)) {
+                if (method !== 'GET') deny(405, 'METHOD_NOT_ALLOWED');
+                if (typeof state.collectionDisplay?.handler !== 'function') deny(503, 'COLLECTION_DISPLAY_UNAVAILABLE');
+                return state.collectionDisplay.handler(req, res);
+            }
+            if (['/api/customer/ownership/claims', '/api/customer/ownership/claim', '/api/customer/ownership/history'].includes(path)) {
+                if (method !== 'GET') deny(405, 'METHOD_NOT_ALLOWED');
+                if (typeof state.ownershipHistory?.handler !== 'function') deny(503, 'OWNERSHIP_CLAIMS_UNAVAILABLE');
+                // The pinned composition owns synchronous ingress admission,
+                // live session/account checks and the separate restricted role.
+                return await state.ownershipHistory.handler(req, res);
+            }
+            state.assertRequest(req);
             const known = [
+                ['GET', /^\/api\/customer\/collection$/],
                 ['POST', /^\/api\/customer\/dealer\/handoffs\/(read|confirm)$/],
                 ['POST', /^\/api\/customer\/orders\/[a-f0-9-]{36}\/handoff$/],
                 ['GET', /^\/api\/customer\/session$/], ['GET', /^\/api\/customer\/dealer\/(session|memberships)$/], ['POST', /^\/api\/customer\/dealer\/(session|logout)$/], ['POST', /^\/api\/customer\/auth\/(request|verify|logout)$/],

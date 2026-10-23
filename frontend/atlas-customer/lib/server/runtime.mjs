@@ -2,6 +2,10 @@ import { acceptsSiteRequest } from '@atlas/site-router/server';
 import { CustomerAuth } from './auth.mjs';
 import {createDealerAccess} from './dealer.mjs';
 import { CustomerDatabase } from './database.mjs';
+import { createOwnershipHistoryRuntime } from './ownership-history-runtime.mjs';
+import { createCollectionRuntime } from './collection-runtime.mjs';
+import { createCollectionPreferencesRuntime } from './collection-preferences-runtime.mjs';
+import { createCollectionDisplayComposition } from './collection-display-composition.mjs';
 import { productionConfig, cookie } from './config.mjs';
 import { deny } from './policy.mjs';
 import { twilioVerifyTransport } from './twilio.mjs';
@@ -68,5 +72,20 @@ export async function runtime() {
             return typeof value === 'string' && /^[a-fA-F0-9:.]{3,64}$/.test(value) ? value : 'customer-ingress';
         },
     };
+    // Disabled unless both explicit settings validate. This creates no reader
+    // client/connection until an admitted history GET; the auth client is never reused.
+    current.ownershipHistory = createOwnershipHistoryRuntime({ customerState: current,
+        settings: { enabled: env.ATLAS_CUSTOMER_OWNERSHIP_HISTORY, databaseUrl: env.ATLAS_CUSTOMER_OWNERSHIP_HISTORY_DATABASE_URL },
+        createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
+    current.collection = createCollectionRuntime({ customerState: current,
+        settings: { enabled: env.ATLAS_CUSTOMER_COLLECTION, databaseUrl: env.ATLAS_CUSTOMER_COLLECTION_DATABASE_URL },
+        createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
+    current.ownershipRead = current.collection.reader;
+    current.collectionPreferences = createCollectionPreferencesRuntime({ customerState: current,
+        settings: { enabled: env.ATLAS_CUSTOMER_COLLECTION_PREFERENCES,
+            databaseUrl: env.ATLAS_CUSTOMER_COLLECTION_PREFERENCES_DATABASE_URL,
+            schemaOwner: env.ATLAS_CUSTOMER_COLLECTION_PREFERENCES_SCHEMA_OWNER },
+        createClient: databaseUrl => new PrismaClient({ datasources: { db: { url: databaseUrl } } }) });
+    current.collectionDisplay = createCollectionDisplayComposition({ customerState: current, enabled: env.ATLAS_CUSTOMER_COLLECTION_DISPLAY });
     return current;
 }

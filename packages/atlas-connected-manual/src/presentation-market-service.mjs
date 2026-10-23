@@ -2,14 +2,19 @@ import { digest, object, requireThat, uuid } from '@atlas/manual-service/contrac
 import { marketHasRetiredReclassification, marketJobStatus } from './market-job-store.mjs';
 import { createPresentationMarket, marketPreviewHash, MARKET_UNAVAILABLE_REASONS } from './presentation-market.mjs';
 import { projectRetrievedMarketPool } from './market-retrieved-pool.mjs';
+import { ARCHIVE_MARKET_ORIGIN, assertMarketArchiveSearchCapability } from './market-archive-search.mjs';
 
 // Automatic approval jobs and explicit staff refresh share saved previews.
 // Durable mode never calls a provider inside HTTP; ambiguous requests remain
 // fenced. Public report visits read only deliberately selected evidence.
-export function createPresentationMarketService({ repository, approved, artifacts, provider = null, readPhoto = null, jobs = null, worker = null }) {
+export function createPresentationMarketService({ repository, approved, artifacts, provider = null, readPhoto = null, jobs = null, worker = null, archiveSearch = null }) {
+  if (archiveSearch) {
+    assertMarketArchiveSearchCapability(archiveSearch, { artifacts });
+    requireThat(jobs?.archiveSearch === archiveSearch, 500, 'MARKET_ARCHIVE_CONFIGURATION_INVALID');
+  }
   const market = createPresentationMarket();
-  async function saved(staff, cardId, requestId) {
-    const row = await repository.market(staff, cardId, requestId);
+  async function saved(staff, cardId, requestId, readRepository = repository) {
+    const row = await readRepository.market(staff, cardId, requestId);
     const binding = { approvalActionId: row.input.approvalActionId };
     if (row.state === 'STARTED') return { ...binding, state: 'PENDING', previewId: requestId };
     if (row.state !== 'READY') return { ...binding, state: row.state, previewId: requestId,
@@ -18,7 +23,7 @@ export function createPresentationMarketService({ repository, approved, artifact
     requireThat(record?.state === 'READY' && record.ref?.kind === 'MARKET_PREVIEW', 503, 'MARKET_PREVIEW_CORRUPT');
     const preview = await artifacts.read(record.ref, { cardId, kind: 'MARKET_PREVIEW', sourceHash: record.artifactHash });
     requireThat(digest(JSON.stringify(preview)) === record.artifactHash && marketPreviewHash(preview) === record.sourceHash, 503, 'MARKET_PREVIEW_CORRUPT');
-    await repository.market(staff, cardId, requestId);
+    await readRepository.market(staff, cardId, requestId);
     return { ...binding, state: 'READY', previewId: requestId, preview, sourceHash: record.sourceHash, ref: record.ref, input: row.input };
   }
   const publicPreview = value => {
@@ -28,7 +33,7 @@ export function createPresentationMarketService({ repository, approved, artifact
     const status = marketJobStatus(job);
     if (status.state !== 'SEARCHING' || job.response?.responsePolicy !== 'ATLAS_SLAB_V1'
       || marketHasRetiredReclassification(job)) return status;
-    const source = await approved.loadPacket(staff, cardId, job.approval_action_id);
+    const source = await (archiveSearch?.approved ?? approved).loadPacket(staff, cardId, job.approval_action_id);
     return { ...status, stage: 'READING_PHOTOS', retrieved: projectRetrievedMarketPool(source, job) };
   }
   return Object.freeze({
@@ -44,24 +49,35 @@ export function createPresentationMarketService({ repository, approved, artifact
       return { bytes: photo.bytes, contentType: photo.mimeType };
     },
     async status(staff, cardId) {
-      const job = jobs ? await jobs.latest(staff, cardId) : null;
+      if (archiveSearch) assertMarketArchiveSearchCapability(archiveSearch, { artifacts });
+      // Legacy approval polling may precede publication. Only archive-origin
+      // jobs require the PUBLISHED-only read scope at this point. Retained
+      // response photo status below is necessarily post-publication.
+      let job = jobs ? await jobs.latest(staff, cardId) : null;
+      const archive = job?.origin === ARCHIVE_MARKET_ORIGIN;
+      if (archive) {
+        requireThat(archiveSearch, 503, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED');
+        job = await jobs.latest(staff, cardId, { archive: true });
+      }
+      const reads = archive ? archiveSearch.repository : repository;
       if (job) {
         const status = await activeStatus(staff, cardId, job);
         if (status.state !== 'READY') return status;
-        return { ...status, ...publicPreview(await saved(staff, cardId, status.previewId)) };
+        return { ...status, ...publicPreview(await saved(staff, cardId, status.previewId, reads)) };
       }
-      const id = await repository.latestMarket(staff, cardId);
+      const id = await reads.latestMarket(staff, cardId);
       if (!id) return { state: 'NOT_REQUESTED', refreshable: Boolean(provider && jobs) };
-      const value = publicPreview(await saved(staff, cardId, id));
+      const value = publicPreview(await saved(staff, cardId, id, reads));
       return { ...value, state: value.state === 'PENDING' ? 'UNKNOWN' : value.state,
         refreshable: !['PENDING','UNKNOWN'].includes(value.state) && Boolean(provider && jobs) };
     },
     async preview(staff, cardId, input) {
       if (!provider) return { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED', refreshable: false };
       requireThat(jobs, 503, 'MARKET_DURABLE_LABEL_WORKER_REQUIRED');
-      const job = await jobs.reserve(staff, cardId, input);
+      if (archiveSearch) assertMarketArchiveSearchCapability(archiveSearch, { artifacts });
+      const job = await jobs.reserve(staff, cardId, input, { archive: Boolean(archiveSearch) });
       void worker?.wake();
-      return job.state === 'READY' ? { ...marketJobStatus(job), ...publicPreview(await saved(staff, cardId, job.request_id)), requestId: input.requestId } : { ...await activeStatus(staff, cardId, job), requestId: input.requestId };
+      return job.state === 'READY' ? { ...marketJobStatus(job), ...publicPreview(await saved(staff, cardId, job.request_id, archiveSearch?.repository ?? repository)), requestId: input.requestId } : { ...await activeStatus(staff, cardId, job), requestId: input.requestId };
     },
     async select(staff, cardId, input) {
       object(input, ['requestId','approvalActionId','expectedRevision','previewId','selectedIds']);

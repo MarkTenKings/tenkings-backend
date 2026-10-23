@@ -3,6 +3,17 @@ import { open } from 'node:fs/promises';
 import { requireThat } from '@atlas/manual-service/contract';
 import { parseDealerDirectory } from '@atlas/report-view/dealer-directory';
 
+// Independent native opt-in. The expected schema is reviewed before release;
+// this configuration never learns a trusted hash from the running database.
+export function manualArchiveMarketSearchSettings(env) {
+  if (env.ATLAS_STAFF_ARCHIVE_COMP_SEARCH !== '1') return null;
+  requireThat(env.ATLAS_MANUAL_ENABLED === 'true' && env.ATLAS_MANUAL_PRESENTATION_ENABLED === 'true'
+    && env.ATLAS_MANUAL_MARKET_ENABLED === 'true' && env.ATLAS_MANUAL_MARKET_AUTOMATIC_ENABLED === 'true'
+    && env.ATLAS_VARIANT_WORKER_ENABLED !== 'true' && !env.VERCEL && !env.AWS_LAMBDA_FUNCTION_NAME
+    && /^[a-f0-9]{64}$/.test(env.ATLAS_ARCHIVE_MARKET_SCHEMA_SHA256 ?? ''), 503, 'MARKET_ARCHIVE_CONFIGURATION_INVALID');
+  return Object.freeze({ expectedSchemaSha256: env.ATLAS_ARCHIVE_MARKET_SCHEMA_SHA256 });
+}
+
 export function manualResearchSettings(env) {
   if (env.ATLAS_MANUAL_RESEARCH_ENABLED !== 'true') return null;
   requireThat(env.ATLAS_MANUAL_PRESENTATION_ENABLED === 'true' && env.ATLAS_MANUAL_MARKET_ENABLED === 'true',

@@ -47085,3 +47085,29 @@ Visual review found and cleared a tiny residual detached tail speck below the ce
 ## 2026-10-23 — Photo-informed label integration: preserve handoff and reconcile live source
 
 User now authorizes building, integrating, and deploying the photo/font/color system for production testing, superseding earlier isolated-preview scope. Whole-number new labels only; one shared below-10 contrast policy. Exact HallowFranken remains a specimen-only candidate pending licensed font binary; no silent equivalence claim. Read-only release audit found live native8070c5f2 and current staff/public successors, newer than handoff20b747ba. Preserve all pre-existing pending source changes in a local commit, then merge the exact live source before further integration. Snapshot paths and binary patch retained in ~/.codex/atlas-handoffs/atlas-photo-font-production-20261022. This is a preservation checkpoint, not a deployment or validation claim. No runtime, stored approval, report, photo, label, or provider mutation.
+
+### 2026-10-22 — R1 source composed after slab release
+
+Local candidate on actual released 20b747badb8ad34c510673c446cf326396bdeeac; 148 exact R1 paths from a0f4951fb7adc34a92ea1cd67d6bd6d4271cb3e1, six reviewed managed-role runtime/test paths from f4ffeedf52fb761f0a28dc0fdab5cad664063c01, and native package-list integration. All successor grading/slab/photo/label paths preserved. Claims/history off, comp policy null. No deployment, migration, grants or runtime binding. Fresh combined qualification remains.
+
+
+### October22,2026 — Optional archive comps isolated successor prepared
+
+Local preparation only. Parent is last-observed live source `a537f922c567795b2a568048c78f595ff8853731`.
+Only57 optional-comp implementation/test/SQL paths are selected from foundation `d0db05e2eeb5f27746e8986b008040bb865f45d6`,
+relative to pre-optional source `433d262c8f467cd862119fe57dbc6a5ae47b00e1`.56 share identical parent bytes or absence.
+The sole runtime overlap was merged while preserving the accepted parent's alpha-preview wiring.
+
+All other production code, assets, package metadata and lockfile are unchanged.
+Grading, Review Queue, approved labels/slab/report behavior, public homepage and customer code
+are exact parent sources. Claims/history and pricing guidance remain disabled.
+
+SQL012 is locally registered and qualified but has not been applied in production.
+No paid search, new title, environment change, runtime restart or deployment occurred.
+Builds and fresh production preflight/release/acceptance remain. Current parent identity must
+be refreshed before effects; no consumed release plan is reusable.
+
+Source selection, hashes and receipt: `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/candidate-01`.
+Retained bounded implementation/database evidence lives in sibling `database-qualification`.
+
+Reconciliation completed locally: both append-only session histories retained; packaging closure retains both Bebas assets and the live comp-runtime entry. Merge includes both live R1 foundation and8070c5f2 fixes. No runtime effects.
