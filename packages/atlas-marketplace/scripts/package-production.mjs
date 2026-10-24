@@ -21,8 +21,10 @@ const collected = await collectManualSource(root), files = new Map(collected.fil
 const extraPaths = git(['ls-tree', '-r', '--name-only', sourceRevision]).toString().trim().split('\n').filter(path =>
     /^frontend\/atlas-customer\/lib\//.test(path)
     || /^packages\/atlas-marketplace\/ui\//.test(path)
+    || /^packages\/atlas-dealer-operations\/src\//.test(path)
     || ['frontend/atlas-customer/package.json', 'frontend/atlas-customer/prisma/schema.prisma',
         'frontend/atlas-customer/scripts/generate-database.mjs', 'frontend/atlas-public/lib/server/policy.mjs',
+        'packages/atlas-dealer-operations/package.json',
         'packages/atlas-site-router/marketplace.mjs', 'packages/atlas-marketplace/scripts/production-host.mjs'].includes(path));
 for (const path of extraPaths) {
     const stat = await lstat(join(root, path)); assert(stat.isFile() && !stat.isSymbolicLink());
