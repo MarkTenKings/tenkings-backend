@@ -61,3 +61,8 @@ remain unrun. The blocked output
 probe is untouched. Native recovery-lock observations do not cover enrolled
 catalog/coordinator/Engine recovery; permanent installation prerequisites remain
 unmet. No authority, enrollment or physical-intake requirement is loosened.
+
+
+### October 24 fresh-host ordinary observation
+
+The new production host612177189 has a separate genuine native enrollment and ordinary complete-mode PNG result using retained owner-lock addon187130dd, profile d488ebb8 and repaired ordinary image101965ad. See the dated fresh-host section in PROOF_DECODER_TARGET_QUALIFICATION.md and the original `production-host-01/ordinary-composition-result.json` (9a2c2b2d). This does not expand J1–J6 into a blanket187 qualification or replace the runtime08/nativee7 pins/timestamps above. Two known empty failed-start epochs were archived intact and replaced under independently approved empty-state custody; neither action reconciled the old target's UNKNOWN REMOVE. Remaining matrix variants stay open.
