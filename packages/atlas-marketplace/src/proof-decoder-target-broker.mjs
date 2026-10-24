@@ -149,6 +149,19 @@ export function assertProofDecoderPreparedSubmission(value,options){
   const {client}=engineDataOptions(options,['client']),owner=targetClients.get(assertProofDecoderTargetBrokerClient(client)),record=owner.handles.get(value);
   check(record&&!record.claimed&&record.state==='PREPARED','DECODER_BROKER_PREPARED_HANDLE');return record.report;
 }
+/** Consume the old key synchronously, transferring the SAME prepared record.
+ * The caller must retain the replacement privately after durable registration;
+ * no bytes, deadline, timer, request ID or disposition is regenerated. */
+export function takeProofDecoderPreparedSubmission(value,options){
+ const {client}=engineDataOptions(options,['client']),request=assertProofDecoderPreparedSubmission(value,{client}),owner=targetClients.get(client),status=client.status(),now=time(owner.observer);
+ check(!status.closed&&!status.quarantined&&now<brokerNanoseconds(request.deadlineBootNs),'DECODER_BROKER_DEADLINE');
+ const record=owner.handles.get(value),handle=Object.freeze({});owner.handles.delete(value);owner.handles.set(handle,record);
+ return Object.freeze({handle,request,observedAtBootNs:String(now)});
+}
+export function assertProofDecoderPreparedSubmissionBeforeDeadline(value,options){
+ const {client}=engineDataOptions(options,['client']),request=assertProofDecoderPreparedSubmission(value,{client}),owner=targetClients.get(client),status=client.status(),now=time(owner.observer);
+ check(!status.closed&&!status.quarantined&&now<brokerNanoseconds(request.deadlineBootNs),'DECODER_BROKER_DEADLINE');return request;
+}
 export function assertProofDecoderClientOutcome(value,options){
   const {client}=engineDataOptions(options,['client']),owner=targetClients.get(assertProofDecoderTargetBrokerClient(client)),observation=owner.outcomes.get(value);
   check(observation,'DECODER_BROKER_DISPOSITION_REQUIRED');return decoderFreeze({...observation,completion:observation.disposition==='COMPLETE_CLEAN'?value:null});

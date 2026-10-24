@@ -9,6 +9,7 @@ import {decoderContractData,decoderExact,decoderFreeze} from './proof-decoder-pr
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {INTAKE_PROTECTED_CATALOG_QUERIES,INTAKE_PROTECTED_CLOSURE_HASH,INTAKE_PROTECTED_ROLE,validateIntakeProtectedCatalog,validateRetentionIntakeProtectedCatalog} from './proof-intake-protected-catalog.mjs';
 import {intakeProtectedInstallation} from './proof-intake-protected-protocol.mjs';
+import {intakeAccountingInstallation} from './proof-intake-accounting.mjs';
 import {RETENTION_PROTECTED_CATALOG_QUERIES,RETENTION_PROTECTED_CLOSURE_HASH,RETENTION_PROTECTED_DATABASE,RETENTION_PROTECTED_ROLE,RETENTION_PROTECTED_OWNER,validateRetentionProtectedCatalog} from './proof-retention-protected-catalog.mjs';
 
 // Exact installed public dependency inventory used by the isolated C1 fixture.
@@ -86,6 +87,11 @@ export function createProofIntakeProtectedConnectionOwner(options={}){
  const installation=intakeProtectedInstallation(input.installation);
  return createOwnedConnection(intakeProtectedPostgresConnectionConfiguration(input.configuration),null,installation);
 }
+export function createProofIntakeAccountedConnectionOwner(options={}){
+ const input=engineDataOptions(options,[],['enabled','configuration','installation','accounting']);if(input.enabled!==true)return null;
+ const installation=intakeProtectedInstallation(input.installation),accounting=intakeAccountingInstallation(input.accounting,installation);
+ return createOwnedConnection(intakeProtectedPostgresConnectionConfiguration(input.configuration),null,installation,accounting);
+}
 export function assertProofIntakeProtectedConnectionOwner(value){check(intakeOwners.has(value),'INTAKE_PROTECTED_OWNER_REQUIRED');return value;}
 // Explicit extension opt-in. The existing retention-only factory still refuses
 // extra schema objects. This factory retains the separate retention DB role.
@@ -100,11 +106,11 @@ export function createProofRetentionIntakeConnectionOwner(options={}){
  check(Number.isSafeInteger(input.maxOperations)&&input.maxOperations>=1&&input.maxOperations<=4096,'RETENTION_PROTECTED_BINDING');
  return createOwnedConnection(retentionIntakePostgresConnectionConfiguration(input.configuration),decoderFreeze({binding:installation.binding,maxOperations:input.maxOperations}),installation);
 }
-function createOwnedConnection(config,protectedScope,intakeScope=null){
+function createOwnedConnection(config,protectedScope,intakeScope=null,accountingScope=null){
   check(process.versions.node==='22.16.0'&&['linux','darwin'].includes(process.platform),'RETENTION_CONNECTION_RUNTIME');
   const Client=loadClient(config.driverDirectory),endpoint=config.endpoint;
   if(endpoint.kind==='LOCAL_UNIX'){directory(endpoint.directory);check((fs.lstatSync(endpoint.directory).mode&0o077)===0,'RETENTION_SOCKET_DIRECTORY');}
-  const secret=Buffer.from(config.password,'utf8'),publicConfig={schema:config.schema,database:config.database,role:config.role,functionOwner:config.functionOwner,endpoint:endpoint.kind==='LOCAL_UNIX'?endpoint:{kind:endpoint.kind,hostname:endpoint.hostname,port:endpoint.port,caHash:sha(Buffer.from(endpoint.ca))},driverInventoryHash:hash(DRIVER_FILES),...(intakeScope?{intakeCatalogHash:INTAKE_PROTECTED_CLOSURE_HASH,installedIntake:intakeScope,...(protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}:{})}:protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}: {functionDefinitionHashes:config.functionDefinitionHashes})};
+  const secret=Buffer.from(config.password,'utf8'),publicConfig={schema:config.schema,database:config.database,role:config.role,functionOwner:config.functionOwner,endpoint:endpoint.kind==='LOCAL_UNIX'?endpoint:{kind:endpoint.kind,hostname:endpoint.hostname,port:endpoint.port,caHash:sha(Buffer.from(endpoint.ca))},driverInventoryHash:hash(DRIVER_FILES),...(intakeScope?{intakeCatalogHash:INTAKE_PROTECTED_CLOSURE_HASH,installedIntake:intakeScope,...(accountingScope?{installedAccounting:accountingScope}:{}),...(protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}:{})}:protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}: {functionDefinitionHashes:config.functionDefinitionHashes})};
   let closed=false,current=null,pending=false;const endings=new Set();
   async function waitClosed(){if(!endings.size)return;let timer;try{await Promise.race([Promise.allSettled([...endings]),new Promise((_,reject)=>{timer=setTimeout(()=>reject(failure('RETENTION_CONNECTION_CLOSE_UNKNOWN')),1000);})]);}finally{clearTimeout(timer);}}
   function terminate(state){
@@ -137,6 +143,7 @@ function createOwnedConnection(config,protectedScope,intakeScope=null){
           if(protectedScope)validateRetentionIntakeProtectedCatalog(catalog);else validateIntakeProtectedCatalog(catalog);
           const rows=(await client.query('SELECT atlas_marketplace.read_intake_configuration_v1() AS configuration')).rows;
           check(rows.length===1&&canonicalJSON(rows[0])===canonicalJSON({configuration:intakeScope}),'INTAKE_PROTECTED_INSTALLATION');
+          if(accountingScope){const observed=(await client.query('SELECT atlas_marketplace.read_intake_accounting_configuration_v1() AS configuration')).rows;check(observed.length===1&&canonicalJSON(observed[0])===canonicalJSON({configuration:accountingScope}),'INTAKE_ACCOUNTING_INSTALLATION');}
           if(protectedScope){const installed=(await client.query('SELECT atlas_marketplace.read_retention_binding_v1() AS binding')).rows;check(installed.length===1&&canonicalJSON(installed[0])===canonicalJSON({binding:{schema:'atlas-proof-retention-installed-binding-v1',...protectedScope}}),'RETENTION_PROTECTED_BINDING');}
         }else if(protectedScope){
           const catalog={};

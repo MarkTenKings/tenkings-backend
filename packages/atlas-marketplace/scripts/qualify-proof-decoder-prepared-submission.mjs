@@ -5,7 +5,7 @@ import {dirname,isAbsolute,normalize} from 'node:path';
 import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createProofDecoderLinuxObserver} from '../src/proof-decoder-linux-observer.mjs';
-import {createProofDecoderTargetBrokerClient} from '../src/proof-decoder-target-broker.mjs';
+import {createProofDecoderTargetBrokerClient,assertProofDecoderPreparedSubmission,takeProofDecoderPreparedSubmission,assertProofDecoderPreparedSubmissionBeforeDeadline,assertProofDecoderClientOutcome} from '../src/proof-decoder-target-broker.mjs';
 
 function boundedFile(path,limit){
   assert.equal(typeof path,'string');assert.ok(isAbsolute(path));assert.equal(normalize(path),path);assert.equal(realpathSync(path),path);
@@ -36,14 +36,30 @@ function command(expected,deadline,observer){
 assert.equal(process.argv.length,3);assert.equal(process.platform,'linux');assert.equal(process.arch,'x64');assert.equal(process.versions.node,'22.16.0');
 const raw=boundedFile(process.argv[2],131072);let config;try{config=JSON.parse(raw);}finally{raw.fill(0);}
 assert.deepEqual(Object.keys(config).sort(),['mode','plan','addonPath','addonSha256','expectedBootId','expectedEpoch','expectedBindingHash','originalPath','expectedOutcome'].sort());
-assert.ok(['handles','before-start','unknown','complete','cancel','close-active'].includes(config.mode));
+assert.ok(['transfer','handles','before-start','unknown','complete','cancel','close-active'].includes(config.mode));
 const {plan,addonPath,addonSha256,expectedBootId,expectedEpoch,expectedBindingHash}=config;
 assert.equal(process.getuid(),plan.profile.ipc.clientUid);assert.equal(process.geteuid(),plan.profile.ipc.clientUid);assert.equal(process.getgid(),plan.profile.ipc.clientGid);assert.equal(process.getegid(),plan.profile.ipc.clientGid);assert.ok(process.getgroups().every(gid=>gid===plan.profile.ipc.clientGid));
 const observer=createProofDecoderLinuxObserver({enabled:true,addonPath,addonSha256}),clients=[];
 function factory(){const client=createProofDecoderTargetBrokerClient({enabled:true,plan,observer,expectedBootId,expectedEpoch,expectedBindingHash});clients.push(client);return client;}
 let original;
 try{
-  if(config.mode==='handles'){
+  if(config.mode==='transfer'){
+    assert.equal(config.originalPath,null);assert.equal(config.expectedOutcome,null);
+    // This preparation-only operator deliberately never registers/submits a D1
+    // dispatch. Live composition must durably register D1 BEFORE this transfer.
+    original=Buffer.from('operator-only same-record handle transfer');const client=factory(),other=factory(),sourcePlan={byteCount:original.length,sha256:sha(original),declaredType:'image/png'};
+    for(const abort of [false,true]){
+      const signal=new AbortController(),old=client.prepareRequest({bytes:original,plan:sourcePlan,signal:signal.signal}),saved=old.report;
+      const taken=takeProofDecoderPreparedSubmission(old,{client});assert.equal(taken.request,saved);assert.equal(assertProofDecoderPreparedSubmissionBeforeDeadline(taken.handle,{client}),saved);assert.ok(BigInt(taken.observedAtBootNs)<BigInt(saved.deadlineBootNs));
+      assert.deepEqual(Object.keys(taken.handle),[]);assert.equal(client.status().prepared,1);assert.equal(client.status().retainedOriginalBytes,original.length);
+      for(const use of [()=>assertProofDecoderPreparedSubmission(old,{client}),()=>takeProofDecoderPreparedSubmission(old,{client}),()=>client.discardPrepared(old),()=>assertProofDecoderPreparedSubmission(taken.handle,{client:other})])assert.throws(use,{code:'DECODER_BROKER_PREPARED_HANDLE'});
+      const failure=await rejected(client.submitPrepared(old));assert.equal(failure.code,'DECODER_BROKER_PREPARED_HANDLE');assert.throws(()=>client.lookupDisposition(failure));
+      let terminal;if(abort){signal.abort();terminal=await rejected(client.submitPrepared(taken.handle));}else terminal=client.discardPrepared(taken.handle);
+      disposition(client,terminal,'KNOWN_NO_START_SENT',saved);assert.equal(assertProofDecoderClientOutcome(terminal,{client}).request,saved);assert.equal(client.status().retainedOriginalBytes,0);assert.equal(client.status().occupiedSlots,0);
+      emit({event:'CASE',name:abort?'same-record-abort-wipes-original':'transfer-invalidates-old-handle-and-preserves-report',passed:true});
+    }
+    emit({event:'RESULT',mode:config.mode,cases:2,client:client.status(),note:'Genuine native clock/private handles; no socket or input submission.'});
+  }else if(config.mode==='handles'){
     assert.equal(config.originalPath,null);assert.equal(config.expectedOutcome,null);
     original=Buffer.from('operator-only prepared handle; never submitted');const sourcePlan={byteCount:original.length,sha256:sha(original),declaredType:'image/png'},client=factory(),other=factory();
     const handle=client.prepareRequest({bytes:original,plan:sourcePlan}),saved=clone(handle.report);

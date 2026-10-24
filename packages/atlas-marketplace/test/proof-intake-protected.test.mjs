@@ -61,10 +61,10 @@ test('VALIDATE requires exact original CREATE, refuses legacy adoption/replaceme
  const record={schema:'atlas-proof-intake-record-v1',operation:o,operationHash:hash(o),dispatchKey:v.dispatchKey,upload:u,uploadHash:hash(u),revision:2};assert.deepEqual(intakeProtectedRecord(record,f.installation),record);
  const changed=structuredClone(record);changed.upload.manifest.storageId='borrowed';changed.uploadHash=hash(changed.upload);assert.throws(()=>intakeProtectedRecord(changed,f.installation));
 });
-test('seven extension function pins and fixed grants cover exact inert SQL, without changing base gateway',()=>{
+test('sixteen extension function pins and fixed grants cover exact inert SQL, without changing base gateway',()=>{
  const sql=fs.readFileSync(new URL('../sql/r1-proof-intake-gateway-proposal.sql',import.meta.url),'utf8'),catalog=fs.readFileSync(new URL('../src/proof-intake-protected-catalog.mjs',import.meta.url),'utf8'),pins=JSON.parse(catalog.match(/const FUNCTIONS=decoderFreeze\((.*)\);\n/)[1]);let count=0;
  for(const m of sql.matchAll(/CREATE FUNCTION atlas_marketplace\.(\w+)\((.*?)\)\s*RETURNS\s+(.*?)\s+LANGUAGE\s+(sql|plpgsql)(.*?)AS \$\$(.*?)\$\$;/gs)){const [,name,args,,,,body]=m,signature=name+'('+(args?args.split(',').map(a=>a.trim().split(/\s+/)[1]).join(', '):'')+')';assert.equal(pins.find(p=>p.name===signature)?.bodyHash,createHash('sha256').update(body).digest('hex'));count++;}
- assert.equal(count,7);assert.equal(pins.length,7);assert.ok(sql.indexOf("RAISE EXCEPTION 'R1_PROOF_INTAKE_GATEWAY_NOT_APPROVED'")<sql.indexOf('CREATE TABLE'));assert.doesNotMatch(sql,/CREATE OR REPLACE|ALTER FUNCTION atlas_marketplace.commit_state|GRANT .* ON TABLE/);
+ assert.equal(count,16);assert.equal(pins.length,16);assert.ok(sql.indexOf("RAISE EXCEPTION 'R1_PROOF_INTAKE_GATEWAY_NOT_APPROVED'")<sql.indexOf('CREATE TABLE'));assert.doesNotMatch(sql,/CREATE OR REPLACE|ALTER FUNCTION atlas_marketplace.commit_state|GRANT .* ON TABLE/);
  for(const key of ['identity','privileges'])assert.match(INTAKE_PROTECTED_CATALOG_QUERIES[key],/atlas_proof_intake_writer/);assert.throws(()=>validateIntakeProtectedCatalog({authority:true}));
 });
 

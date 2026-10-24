@@ -197,7 +197,7 @@ export function openProofOriginalReader(options={}){
 const preparedRetentionOwners=new WeakMap();
 const V4_TABLES=Object.freeze({retentionDispatch:'retention_dispatches',retentionSettlement:'retention_settlements'});
 const V4_VALIDATE=Object.freeze({retentionDispatch:publicationRetentionDispatch,retentionSettlement:publicationRetentionSettlement});
-const preparedDispatchOwners=new WeakMap(); // A real handle has one owner/identity for its entire lifetime.
+const preparedDispatchOwners=new WeakMap(); // Genuine original report identity survives private handle transfer.
 const V3_TABLES=Object.freeze({dispatch:'decoder_dispatches',settlement:'decoder_settlements'});
 const V3_VALIDATE=Object.freeze({dispatch:publicationDecoderDispatch,settlement:publicationDecoderSettlement});
 const V3_KINDS=Object.freeze(['DISPATCH_MIGRATE','DECODE_DISPATCH','DECODE_SETTLE','DECODE_UNKNOWN']);
@@ -395,14 +395,14 @@ function openLifecycleOwner(options,version,migration=null){
       beginDecoderDispatch(options){return critical(()=>{
         const v=engineDataOptions(options,['operationId','expectedRevision','sessionId','stageBinding','client','prepared']);publicationData({operationId:v.operationId,expectedRevision:v.expectedRevision,sessionId:v.sessionId},['operationId','expectedRevision','sessionId']);check(uuid(v.sessionId));
         const client=assertProofDecoderTargetBrokerClient(v.client),prepared=assertProofDecoderPreparedSubmission(v.prepared,{client}),session=row('session',v.sessionId);check(session,'PUBLICATION_SESSION_HELD');
-        const identity=publicationDecoderIdentity({schema:'atlas-proof-publication-decoder-identity-v1',ledgerId:io.manifest.ledgerId,sessionId:v.sessionId,binding:session.binding,stageBinding:v.stageBinding,prepared}),identityHash=hash(identity),request={identityHash,identity},current=ready(),prior=replay(v.operationId,'DECODE_DISPATCH',request,current),bound=preparedDispatchOwners.get(v.prepared);
+        const identity=publicationDecoderIdentity({schema:'atlas-proof-publication-decoder-identity-v1',ledgerId:io.manifest.ledgerId,sessionId:v.sessionId,binding:session.binding,stageBinding:v.stageBinding,prepared}),identityHash=hash(identity),request={identityHash,identity},current=ready(),prior=replay(v.operationId,'DECODE_DISPATCH',request,current),bound=preparedDispatchOwners.get(prepared);
         if(prior){check(bound?.owner===owner&&bound.operationId===v.operationId&&bound.identityHash===identityHash,'PUBLICATION_PREPARED_ALREADY_BOUND');return observation(row('dispatch',v.operationId));}
         check(!bound,'PUBLICATION_PREPARED_ALREADY_BOUND');mutable(current,v.expectedRevision);sessionFor(v.sessionId);check(current.externalHoldCount===0,'PUBLICATION_STORE_HELD');publicationCapacity(current,{pendingDispatches:1});
         check(!io.db.prepare('SELECT id FROM decoder_dispatches WHERE request_id=? OR stage_id=?').get(prepared.requestId,identity.stageBinding.stageId),'PUBLICATION_OPERATION_CONFLICT');const scopes=scopesFor(identity.stageBinding.fences,true);live(identity.stageBinding);
         const revision=current.revision+1,dispatch=publicationDecoderDispatch({operationId:v.operationId,sessionId:v.sessionId,identityHash,identity,revision});
         // Bind before the durable intent; any failure poisons the owner and the
         // same private handle cannot be borrowed for a second ledger/identity.
-        preparedDispatchOwners.set(v.prepared,{owner,operationId:v.operationId,identityHash});dispatchProducers.set(v.operationId,{client,prepared:v.prepared,outcome:null});
+        preparedDispatchOwners.set(prepared,{owner,operationId:v.operationId,identityHash});dispatchProducers.set(v.operationId,{client,prepared:v.prepared,outcome:null});
         commit('DECODE_DISPATCH',current,{...current,revision,operationCount:current.operationCount+1,externalHoldCount:current.externalHoldCount+1},{operation:op(v.operationId,'DECODE_DISPATCH',request,revision),dispatch,scopes});return observation(dispatch);
       });},
       settleDecoderDispatch(options){return critical(()=>{

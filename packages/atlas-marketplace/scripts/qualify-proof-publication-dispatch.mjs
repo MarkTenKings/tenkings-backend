@@ -11,7 +11,7 @@ import {spawnSync} from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 import {canonicalJSON,hash} from '../src/contract.mjs';
 import {createProofDecoderLinuxObserver} from '../src/proof-decoder-linux-observer.mjs';
-import {createProofDecoderTargetBrokerClient,assertProofDecoderClientOutcome} from '../src/proof-decoder-target-broker.mjs';
+import {createProofDecoderTargetBrokerClient,assertProofDecoderClientOutcome,takeProofDecoderPreparedSubmission} from '../src/proof-decoder-target-broker.mjs';
 import {openProofPublicationStore,openProofOriginalReader,migrateProofPublicationLedgerV2,openProofPublicationLifecycleStore,migrateProofPublicationLedgerV3,openProofPublicationDispatchStore} from '../src/proof-publication-store.mjs';
 
 const CASES=['clean','other','initial','old-hold','crash-migrate','crash-dispatch','crash-settle','complete','unknown'];
@@ -68,6 +68,25 @@ async function metadata(config,setup,observer,factory){
   });
   emit({event:'RESULT',mode:'metadata',scope:'ACTUAL_NATIVE_AND_STORAGE_ONLY_NO_SOCKET_SUBMISSION',powerLossTested:false});
 }
+async function transfer(config,setup,observer,factory){
+  const f=fixture(setup,'clean'),f2=fixture(setup,'other');setupV2(f,observer);upgrade(f,observer);setupV2(f2,observer);upgrade(f2,observer);
+  const store=openProofPublicationDispatchStore({...f.options,linuxObserver:observer}),other=openProofPublicationDispatchStore({...f2.options,linuxObserver:observer}),client=factory();
+  try{
+    const s=start(store),s2=start(other),old=noInput(client),request=intent(store,s,client,old),registered=store.beginDecoderDispatch(request);
+    const taken=takeProofDecoderPreparedSubmission(old,{client});assert.equal(taken.request,old.report);assert.throws(()=>store.beginDecoderDispatch(request),{code:'DECODER_BROKER_PREPARED_HANDLE'});
+    // Same private report/record, different key: original registration replays;
+    // the second publisher cannot claim the transferred record or any new ID.
+    assert.deepEqual(store.beginDecoderDispatch({...request,prepared:taken.handle}),registered);
+    const before=other.status();assert.throws(()=>other.beginDecoderDispatch({...intent(other,s2,client,old),prepared:taken.handle}),{code:'PUBLICATION_PREPARED_ALREADY_BOUND'});assert.deepEqual(other.status(),before);
+    assert.throws(()=>store.beginDecoderDispatch({...request,prepared:taken.handle,operationId:randomUUID(),expectedRevision:store.status().revision}),{code:'PUBLICATION_PREPARED_ALREADY_BOUND'});
+    const outcome=client.discardPrepared(taken.handle),observed=assertProofDecoderClientOutcome(outcome,{client});assert.equal(observed.request,old.report);
+    const settled=store.settleDecoderDispatch(settlement(store,request,client,outcome));assert.deepEqual(settled.record.outcome.request,registered.record.identity.prepared);assert.equal(settled.record.outcome.disposition,'KNOWN_NO_START_SENT');assert.equal(store.status().externalHoldCount,0);end(other,s2);end(store,s);
+    emit({event:'RESULT',mode:'transfer',cases:1,scope:'ACTUAL_PRIVATE_TRANSFER_AND_STORAGE_ONLY_NO_SOCKET',settlement:settled});
+  }finally{
+    for(const current of [other,store]){if(current.status().externalHoldCount)assert.throws(()=>current.close());else current.close();}
+  }
+}
+
 function crash(config,setup,observer,factory,phase){
   assert.ok(['migrate','dispatch','settle'].includes(phase));const f=fixture(setup,'crash-'+phase),kill=()=>process.kill(process.pid,'SIGKILL');
   if(phase==='migrate'){const exec=DatabaseSync.prototype.exec;let entered=false;DatabaseSync.prototype.exec=function(sql){const out=exec.call(this,sql);if(sql==='PRAGMA user_version=3')entered=true;if(entered&&sql==='COMMIT')kill();return out;};upgrade(f,observer);}
@@ -83,8 +102,8 @@ async function effect(config,setup,observer,factory){
 const args=process.argv.slice(2);assert.equal(process.platform,'linux');assert.equal(process.arch,'x64');assert.equal(process.versions.node,'22.16.0');
 if(args[0]==='prepare'){assert.equal(args.length,6);assert.ok(args.slice(2).every(v=>/^[1-9][0-9]{0,9}$/.test(v)));prepare(args[1],...args.slice(2).map(Number));}
 else{
-  assert.ok(args[0]==='run'&&args.length===2||args[0]==='crash-child'&&args.length===3);const config=json(args[1]);assert.deepEqual(Object.keys(config).sort(),['schema','sourcePath','mode','fixtureConfigPath','plan','addonPath','addonSha256','expectedBootId','expectedEpoch','expectedBindingHash','originalPath','expectedOutcome'].sort());assert.equal(config.schema,'atlas-proof-publication-dispatch-operator-v1');assert.equal(config.sourcePath,args[1]);assert.ok(['metadata','complete','unknown'].includes(config.mode));assert.ok(config.mode==='complete'?['SUCCESS','INVALID_IMAGE'].includes(config.expectedOutcome):config.expectedOutcome===null);assert.ok(config.mode==='metadata'?config.originalPath===null:typeof config.originalPath==='string');
+  assert.ok(args[0]==='run'&&args.length===2||args[0]==='crash-child'&&args.length===3);const config=json(args[1]);assert.deepEqual(Object.keys(config).sort(),['schema','sourcePath','mode','fixtureConfigPath','plan','addonPath','addonSha256','expectedBootId','expectedEpoch','expectedBindingHash','originalPath','expectedOutcome'].sort());assert.equal(config.schema,'atlas-proof-publication-dispatch-operator-v1');assert.equal(config.sourcePath,args[1]);assert.ok(['metadata','transfer','complete','unknown'].includes(config.mode));assert.ok(config.mode==='complete'?['SUCCESS','INVALID_IMAGE'].includes(config.expectedOutcome):config.expectedOutcome===null);assert.ok(['metadata','transfer'].includes(config.mode)?config.originalPath===null:typeof config.originalPath==='string');
   const setup=json(config.fixtureConfigPath);assert.equal(setup.schema,'atlas-proof-publication-dispatch-fixtures-v1');assert.equal(setup.sourcePath,config.fixtureConfigPath);assert.deepEqual(Object.keys(setup.fixtures),CASES);assert.equal(process.getuid(),setup.publisher.uid);assert.equal(process.geteuid(),setup.publisher.uid);assert.equal(process.getgid(),setup.publisher.gid);assert.equal(process.getegid(),setup.publisher.gid);assert.ok(process.getgroups().every(g=>g===setup.publisher.gid));assert.equal(config.plan.profile.ipc.clientUid,setup.publisher.uid);assert.equal(config.plan.profile.ipc.clientGid,setup.publisher.gid);
   const observer=createProofDecoderLinuxObserver({enabled:true,addonPath:config.addonPath,addonSha256:config.addonSha256}),clients=[];const factory=()=>{const client=createProofDecoderTargetBrokerClient({enabled:true,plan:config.plan,observer,expectedBootId:config.expectedBootId,expectedEpoch:config.expectedEpoch,expectedBindingHash:config.expectedBindingHash});clients.push(client);return client;};
-  try{if(args[0]==='crash-child')crash(config,setup,observer,factory,args[2]);else if(config.mode==='metadata')await metadata(config,setup,observer,factory);else await effect(config,setup,observer,factory);}finally{for(const client of clients)await client.close();observer.close();process.stdin.destroy();}
+  try{if(args[0]==='crash-child')crash(config,setup,observer,factory,args[2]);else if(config.mode==='metadata')await metadata(config,setup,observer,factory);else if(config.mode==='transfer')await transfer(config,setup,observer,factory);else await effect(config,setup,observer,factory);}finally{for(const client of clients)await client.close();observer.close();process.stdin.destroy();}
 }
