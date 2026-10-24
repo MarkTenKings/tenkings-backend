@@ -103,9 +103,27 @@ CREATE, accessor rejection, and no-retry/no-capacity resource decisions. These
 tests contain synthetic historical data only and do not load native code or
 open sockets. Existing unchanged suites were not replayed.
 
-Native compilation and positive target behavior remain **NOT_RUN**. Required
-target checks include retained-lock exclusion and owned-process death, exact
-inode/path replacement refusal, enrolled broker effects, killed owner with
+The exact native build completed once in `ops/native-restart-reconciliation-build-01`.
+Addon SHA256 is `187130dd78e3f9278fccddcf72962331224f4b4d33a5b9869eaee77068f82855`;
+strict compiler flags passed with no diagnostics. The closure pins the GCC13
+driver, ld.bfd and2367 Node headers but remains nonhermetic: cc1, assembler,
+system headers, CRT/runtime, dynamic loader and implicit search inputs are unpinned.
+
+`ops/native-owner-check-01` loaded that addon in a fresh owned private mount
+namespace. Actual native observations pass: live-owner exclusion, retained-handle
+validity, takeover of the same lock inode only after pidfd-owned death, and
+old-handle refusal after lock-inode replacement. Same-process duplicate acquisition
+and a forged JavaScript handle refused. All four owned processes were waited;
+namespace/contender exited0 and the two held owners exited-9 after exact pidfd
+signals. Remote receipt SHA256 is
+`76791b8984d2bd9619641a92643b88243488aa4d0c29de473196471bf4686e11`.
+The host mount namespace/table, actual enrollment-path absence, stopped guard,
+empty frozen parent, empty Engine and all20 old ledgers/publisher holds were
+unchanged. This is native-primitive evidence only; the private fixture did not
+enroll the host or exercise the JavaScript catalog/registry/recovery coordinator.
+
+Actual enrolled target recovery remains **NOT_RUN**. Required target checks
+include catalog/parent/path replacement refusal, enrolled broker effects, killed owner with
 pending CREATE/START, late resource appearance, sidecar/partial enrollment
 refusal, known finalized absence/contradiction, and crash/lost response between
 DELETE intent and response. They must verify original ledger and publisher holds
