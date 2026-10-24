@@ -29,7 +29,7 @@
     {
       "source": "packages/atlas-marketplace/src/proof-decoder-worker.mjs",
       "path": "opt/atlas-proof-decoder/worker.mjs",
-      "sha256": "8336cda545a25030d512c36219236b96800eebab841488de0e30bc9e5f5dc2a3"
+      "sha256": "7ea55b6db2d1e819681eea0deb0b04629099e2761b18ed0b44a583b921614fde"
     },
     {
       "source": "packages/atlas-marketplace/src/proof-image-decode.mjs",

@@ -48937,3 +48937,32 @@ Diagnostic epoch PASS, canonical receipt369f8baa2fe58b5b9d3e535944672aa581b52538
 ### 2026-10-24T01:15:33.516007+00:00 — R2 exact observed JPEG failure classifier
 
 Worker now classifies only the exact observed58-byte VipsJpeg premature-data-segment message as INVALID_IMAGE, after existing coded/resource failure gates. No diagnostic output, PDW1/argv/exit or broad native-error rule changes. WorkerSHA7ea55b6db2d1e819681eea0deb0b04629099e2761b18ed0b44a583b921614fde. Three focused Node22 tests PASS: exact message, near-miss/newline/NUL refusal, coded/unavailable error refusal; packet jpeg-native-classifier-01/source-ready-01.json. Root reviewed the one-line classifier delta and focused tests; reused agent execution, no duplicate suite. Actual updated-image broker qualification remains pending.
+
+
+### 2026-10-24T01:17:01.510931+00:00 — R2 exact unseeded join resume plan
+
+Dispatch resume02 source8b8511e5db889cb3dfa15536dd4ececa465a7b1c0391b8ff827d96ba7f8d5b15 against exact stopped existing PG/source/setup/emptyfivefixtures. Root reviewed targeted resume delta: no initdb/SQL/prepare replay; pin pg_control and setup/descriptors/prior receipts; assert empty7tables after owned PG start before cases. All8commandnames statically checked; normalize only log labels. Fresh receipt directory only; same5case arguments and original deadlines. New observed16-ledger decoder checkpoint5b5d0d64a13e71a4948244013a05b8557f799687c5f7ecdb04f107a9fe74d5df bound, no broker socket. Owned PGstop/socketabsence and oldevidence preservation required. No production/shared changes.
+
+
+### 2026-10-24T01:18:49.231719+00:00 — R2 protected PG→publisher actual PASS; repaired image assembly plan
+
+Five-case join PASS, stdout9b25277d28bf76872a2dce26fe3922cee47e650eb5197453fa7dcba5686207dd, remoteformattedreceipt0a38a7b91026a609e38f080bbe925af2e730b6f2471750879d99ac3ced85950d. Realv4files+protectedPG17.11:rev5/3COMMITTED/2CANCELLED/5events;state16863389be48e8588747fe110ffef301f61ffbcadc3aa2ad1cadb963a64a9f1f. CrashcaseSIGKILL-9 retainedhold+lock; originalsunchanged. OwnedPG32301 exit0/socketabsent; all16decoderledgers andolderpublisherfixturesunchanged. Existingunseededsetupreused; noinitdb/SQL/prepare replay. Canonicalauthority/intake/decoder/C0/powerloss stillnotestablished. Publication retention doc updated.
+
+Updated repository closure-spec only to bind worker7ea55b6…; all five source hashes checked against currentfiles. Next action: reuse successful deterministic image assembler with only worker substituted, new jpeg-classifier-image-build-01; source873692cf5da73dd3e8ee7f8f10f705d8a1e24c65fa68e963d3819560d2ee9d98. Exact145-file inventory changes one file; inventory10b782e96395d79494b4206d4c7f89fc7b5b22b9a74ca54a63f9f0aa3f29f702. Current16-ledger/config/latch/emptybrokerdir checkpoint bound. No downloads, imageimport, guard, decoder or PG action; oldrootfs/archives retained.
+
+
+### 2026-10-24T01:20:47.178161+00:00 — R2 repaired image assembled; import planned
+
+Reused assembler PASS, receiptcfc9eee681f3d06474c7b1fe8c2b4a230e3a0f9abaf227e0286d4033dc548e4f; candidateOCI manifest101965adc040d3498d5ac05483b3e9d8fef6b4d0733f565b6e258da3d9907f3e, layerbe8c6b9c0d4abd745bf028f67c27a5228c23af0d1aa489d495558b8c7d7c47b3. Only worker changed; all16ledgers/currentcontrols/rootfs/archives preserved. Next import reuses successful import04 with only actual candidate paths/hashes, currentemptybroker baseline and distinct atlas-r2-proof-repair repository; source06c0bda9f232738182d7c6d25f657eefd030b6c6c45d36bc7bf6880d0526d73f. Preserve original/probe/diagnostic images; one new import POST only, bounded loopbackTLS registry, no credentialreceipt reads, no guard/decoder/DB action.
+
+R1 ownership update received: R1 owns canonical staff/customer auth/logout/access/control and trusted host changes; R2 owns isolatedC0 modules/proposals. Composed baseline remainsd8a4496300dfb204a4dbcaed7d4d6fb313ce4463; auth-only9b403a15 is separatelyqualified/notdeployed. FullC0/sharedschema-role-IPC acceptance followsauthcutover. R1 is preparing a freshlead transfer, not startingeffects. No routine reply sent and no sharedoperation inferred from a reported gradingpause.
+
+
+### 2026-10-24T01:21:51.342216+00:00 — R2 import header correction before effects
+
+Repair import01 failed at header evaluation (missing json import), before any target read/mutation. Root restored the exact existing import declarations and locally evaluated only the public constant header. Body/payload unchanged; new source97e8e3fd2b7c2d4d76e1f489f57456a39726bb078d10b086cdb37717e13ea130 (import_jpeg_classifier_image_02.py). Next dispatch remains the planned one-use isolated candidate import; originalfailedreceipt retained.
+
+
+### 2026-10-24T01:22:52.795416+00:00 — R2 repaired candidate import observed
+
+Candidate import02 PASS, canonical receipt3ada9e3d63177d802b65612eaf2e3786cbb4af9c0c8415b4a739691815b7b19b, exact atlas-r2-proof-repair manifest101965adc040d3498d5ac05483b3e9d8fef6b4d0733f565b6e258da3d9907f3e and layerbe8c6b9… observed. Registry stopped/keyremoved; all3priorimageprojections and16ledger/control pins unchanged. No native/guard/job effects. Actual affected broker case remains pending; docs and closure spec now distinguish completed storagejoin from remaining decoder/C0/sharedproduction gates.

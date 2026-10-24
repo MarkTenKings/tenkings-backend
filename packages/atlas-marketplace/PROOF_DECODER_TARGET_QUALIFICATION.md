@@ -189,8 +189,13 @@ cause or a worker-validation capability. Genuine resource cleanup reached
 FINALIZED revision9 before the original deadline; the owned harness exited0.
 All fifteen prior ledger sets were unchanged. Guard shutdown preserved the new
 GUARD_SHUTDOWN poison, with an empty frozen parent, no Engine containers and no
-broker socket. Production classification repair and its affected target check
-remain pending; this diagnostic does not complete the corrupt-image case.
+broker socket. Commit705bcf34 adds only exact-message classification after existing
+coded/resource failure gates; three focused tests passed. The resulting candidate
+image `atlas-r2-proof-repair@sha256:101965adc040d3498d5ac05483b3e9d8fef6b4d0733f565b6e258da3d9907f3e`
+was imported on the isolated host with one changed worker file. Its actual import
+receipt is `3ada9e3d63177d802b65612eaf2e3786cbb4af9c0c8415b4a739691815b7b19b`.
+The affected genuine broker check remains pending; neither diagnostic observation
+nor image import completes the corrupt-image case.
 
 The candidate binds the imported linux/amd64 image
 `127.0.0.1:5001/atlas-r2-proof@sha256:2b497d3724e65ca2ae449072dada74b3197247649eaa2a8349b7d02d79609ac6`,
@@ -313,7 +318,7 @@ outside this lane and disabled pending Fingerprint PLUS genuine ownership author
 | `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: small/alpha/16M completed under original pins;10MiB accepted with FINALIZED cleanup in corpus05; full final-runtime evidence binding pending |
 | `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | INCOMPLETE: three genuine broker submissions completed in corpus02; full variant/evidence binding to final runtime pending |
 | `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE:16M accepted earlier; corpus05 accepted10MiB with FINALIZED cleanup, refused+1byte before submission and rejected16M+1pixel with FINALIZED cleanup; corpus06 also rejected PNG bytes declared as JPEG with FINALIZED cleanup; fresh prepared count/hash mismatches refused with private no-start dispositions in prepared-source-negatives01; unsupported-MIME and remaining final binding variants remain |
-| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: earlier variants finalized under their recorded pins; EOI-preserved entropy truncation failed its client oracle despite finalized cleanup. A separate diagnostic observed the exact VipsJpeg premature-data-segment message and finalized cleanup; production classification repair, affected target check and final binding remain |
+| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: earlier variants finalized under their recorded pins; EOI-preserved entropy truncation failed its client oracle despite finalized cleanup. A separate diagnostic observed the exact VipsJpeg premature-data-segment message and finalized cleanup; exact classification repair is implemented, while its affected target check and final binding remain |
 | `FORGED_DUPLICATE_OR_TRAILING_OUTPUT` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Distinct malicious-output probe emits wrong request/hash, early one-byte stdout prefix, duplicate/trailing/oversize/partial PDW1 and stderr flood. Actual broker refusal/hold; never claim this is normal worker output. | NOT_RUN |
 | `EXTERNAL_NETWORK_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: AF_INET/INET6, raw, AF_PACKET, AF_ALG, VSOCK and AF_UNIX socket attempts; seccomp/AA denial and net namespace lo-only/no ports. No external packets need be transmitted. | INCOMPLETE: ordinary2 reported nine fixed socket-creation attempts denied EPERM with native pre-input controls; independent interface/port inventory and final evidence binding remain |
 | `HOST_SECRET_PROOF_DOCKER_ACCESS_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Dedicated nonsecret absent/unmounted canaries and exact Docker/guard/broker path open attempts; kernel mount/namespace evidence. No real secrets enumerated/read; distinguish ENOENT absence from policy EACCES/EPERM. | NOT_RUN |

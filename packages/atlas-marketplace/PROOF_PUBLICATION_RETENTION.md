@@ -163,9 +163,11 @@ SYNTHETIC_LOCAL protected adapter candidate is described in
 `PROOF_RETENTION_PROTECTED_ADAPTER.md`; its fresh PostgreSQL17.11 harness passed20 groups/15 refusals. That result does not establish this physical join. Existing D1 metadata passed on its frozen
 8b37c773 closure; D2 does not alter that immutable target evidence.
 
-## Prepared protected PostgreSQL → publisher join
+## Protected PostgreSQL → publisher join
 
-The new `qualify-proof-publication-protected-join.mjs` is source-only and **NOT_RUN**.
+The new `qualify-proof-publication-protected-join.mjs` has now passed the five-case
+isolated Linux fixture described below. It remains **UNQUALIFIED** for canonical
+customer authority and initial intake.
 Its only runtime change is a closed protected-connection branch in
 `publicationRetentionWriterBinding`: it requires the exact source-owned catalog
 hash, fixed database/roles, and installed intake tuple/capacity equal to the
@@ -222,7 +224,31 @@ The two focused binding-projection cases passed locally: protected installed
 identity/capacity/closure refusals and unchanged generic history acceptance.
 The first protected test had an aliased synthetic test object; fixing only that
 fixture and rerunning only the failed case passed. No prior metadata or database
-case was rerun. Syntax checks do not establish the five-case join. Actual
-LinuxPG→publisher execution, canonical authorization, initial intake, decoder
-qualification, cross-process authority/revocation and power-loss behavior remain
-unestablished by this candidate.
+case was rerun. Those local checks alone did not establish the five-case join.
+
+The actual Linux run in `ops/protected-publisher-join-resume-01` passed all five
+cases using the frozen6d59615a runtime closure. Stdout SHA256 is
+`9b25277d28bf76872a2dce26fe3922cee47e650eb5197453fa7dcba5686207dd`;
+the remote formatted receipt SHA256 is
+`0a38a7b91026a609e38f080bbe925af2e730b6f2471750879d99ac3ced85950d`.
+PostgreSQL ended at revision5 with three committed and two cancelled operations,
+five events, and state hash
+`16863389be48e8588747fe110ffef301f61ffbcadc3aa2ad1cadb963a64a9f1f`.
+Real database operations and publisher file IO were exercised. Original envelopes
+remained unchanged; the deliberately killed crash case retained its publisher
+hold and lock. The owned PostgreSQL process exited0, its socket disappeared,
+and all sixteen existing decoder ledger sets and older publisher fixtures were
+unchanged.
+
+Setup failures are preserved separately. One read-only preflight used an overly
+strict ledger-directory suffix. The next attempt initialized the database and
+prepared five empty fixtures, then rejected an underscore in a command log name
+before any case wrote publication data. The successful resume reused the exact
+stopped database, source and empty fixtures after checking all seven tables empty;
+it did not repeat initialization, SQL installation or preparation. Only command
+log labels were normalized. The private PostgreSQL17.11 prefix is inventoried,
+but host loader/libc/NSS/kernel dependencies are not a hermetic OS closure.
+
+Canonical authorization, protected initial intake, decoder qualification,
+cross-process authority/revocation and power-loss behavior remain unestablished.
+The synthetic initial VALIDATED rows are fixture setup, not production authority.
