@@ -130,3 +130,61 @@ verification, lifecycle accounting, original-only publisher dispatch and fence
 serialization, old-row reconciliation, and authenticated intake/read/review
 composition. No canonical policy, ownership/history, pricing, installation or
 production authority is activated by this candidate.
+
+
+## Decoder-origin preparation prerequisite
+
+`prepareValidationFromDecoder({createOperation, client, outcome})` now composes
+an actual private same-client broker outcome with the owned intake connection.
+It is an internal, default-off `SYNTHETIC_LOCAL` path. `COMPLETE_CLEAN` transport
+provenance does not establish qualified decoder or canonical actor authority.
+The existing structural `prepareValidation(...)` remains for the explicit
+synthetic fixture; neither method is wired to a physical/public intake endpoint.
+
+The method claims the original outcome synchronously before the first async
+boundary, allocates one operation ID, validation-attempt ID and timestamp, and
+uses the shared single-active database call guard. The claim cannot be borrowed
+by a second intake instance or another original CREATE. A repeated same-owner,
+same-CREATE call refuses and exposes only the same bounded preparation report;
+it does not requery, allocate identities, renew time or return a replacement
+handle. A failed preparation retains that report and its consumed local slot.
+
+The exact original CREATE record is read from the audited PostgreSQL gateway by
+its operation ID/hash. The closed projection binds its original upload, object
+key, storage/policy tuple and byte plan. The decoder request ID and validation
+DTO are derived together from one private successful result; callers do not
+supply either field. The original upload/policy window remains unchanged. The
+existing gateway rechecks the current immutable upload and original manifest
+projection while holding its real state lock, and checks its actual wall clock.
+
+The broker adds `assertProofDecoderClientOutcomeBeforeDeadline(value, {client})`
+as an explicit stricter export. It retains the same genuine native observer in
+the private client record, refuses closed/quarantined clients or a closed
+observer, and reads actual BOOTTIME against the original prepared deadline.
+The historical outcome verifier is unchanged. The intake path checks this
+private origin/deadline before and after its connection/original lookup, before
+the write and COMMIT, and after COMMIT. A late, closed or uncertain commit returns
+`UNKNOWN` with the same operation and consumed handle. Only exact-original
+lookup remains; there is no resubmission, new validation attempt or decoder
+retry. These checks are not a canonical revocation fence or a database-enforced
+BOOTTIME transaction deadline: a late actual COMMIT can exist behind UNKNOWN.
+
+Six distinct new pure/refusal cases cover original/DTO coupling, uncertain and
+invalid-image outcomes, contradictory transport fields, exact original/storage/
+policy tuples, time windows and closed scalars, private-brand refusal without
+calling a fake clock, and default-off/injected-factory refusal. The first run
+passed five cases; the sixth expected the later window error for a fractional
+number already refused by the scalar parser. Only that corrected case reran.
+Only the expanded tuple/policy case then reran. No fake positive client/outcome
+brands, PostgreSQL replay or native runtime effects were used. The actual nine
+PostgreSQL groups above predate this composition delta and remain valid for
+their original source scope. Actual private decoder-to-PostgreSQL preparation,
+shared-call races, deadline crossings and post-COMMIT uncertainty for this new
+path are `NOT_RUN`.
+
+A live qualified path still requires the source-owned qualification/installation
+producer and canonical C0 request/stage/fence composition, including revocation
+serialization. Fingerprint and genuine ownership remain required before
+ownership/history/pricing can turn on. This prerequisite supplies private
+transport provenance and durable original identity; it does not synthesize any
+of those missing producers or grant fresh publication permission.

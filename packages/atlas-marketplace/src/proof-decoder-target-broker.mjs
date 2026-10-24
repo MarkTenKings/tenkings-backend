@@ -154,6 +154,16 @@ export function assertProofDecoderClientOutcome(value,options){
   check(observation,'DECODER_BROKER_DISPOSITION_REQUIRED');return decoderFreeze({...observation,completion:observation.disposition==='COMPLETE_CLEAN'?value:null});
 }
 
+/** Stricter source-owned freshness check for a new storage preparation. This
+ * is still an UNQUALIFIED transport observation, never admission authority.
+ * The historical verifier above intentionally retains its existing semantics. */
+export function assertProofDecoderClientOutcomeBeforeDeadline(value,options){
+ const {client}=engineDataOptions(options,['client']),observed=assertProofDecoderClientOutcome(value,{client}),owner=targetClients.get(client),status=client.status();
+ check(!status.closed&&!status.quarantined&&observed.request,'DECODER_BROKER_OUTCOME_UNAVAILABLE');
+ check(time(owner.observer)<brokerNanoseconds(observed.request.deadlineBootNs),'DECODER_BROKER_DEADLINE');
+ return observed;
+}
+
 /** Nonroot application-side transport only. No Engine socket, registry, guard,
  * qualification constructor, proof publication or fresh capability is exposed. */
 export function createProofDecoderTargetBrokerClient(options={}){
@@ -264,5 +274,5 @@ export function createProofDecoderTargetBrokerClient(options={}){
       });return job.done;
     },
     async close(){closed=true;if(prepared)retire(prepared,error('DECODER_BROKER_CLOSED'));const job=active;job?.cancel?.();if(job)try{await job.done;}catch{}return this.status();}
-  });targetClients.set(client,{handles,outcomes});return client;
+  });targetClients.set(client,{handles,outcomes,observer});return client;
 }
