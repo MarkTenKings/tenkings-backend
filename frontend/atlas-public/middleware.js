@@ -16,6 +16,14 @@ export async function middleware(request) {
         if (route.zone === 'public' && !marketplace) return NextResponse.next();
         if (process.env.VERCEL_ENV !== 'production' || request.headers.get('host') !== new URL(SITE_ORIGIN).host
             || request.nextUrl.protocol !== 'https:') return unavailable();
+        // Redirect the browser before signing so directory-relative assets resolve
+        // within the mount. Signed API targets and request bodies stay exact.
+        if (marketplace && ['GET', 'HEAD'].includes(request.method)
+            && ['/marketplace', '/account/marketplace', '/account/marketplace/seller', '/admin/marketplace'].includes(request.nextUrl.pathname)) {
+            const directory = new URL(target, SITE_ORIGIN);
+            directory.pathname += '/';
+            return NextResponse.redirect(directory, 308);
+        }
         // External rewrite streams the original body. No API-function JSON
         // parser, body serialization, internal URL alias or new auth key.
         // The owned TLS gateway must retain this target and set canonical Host,
