@@ -15,6 +15,47 @@ function secret(value) {
     return bytes;
 }
 
+function registryInput(value) {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string' || value.length > 131072) deny(503, 'ACCESS_CONFIGURATION_INVALID');
+    try { return JSON.parse(value); } catch { deny(503, 'ACCESS_CONFIGURATION_INVALID'); }
+}
+
+/** Server-only replacement-key roster. Its trusted ID/hash provenance must be
+ * qualified before activation; this parser cannot establish roster ownership. */
+function phoneIdentities(input, derive) {
+    const supplied = input.phoneIdentityRegistry;
+    const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
+        && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+    const invalid = () => deny(503, 'ACCESS_CONFIGURATION_INVALID');
+    if (!exact(supplied, ['version', 'keyVersion', 'entries']) || supplied.version !== 1
+        || typeof supplied.keyVersion !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(supplied.keyVersion)
+        || !Array.isArray(supplied.entries)) invalid();
+    const phones = [...input.approvedPhones];
+    if (!phones.length || phones.length > 256 || new Set(phones).size !== phones.length
+        || phones.some(phone => typeof phone !== 'string' || !/^\+[1-9]\d{7,14}$/.test(phone))
+        || supplied.entries.length !== phones.length) invalid();
+    const approved = new Map(phones.map(phone => [derive(phone), phone]));
+    const aliases = new Map(), phoneByHash = new Map(), identityByHash = new Map(), ids = new Set();
+    const entries = supplied.entries.map(entry => {
+        if (!exact(entry, ['newPhoneHash', 'identityId', 'canonicalPhoneHash'])
+            || !/^[a-f0-9]{64}$/.test(entry.newPhoneHash ?? '')
+            || !/^[a-f0-9]{64}$/.test(entry.canonicalPhoneHash ?? '')
+            || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(entry.identityId ?? '')
+            || !approved.has(entry.newPhoneHash) || aliases.has(entry.newPhoneHash)
+            || phoneByHash.has(entry.canonicalPhoneHash) || ids.has(entry.identityId)) invalid();
+        aliases.set(entry.newPhoneHash, entry.canonicalPhoneHash);
+        phoneByHash.set(entry.canonicalPhoneHash, approved.get(entry.newPhoneHash));
+        identityByHash.set(entry.canonicalPhoneHash, entry.identityId);
+        ids.add(entry.identityId);
+        return Object.freeze({ newPhoneHash: entry.newPhoneHash, identityId: entry.identityId,
+            canonicalPhoneHash: entry.canonicalPhoneHash });
+    }).sort((a, b) => a.newPhoneHash < b.newPhoneHash ? -1 : a.newPhoneHash > b.newPhoneHash ? 1 : 0);
+    const registry = Object.freeze({ version: 1, keyVersion: supplied.keyVersion, entries: Object.freeze(entries) });
+    return { registry, phoneByHash, phoneHash: phone => aliases.get(derive(phone)) ?? null,
+        identityIdForPhoneHash: phoneHash => identityByHash.get(phoneHash) ?? null };
+}
+
 /** No default credentials, legacy environment names, preview mode or fixture promotion. */
 export function productionAccessConfig(env) {
     if (env.ATLAS_STAFF_RUNTIME !== 'postgres' || env.NODE_ENV !== 'production' || env.VERCEL_ENV !== 'production'
@@ -53,20 +94,26 @@ function productionAccessDetails(env,deploymentId,releaseSha) {
         releaseSha, accountSid, serviceSid, databaseUrl: database.href, cookies: ACCESS_COOKIES,
         sessionKey, phoneKey, routerKey,
         approvedPhones: parseApprovedPhones(env.ATLAS_ADMIN_PHONES),
+        phoneIdentityRegistry: registryInput(env.ATLAS_AUTH_PHONE_IDENTITY_REGISTRY),
         // Release activation must attest the actual Verify service lifetime.
         providerLifetimeMs: 600_000 });
 }
 
 export function makeAccessConfig(input) {
     if (input.basePath !== STAFF_BASE_PATH) deny(503, 'ACCESS_CONFIGURATION_INVALID');
-    const phoneHash = phone => createHmac('sha256', input.phoneKey).update(`atlas-phone-v1:${phone}`).digest('hex');
-    const phoneByHash = new Map([...input.approvedPhones].map(phone => [phoneHash(phone), phone]));
-    const configHash = hash(JSON.stringify({ version: 2, application: STAFF_APPLICATION, basePath: STAFF_BASE_PATH,
+    const derive = phone => createHmac('sha256', input.phoneKey).update(`atlas-phone-v1:${phone}`).digest('hex');
+    const identities = input.phoneIdentityRegistry === undefined ? null : phoneIdentities(input, derive);
+    const phoneHash = identities?.phoneHash ?? derive;
+    const phoneByHash = identities?.phoneByHash ?? new Map([...input.approvedPhones].map(phone => [phoneHash(phone), phone]));
+    const configHash = hash(JSON.stringify({ version: identities ? 3 : 2, application: STAFF_APPLICATION, basePath: STAFF_BASE_PATH,
         mode: input.mode, origin: input.origin, deploymentId: input.deploymentId, releaseSha: input.releaseSha,
         accountSid: input.accountSid, serviceSid: input.serviceSid, providerLifetimeMs: input.providerLifetimeMs,
         sessionKeyHash: hash(input.sessionKey), phoneKeyHash: hash(input.phoneKey),
-        routerKeyHash: input.routerKey ? hash(input.routerKey) : null, approved: [...phoneByHash.keys()].sort() }));
-    return Object.freeze({ ...input, application: STAFF_APPLICATION, phoneHash, phoneByHash, configHash });
+        routerKeyHash: input.routerKey ? hash(input.routerKey) : null, approved: [...phoneByHash.keys()].sort(),
+        ...(identities ? { phoneIdentityRegistry: identities.registry } : {}) }));
+    return Object.freeze({ ...input, application: STAFF_APPLICATION, phoneHash, phoneByHash, configHash,
+        phoneIdentityRegistry: identities?.registry, existingIdentityOnly: !!identities,
+        identityIdForPhoneHash: identities?.identityIdForPhoneHash });
 }
 
 export function assertProductionStaffRequest(req, config) {
