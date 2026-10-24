@@ -3,7 +3,11 @@
 .compactRetry.compactRetry.compactRetry{bottom:0;padding:3px;font-size:8px;min-height:25px;max-width:65px;white-space:normal}
 .detail{width:100%;min-width:0;color:#20242c}
 .photoStage{--detail-media-height:clamp(390px,48vw,540px);display:grid;place-items:center;min-height:340px;height:var(--detail-media-height);background:#fff;position:relative}
+/* Reserve the turn envelope and 44px controls + 8px gap so the actual holder
+   stays close to the still's size. Camera distance remains fixed on rotation. */
+.photoStage3D{height:calc(var(--detail-media-height)*1.14 + 52px)}
 .detailVisual{height:100%;width:auto;aspect-ratio:80.264/135.382;max-width:100%;display:flex;align-items:center;justify-content:center}
+.photoStage3D .detailVisual{height:var(--detail-media-height);max-height:100%}
 .pending3D{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%}
 .pending3DNote{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:min(340px,95%);padding:12px 16px;background:#fffffff5;border:1px solid #e4e8e4;border-radius:6px;font-size:11px!important;line-height:1.5!important;color:#4e5e57!important;text-align:center}
 .controls{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:16px;margin:18px 0 10px}

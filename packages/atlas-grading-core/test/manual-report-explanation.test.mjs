@@ -9,7 +9,7 @@ import { calculateAtlasConditionScore, calculateAtlasScoringDamagePercent, ATLAS
 import { calculateSpeedsterReview } from '../dist/review.js';
 import { measureSpeedsterCenteringBorders } from '../dist/scoring.js';
 import { SPEEDSTER_RULE_VERSION } from '../dist/contracts.js';
-import { encodeSpeedsterTraceRleV1 } from '../dist/trace-codec.js';
+import { decodeSpeedsterTraceRleV1, encodeSpeedsterTraceRleV1 } from '../dist/trace-codec.js';
 
 const quad = [{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }];
 const contour = [{ x: .2, y: .2 }, { x: .3, y: .2 }, { x: .3, y: .3 }];
@@ -59,7 +59,7 @@ test('a nonzero 42-pixel Back surface mark correctly explains an exact 10 and pr
 
 test('condition descriptions match every scoring-percent band and all category multipliers', () => {
   const bands = explain([]).policy.conditionBands;
-  assert.deepEqual(explain([]).policy.categoryDamageMultipliers, { CORNERS: .25, EDGES: 1, SURFACE: 2 });
+  assert.deepEqual(explain([]).policy.categoryDamageMultipliers, { CORNERS: .25, EDGES: .25, SURFACE: 2 });
   assert.equal(explain([]).policy.globalDamageMultiplier, undefined);
   for (const [damage, score] of [[0,10],[.01,10],[.010001,9.5],[.02,9.5],[.020001,9],[.03,9],
     [.030001,8],[.04,8],[.040001,7],[.05,7],[.050001,6],[.06,6],[.060001,5],[.07,5],
@@ -68,8 +68,8 @@ test('condition descriptions match every scoring-percent band and all category m
       && (b.upperPercent === null || (b.upperInclusive ? damage <= b.upperPercent : damage < b.upperPercent)));
     assert.equal(matches.length, 1); assert.equal(matches[0].score, score);
   }
-  for (const [zone, multiplier] of [['CORNERS',.25],['EDGES',1],['SURFACE',2]]) {
-    assert.equal(calculateAtlasConditionScore(.02, zone), { CORNERS: 10, EDGES: 9.5, SURFACE: 8 }[zone]);
+  for (const [zone, multiplier] of [['CORNERS',.25],['EDGES',.25],['SURFACE',2]]) {
+    assert.equal(calculateAtlasConditionScore(.02, zone), { CORNERS: 10, EDGES: 10, SURFACE: 8 }[zone]);
     close(calculateAtlasScoringDamagePercent(.02, zone), .02 * multiplier);
     const value = explain([finding({ zone, area: .02, denominator: 100 })]);
     assert.equal(value.sides.BACK[zone].weightedDamagePercent, .02);
@@ -115,9 +115,9 @@ test('source traces retain multiple measured zones and multiplier-based damage w
   const value = explain([trace]);
   assert.deepEqual(value.findings[0].regions.map(r => r.zone), ['CORNERS','EDGES']);
   for (const r of value.findings[0].regions) { assert.equal(r.multiplier, 1.5); assert.equal(r.areaMm2, 1); assert.equal(r.weightedAreaMm2, 1.5); }
-  assert.equal(value.sides.BACK.CORNERS.score, 1); assert.equal(value.sides.BACK.EDGES.score, 1);
-  assert.equal(value.categories.corners.subgrade, 7.3); assert.equal(value.categories.edges.subgrade, 7.3);
-  close(value.overall.rawGrade, 8.65); assert.equal(value.overall.displayGrade, 8.7);
+  assert.equal(value.sides.BACK.CORNERS.score, 1); assert.equal(value.sides.BACK.EDGES.score, 4);
+  assert.equal(value.categories.corners.subgrade, 7.3); assert.equal(value.categories.edges.subgrade, 8.2);
+  close(value.overall.rawGrade, 8.875); assert.equal(value.overall.displayGrade, 8.9);
   // A retained, fully shadowed exact trace owns no measured region. Its full
   // bitmap must never be counted again by an explanation-only projection.
   const shadowed = explain([trace, { ...trace, id: 'shadowed', measurementRegions: [] }]);
@@ -284,7 +284,7 @@ test('a synthetic prior ATLAS 1.5 report remains immutable and is explained unde
   }
   assert.equal(explanation.overall.finalGrade, 9.5);
   assert.deepEqual(historical, before); assert.equal(sha(historical), hash);
-  assert.deepEqual(current.grade.subgrades, { centering: 10, corners: 10, edges: 9.5, surface: 8 });
+  assert.deepEqual(current.grade.subgrades, { centering: 10, corners: 10, edges: 10, surface: 8 });
   assert.equal(current.ruleVersion, ATLAS_RULE_VERSION);
   assert.throws(() => explainAtlasManualReport({ ...historical, ruleVersion: ATLAS_RULE_VERSION }), /EXPLANATION_GRADE_MISMATCH/);
   assert.throws(() => explainAtlasManualReport({ ...current, ruleVersion: historical.ruleVersion }), /EXPLANATION_GRADE_MISMATCH/);
@@ -347,7 +347,7 @@ test('new report creation and explanation round raw 8.35 to 8 and raw 8.5 to 9 w
   }
 });
 
-test('whole awards preserve precise Sports and Pokémon physical scores, findings and historical half-report hashes', () => {
+test('Sports and Pokémon retain historical half-report hashes while current edge scoring preserves measurements', () => {
   const historicalHashes = { SPORTS: '387351719b44e16c6f4ad005cc9294c25b72f2f201b30282d9b29417a531c572',
     POKEMON: 'd091589e0ad5449e874b1c925b746277d7bee620a8ed0cd64ccd1316941bd6c7' };
   for (const cardProfile of ['SPORTS', 'POKEMON']) {
@@ -357,28 +357,67 @@ test('whole awards preserve precise Sports and Pokémon physical scores, finding
       identity: { cardName: 'Synthetic', year: '2026', productSet: 'Report explanation', layoutType: 'POKEMON' } });
     const report = previewAtlasManualReport(input), historical = { ...historicalHalfReport(input),
       ruleVersion: 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1' };
+    // Restore the independently captured historical edge outcome. Current
+    // builders cannot select an old rule or rewrite an approved report.
+    historical.grade.back.edges.score = 9.5;
+    historical.grade.subgrades.edges = 9.85;
+    historical.grade.overall = { rawGrade: 8.387500000000001, displayGrade: 8.4 };
+    historical.findings[1].measurement.subgradeEffect = .15;
+    historical.finalGrade = 8.5;
     // Literal hashes captured from the pre-change builder, including precise
     // grades, all measurements/findings and identity serialization.
     assert.equal(sha(historical), historicalHashes[cardProfile]);
-    const { finalGrade, finalGradePolicy, ruleVersion, ...physical } = report;
-    const { finalGrade: oldAward, finalGradePolicy: oldPolicy, ruleVersion: oldRule, ...oldPhysical } = historical;
-    assert.deepEqual(physical, oldPhysical); assert.equal(finalGrade, 8); assert.equal(oldAward, 8.5);
-    assert.equal(report.grade.back.edges.score, 9.5);
-    assert.equal(report.grade.overall.rawGrade, 8.387500000000001); assert.equal(report.grade.overall.displayGrade, 8.4);
+    assert.equal(report.finalGrade, 8); assert.equal(historical.finalGrade, 8.5);
+    assert.equal(report.grade.back.edges.score, 10);
+    assert.equal(report.grade.overall.rawGrade, 8.425); assert.equal(report.grade.overall.displayGrade, 8.4);
     const currentExplanation = explainAtlasManualReport(report), oldExplanation = explainAtlasManualReport(historical);
-    for (const key of ['sides', 'categories', 'findings']) assert.deepEqual(currentExplanation[key], oldExplanation[key]);
-    const invariant = explanation => {
-      const copy = structuredClone(explanation);
-      delete copy.ruleVersion; delete copy.policy.categoryDamageMultipliers; delete copy.policy.conditionFormula;
-      delete copy.policy.finalGradePolicy; delete copy.policy.finalGradeFormula;
-      delete copy.overall.finalGrade; delete copy.overall.finalGradePolicy; delete copy.overall.finalRoundingDelta;
-      return copy;
-    };
-    assert.deepEqual(invariant(currentExplanation), invariant(oldExplanation));
+    for (const side of ['FRONT','BACK']) for (const category of ['centering','CORNERS','SURFACE']) {
+      assert.deepEqual(currentExplanation.sides[side][category], oldExplanation.sides[side][category]);
+    }
+    const measurement = f => { const { subgradeEffect, ...value } = f.measurement; return value; };
+    assert.deepEqual(report.findings.map(measurement), historical.findings.map(measurement));
+    assert.deepEqual(report.findings.map(f => f.canonicalContour), historical.findings.map(f => f.canonicalContour));
     assert.equal(sha(historical), historicalHashes[cardProfile]);
-    assert.throws(() => explainAtlasManualReport({ ...historical, finalGradePolicy }), /GRADE_MISMATCH/);
-    assert.throws(() => explainAtlasManualReport({ ...report, finalGradePolicy: oldPolicy }), /GRADE_MISMATCH/);
+    assert.throws(() => explainAtlasManualReport({ ...historical, finalGradePolicy: report.finalGradePolicy }), /GRADE_MISMATCH/);
+    assert.throws(() => explainAtlasManualReport({ ...report, finalGradePolicy: historical.finalGradePolicy }), /GRADE_MISMATCH/);
   }
+});
+
+test('Cam measured scuff uses one quarter edge damage while its frozen October 21 report and explanation remain exact', () => {
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/category-damage-2026-10-21.json', import.meta.url), 'utf8'));
+  const before = JSON.stringify(fixture), oldExplanation = explainAtlasManualReport(fixture.report);
+  assert.equal(sha(fixture.report), fixture.reportSha256);
+  assert.equal(sha(oldExplanation), fixture.explanationSha256);
+  assert.equal(fixture.report.ruleVersion, 'ATLAS_2026_10_21_CATEGORY_DAMAGE_V1');
+  assert.deepEqual(oldExplanation.policy.categoryDamageMultipliers, { CORNERS: .25, EDGES: 1, SURFACE: 2 });
+  assert.match(oldExplanation.policy.conditionFormula, /Corners 0\.25; Edges 1; Surface 2/);
+  assert.equal(oldExplanation.categories.edges.subgrade, 3.7);
+  assert.equal(oldExplanation.overall.rawGrade, 8.425); assert.equal(oldExplanation.overall.finalGrade, 8);
+
+  const current = previewAtlasManualReport(fixture.source), explanation = explainAtlasManualReport(current);
+  assert.equal(current.ruleVersion, 'ATLAS_2026_10_23_CATEGORY_DAMAGE_V1');
+  assert.equal(current.findingCounts.included, 1);
+  const bitmap = decodeSpeedsterTraceRleV1(current.findings[0].finalTrace), counts = { EDGES: 0, SURFACE: 0 };
+  bitmap.forEach((pixel, index) => { if (pixel) counts[index % 1270 < 40 ? 'EDGES' : 'SURFACE']++; });
+  assert.deepEqual(counts, { EDGES: 242, SURFACE: 80 });
+  assert.deepEqual(current.findings[0].finalTrace, fixture.report.findings[0].finalTrace);
+  for (const [index, region] of current.findings[0].measurementRegions.entries()) {
+    const previous = fixture.report.findings[0].measurementRegions[index];
+    const { subgradeEffect, ...measured } = region.measurement;
+    const { subgradeEffect: oldEffect, ...oldMeasured } = previous.measurement;
+    assert.deepEqual(measured, oldMeasured); assert.deepEqual(region.canonicalContour, previous.canonicalContour);
+    assert.equal(region.measurement.pixelCount, counts[region.zone]);
+  }
+  assert.equal(explanation.sides.FRONT.EDGES.weightedDamagePercent, .114237160121);
+  assert.equal(explanation.sides.FRONT.EDGES.scoringDamagePercent, .02855929003);
+  assert.equal(explanation.sides.FRONT.EDGES.score, 9); assert.equal(explanation.sides.BACK.EDGES.score, 10);
+  assert.deepEqual(current.grade.subgrades, { centering: 10, corners: 10, edges: 9.3, surface: 10 });
+  assert.equal(current.grade.overall.rawGrade, 9.825); assert.equal(current.finalGrade, 10);
+  assert.equal(explanation.findings[0].regions[0].marginalSubgradeEffect, .7);
+  assert.match(explanation.policy.conditionFormula, /Corners 0\.25; Edges 0\.25; Surface 2/);
+  assert.throws(() => explainAtlasManualReport({ ...fixture.report, ruleVersion: ATLAS_RULE_VERSION }), /GRADE_MISMATCH/);
+  assert.throws(() => explainAtlasManualReport({ ...current, ruleVersion: fixture.report.ruleVersion }), /GRADE_MISMATCH/);
+  assert.equal(JSON.stringify(fixture), before);
 });
 
 test('frozen 0.5-corner reports retain their original scores and bytes while new reviews use 0.25', () => {

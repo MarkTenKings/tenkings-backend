@@ -1,5 +1,79 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+> October 24, 2026 source composition only: the R2 successor now incorporates qualified R1 source `cf4a5b64` while retaining R2 `246dcbc3` proof/marketplace work. Current R1 grading, reports, label/Rush, slab, comp and registered-schema implementations are preserved. No deployment, schema installation, credential change or activation occurs in this merge. Production status belongs to the release lead’s fresh observations; dated sections below preserve history, not current execution authority. Claims/history and marketplace pricing remain off.
+
+## Observed production baseline for photo/font work — October 22, 2026 Pacific
+
+Read-only evidence at 2026-10-23 06:26 UTC supersedes the older release headings below: native source is `8070c5f22a843b6d9a8ba8347f5235754cc1daa5`, image `sha256:c2a274de50803b232a71042bb87876c849666d50264d9d076610081f5e03bca8`, main `atlas-r1-main-8070c5f2-02`, worker `atlas-r1-worker-8070c5f2-01`. The completed optional-comp release and effective native recovery are retained at `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/release-01/`. Installed schema012 and the retained customer successor must be preserved; old schema011→012 migration and admission plans must not be replayed.
+
+The photo/font candidate is being implemented and qualified in `codex/atlas-slab-quality`, after preserving pending work in `b64e8b99` and merging the live source in `31b0c67f`. It is not yet deployed. Fresh source/image/web qualification, current runtime/control observations, a no-migration preservation gate and new release intents are required for its already-authorized production rollout. The external baseline audit is `~/.codex/atlas-handoffs/atlas-two-line-labels-20261022/grade10-material-comparison-20261022/proofs/release-readiness-20261023.json`; historical observations do not grant freshness for a later effect.
+
+## Current Atlas slab quality and retained jig25 release — October 22, 2026 Pacific
+
+Production native, staff and public now serve application source **`20b747badb8ad34c510673c446cf326396bdeeac`**. The shared staff Graded Cards/detail viewer gives existing and future eligible approvals the improved slab, centered Front/Back placement, front NFC reference and optional higher-resolution 3D. It composes exact approved inspection photographs and matching saved label artwork at display time. Recorded physical slab photographs retain their existing precedence. The previously deployed 25-position label template and shared backs remain included.
+
+| Surface | Current identity |
+| --- | --- |
+| Native image | `sha256:2ed7f7095fec3cf86d85d2620e278df2cae035db768713dc426070fbd0ee9181` |
+| Main | `6cbc7a142765911e6cdb42a5f0542bfaf68927214113113a33cd4725821047e2` / `atlas-slab-quality-main-20b747ba-02` |
+| Worker | `c5fb531abfbc8559be3205c0b6240e84204e04e9d7d1b45f56d587b7189487dc` / `atlas-slab-quality-worker-20b747ba-02` |
+| Staff | `dpl_J27ngyVUjRd2f7UYokXhzZ8zLhi3` / `atlas-grading-staff-rfmzyowz2-ten-kings.vercel.app` |
+| Public | `dpl_5kCY6dsGPAny5ENDRGyGwEWT1zA9` / `atlas-grading-public-qvagsbu05-ten-kings.vercel.app` |
+| Customer retained | Source `c68e9ea7c77b35fc53cab6ee162e063dfb02b0fe` / `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5` |
+| Controls | Staff144 / Public106 / STAFF SMS112; customer83 / CUSTOMER SMS35 retained |
+
+Both canonical website targets and aliases were independently verified after same-build promotion. Native sealed healthy with zero application restarts and the existing restart policy; the previous pair is retained stopped. Gateways, customer configuration, installed schema (including predecessor additive009), all 37 protected business-table commitments and saved report/photo/label evidence were preserved. No migration, reapproval, regrade, label refresh, print or NFC write occurred in this release.
+
+Transparent source-bound 558×768 WebP previews are generated once into an immutable private display cache and delivered using fresh short-lived access grants. Full-detail 3D loads when selected. Unavailable preview transport may fall back to the independently verified full photo; a cold alpha cache temporarily retains the verified JPEG while bounded background checks request its transparent replacement. Public report evidence and the existing homepage scene keep their own presentation; this release does not add a staff-style 3D viewer to customer/public pages.
+
+Qualification passed948/948 staff tests,958/958 actual Linux native tests,102 successor guards and exact staff/public source/build/served-asset qualification. Live acceptance passed **103 canonical checks, four reports, eight unchanged original image hashes and eight decoded transparent previews**. All eight previews progressed from pending to ready and retained the same representation on warm access (589,974 bytes total). These checks establish real delivery, not a sustained-load or physical-device benchmark. Authenticated positive staff UI acceptance remains separate: the owner approved the local visuals; the production browser reached ordinary staff sign-in.
+
+The first cutover stopped before quiesce because legitimate live staff edits changed the baseline. Its holder was explicitly aborted and absence proved. After the owner paused grading, the fresh release-02 baseline included the completed approval and READY label:155 cards,346 actions,31 approvals,31 publications,30 report identities and40 label items. No preservation exception was introduced. The first technical acceptance stopped only on the valid `charset=utf-8` JavaScript header parameter while exact status/bytes/hash matched. A separately reviewed MIME-only successor passed39 offline checks and the full103 canonical checks; all original failed evidence and sealed helpers remain intact.
+
+The same holder `0b02054d-30e1-495b-b259-64b1645565a9` was explicitly released at **2026-10-22T19:57:15.507Z**. Strict absence proof confirms the transaction and original/replacement admission locks are absent; grading may resume. Release proof SHA256 `1dd52fbf2b6929a454981b64cc75c071798aad150959d6f97348efee382ad42c`; absence `8a2775f40ee6b6976f1bb9bdff0b7733dce36b53d5b6e2a487ee7e9773796cf9`; final runtime postflight `afa993c7de4e4d97b10d8a45cec320e370aa6da84db181342f6396d3c84fb82e`; final preservation `dd724b02bc329b91a26f8c538d5a3ab146705eff47b75f78d7e13af74734c649`.
+
+Evidence: `~/.codex/atlas-handoffs/atlas-slab-quality-20261022/release-02/`, with immutable native/web qualifications reused from release-01. Technical PASS `bca3c6bff7e3d2d240c73c56733d2c21d9335ba24eec109f1a7ee0bebe1d3622`; reports PASS `0cf8708f305f7f986f7b8d0c57377a1319308a71e583a83760c35b354c59e009`. See [slab quality audit](../atlas/audits/2026-10-22/slab-quality-and-progressive-media.md). Consumed intents are evidence, never replay scripts. The dated deployment identities below are historical checkpoints, even where their original headings said “current.”
+
+## Current approved Atlas B label release — October 22, 2026 Pacific
+
+Production native, staff and public serve **cf5fcefa1273e5a661691b0d4f877e224d48104a**. This incorporates the verified f0fd4f15 photo recovery. Approved B front and original smaller back use pinned artwork with preserved proportions; dynamic text uses owner-approved Montserrat Black900 and RobotoCondensed700. Color front/back, black/transparent and original print outputs use the existing versioned generator and immutable refresh path. Public examples and approved-card media consume the new artwork. Physical dimensions and the 50-position jig remain unchanged.
+
+| Surface | Current identity |
+| --- | --- |
+| Native image | sha256:5336fca9c4ef1d8ba7462d120ab226a401e9e63b4750aa4000f77a335be7d478 |
+| Main | ffcbbfcf94891357c3f7d07c2c1302e0402e996f6580d33e5c4d90468d044a93 / atlas-approved-labels-main-cf5fcefa-02 |
+| Worker | a138a9ff7275429e3a7ba09b1afb95dde3af3ad61c4ef96e91ad7cbb4c144fc7 / atlas-approved-labels-worker-cf5fcefa-02 |
+| Staff | dpl_89Wbq9hBih53SpwsKV7zXpgpbwct / atlas-grading-staff-ik6z5sizh-ten-kings.vercel.app |
+| Public | dpl_8j6wpzFdViSDX9EuKaCVvreunMsR / atlas-grading-public-ifz81mkm1-ten-kings.vercel.app |
+| Customer retained | c68e9ea7 / dpl_2aW7K6CTUftYNKaWanBouvgUaDS5 |
+| Controls | Staff142 / Public104 / STAFF SMS110; customer83 and CUSTOMER SMS35 retained |
+| Outer gateway | 23d08cb750f9d19425f119bd74cfd5ed2e93de394f2ca1c639232f6a984d8584 |
+| Inner gateway | e8f0543569b1ce882e18f01b718312573c1c3a9a0a76a2eba6ec68d8bc395e70 |
+
+Both gateway changes extend only the existing exact artwork-mode allowlist. Authentication, methods and invalid-query refusal remain intact. Outer was gracefully reloaded once; inner reused the existing graceful restart workflow. Historical containers/images and business data were retained. Native qualification passed 857/857 tests, including full-50-label bounded raster output; staff/public source and served assets were qualified. Canonical acceptance passed 83 technical checks plus four reports/eight image bindings. A mistaken acceptance-helper label-list URL was corrected in a separate successor helper; original failure remains preserved.
+
+Admission holder ba85b2c7-9c23-4970-9773-12ddd2af2a56 was explicitly released after fresh postflight and preservation. Release proof SHA256 6ec862f3bae4de0c0edb9b2edd30be72b3187487bf4e5f0781532828a836a1b0; strict absence census 84c27a4b1c42e5809127340042c391d8c8e81b3398208c3ef17d5e1df77c4482 proves no holder session or exclusive admission locks remain. Six eligible unprinted current labels were refreshed once via refreshLayout into immutable REPRINT successors; grades, approvals, old labels/sheets/exports/print history retained. Apply receipt 6b11f8310662595191317fbef9dd68fcf594e6c0e68059b281430e0e3aca41ee. No paid analysis, migration, approval, NFC write or physical printing was performed.
+
+Post-refresh acceptance passed: all six successors READY, 60 artwork modes and 36 PNG/profile checks, with current graded-card front/back selection and prior data preservation verified. Receipt SHA256 3d5598da1316aeefa83ba125273b1319773ec10482836a28d14a37c84b879e8b. Actual PNG artifacts are in ~/Downloads/ATLAS_Approved_Labels_2026-10-22.zip. This server evidence does not claim ordinary authenticated browser download acceptance or physical printer qualification.
+
+Packet: ~/.codex/atlas-handoffs/atlas-approved-labels-20261022/release-02; refresh-02 contains the exact six-item plan, dry-run/apply and generated-output acceptance. All effect intents are consumed: do not replay. See docs/atlas/audits/2026-10-22/approved-labels-integration.md for design, print constraints and remaining browser/physical checks. Staff sign-in is required after the release binding change; no authenticated UI acceptance is claimed until the owner completes it.
+
+## Current ATLAS corner multiplier release — October 21, 2026 Pacific
+
+The only scoring change is **Corners 0.5× → 0.25×**, active under `ATLAS_2026_10_21_CATEGORY_DAMAGE_V1`. Edges1, Surface2, defect weights, geometry, bands, centering, side/category weights and final rounding are unchanged. Historical October13 reports retain their original0.5 factor and exact saved values. Approved cards require a deliberate new calculation/regrade and human approval to adopt the new rule. Unapproved reviews calculate the new policy when opened/resumed/refreshed; untouched machine queue proposals remain historical evidence. No AI rerun or data backfill was performed.
+
+Production serving source is `713573fcc8c0c2701ba413e5e79585d8f074fa1b`; test-only successor `8dff482deaee01522ddb89e1e3082316d8292125` corrected retired factor expectations. Native image is `sha256:79ae19e344817066cd3211518cb3465d1692a06c9eee8296005068a11472ac0e`. Main `76f169defbcf4d24e771ead87d8975b7af3e16d3fa87b8a6808c0537f311b055` / `atlas-corner-quarter-main-713573fc-01`; worker `2d6a9eb853fbe3cb5691c974f8ccb7e290ab638ec63345459b1103e32d668d7c` / `atlas-corner-quarter-worker-713573fc-01`. Both are healthy with zero restarts and the retained restart policy.
+
+Staff: `dpl_5d2oKMsigNTyL1Xu6NNd9skAMnzX` / `atlas-grading-staff-qzxxza2hv-ten-kings.vercel.app`. Public: `dpl_FLc6Axe8F3ZukHf2DcgbobZphVZW` / `atlas-grading-public-2d6b3v6f4-ten-kings.vercel.app`. Public was promoted first for historical/new-rule reader compatibility. Staff/Public/STAFF SMS controls are **140/102/108**. Customer remains source `c68e9ea7c77b35fc53cab6ee162e063dfb02b0fe`, deployment `dpl_2aW7K6CTUftYNKaWanBouvgUaDS5`, controls83/35. Project settings/environment, gateways, secrets, schema, all37 business-table commitments and unrelated staged artifacts were preserved.
+
+Qualification:194/194 Linux checks,35 canonical checks, and both actual Hurts/Kurtz report pages plus all four image hashes pass. Both original reports remain grade9/corners7.2. Live pure probes in both serving containers confirm0.25/1/2 and historical compatibility; no real card was approved or regraded. Authenticated positive staff UI acceptance was not simulated. The holder was explicitly released at `2026-10-22T06:54:24.876Z`; absence at06:54:42.704Z proves no holder session or admission lock remains. Final health after release passed.
+
+Evidence: `~/.codex/atlas-handoffs/atlas-corner-quarter-20261021/release-01/`. Release absence SHA256 `7d8e662a7ac2f3aa6c7fc89bccf308a31698fd3eecff26f11770e2cc237782a4`; live policy `06efc20ce4b7ac3dcd54353011d3b5f3116003137df793172a7359afe7454ca0`. Consumed plans are evidence, never replay scripts. Future work must use fresh observations and retain support for10_21 reports; the retired f974 public reader cannot explain newly approved10_21 reports. This section supersedes older dated “current” deployment identities below.
+
+### Retained historical R2 branch release checkpoints
+
+The following branch records retain their original observations. Their serving identities are historical; use the newer dated release evidence above and in SESSION_LOG.
+
 > Latest verified ATLAS checkpoint: the slab technical release `20b747ba` is complete on native/staff/public, image `2ed7f709…`, controls Staff144/Public106/STAFF SMS112. Customer remains `c68e9ea7`/83/35 and SQL009/ledger9. Release and holder absence, native health, immutable Vercel targets and database controls are reconciled in `resume-02/successor-slab-checkpoint.json` (7206b067; observations 19:57–19:59 UTC). Slab authenticated positive acceptance remains marked pending. R1 candidate `a537f922` preserves the slab successor and adds the reviewed managed-role fix. All three web builds, 63 affected web checks and 57 Linux checks pass; native image `2c871804…` completed at20:12UTC with existing containers/images preserved. Three actual restricted local logins pass. The separately failed optional negative packet is reconciled without claiming its unexecuted cases. Independent schema preservation review passes with explicit composite-evidence limits; unchanged schema/storage qualification is reused. Live schema/role/admission/control/provider/runtime/session gates remain. No R1 production migration, roles, grants, runtime credentials or activation. Grading, labels and photos are preserved; ownership claims/history stay disabled pending Fingerprint. Ten Kings and Set Ops unchanged. Earlier checkpoints below are historical.
 
 ## Historical ATLAS Workspace review-entry release — October 21, 2026 Pacific

@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
+import { ARCHIVE_MARKET_ORIGIN, archiveMarketLiveSQL, assertMarketArchiveSearchCapability } from './market-archive-search.mjs';
 
 const refreshRequestId = (actionId, previewId) => { const h=digest(`atlas-market-refresh-v1:${actionId}:${previewId}`); return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`; };
 // Recognition only: retired jobs can never regain a provider or projection path.
 export const marketHasRetiredReclassification = row => (row?.audit ?? []).some(value => value.event === 'RECLASSIFY');
 const table = 'atlas_manual_connected.market_job';
-const live = `EXISTS(SELECT 1 FROM atlas_manual.publication p JOIN atlas_manual.approval a USING(card_id,action_id)
+const legacyLive = `EXISTS(SELECT 1 FROM atlas_manual.publication p JOIN atlas_manual.approval a USING(card_id,action_id)
  JOIN atlas_manual.card c ON c.id=p.card_id WHERE p.card_id=j.card_id AND p.action_id=j.approval_action_id
  AND p.mode=j.mode AND a.source_hash=j.source_hash AND a.report_hash=j.report_hash
  AND (j.public_hash IS NULL OR p.public_hash=j.public_hash)
@@ -13,7 +14,6 @@ const live = `EXISTS(SELECT 1 FROM atlas_manual.publication p JOIN atlas_manual.
  AND NOT EXISTS(SELECT 1 FROM atlas_manual.publication newer WHERE newer.card_id=p.card_id AND newer.version>p.version)
  AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=p.card_id))
  AND atlas_manual_connected.display_owner_current(j.actor_id,j.access_version)`;
-const active = `j.request_id=$1::uuid AND j.claim_id=$2::uuid AND j.state IN('RUNNING','REQUESTED') AND j.lease_until>clock_timestamp() AND ${live}`;
 // Old workers exhausted six claims while merely waiting on a shared label.
 // Recover only the exact, fully accounted-for case; never reinterpret another
 // failure, an expired lease, a manual retry, or an uncertain sold search.
@@ -102,9 +102,17 @@ async function insert(tx, { cardId, actionId, requestId, actorId, accessVersion,
   return stored(job);
 }
 
-export function createMarketJobStore({ boundary, validateAccess = null, leaseMs = 180000 }) {
+export function createMarketJobStore({ boundary, validateAccess = null, leaseMs = 180000, archiveSearch = null }) {
   requireThat(typeof boundary.machineTransaction === 'function' && Number.isInteger(leaseMs) && leaseMs >= 1000 && leaseMs <= 300000, 500, 'MARKET_WORKER_CONFIG_INVALID');
-  const machine = work => boundary.machineTransaction(null, work);
+  if (archiveSearch !== null) assertMarketArchiveSearchCapability(archiveSearch, { boundary, validateAccess });
+  const legacy = `(j.origin IN('APPROVAL','BACKFILL','REFRESH') AND ${legacyLive})`;
+  const live = archiveSearch ? `(${legacy} OR (${archiveMarketLiveSQL}))` : legacy;
+  const handled = archiveSearch ? "origin IN('APPROVAL','BACKFILL','REFRESH','ARCHIVE_SEARCH_V1')" : "origin IN('APPROVAL','BACKFILL','REFRESH')";
+  const active = `j.request_id=$1::uuid AND j.claim_id=$2::uuid AND j.state IN('RUNNING','REQUESTED') AND j.lease_until>clock_timestamp() AND ${live}`;
+  const checkArchive = job => {
+    if (job?.origin === ARCHIVE_MARKET_ORIGIN) { requireThat(archiveSearch, 503, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED'); archiveSearch.verifyJob(job); }
+  };
+  const machine = work => { if (archiveSearch) assertMarketArchiveSearchCapability(archiveSearch, { boundary, validateAccess }); return boundary.machineTransaction(null, work); };
   async function scope(tx, principal, cardId, actionId = null, write = false) {
     uuid(cardId); if (actionId) uuid(actionId);
     const [card] = await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual.card WHERE id=$1::uuid FOR ${write ? 'UPDATE' : 'SHARE'}`, cardId);
@@ -140,6 +148,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
     return { ...plan, planHash: digest(canonical(plan, { maxBytes: 1048576 })) };
   }
   return Object.freeze({
+    archiveSearch,
     // Server-only maintenance. First return the exact read-only impact; applying
     // the reviewed hash cannot purchase searches or replace existing previews.
     backfillPlan({ refreshLegacyApprovalIds = [] } = {}) { return machine(({ tx, principal }) => backfillPlan(tx, principal.mode, refreshLegacyApprovalIds)); },
@@ -158,22 +167,36 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         return { planHash: plan.planHash, queued };
       });
     },
-    async reserve(staff, cardId, input) {
+    async reserve(staff, cardId, input, { archive = false } = {}) {
+      requireThat(!archive || archiveSearch, 503, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED');
       object(input, ['requestId','approvalActionId','expectedRevision', ...(Object.hasOwn(input ?? {}, 'afterPreviewId') ? ['afterPreviewId'] : [])]); uuid(input.requestId); uuid(input.approvalActionId);
       if (input.afterPreviewId !== undefined) uuid(input.afterPreviewId);
       requireThat(Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0 && input.expectedRevision < 2147483647);
-      return boundary.transaction(staff, async ({ tx, principal }) => {
-        const publication = await scope(tx, principal, cardId, input.approvalActionId, true);
+      return boundary.transaction(staff, async context => {
+        const { tx, principal } = context;
+        const admitted = archive ? await archiveSearch.scope(context, cardId, input.approvalActionId, true) : null;
+        const publication = admitted?.publication ?? await scope(tx, principal, cardId, input.approvalActionId, true);
+        const recheck = async () => {
+          if (!archive) return;
+          const final = await archiveSearch.scope(context, cardId, input.approvalActionId, true);
+          requireThat(canonical(archiveSearch.authority(admitted, input)) === canonical(archiveSearch.authority(final, input)),
+            409, 'MARKET_ARCHIVE_APPROVAL_STALE');
+        };
         const [recovery] = await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid
           AND audit @> jsonb_build_array(jsonb_build_object('event','RECOVERY','requestId',$3::text))`,cardId,input.approvalActionId,input.requestId);
         if(recovery){
+          if (recovery.origin === ARCHIVE_MARKET_ORIGIN) { requireThat(archive, 403, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED'); archiveSearch.verifyJob(recovery, admitted); }
+          else if (archive) await scope(tx, principal, cardId, input.approvalActionId, true);
           const receipt=recovery.audit.find(value=>value.event==='RECOVERY'&&value.requestId===input.requestId);
           requireThat(receipt.actorId===principal.id&&receipt.requestHash===digest(canonical(input)),409,'PRESENTATION_REQUEST_CONFLICT');
-          return stored(recovery);
+          await recheck(); return stored(recovery);
         }
         const [prior] = await tx.$queryRawUnsafe(`SELECT j.*,m.actor_id request_actor,m.request_hash FROM ${table} j JOIN atlas_manual.presentation_market m USING(card_id,request_id)
           WHERE j.request_id=$1::uuid`, input.requestId);
-        if (prior) { requireThat(prior.card_id === cardId && prior.request_actor === principal.id && prior.request_hash === digest(canonical(input)), 409, 'PRESENTATION_REQUEST_CONFLICT'); return stored(prior); }
+        if (prior) {
+          if (prior.origin === ARCHIVE_MARKET_ORIGIN) { requireThat(archive, 403, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED'); archiveSearch.verifyJob(prior, admitted); }
+          else if (archive) await scope(tx, principal, cardId, input.approvalActionId, true);
+          requireThat(prior.card_id === cardId && prior.request_actor === principal.id && prior.request_hash === digest(canonical(input)), 409, 'PRESENTATION_REQUEST_CONFLICT'); await recheck(); return stored(prior); }
         const [existingRequest] = await tx.$queryRawUnsafe('SELECT request_id FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid', cardId, input.requestId);
         requireThat(!existingRequest, 409, 'PRESENTATION_REQUEST_CONFLICT');
         if (input.afterPreviewId) {
@@ -185,7 +208,11 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
           const [child] = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j JOIN atlas_manual.presentation_market m USING(card_id,request_id)
             WHERE j.card_id=$1::uuid AND j.approval_action_id=$2::uuid AND m.request::jsonb->>'afterPreviewId'=$3
             AND (j.state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN','READY') OR j.state='FAILED' AND j.response IS NOT NULL) ORDER BY j.created_at DESC LIMIT 1`, cardId, input.approvalActionId, input.afterPreviewId);
-          if (child) return stored(child);
+          if (child) {
+            if (child.origin === ARCHIVE_MARKET_ORIGIN) { requireThat(archive, 403, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED'); archiveSearch.verifyJob(child, admitted); }
+            else if (archive) await scope(tx, principal, cardId, input.approvalActionId, true);
+            await recheck(); return stored(child);
+          }
         }
         const [busy] = await tx.$queryRawUnsafe(`SELECT state FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid
           AND state IN('QUEUED','RUNNING','REQUESTED','UNKNOWN') LIMIT 1`, cardId, input.approvalActionId);
@@ -199,18 +226,40 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
           ORDER BY created_at DESC,request_id DESC LIMIT 1`,cardId,input.approvalActionId);
         if(!input.afterPreviewId&&recoverable?.state==='FAILED'&&recoverable.response
           && !marketHasRetiredReclassification(recoverable) && JSON.parse(recoverable.response).responsePolicy === 'ATLAS_SLAB_V1'){
+          if (recoverable.origin === ARCHIVE_MARKET_ORIGIN) { requireThat(archive, 403, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED'); archiveSearch.verifyJob(recoverable, admitted); }
+          else if (archive) await scope(tx, principal, cardId, input.approvalActionId, true);
+          await recheck();
           return stored((await tx.$queryRawUnsafe(`UPDATE ${table} SET state='QUEUED',attempts=0,recoveries=recoveries+1,code='MARKET_RESPONSE_RECOVERED',
             available_at=clock_timestamp(),updated_at=clock_timestamp(),audit=audit||jsonb_build_array(jsonb_build_object('event','RECOVERY','requestId',$2::text,'requestHash',$3::text,'actorId',$4::text,'at',clock_timestamp()))
             WHERE request_id=$1::uuid RETURNING *`,recoverable.request_id,input.requestId,digest(canonical(input)),principal.id))[0]);
+        }
+        if (archive) {
+          const final = await archiveSearch.scope(context, cardId, input.approvalActionId, true);
+          const authorization = canonical(archiveSearch.authority(admitted, input));
+          requireThat(authorization === canonical(archiveSearch.authority(final, input)), 409, 'MARKET_ARCHIVE_APPROVAL_STALE');
+          const request = canonical(input);
+          await tx.$executeRawUnsafe(`INSERT INTO atlas_manual.presentation_market(card_id,approval_action_id,request_id,actor_id,request,request_hash)
+            VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)`, cardId, publication.action_id, input.requestId, principal.id, request, digest(request));
+          await tx.$executeRawUnsafe(`/* market-archive:insert */ INSERT INTO ${table}
+            (request_id,card_id,approval_action_id,actor_id,access_version,mode,origin,source_hash,report_hash,archive_authority,archive_authority_hash)
+            VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,'ARCHIVE_SEARCH_V1',$7,$8,$9,$10)`,
+          input.requestId, cardId, publication.action_id, principal.id, principal.accessVersion, principal.mode,
+          publication.source_hash, publication.report_hash, authorization, digest(authorization));
+          const [created] = await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE request_id=$1::uuid`, input.requestId);
+          archiveSearch.verifyJob(created, final); return stored(created);
         }
         return insert(tx, { cardId, actionId: publication.action_id, requestId: input.requestId, actorId: principal.id,
           accessVersion: principal.accessVersion, mode: principal.mode, expectedRevision: input.expectedRevision, origin: 'REFRESH', afterPreviewId: input.afterPreviewId });
       });
     },
-    latest(staff, cardId) {
-      return boundary.transaction(staff, async ({ tx, principal }) => {
-        const publication = await scope(tx, principal, cardId);
-        return stored((await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY created_at DESC,request_id DESC LIMIT 1`, cardId, publication.action_id))[0]);
+    latest(staff, cardId, { archive = false } = {}) {
+      requireThat(!archive || archiveSearch, 503, 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED');
+      return boundary.transaction(staff, async context => {
+        const { tx, principal } = context;
+        const publication = archive ? (await archiveSearch.scope(context, cardId)).publication : await scope(tx, principal, cardId);
+        const row = (await tx.$queryRawUnsafe(`SELECT * FROM ${table} WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY created_at DESC,request_id DESC LIMIT 1`, cardId, publication.action_id))[0];
+        if (archive) await archiveSearch.scope(context, cardId, publication.action_id);
+        return stored(row);
       });
     },
     claim(concurrency = 2) {
@@ -257,12 +306,12 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
         }
         await tx.$executeRawUnsafe(`UPDATE ${table} SET state=CASE WHEN state='REQUESTED' AND response IS NULL THEN 'UNKNOWN' WHEN attempts>=6 THEN 'FAILED' ELSE 'QUEUED' END,
           code=CASE WHEN state='REQUESTED' AND response IS NULL THEN 'PROVIDER_OUTCOME_UNKNOWN' ELSE 'MARKET_LEASE_EXPIRED' END,
-          claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE mode=$1 AND state IN('RUNNING','REQUESTED') AND lease_until<=clock_timestamp()`, principal.mode);
+          claim_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE mode=$1 AND ${handled} AND state IN('RUNNING','REQUESTED') AND lease_until<=clock_timestamp()`, principal.mode);
         // A late response is evidence, never authority for another dispatch.
         await tx.$executeRawUnsafe(`UPDATE ${table} SET state=CASE WHEN attempts>=6 THEN 'FAILED' ELSE 'QUEUED' END,code='MARKET_RESPONSE_RECOVERED',updated_at=clock_timestamp()
-          WHERE mode=$1 AND state='UNKNOWN' AND response IS NOT NULL`, principal.mode);
+          WHERE mode=$1 AND ${handled} AND state='UNKNOWN' AND response IS NOT NULL`, principal.mode);
         await tx.$executeRawUnsafe(`UPDATE ${table} j SET state='FAILED',code='MARKET_APPROVAL_NO_LONGER_ACTIVE',updated_at=clock_timestamp()
-          WHERE j.mode=$1 AND j.state='QUEUED' AND NOT (${live})`, principal.mode);
+          WHERE j.mode=$1 AND j.${handled} AND j.state='QUEUED' AND NOT (${live})`, principal.mode);
         const [count] = await tx.$queryRawUnsafe(`SELECT count(*)::int n FROM ${table} WHERE mode=$1 AND state IN('RUNNING','REQUESTED') AND lease_until>clock_timestamp()`, principal.mode);
         if (count.n >= concurrency) return null;
         const [row] = await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE j.mode=$1 AND j.state='QUEUED'
@@ -276,7 +325,9 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       });
     },
     pageContext(job) {
+      checkArchive(job);
       return machine(async ({ tx }) => {
+        if (job.origin === ARCHIVE_MARKET_ORIGIN) requireThat((await tx.$queryRawUnsafe(`SELECT j.* FROM ${table} j WHERE ${active}`, job.request_id, job.claim_id)).length === 1, 409, 'MARKET_ARCHIVE_ACCESS_ENDED');
         const [request] = await tx.$queryRawUnsafe('SELECT request,request_hash FROM atlas_manual.presentation_market WHERE card_id=$1::uuid AND request_id=$2::uuid', job.card_id, job.request_id);
         requireThat(request && digest(request.request) === request.request_hash, 503, 'MARKET_REQUEST_CORRUPT');
         const input = JSON.parse(request.request);
@@ -289,6 +340,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
     },
     renew(job) { return machine(async ({ tx }) => (await tx.$executeRawUnsafe(`UPDATE ${table} j SET lease_until=clock_timestamp()+$3*interval '1 millisecond',updated_at=clock_timestamp() WHERE ${active}`, job.request_id, job.claim_id, leaseMs)) === 1); },
     bind(job, source) {
+      checkArchive(job);
       requireThat(source?.row?.source_hash === job.source_hash && source.row.report_hash === job.report_hash
         && source.row.card_id === job.card_id && source.row.action_id === job.approval_action_id && source.row.mode === job.mode
         && source.row.state === 'PUBLISHED' && source.publicHash === source.row.public_hash, 409, 'MARKET_APPROVAL_MISMATCH');
@@ -303,7 +355,7 @@ export function createMarketJobStore({ boundary, validateAccess = null, leaseMs 
       // A late paid response survives retirement and lease loss. Only its exact
       // persisted dispatch can append it; immutable evidence cannot be replaced.
       return machine(async ({ tx, principal }) => (await tx.$executeRawUnsafe(`UPDATE ${table} SET response=$3,response_hash=$4,audit=audit||jsonb_build_array(jsonb_build_object('event','RESPONSE','dispatchId',$2::text,'responseHash',$4::text,'at',clock_timestamp())),updated_at=clock_timestamp()
-        WHERE request_id=$1::uuid AND dispatch_id=$2::uuid AND mode=$5 AND response IS NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(audit) a WHERE a->>'event'='RECLASSIFY')`, job.request_id, job.claim_id, value, digest(value), principal.mode)) === 1);
+        WHERE request_id=$1::uuid AND dispatch_id=$2::uuid AND mode=$5 AND ${handled} AND response IS NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(audit) a WHERE a->>'event'='RECLASSIFY')`, job.request_id, job.claim_id, value, digest(value), principal.mode)) === 1);
     },
     recordProgress(job, progress) {
       requireThat(validProgress(progress), 500, 'MARKET_PROGRESS_INVALID');

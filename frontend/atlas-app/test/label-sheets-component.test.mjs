@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import * as api from '../lib/label-sheets-client.mjs';
 import * as nfc from '../lib/gototags-nfc-export.mjs';
 import * as geometry from '../../../packages/atlas-finishing/src/label-sheet-geometry.mjs';
+import * as geometry25 from '../../../packages/atlas-finishing/src/label-sheet-25.mjs';
 const require = createRequire(new URL('../package.json', import.meta.url)), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const code = babel.transformSync(readFileSync(new URL('../components/LabelSheets.jsx', import.meta.url), 'utf8'), { filename: 'LabelSheets.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false }).code;
 const all = (value, predicate, out = []) => { if (Array.isArray(value)) value.forEach(child => all(child, predicate, out)); else if (value && typeof value === 'object') { if (predicate(value)) out.push(value); all(value.props?.children, predicate, out); } return out; };
@@ -58,6 +59,8 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
       if (name === 'next/link') return 'a';
       if (name === './Shell') return 'Shell';
       if (name === '@atlas/finishing/label-sheet-geometry') return geometry;
+      if (name === '@atlas/finishing/label-sheet-25') return geometry25;
+      if (name.endsWith('.png')) return { src: `/_next/static/media/${name.split('/').at(-1)}` };
       if (name.endsWith('/label-sheets-client.mjs')) return { ...api, createLabelSheetsClient: options => api.createLabelSheetsClient({ ...options, cryptoImpl: { randomUUID } }) };
       if (name.endsWith('/gototags-nfc-export.mjs')) return nfc;
       if (name.endsWith('/manual-client.mjs')) return { manualRequest: request, manualMessage: failure => failure.code ?? failure.message ?? 'Request unavailable' };
@@ -72,6 +75,8 @@ async function fixture({ sheets = [data()], staff: initialStaff = { id: randomUU
   f.click = label => { const button = f.button(label); assert.ok(button, label); assert.notEqual(button.props.disabled, true, label); button.props.onClick(); f.render(); };
   f.detail = () => f.find(node => node.type?.name === 'LabelDetail')[0]?.props;
   f.dialog = () => f.find(node => node.type?.name === 'ActionDialog')[0]?.props;
+  f.dialogTree = () => { const node = f.find(node => node.type?.name === 'ActionDialog')[0]; cursor = slots.length; return node.type(node.props); };
+  f.select = (label, value) => { const select = f.find(node => node.type === 'select' && node.props['aria-label'] === label)[0]; assert.ok(select, label); select.props.onChange({ target: { value } }); f.render(); };
   f.switchStaff = id => { staff = { ...staff, id }; f.render(); };
   f.tick = async () => { [...timers].forEach(fn => fn()); await f.flush(); };
   f.dispose = () => slots.forEach(slot => slot?.cleanup?.()); f.render(); await f.flush(); return f;
@@ -98,7 +103,7 @@ test('download and physical print recording stay distinct and select the exact s
   const first = data(), f = await fixture({ sheets: [first] }); f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
   assert.equal(f.downloads.length, 0);
   f.click('Download sheet PNG ↓'); await f.flush();
-  assert.equal(f.calls.filter(call => call.method === 'POST').length, 2); assert.equal(first.printEvents.length, 0); assert.match(f.text(), /Download Black ink \+ transparent foil PNG/);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 2); assert.equal(first.printEvents.length, 0); assert.match(f.text(), /Download Card colors \+ transparent foil PNG/);
   assert.deepEqual(f.downloads, [{ href: 'https://objects.example/exact.png', filename: '' }]); assert.equal(f.blobs.size, 0);
   assert.match(f.text(), /Download requested/); assert.match(f.text(), /If the download did not start, use this link/);
   assert.ok(f.find(node => node.type === 'a' && node.props.href === f.downloads[0].href && node.props.download === true).length);
@@ -107,9 +112,9 @@ test('download and physical print recording stay distinct and select the exact s
   assert.equal(first.printEvents.length, 1); assert.deepEqual(first.printEvents[0].successfulSlots, [2]); assert.equal(f.downloads.length, 1); assert.match(f.text(), /1 saved physical print confirmation/); f.dispose();
 });
 test('individual download needs one explicit gesture for either saved print format and never downloads during preparation or polling', async () => {
-  for (const format of ['foil', 'original']) {
+  for (const format of ['cardFoil', 'original']) {
     const first = data(), f = await fixture({ sheets: [first] });
-    if (format === 'original') { f.find(node => node.type === 'select' && node.props.value === 'foil')[0].props.onChange({ target: { value: format } }); f.render(); }
+    if (format === 'original') { f.find(node => node.type === 'select' && node.props.value === 'cardFoil')[0].props.onChange({ target: { value: format } }); f.render(); }
     f.exportState = 'PREPARING'; f.detail().onIndividual(f.detail().item, null); await f.flush();
     assert.equal(f.downloads.length, 0);
     const output = first.items[0].exports[0]; assert.equal(output.exportProfileId, api.LABEL_PRINT_FORMATS[format].individual);
@@ -119,7 +124,7 @@ test('individual download needs one explicit gesture for either saved print form
     assert.deepEqual(f.downloads, [{ href: 'https://objects.example/exact.png', filename: '' }]); assert.equal(f.blobs.size, 0);
     const posts = f.calls.filter(call => call.method === 'POST'); assert.equal(posts.length, 2);
     assert.ok(posts[1].url.endsWith(`/${output.exportId}/download`)); assert.equal(first.printEvents.length, 0);
-    assert.match(f.text(), new RegExp(`Download ${format === 'foil' ? 'Black ink \\+ transparent foil' : 'Original black, gray \\+ white'} PNG`));
+    assert.match(f.text(), new RegExp(`Download ${format === 'cardFoil' ? 'Card colors \\+ transparent foil' : 'Original black, gray \\+ white'} PNG`));
     await f.tick(); assert.equal(f.downloads.length, 1); f.dispose();
   }
 });
@@ -136,10 +141,10 @@ test('a lost download reply stays saved without starting a download until its ex
   assert.equal(f.button('Retry saved request'), undefined); assert.equal(first.printEvents.length, 0); f.dispose();
 });
 test('invalid signed download replies never activate a link or discard the saved request', async () => {
-  for (const changed of [{ url: 'javascript:alert(1)' }, { expiresAt: new Date(0).toISOString() }, { exportProfileId: api.LABEL_PRINT_FORMATS.foil.individual }]) {
+  for (const changed of [{ url: 'javascript:alert(1)' }, { expiresAt: new Date(0).toISOString() }, { exportProfileId: api.LABEL_PRINT_FORMATS.cardFoil.individual }]) {
     const first = data(), f = await fixture({ sheets: [first] });
     f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
-    f.hold = url => url.endsWith('/download') ? Promise.resolve({ url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString(), exportProfileId: api.LABEL_PRINT_FORMATS.foil.sheet, ...changed }) : null;
+    f.hold = url => url.endsWith('/download') ? Promise.resolve({ url: 'https://objects.example/exact.png', expiresAt: new Date(Date.now() + 60000).toISOString(), exportProfileId: api.LABEL_PRINT_FORMATS.cardFoil.sheet, ...changed }) : null;
     f.click('Download sheet PNG ↓'); await f.flush();
     assert.equal(f.downloads.length, 0); assert.ok(f.button('Retry saved request'));
     assert.equal(f.find(node => node.type === 'a' && node.props.download === true).length, 0); f.dispose();
@@ -151,7 +156,7 @@ test('a late download reply from the prior staff account cannot start a download
   f.hold = url => url.endsWith('/download') ? new Promise(resolve => { finish = resolve; }) : null;
   f.click('Download sheet PNG ↓'); await f.flush(); assert.equal(typeof finish, 'function');
   f.hold = null; f.sheets = [data(2)]; f.switchStaff(randomUUID()); await f.flush();
-  finish({ url: 'https://objects.example/prior-account.png', expiresAt: new Date(Date.now() + 60000).toISOString(), exportProfileId: api.LABEL_PRINT_FORMATS.foil.sheet }); await f.flush();
+  finish({ url: 'https://objects.example/prior-account.png', expiresAt: new Date(Date.now() + 60000).toISOString(), exportProfileId: api.LABEL_PRINT_FORMATS.cardFoil.sheet }); await f.flush();
   assert.equal(f.downloads.length, 0); assert.equal(f.find(node => node.type === 'a' && node.props.download === true).length, 0);
   assert.doesNotMatch(f.text(), /Download requested/); f.dispose();
 });
@@ -285,7 +290,7 @@ test('superseded approvals remain visible as history but cannot export or record
 });
 test('saved individual exports from the item listing survive reload in the sheet inspector', async () => {
   const sheet = data(), f = await fixture({ sheets: [sheet] });
-  const output = { exportId: randomUUID(), itemId: sheet.items[0].itemId, exportProfileId: api.LABEL_PRINT_FORMATS.foil.individual, state: 'READY', sha256: 'e'.repeat(64) };
+  const output = { exportId: randomUUID(), itemId: sheet.items[0].itemId, exportProfileId: api.LABEL_PRINT_FORMATS.cardFoil.individual, state: 'READY', sha256: 'e'.repeat(64) };
   f.listItems = sheet.items.map((item, index) => ({ ...item, exports: index === 0 ? [output] : [] }));
   await f.tick();
   assert.equal(f.detail().individualOutput.exportId, output.exportId);
@@ -385,18 +390,143 @@ test('NFC refresh preserves deliberately unchecked cards and does not select new
   assert.ok(csv.includes(first.items[1].snapshot.reportHref)); assert.ok(!csv.includes(first.items[0].snapshot.reportHref)); assert.ok(!csv.includes(second.items[0].snapshot.reportHref)); f.dispose();
 });
 
-test('foil export is the default and saved original-ink exports never masquerade as black-only files', async () => {
+test('card-color foil export is the default and saved historical exports retain their formats', async () => {
   const sheet = data(), original = { exportId: randomUUID(), exportProfileId: api.LABEL_PRINT_FORMATS.original.sheet, state: 'READY', sha256: 'c'.repeat(64) };
   sheet.state = 'SEALED'; sheet.exports = [original];
   const f = await fixture({ sheets: [sheet] });
   assert.ok(f.button('Export this sheet')); assert.equal(f.button('Download sheet PNG ↓'), undefined);
-  const selector = f.find(node => node.type === 'select' && node.props.value === 'foil')[0]; assert.ok(selector);
-  f.click('Export this sheet'); assert.equal(f.dialog().printFormat, 'foil');
+  const selector = f.find(node => node.type === 'select' && node.props.value === 'cardFoil')[0]; assert.ok(selector);
+  f.click('Export this sheet'); assert.equal(f.dialog().printFormat, 'cardFoil');
   f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
-  const post = f.calls.find(call => call.method === 'POST'); assert.equal(post.body.exportProfileId, api.LABEL_PRINT_FORMATS.foil.sheet);
+  const post = f.calls.find(call => call.method === 'POST'); assert.equal(post.body.exportProfileId, api.LABEL_PRINT_FORMATS.cardFoil.sheet);
   // Both formats coexist; selecting original must select its own saved bytes.
   sheet.exports.push(original); await f.tick();
   selector.props.onChange({ target: { value: 'original' } }); f.render();
   assert.ok(f.button('Download sheet PNG ↓')); f.click('Download sheet PNG ↓'); await f.flush();
   assert.ok(f.calls.some(call => call.method === 'POST' && call.url.endsWith(`/${original.exportId}/download`))); f.dispose();
+});
+
+test('approved-B selections use their exact front/back preview and sheet profile with one explicit download', async () => {
+  for (const format of ['color', 'foilBack', 'originalBack', 'colorBack']) {
+    const sheet = data(); sheet.items.forEach(item => { item.snapshot.layoutVersion = 'atlas-approved-b-v1'; });
+    const f = await fixture({ sheets: [sheet] }), profile = api.LABEL_PRINT_FORMATS[format];
+    const option = f.find(node => node.type === 'option' && node.props.value === format)[0]; assert.equal(option.props.disabled, false);
+    f.find(node => node.type === 'select' && node.props.value === 'cardFoil')[0].props.onChange({ target: { value: format } }); f.render();
+    assert.equal(f.detail().printFormat, format);
+    for (const preview of f.find(node => node.type?.name === 'ThumbnailArtwork')) {
+      const image = preview.type(preview.props); assert.equal(image.type, 'img'); assert.ok(image.props.src.endsWith(`mode=${profile.previewMode}`));
+    }
+    f.click('Export this sheet'); assert.equal(f.dialog().printFormat, format); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+    assert.equal(f.downloads.length, 0); assert.equal(f.calls.find(call => call.method === 'POST').body.exportProfileId, profile.sheet);
+    f.click('Download sheet PNG ↓'); await f.flush(); assert.equal(f.downloads.length, 1);
+    assert.ok(f.text().includes(`Download ${profile.label} PNG`)); assert.equal(sheet.printEvents.length, 0); f.dispose();
+  }
+});
+
+test('approved-B individual exports retain separate format profiles through preparation and explicit download', async () => {
+  for (const format of ['color', 'foilBack', 'originalBack', 'colorBack']) {
+    const sheet = data(); sheet.items.forEach(item => { item.snapshot.layoutVersion = 'atlas-approved-b-v1'; });
+    const f = await fixture({ sheets: [sheet] }), profile = api.LABEL_PRINT_FORMATS[format];
+    f.find(node => node.type === 'select' && node.props.value === 'cardFoil')[0].props.onChange({ target: { value: format } }); f.render();
+    f.exportState = 'PREPARING'; f.detail().onIndividual(f.detail().item, null); await f.flush();
+    const output = sheet.items[0].exports[0]; assert.equal(output.exportProfileId, profile.individual); assert.equal(f.downloads.length, 0);
+    output.state = 'READY'; await f.tick(); assert.equal(f.downloads.length, 0);
+    f.detail().onIndividual(f.detail().item, f.detail().individualOutput); await f.flush(); assert.equal(f.downloads.length, 1);
+    assert.ok(f.text().includes(`Download ${profile.label} PNG`)); f.dispose();
+  }
+});
+
+test('historical or mixed sheets cannot select new formats and changing to an old sheet never silently changes the selected format', async () => {
+  const current = data(1), historical = data(2); current.items.forEach(item => { item.snapshot.layoutVersion = 'atlas-approved-b-v1'; });
+  const f = await fixture({ sheets: [current, historical] });
+  f.find(node => node.type === 'select' && node.props.value === 'cardFoil')[0].props.onChange({ target: { value: 'colorBack' } }); f.render();
+  const old = f.find(node => node.type === 'button' && text(node).startsWith('Sheet 002'))[0]; old.props.onClick(); await f.flush();
+  assert.ok(f.find(node => node.type === 'select' && node.props.value === 'colorBack').length);
+  assert.equal(f.button('Export this sheet').props.disabled, true);
+  for (const format of ['color', 'foilBack', 'originalBack', 'colorBack']) assert.equal(f.find(node => node.type === 'option' && node.props.value === format)[0].props.disabled, true);
+  const preview = f.find(node => node.type?.name === 'ThumbnailArtwork')[0]; assert.equal(preview.type(preview.props).type, 'span');
+  assert.ok(f.text().includes('Choose an original front format')); assert.equal(f.calls.some(call => call.method), false);
+  f.find(node => node.type === 'select' && node.props.value === 'colorBack')[0].props.onChange({ target: { value: 'original' } }); f.render();
+  assert.equal(f.button('Export this sheet').props.disabled, false); f.dispose();
+  const mixed = data(); mixed.items[0].snapshot.layoutVersion = 'atlas-approved-b-v1'; const g = await fixture({ sheets: [mixed] });
+  assert.equal(g.find(node => node.type === 'option' && node.props.value === 'colorBack')[0].props.disabled, true); g.dispose();
+});
+
+const approvedData = (number = 1, count = 50) => {
+  const sheet = data(number, count); sheet.items.forEach(item => { item.snapshot.layoutVersion = 'atlas-approved-b-v1'; }); return sheet;
+};
+test('25-position page two maps queue 26–50 into the exact mixed-orientation physical preview', async () => {
+  const first = approvedData(), f = await fixture({ sheets: [first] });
+  f.select('Print template', '25'); f.select('Template page', '2');
+  const positions = f.find(node => node.type === 'button' && /^Position \d+, queue position/.test(node.props['aria-label'] ?? ''));
+  assert.equal(positions.length, 25); assert.match(positions[0].props['aria-label'], /^Position 1, queue position 26, page 2, 90 degrees, Saved Player 1-26/);
+  assert.match(positions[6].props['aria-label'], /^Position 7, queue position 32, page 2, 0 degrees, Saved Player 1-32/);
+  for (let index = 0; index < positions.length; index++) {
+    const frame = geometry25.LABEL_JIG_25.slots[index], position = positions[index];
+    assert.equal(position.props.style.left, `${frame.xMm / 310 * 100}%`); assert.equal(position.props.style.top, `${frame.yMm / 400 * 100}%`);
+    assert.equal(position.props.style.width, `${frame.widthMm / 310 * 100}%`); assert.equal(position.props.style.height, `${frame.heightMm / 400 * 100}%`);
+    const artwork = all(position, node => node.props.className === 'slotArtwork')[0];
+    assert.equal(artwork.props.style.transform, `translate(-50%, -50%) rotate(${frame.rotationDeg}deg)`);
+  }
+  assert.equal(f.detail().slot, 26); assert.equal(f.detail().physicalSlot, 1); assert.equal(f.detail().item.itemId, first.items[25].itemId);
+  positions[24].props.onClick(); f.render(); assert.equal(f.detail().slot, 50); assert.equal(f.detail().physicalSlot, 25);
+  assert.equal(f.find(node => node.type === 'button' && node.props['aria-label'] === 'Next position')[0].props.disabled, true);
+  assert.equal(f.calls.some(call => call.method), false); f.dispose();
+});
+test('a page-two export dialog freezes its sheet, profile and selected page even when the underlying view changes', async () => {
+  const first = approvedData(), second = approvedData(2, 3), f = await fixture({ sheets: [first, second] });
+  f.select('Print template', '25'); f.select('Template page', '2'); f.click('Export this sheet');
+  const dialog = f.dialog(), dialogText = text(f.dialogTree());
+  assert.equal(dialog.page, 2); assert.equal(dialog.template, '25'); assert.equal(dialog.exportProfileId, api.labelSheetProfile('cardFoil', '25', 2));
+  assert.deepEqual(dialog.selectedItems.map(item => item.slot), Array.from({ length: 25 }, (_, i) => i + 26));
+  assert.match(dialogText, /freezes the whole 50-position queue \(50 saved labels\), including the other page/);
+  assert.match(dialogText, /Position 1 · Queue 26 · Saved Player 1-26/); assert.doesNotMatch(dialogText, /Saved Player 1-1\D/);
+  assert.equal(f.find(node => node.type === 'select' && node.props['aria-label'] === 'Template page')[0].props.disabled, true);
+  const sheetButton = f.find(node => node.type === 'button' && text(node).startsWith('Sheet 002'))[0]; sheetButton.props.onClick(); await f.flush();
+  assert.equal(f.dialog().sheet.sheetId, first.sheetId); assert.equal(f.dialog().page, 2);
+  f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+  const post = f.calls.find(call => call.method === 'POST');
+  assert.equal(post.url, `${api.LABEL_SHEETS_PATH}/${first.sheetId}/exports`);
+  assert.equal(post.body.exportProfileId, api.labelSheetProfile('cardFoil', '25', 2)); assert.equal(post.body.expectedSheetRevision, 50);
+  assert.equal(second.state, 'OPEN'); assert.equal(f.downloads.length, 0); f.dispose();
+});
+test('page-two print dialog and confirmation contain original queue slots from that page only', async () => {
+  const first = approvedData(), f = await fixture({ sheets: [first] });
+  f.select('Print template', '25'); f.select('Template page', '2'); f.click('Export this sheet'); f.dialog().onSubmit({ slots: [], reason: '' }); await f.flush();
+  f.click('Download sheet PNG ↓'); await f.flush(); assert.equal(f.downloads.length, 1); assert.equal(first.printEvents.length, 0);
+  f.click('Record printed labels'); const dialog = f.dialog(), tree = f.dialogTree();
+  const checkboxes = all(tree, node => node.type === 'input' && node.props.type === 'checkbox');
+  assert.equal(checkboxes.length, 25); assert.ok(checkboxes.every(node => node.props.checked));
+  assert.match(text(tree), /1 · Queue 26Saved Player 1-26/); assert.doesNotMatch(text(tree), /Saved Player 1-1\D/);
+  assert.deepEqual(dialog.selectedItems.map(item => item.slot), Array.from({ length: 25 }, (_, i) => i + 26));
+  dialog.onSubmit({ slots: [26, 50], reason: '' }); await f.flush();
+  assert.deepEqual(first.printEvents[0].successfulSlots, [26, 50]); assert.equal(f.downloads.length, 1); f.dispose();
+});
+test('empty template pages cannot export or create print records; the other page remains exportable', async () => {
+  const first = approvedData(1, 3), f = await fixture({ sheets: [first] });
+  f.select('Print template', '25'); f.select('Template page', '2');
+  assert.equal(f.button('Export this sheet').props.disabled, true); assert.equal(f.button('Record printed labels'), undefined);
+  assert.equal(f.detail().item, undefined); assert.match(f.text(), /0 labels on this page/);
+  f.select('Template page', '1'); assert.equal(f.button('Export this sheet').props.disabled, false);
+  assert.equal(f.calls.some(call => call.method), false); f.dispose();
+});
+test('25-position format eligibility follows only selected page while all queue items must be ready', async () => {
+  const first = approvedData(); delete first.items[0].snapshot.layoutVersion;
+  const f = await fixture({ sheets: [first] }); f.select('Print template', '25');
+  assert.equal(f.button('Export this sheet').props.disabled, false);
+  const formatSelect = () => f.find(node => node.type === 'select' && node.props.value === 'cardFoil')[0];
+  assert.equal(all(formatSelect(), node => node.type === 'option' && node.props.value === 'color')[0].props.disabled, true);
+  f.select('Template page', '2');
+  formatSelect().props.onChange({ target: { value: 'color' } }); f.render(); assert.equal(f.button('Export this sheet').props.disabled, false);
+  first.items[0].state = 'PENDING_RENDER'; await f.tick(); assert.equal(f.button('Export this sheet').props.disabled, true);
+  f.dispose();
+});
+test('shared back PNGs remain direct static downloads with no labels, API export or print mutation', async () => {
+  const f = await fixture({ sheets: [] });
+  const links = f.find(node => node.type === 'a' && typeof node.props.download === 'string' && node.props.download.startsWith('atlas-25-back-'));
+  assert.equal(links.length, 3);
+  assert.deepEqual(links.map(node => node.props.download), ['atlas-25-back-black.png', 'atlas-25-back-gold.png', 'atlas-25-back-silver.png']);
+  for (const link of links) { assert.equal(link.props.href, `/_next/static/media/${link.props.download}`); assert.equal(link.props.onClick, undefined); }
+  assert.match(f.text(), /310 × 400 mm/); assert.match(f.text(), /Preserve the full transparent canvas; turn off auto-crop/);
+  assert.equal(f.calls.some(call => call.method), false); assert.equal(f.downloads.length, 0); f.dispose();
 });

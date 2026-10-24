@@ -12,10 +12,12 @@ const ORDER_DESK_LABEL_PATH = new RegExp(`^/api/staff/manual-connected/order-des
 const ORDER_DESK_PHOTO_PATH = new RegExp(`^/api/staff/manual-connected/order-desk/orders/${ORDER_DESK_ID}/cards/${ORDER_DESK_ID}/photos/(?:FRONT|BACK)(?:\\?size=(?:thumbnail|detail))?$`);
 const LABEL_SHEET_PATH = new RegExp(`^/api/staff/manual-connected/label-sheets(?:/${ORDER_DESK_ID}(?:/exports(?:/${ORDER_DESK_ID}(?:/download)?)?|/print-confirmations)?)?$`);
 const LABEL_ITEM_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/(?:artwork|reprints|layout-retries|exports(?:/${ORDER_DESK_ID}(?:/download)?)?)$`);
-const LABEL_ARTWORK_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/artwork\\?mode=(?:preview|print|preview-foil|print-foil)$`);
+const LABEL_ARTWORK_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/artwork\\?mode=(?:(?:preview|print)(?:-back)?(?:-foil)?|print(?:-back)?-color|(?:preview|print)-card-foil)$`);
+const LABEL_EMBEDDED_IMAGE_CSP = "default-src 'none'; img-src data:; sandbox";
 // Retained sold photos share the market status endpoint. Admit raster bytes
 // only for its exact preview UUID/image digest query, in either parameter order.
 const MARKET_IMAGE_PATH = new RegExp(`^/api/staff/manual-connected/cards/${ORDER_DESK_ID}/presentation/market\\?(?:preview=${ORDER_DESK_ID}&image=[a-f0-9]{64}|image=[a-f0-9]{64}&preview=${ORDER_DESK_ID})$`);
+const ARCHIVE_MARKET_IMAGE_PATH = new RegExp(`^/api/staff/manual-connected/cards/${ORDER_DESK_ID}/presentation/market/archive-image\\?(?:preview=${ORDER_DESK_ID}&image=[a-f0-9]{64}|image=[a-f0-9]{64}&preview=${ORDER_DESK_ID})$`);
 const VERSION = 'atlas-manual-private-v1';
 const PREFIX = 'x-atlas-manual-';
 const WORKSPACE_HEADER = 'x-atlas-workspace';
@@ -185,7 +187,7 @@ export function manualResponsePolicy(path, contentType) {
     limit: 4 * 1024 * 1024, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
   if (LABEL_ARTWORK_PATH.test(path) && contentType === 'image/svg+xml') return {
     limit: 1024 * 1024, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
-  requireTransport((/\/(?:images|preview-image)\//.test(path) || ORDER_DESK_PHOTO_PATH.test(path) || MARKET_IMAGE_PATH.test(path))
+  requireTransport((/\/(?:images|preview-image)\//.test(path) || ORDER_DESK_PHOTO_PATH.test(path) || MARKET_IMAGE_PATH.test(path) || ARCHIVE_MARKET_IMAGE_PATH.test(path))
     && /^image\/(?:png|jpeg|webp)$/.test(contentType), 502, 'MANUAL_SERVICE_RESPONSE_INVALID');
   return { limit: MANUAL_TRANSPORT_LIMITS.imageResponseBytes, overflow: 'MANUAL_IMAGE_DIRECT_REQUIRED' };
 }
@@ -237,7 +239,7 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
       closed = true; stopHeartbeat(); controller.abort();
       rejectDisconnected?.(new ManualTransportError(503, 'MANUAL_SERVICE_UNAVAILABLE'));
     };
-    const finish = (status, contentType, bytes, labelSha256) => {
+    const finish = (status, contentType, bytes, labelSha256, labelEmbeddedImages = false) => {
       stopHeartbeat();
       if (closed || res.destroyed || res.writableEnded) return;
       if (streamed) {
@@ -249,7 +251,7 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
       } else {
         manualPrivateHeaders(res); res.setHeader('Content-Type', contentType);
         if (labelSha256) res.setHeader('X-ATLAS-Label-SHA256', labelSha256);
-        if (contentType.startsWith('image/')) res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        if (contentType.startsWith('image/')) res.setHeader('Content-Security-Policy', labelEmbeddedImages ? LABEL_EMBEDDED_IMAGE_CSP : "default-src 'none'; sandbox");
         res.status(status).send(bytes);
       }
     };
@@ -303,10 +305,14 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
             && responseBody.subarray(0, 5).toString('ascii') === '%PDF-' && sha256(responseBody) === labelSha256,
           502, 'MANUAL_SERVICE_RESPONSE_INVALID');
         }
-        return { status: response.status, contentType, bytes: responseBody, labelSha256 };
+        // Only this exact private-service policy can permit the hash-pinned B
+        // artwork's inline PNGs. Never forward arbitrary upstream CSP values.
+        const labelEmbeddedImages = response.status === 200 && contentType === 'image/svg+xml' && LABEL_ARTWORK_PATH.test(req.url)
+          && response.headers.get('content-security-policy') === LABEL_EMBEDDED_IMAGE_CSP;
+        return { status: response.status, contentType, bytes: responseBody, labelSha256, labelEmbeddedImages };
       };
       const result = await Promise.race([work(), timeout, disconnectedResult]);
-      finish(result.status, result.contentType, result.bytes, result.labelSha256);
+      finish(result.status, result.contentType, result.bytes, result.labelSha256, result.labelEmbeddedImages);
     } catch (error) {
       controller.abort();
       if (streamed) finish(error instanceof ManualTransportError ? error.status : 503,

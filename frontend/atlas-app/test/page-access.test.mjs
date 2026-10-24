@@ -5,9 +5,9 @@ import { BoundaryError } from '../lib/server/policy.mjs';
 import { productionAccessConfig } from '../lib/server/access/config.mjs';
 const production = { ATLAS_STAFF_RUNTIME: 'postgres', NODE_ENV: 'production', VERCEL_ENV: 'production' };
 const sensitive = 'DO_NOT_RECORD_PRIVATE_CREDENTIAL_OR_REQUEST';
-function fixture({ env = production, runtimeError, databaseError, sessionError, logError, manual, signedIn = true } = {}) {
+function fixture({ env = production, runtimeError, databaseError, sessionError, logError, manual, signedIn = true, role = 'REVIEWER' } = {}) {
   const logs = [], calls = { runtime: 0, database: 0, session: 0 }, headers = {};
-  const staff = { id: 'fixture-staff', role: 'REVIEWER' };
+  const staff = { id: 'fixture-staff', role };
   const state = { mode: 'PRODUCTION', connectedManual: manual, auth: {
     database: { async transaction(work) { calls.database++; if (databaseError) throw databaseError; return work(); } },
     async maybeAuthenticate() { calls.session++; if (sessionError) throw sessionError; return signedIn ? staff : null; },
@@ -99,6 +99,23 @@ test('retired workspace upload origin cannot extend current manual CSP', async (
   assert.equal(result.props.manualEnabled, true);
   assert.match(f.headers['Content-Security-Policy'], /https:\/\/current.example/);
   assert.doesNotMatch(f.headers['Content-Security-Policy'], /retired\.example/);
+});
+test('archive comp search display is independent, explicit and only returned after reviewer page admission', async () => {
+  const manual = { uploadOrigin: 'https://storage.example' }, env = { ...production, ATLAS_STAFF_ARCHIVE_COMP_SEARCH: '1' };
+  for (const change of [{}, { env: { ...env, ATLAS_STAFF_ARCHIVE_COMP_SEARCH: 'true' } },
+    { env: production }, { manual: undefined }, { role: 'OBSERVER' }]) {
+    const f = fixture({ env, manual, ...change });
+    const plain = await f.access(f.ctx);
+    assert.equal(plain.props.compSearchConfiguredForDisplay, undefined);
+    const result = await f.access(f.ctx, { includeCompSearch: true });
+    assert.equal(result.props.compSearchConfiguredForDisplay, Object.keys(change).length === 0);
+    assert.equal(result.props.compCurationConfiguredForDisplay, undefined);
+    assert.equal(f.calls.database, 2); assert.equal(f.calls.session, 2);
+  }
+  const signedOut = fixture({ env, manual, signedIn: false });
+  assert.deepEqual(await signedOut.access(signedOut.ctx, { includeCompSearch: true }), { redirect: { destination: '/', permanent: false } });
+  const signIn = fixture({ env, manual });
+  assert.deepEqual(await signIn.access(signIn.ctx, { authenticated: false, includeCompSearch: true }), { props: { mode: 'PRODUCTION' } });
 });
 test('non-read methods never invoke runtime, database, session, or a replay', async () => {
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {

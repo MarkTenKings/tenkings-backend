@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { atlasPrintedSerial, emptyAtlasSportsAttributes, parseAtlasSportsAttributes, assertAtlasSportsAttributePhotos, projectAtlasSportsAttributes, atlasPublicSportsAttributesSchema } from '../dist/sports-attributes.js';
 const front = { side: 'FRONT', imageSha256: 'a'.repeat(64), observation: 'Lower right: 007/099.' };
 const back = { side: 'BACK', imageSha256: 'b'.repeat(64), observation: 'Back: the enclosed player-worn material is guaranteed by the manufacturer.' };
+const feature = (kind = 'CASE_HIT') => ({ kind, evidence: { type: 'REVIEWED_REFERENCE', sourceTitle: 'Synthetic manufacturer checklist',
+  sourceUrl: 'https://example.com/checklist#card-7', matchNote: 'The reference identifies card 7 and this exact printing as a case hit.' } });
 function reviewed() {
   const value = emptyAtlasSportsAttributes();
   value.serial = { presence: 'PRESENT', ...atlasPrintedSerial('007/099'), evidence: [front] };
@@ -46,4 +49,35 @@ test('public projection retains approved card facts but excludes private observa
   assert.doesNotMatch(JSON.stringify(projected), /imageSha256|observation|HUMAN_REVIEWED|evidence/);
   assert.equal(JSON.stringify(original), before);
   assert.throws(() => atlasPublicSportsAttributesSchema.parse({ ...projected, actorId: 'staff' }));
+});
+test('special features require a bounded exact kind and an explicit private reviewed reference', () => {
+  const value = { ...emptyAtlasSportsAttributes(), specialFeatures: [feature()] };
+  assert.deepEqual(parseAtlasSportsAttributes(value), value);
+  assert.deepEqual(assertAtlasSportsAttributePhotos(value, {}), value);
+  for (const mutate of [v => { v.specialFeatures = []; }, v => { v.specialFeatures.push(feature()); },
+    v => { v.specialFeatures[0].kind = 'RARE'; }, v => { delete v.specialFeatures[0].evidence; },
+    v => { v.specialFeatures[0].evidence.type = 'MACHINE_PROPOSAL'; }, v => { v.specialFeatures[0].evidence.matchNote = ''; },
+    v => { v.specialFeatures[0].evidence.sourceTitle = 'a'.repeat(161); }, v => { v.specialFeatures[0].evidence.matchNote = 'a'.repeat(601); },
+    v => { v.specialFeatures[0].evidence.actorId = 'invented'; }]) {
+    const invalid = structuredClone(value); mutate(invalid); assert.throws(() => parseAtlasSportsAttributes(invalid));
+  }
+  for (const sourceUrl of ['http://example.com', 'javascript:alert(1)', 'https:example.com', 'https://user:secret@example.com', 'https://example.com/ with-space', 'https://example.com/\\path', ' https://example.com', 'https://example.com/' + 'a'.repeat(2048)]) {
+    const invalid = structuredClone(value); invalid.specialFeatures[0].evidence.sourceUrl = sourceUrl; assert.throws(() => parseAtlasSportsAttributes(invalid));
+  }
+});
+test('special feature projection strips reference evidence while omitted historical keys stay omitted', () => {
+  const old = reviewed(), oldPublic = projectAtlasSportsAttributes(old);
+  const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  // Captured from the same fixture using the exact 20b747ba source parser.
+  assert.equal(digest(parseAtlasSportsAttributes(old)), 'a5aca127929cd659c0e83f77762c7ec8659dfcd8bd3868100afef60012010047');
+  assert.equal(digest(oldPublic), '8ab6b71b144ae3e0d0ba322bad75bc31a63ba2f6703c282959cea9813633b7b0');
+  assert.equal(Object.hasOwn(old, 'specialFeatures'), false); assert.equal(Object.hasOwn(oldPublic, 'specialFeatures'), false);
+  const value = { ...old, specialFeatures: [feature(), feature('SHORT_PRINT'), feature('SUPER_SHORT_PRINT')] }, privateBefore = JSON.stringify(value);
+  const projected = projectAtlasSportsAttributes(value);
+  assert.deepEqual(projected.specialFeatures, [{ kind: 'CASE_HIT' }, { kind: 'SHORT_PRINT' }, { kind: 'SUPER_SHORT_PRINT' }]);
+  assert.doesNotMatch(JSON.stringify(projected), /sourceTitle|sourceUrl|matchNote|REVIEWED_REFERENCE|example\.com/);
+  assert.equal(JSON.stringify(value), privateBefore); assert.deepEqual(atlasPublicSportsAttributesSchema.parse(projected), projected);
+  assert.throws(() => atlasPublicSportsAttributesSchema.parse({ ...projected, specialFeatures: [feature()] }));
+  const stale = structuredClone(value); stale.serial.evidence[0].imageSha256 = 'c'.repeat(64);
+  assert.throws(() => assertAtlasSportsAttributePhotos(stale, { FRONT: front.imageSha256, BACK: back.imageSha256 }), /PHOTO_STALE/);
 });

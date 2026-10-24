@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import * as composition from '../lib/card-history-comp-curation.mjs';
+import * as searchComposition from '../lib/card-history-comp-search.mjs';
 import * as history from '../lib/card-history-client.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core');
@@ -44,6 +45,7 @@ function harness() {
     if (name.endsWith('/components/Shell')) return { __esModule: true, default: 'Shell', Unavailable: 'Unavailable' };
     if (name.endsWith('/card-history-client.mjs')) return history;
     if (name.endsWith('/card-history-comp-curation.mjs')) return composition;
+    if (name.endsWith('/card-history-comp-search.mjs')) return searchComposition;
     if (name.endsWith('/lib/server/runtime.mjs')) return { pageAccess: async (ctx, options) => { f.accessCalls.push({ ctx, options }); return f.access; } };
     if (name.endsWith('.module.css')) return {};
     if (name.startsWith('@babel/runtime/')) return require(`next/dist/compiled/${name}`);
@@ -59,13 +61,22 @@ function harness() {
 }
 
 test('actual SSR page trusts only exact admitted boolean, never a URL flag, and preserves denied/invalid access', async () => {
-  const f = harness(), ctx = { params: { cardId: f.props.cardId }, query: { compCurationConfiguredForDisplay: 'true' } };
+  const f = harness(), ctx = { params: { cardId: f.props.cardId }, query: { compCurationConfiguredForDisplay: 'true', compSearchEnabled: 'true' } };
   for (const flag of [undefined, false, 'true', 1, true]) {
-    f.access = { props: { staff: f.props.staff, manualEnabled: true, ...(flag === undefined ? {} : { compCurationConfiguredForDisplay: flag }) } };
+    f.access = { props: { staff: f.props.staff, manualEnabled: true, compSearchEnabled: true, ...(flag === undefined ? {} : { compCurationConfiguredForDisplay: flag }) } };
     const result = await f.page.getServerSideProps(ctx);
-    assert.deepEqual(f.accessCalls.at(-1), { ctx, options: { includeCompCuration: true } });
+    assert.deepEqual(f.accessCalls.at(-1), { ctx, options: { includeCompCuration: true, includeCompSearch: true } });
     assert.equal(result.props.compCurationConfiguredForDisplay, flag === true);
     const page = f.page.default(result.props); assert.equal(page.props.enabled, flag === true);
+    assert.equal(result.props.compSearchEnabled, false); assert.equal(page.props.compSearchEnabled, false);
+  }
+  for (const flag of [undefined, false, 'true', 1, true]) {
+    f.access = { props: { staff: f.props.staff, manualEnabled: true, compCurationConfiguredForDisplay: false,
+      compSearchConfiguredForDisplay: flag } };
+    const result = await f.page.getServerSideProps(ctx);
+    assert.equal(result.props.compSearchEnabled, flag === true);
+    const page = f.page.default(result.props);
+    assert.equal(page.props.compSearchEnabled, flag === true); assert.equal(page.props.enabled, false);
   }
   for (const access of [{ props: { unavailable: true } }, { props: { staff: f.props.staff, manualEnabled: false } }, { redirect: { destination: '/', permanent: false } }]) {
     f.access = access; assert.equal(await f.page.getServerSideProps(ctx), access);
@@ -122,4 +133,33 @@ test('absent and nonboolean page capability never mounts an optional transport',
     assert.equal(f.flush().compCurationEnabled, false); assert.equal(f.tree.props.compCurationRequest, undefined);
     assert.equal(f.calls.length, 0); f.dispose();
   }
+});
+
+test('search requires an independent opt-in and toggling it preserves the curation request capability', async t => {
+  const f = harness(); t.after(f.dispose);
+  const original = f.flush(); assert.equal(original.compSearchEnabled, false); assert.equal(original.compSearchRequest, undefined);
+  for (const flag of ['true', 1, false]) { f.props.compSearchEnabled = flag; assert.equal(f.flush().compSearchEnabled, false); }
+  f.props.compSearchEnabled = true;
+  const enabled = f.flush(); assert.equal(enabled.compSearchEnabled, true); assert.equal(enabled.compCurationRequest, original.compCurationRequest);
+  assert.equal(f.calls.length, 0); assert.equal(f.flush().compSearchRequest, enabled.compSearchRequest);
+  assert.deepEqual(await enabled.compSearchRequest(`/api/staff/manual-connected/cards/${f.props.cardId}/presentation`), { state: 'NOT_REQUESTED' });
+  assert.equal(f.calls.length, 3); assert(f.calls.every(c => c.init.method === 'GET'));
+  f.props.compSearchEnabled = false;
+  assert.equal(f.renderOnly().compSearchEnabled, false);
+  await assert.rejects(enabled.compSearchRequest(`/api/staff/manual-connected/cards/${f.props.cardId}/presentation`), { code: 'COMP_ACCESS_ENDED' });
+  assert.equal(f.flush().compCurationRequest, original.compCurationRequest); assert.equal(f.calls.length, 3);
+});
+
+test('search can be locally composed without curation, but account/card changes and pagehide end retained handlers', async () => {
+  for (const change of [f => { f.props.cardId = randomUUID(); }, f => { f.props.staff = { ...f.props.staff }; },
+    f => { f.props.staff.id = randomUUID(); }, f => f.events.dispatchEvent(new Event('pagehide'))]) {
+    const f = harness(); f.props.enabled = false; f.props.compSearchEnabled = true;
+    const first = f.flush(), path = `/api/staff/manual-connected/cards/${f.props.cardId}/presentation`;
+    assert.equal(first.compCurationEnabled, false); assert.equal(first.compSearchEnabled, true);
+    change(f); assert.equal(f.renderOnly().compSearchEnabled, false);
+    await assert.rejects(first.compSearchRequest(path), { code: 'COMP_ACCESS_ENDED' }); assert.equal(f.calls.length, 0); f.dispose();
+  }
+  const f = harness(); f.props.compSearchEnabled = true; f.flush(); f.events.dispatchEvent(new Event('pagehide')); f.flush();
+  f.props.compSearchEnabled = false; f.flush(); f.props.compSearchEnabled = true;
+  assert.equal(f.flush().compSearchEnabled, false); assert.equal(f.calls.length, 0); f.dispose();
 });

@@ -1,3 +1,4 @@
+import { designationDecisionRows } from './staff-comp-designation-review.mjs';
 import { createStaffCompCurationClient, curationDecisionInput, curationReadInput, curationStaff, curationSame, curationError,
   parseCurationState, parseCurationReceipt } from './staff-comp-curation-client.mjs';
 
@@ -27,7 +28,7 @@ export function createStaffCompCurationController({ staff, cardId, input, reques
       && receipt.outcome === p.outcome && curationSame(receipt.binding, record.binding) && curationSame(receipt.source, record.source)
       && receipt.policyHash === record.policyHash && curationSame(receipt.policy, record.policy)
       && curationSame(receipt.selected.map(c => c.id).sort(), p.selectedIds)
-      && (p.outcome !== 'SELECTED' || curationSame(receipt.selected, record.selected));
+      && (p.outcome !== 'SELECTED' || curationSame(receipt.selected, p.designationReviews ? designationDecisionRows(record.reviewState, p, actor.id, receipt.asOf) : record.selected));
   }
   async function run(kind, work) {
     ready(); const controller = new AbortController(), turn = ++generation; active = controller;
@@ -59,16 +60,15 @@ export function createStaffCompCurationController({ staff, cardId, input, reques
       if (!ended) { pending = null; emit({ phase: 'CONFIRMED', state: null, receipt, pending: null }); } return receipt;
     });
   }
-  async function decide({ requestId, outcome, selectedIds = [], reviewedIds = [] } = {}) {
+  async function decide({ requestId, outcome, selectedIds = [], reviewedIds = [], designationReviews } = {}) {
     ready(); if (pending) throw curationError('COMP_RECONCILE_REQUIRED');
     const state = view.state; if (!state || view.phase !== 'READY') throw curationError('COMP_READ_REQUIRED');
     const decision = curationDecisionInput({ requestId, approvalActionId: readInput.approvalActionId, expectedSelectionRevision: state.revision,
       previewId: readInput.previewId, expectedPreviewHash: state.source?.previewHash ?? null,
-      outcome, selectedIds, reviewedIds, expectedPolicyHash: state.policyHash });
-    const selected = outcome === 'SELECTED' ? state.preview?.candidates.filter(row => decision.selectedIds.includes(row.id)) : [];
-    if (outcome === 'SELECTED' && (!selected || selected.length !== decision.selectedIds.length || selected.some(row => !row.eligible)
-      || new Set(selected.map(row => row.group)).size !== 1 || new Set(selected.map(row => row.currency)).size !== 1)) throw curationError('COMP_SELECTION_INELIGIBLE');
-    pending = { input: decision, binding: state.binding, source: state.source, policy: state.policy, policyHash: state.policyHash, selected };
+      outcome, selectedIds, reviewedIds, expectedPolicyHash: state.policyHash, ...(designationReviews === undefined ? {} : { designationReviews }) });
+    const selected = outcome === 'SELECTED' ? designationDecisionRows(state, decision, actor.id) : [];
+    pending = { input: decision, binding: state.binding, source: state.source, policy: state.policy, policyHash: state.policyHash, selected,
+      ...(decision.designationReviews ? { reviewState: copy(state) } : {}) };
     // Only the request ID is needed for display; private pending evidence stays
     // in memory and is destroyed on access loss. It is never placed in a URL.
     emit({ pending: { requestId, outcome }, receipt: null }); return send(pending);

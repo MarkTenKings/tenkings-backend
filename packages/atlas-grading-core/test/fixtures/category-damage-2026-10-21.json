@@ -1,0 +1,570 @@
+{
+  "note": "Frozen using the unchanged 6fe0e462 builder before the edge-factor change. Exact reviewed Cam mask and measurements, synthetic identity, image hashes and balanced centering; no production identifiers or photographs.",
+  "source": {
+    "cardProfile": "SPORTS",
+    "identity": {
+      "playerName": "Synthetic edge calibration",
+      "year": "2026",
+      "manufacturer": "Fixture",
+      "productSet": "Cam measurement replay"
+    },
+    "draftRevision": 7,
+    "findingRevisions": {
+      "front": 3,
+      "back": 2
+    },
+    "capture": {
+      "front": {
+        "centeringQuad": [
+          {
+            "x": 0.04,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.97
+          },
+          {
+            "x": 0.04,
+            "y": 0.97
+          }
+        ],
+        "inspectionImageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "back": {
+        "centeringQuad": [
+          {
+            "x": 0.04,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.03
+          },
+          {
+            "x": 0.96,
+            "y": 0.97
+          },
+          {
+            "x": 0.04,
+            "y": 0.97
+          }
+        ],
+        "inspectionImageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "reviewedDefects": [
+      {
+        "id": "front-scuff",
+        "defectType": "LIGHT_SCRATCH_SCUFF",
+        "sourceViewId": "FRONT:inspection",
+        "traceProvenance": {
+          "version": "speedster-trace-provenance-v1",
+          "sourceViewId": "FRONT:inspection",
+          "cropTransform": {
+            "version": "speedster-canonical-crop-affine-v1",
+            "crop": {
+              "x": 0,
+              "y": 0,
+              "width": 1269,
+              "height": 1777
+            }
+          },
+          "highlighterStrokes": [],
+          "finalTraceSha256": "d232258c3cdc4ed9d5696f3499cd56147ebfd1bd015277e62830afd2a3707c02"
+        },
+        "finalTrace": {
+          "format": "TK_SPEEDSTER_TRACE_RLE_V1",
+          "width": 1270,
+          "height": 1778,
+          "origin": "TOP_LEFT",
+          "order": "ROW_MAJOR_Y_X",
+          "runs": [
+            1459257,
+            21,
+            1241,
+            30,
+            1232,
+            39,
+            1231,
+            39,
+            1231,
+            40,
+            1230,
+            40,
+            1230,
+            38,
+            1232,
+            36,
+            1236,
+            32,
+            1240,
+            7,
+            787378
+          ],
+          "sha256": "d232258c3cdc4ed9d5696f3499cd56147ebfd1bd015277e62830afd2a3707c02"
+        },
+        "side": "FRONT",
+        "confidence": 1,
+        "supportingViewIds": [],
+        "origin": "DETECTOR",
+        "reviewResult": "ACCEPTED",
+        "measurementRegions": [
+          {
+            "zone": "EDGES",
+            "canonicalContour": [
+              {
+                "x": 0.02127659574468085,
+                "y": 0.646595385481148
+              },
+              {
+                "x": 0.02048857368006304,
+                "y": 0.6471581316826112
+              },
+              {
+                "x": 0.014972419227738377,
+                "y": 0.6471581316826112
+              },
+              {
+                "x": 0.014184397163120567,
+                "y": 0.6477208778840743
+              },
+              {
+                "x": 0.008668242710795903,
+                "y": 0.6477208778840743
+              },
+              {
+                "x": 0.008668242710795903,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.009456264775413711,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.01024428684003152,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.01103230890464933,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.01182033096926714,
+                "y": 0.6516601012943163
+              },
+              {
+                "x": 0.016548463356973995,
+                "y": 0.6516601012943163
+              },
+              {
+                "x": 0.017336485421591805,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.030732860520094562,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.030732860520094562,
+                "y": 0.646595385481148
+              }
+            ],
+            "measurement": {
+              "pixelCount": 242,
+              "widthMm": 1.45,
+              "heightMm": 0.5,
+              "areaMm2": 0.605,
+              "zonePercent": 0.11423716012084592,
+              "multiplier": 1,
+              "weightedAreaMm2": 0.605,
+              "subgradeEffect": 6.3
+            }
+          },
+          {
+            "zone": "SURFACE",
+            "canonicalContour": [
+              {
+                "x": 0.03152088258471237,
+                "y": 0.646595385481148
+              },
+              {
+                "x": 0.03152088258471237,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.03467297084318361,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.03546099290780142,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.036249014972419225,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.037037037037037035,
+                "y": 0.6499718626899268
+              },
+              {
+                "x": 0.037825059101654845,
+                "y": 0.6499718626899268
+              },
+              {
+                "x": 0.038613081166272656,
+                "y": 0.6494091164884637
+              },
+              {
+                "x": 0.039401103230890466,
+                "y": 0.6494091164884637
+              },
+              {
+                "x": 0.039401103230890466,
+                "y": 0.6488463702870005
+              },
+              {
+                "x": 0.038613081166272656,
+                "y": 0.6482836240855374
+              },
+              {
+                "x": 0.038613081166272656,
+                "y": 0.6477208778840743
+              },
+              {
+                "x": 0.037037037037037035,
+                "y": 0.646595385481148
+              }
+            ],
+            "measurement": {
+              "pixelCount": 80,
+              "widthMm": 0.55,
+              "heightMm": 0.45,
+              "areaMm2": 0.20000000000000007,
+              "zonePercent": 0.003987598568452114,
+              "multiplier": 1,
+              "weightedAreaMm2": 0.20000000000000007,
+              "subgradeEffect": 0
+            }
+          }
+        ]
+      }
+    ],
+    "manualInspection": {
+      "method": "HUMAN",
+      "front": {
+        "inspected": true,
+        "imageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "findingRevision": 3
+      },
+      "back": {
+        "inspected": true,
+        "imageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "findingRevision": 2
+      }
+    }
+  },
+  "report": {
+    "version": "atlas-manual-draft-report-v2",
+    "ruleVersion": "ATLAS_2026_10_21_CATEGORY_DAMAGE_V1",
+    "cardProfile": "SPORTS",
+    "identity": {
+      "playerName": "Synthetic edge calibration",
+      "year": "2026",
+      "manufacturer": "Fixture",
+      "productSet": "Cam measurement replay",
+      "parallel": null,
+      "insert": null,
+      "cardNumber": null
+    },
+    "draftRevision": 7,
+    "inspection": {
+      "method": "HUMAN",
+      "front": {
+        "inspected": true,
+        "imageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "findingRevision": 3
+      },
+      "back": {
+        "inspected": true,
+        "imageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "findingRevision": 2
+      }
+    },
+    "grade": {
+      "front": {
+        "centering": {
+          "leftRightBalance": [
+            50,
+            50
+          ],
+          "topBottomBalance": [
+            50,
+            50
+          ],
+          "score": 10
+        },
+        "corners": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        },
+        "edges": {
+          "weightedDamagePercent": 0.114237160121,
+          "score": 1
+        },
+        "surface": {
+          "weightedDamagePercent": 0.003987598568,
+          "score": 10
+        }
+      },
+      "back": {
+        "centering": {
+          "leftRightBalance": [
+            50,
+            50
+          ],
+          "topBottomBalance": [
+            50,
+            50
+          ],
+          "score": 10
+        },
+        "corners": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        },
+        "edges": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        },
+        "surface": {
+          "weightedDamagePercent": 0,
+          "score": 10
+        }
+      },
+      "subgrades": {
+        "centering": 10,
+        "corners": 10,
+        "edges": 3.7,
+        "surface": 10
+      },
+      "overall": {
+        "rawGrade": 8.425,
+        "displayGrade": 8.4
+      }
+    },
+    "findings": [
+      {
+        "id": "front-scuff",
+        "defectType": "LIGHT_SCRATCH_SCUFF",
+        "sourceViewId": "FRONT:inspection",
+        "traceProvenance": {
+          "version": "speedster-trace-provenance-v1",
+          "sourceViewId": "FRONT:inspection",
+          "cropTransform": {
+            "version": "speedster-canonical-crop-affine-v1",
+            "crop": {
+              "x": 0,
+              "y": 0,
+              "width": 1269,
+              "height": 1777
+            }
+          },
+          "highlighterStrokes": [],
+          "finalTraceSha256": "d232258c3cdc4ed9d5696f3499cd56147ebfd1bd015277e62830afd2a3707c02"
+        },
+        "finalTrace": {
+          "format": "TK_SPEEDSTER_TRACE_RLE_V1",
+          "width": 1270,
+          "height": 1778,
+          "origin": "TOP_LEFT",
+          "order": "ROW_MAJOR_Y_X",
+          "runs": [
+            1459257,
+            21,
+            1241,
+            30,
+            1232,
+            39,
+            1231,
+            39,
+            1231,
+            40,
+            1230,
+            40,
+            1230,
+            38,
+            1232,
+            36,
+            1236,
+            32,
+            1240,
+            7,
+            787378
+          ],
+          "sha256": "d232258c3cdc4ed9d5696f3499cd56147ebfd1bd015277e62830afd2a3707c02"
+        },
+        "side": "FRONT",
+        "confidence": 1,
+        "supportingViewIds": [],
+        "origin": "DETECTOR",
+        "reviewResult": "ACCEPTED",
+        "measurementRegions": [
+          {
+            "zone": "EDGES",
+            "canonicalContour": [
+              {
+                "x": 0.02127659574468085,
+                "y": 0.646595385481148
+              },
+              {
+                "x": 0.02048857368006304,
+                "y": 0.6471581316826112
+              },
+              {
+                "x": 0.014972419227738377,
+                "y": 0.6471581316826112
+              },
+              {
+                "x": 0.014184397163120567,
+                "y": 0.6477208778840743
+              },
+              {
+                "x": 0.008668242710795903,
+                "y": 0.6477208778840743
+              },
+              {
+                "x": 0.008668242710795903,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.009456264775413711,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.01024428684003152,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.01103230890464933,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.01182033096926714,
+                "y": 0.6516601012943163
+              },
+              {
+                "x": 0.016548463356973995,
+                "y": 0.6516601012943163
+              },
+              {
+                "x": 0.017336485421591805,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.030732860520094562,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.030732860520094562,
+                "y": 0.646595385481148
+              }
+            ],
+            "measurement": {
+              "pixelCount": 242,
+              "widthMm": 1.45,
+              "heightMm": 0.5,
+              "areaMm2": 0.605,
+              "zonePercent": 0.11423716012084592,
+              "multiplier": 1,
+              "weightedAreaMm2": 0.605,
+              "subgradeEffect": 6.3
+            }
+          },
+          {
+            "zone": "SURFACE",
+            "canonicalContour": [
+              {
+                "x": 0.03152088258471237,
+                "y": 0.646595385481148
+              },
+              {
+                "x": 0.03152088258471237,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.03467297084318361,
+                "y": 0.6510973550928532
+              },
+              {
+                "x": 0.03546099290780142,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.036249014972419225,
+                "y": 0.65053460889139
+              },
+              {
+                "x": 0.037037037037037035,
+                "y": 0.6499718626899268
+              },
+              {
+                "x": 0.037825059101654845,
+                "y": 0.6499718626899268
+              },
+              {
+                "x": 0.038613081166272656,
+                "y": 0.6494091164884637
+              },
+              {
+                "x": 0.039401103230890466,
+                "y": 0.6494091164884637
+              },
+              {
+                "x": 0.039401103230890466,
+                "y": 0.6488463702870005
+              },
+              {
+                "x": 0.038613081166272656,
+                "y": 0.6482836240855374
+              },
+              {
+                "x": 0.038613081166272656,
+                "y": 0.6477208778840743
+              },
+              {
+                "x": 0.037037037037037035,
+                "y": 0.646595385481148
+              }
+            ],
+            "measurement": {
+              "pixelCount": 80,
+              "widthMm": 0.55,
+              "heightMm": 0.45,
+              "areaMm2": 0.20000000000000007,
+              "zonePercent": 0.003987598568452114,
+              "multiplier": 1,
+              "weightedAreaMm2": 0.20000000000000007,
+              "subgradeEffect": 0
+            }
+          }
+        ]
+      }
+    ],
+    "findingCounts": {
+      "total": 1,
+      "included": 1,
+      "removed": 0,
+      "unreviewed": 0
+    },
+    "finalGrade": 8,
+    "finalGradePolicy": "atlas-final-whole-point-v1"
+  },
+  "reportSha256": "b39a8492d1d32710bc3f72d60c6345fb755bd06979f6bce74c8be8322701928f",
+  "explanationSha256": "3a2800b3830b86bae47030f1982e2d4df9fa74265c388235273016dd33dbef55"
+}

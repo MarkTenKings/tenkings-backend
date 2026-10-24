@@ -18,3 +18,7 @@
 .tools .reset{font-size:11px;padding:7px 10px}
 .srOnly{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:360px){.tools{gap:6px}.hint{font-size:10px}.tools .reset{padding:6px 8px}}
+
+.assetNotice{display:flex;align-items:center;justify-content:center;gap:10px;min-height:40px;color:#5e665f;font-size:11px;line-height:1.4;text-align:center}
+.assetNotice button{background:#fff!important;border:1px solid #dce2dd!important;color:#3b5043!important;min-height:36px;padding:7px 10px;border-radius:5px;font-size:11px;white-space:nowrap}
+.assetNotice button:focus-visible{outline:2px solid #047857;outline-offset:3px}

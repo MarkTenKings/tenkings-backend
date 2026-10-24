@@ -16,6 +16,7 @@ function emptyGet(req) {
 }
 export function createStaffCompCurationHandler(options = {}) {
   const { auth, service, assertRequest, origin } = options;
+  const designationReviewsEnabled = options.designationReviewsEnabled;
   const authenticate = auth?.authenticate, read = service?.read, decide = service?.decide;
   const configured = () => {
     if (typeof authenticate !== 'function' || typeof read !== 'function' || typeof decide !== 'function'
@@ -23,7 +24,9 @@ export function createStaffCompCurationHandler(options = {}) {
     let url; try { url = new URL(origin); } catch { deny(503, 'COMP_NOT_CONFIGURED'); }
     if (url.origin !== origin || !(url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
       || options.auth !== auth || options.service !== service || options.assertRequest !== assertRequest || options.origin !== origin
-      || auth.authenticate !== authenticate || service.read !== read || service.decide !== decide) deny(503, 'COMP_NOT_CONFIGURED');
+      || auth.authenticate !== authenticate || service.read !== read || service.decide !== decide
+      || options.designationReviewsEnabled !== designationReviewsEnabled
+      || designationReviewsEnabled !== undefined && typeof designationReviewsEnabled !== 'boolean') deny(503, 'COMP_NOT_CONFIGURED');
   };
   const admitted = req => {
     configured();
@@ -57,7 +60,7 @@ export function createStaffCompCurationHandler(options = {}) {
         assertWrite(req, origin); csrf = req.headers['x-atlas-csrf'];
         if (typeof csrf !== 'string' || !csrf || csrf.length > 512) deny(403, 'CSRF_REQUIRED');
         if (Buffer.byteLength(JSON.stringify(req.body ?? null)) > 4096) deny(413, 'COMP_REQUEST_TOO_LARGE');
-        input = compCurationInput(req.body);
+        input = compCurationInput(req.body, { designationReviewsEnabled: designationReviewsEnabled === true });
       }
       const cookie = req.headers.cookie ?? '';
       if (typeof cookie !== 'string' || cookie.length > 8192) deny(401, 'SIGN_IN_REQUIRED');

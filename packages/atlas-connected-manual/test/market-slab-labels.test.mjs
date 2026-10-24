@@ -1,5 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {digest} from '@atlas/manual-service/contract';
+import {canonical,digest} from '@atlas/manual-service/contract';
+import {emptyAtlasSportsAttributes,atlasPrintedSerial,projectAtlasSportsAttributes} from '@atlas/grading-core/identity';
+import {createVariantReviewSnapshot,variantCandidateId} from '@tenkings/card-catalog-evidence';
 import {EBAY_SOLD_COMPS_V2_ENGINE_VERSION} from '@tenkings/ebay-sold-comps-v2';
 import {createPresentationMarket,publishedMarketQuery} from '../src/presentation-market.mjs';
 import {createMarketSlabLabeler,MARKET_SLAB_POLICY} from '../src/market-slab-labels.mjs';
@@ -8,12 +10,18 @@ import {photoCacheDatabase} from './variant-photo-retention-fixture.mjs';
 import {publicationFixture} from './publication-fixture.mjs';
 import {labelCatalog,labelPhoto} from './variant-label-fixture.mjs';
 import {CODEX_LABEL_POLICY,CODEX_LABEL_MODEL,codexReadingKey,variantCodexChoice} from '../src/variant-codex.mjs';
-async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,priorReferenceGrade,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false,responseMode=null,failBatches=[],unreadGrade=false,failImage=false,cacheDatabase=null,imageGate=null,modelTimeoutMs=300000,modelTransport=null}={}){
+async function fixture({photos=2,failSend=false,failPublication=false,priorReference=false,priorReferenceGrade,modelGate=null,onModel=()=>{},company='TAG',literal='2020 POKEMON\nMAGIKARP\n8.5',badPhoto=false,loseResponseAcknowledgement=false,responseMode=null,failBatches=[],unreadGrade=false,failImage=false,cacheDatabase=null,imageGate=null,modelTimeoutMs=300000,modelTransport=null,sportsIdentity=null,confirmed=true}={}){
  const f=await publicationFixture();await f.publication.publish({},f.cardId,f.actionId);const manifest=JSON.parse(f.row.manifest),packet=await f.artifacts.read(manifest.packet.ref,{cardId:f.cardId,kind:'PUBLIC_REPORT',sourceHash:manifest.packet.sourceHash});
- packet.report.cardProfile='POKEMON';packet.report.identity={cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:'Base'};
+ packet.report.cardProfile=sportsIdentity?'SPORTS':'POKEMON';packet.report.identity=sportsIdentity??{cardName:'Magikarp',year:'2020',productSet:'Rebel Clash',cardNumber:'039/192',parallel:'Base'};
  packet.report.finalGrade=8.5;packet.report.grade.overall={rawGrade:8.5,displayGrade:8.5};
- const source={packet,publicHash:digest(JSON.stringify(packet))},catalog=labelCatalog(),rows=cacheDatabase?.rows??new Map(),calls={images:0,model:0},requests=[];let tail=Promise.resolve(),drop=failPublication,loseAck=loseResponseAcknowledgement;
- const tx={async $queryRawUnsafe(sql,key){if(sql.includes('SELECT v.decision')){assert(sql.includes("{card,draft,source,sourceHash}"));assert(sql.includes("{receipt,approval,sourceHash}"));return [{approved_identity:packet.report.identity,identity_hash:digest(JSON.stringify(packet.report.identity,Object.keys(packet.report.identity).sort())),decision:'SELECTED',candidate_id:catalog.candidates[0].candidateId,catalog:JSON.stringify(catalog),catalog_hash:catalog.snapshotHash}];}
+ let catalog=labelCatalog();
+ if(sportsIdentity){
+  const identity={category:'SPORTS',name:sportsIdentity.playerName,year:sportsIdentity.year,manufacturer:sportsIdentity.manufacturer,setName:sportsIdentity.productSet,cardNumber:sportsIdentity.cardNumber,language:null};
+  const candidate={authority:'provider_candidate',label:'Base',identity,parallel:'Base',canonical:null,applicability:'unknown',diagnostics:[],images:[],source:{provider:'fixture',recordId:'local',url:null,sha256:digest('synthetic local source'),references:[]},warnings:[]};
+  candidate.candidateId=variantCandidateId(candidate);catalog=createVariantReviewSnapshot({identity,candidates:[candidate],capturedAt:'2026-10-22T00:00:00.000Z'});
+ }
+ const source={packet,publicHash:digest(JSON.stringify(packet))},rows=cacheDatabase?.rows??new Map(),calls={images:0,model:0},requests=[];let tail=Promise.resolve(),drop=failPublication,loseAck=loseResponseAcknowledgement;
+ const tx={async $queryRawUnsafe(sql,key){if(sql.includes('SELECT v.decision')){assert(sql.includes("{card,draft,source,sourceHash}"));assert(sql.includes("{receipt,approval,sourceHash}"));return confirmed?[{approved_identity:packet.report.identity,identity_hash:digest(canonical(packet.report.identity)),decision:'SELECTED',candidate_id:catalog.candidates[0].candidateId,catalog:JSON.stringify(catalog),catalog_hash:catalog.snapshotHash}]:[];}
   if(sql.includes('SELECT request_id'))return failSend?[]:[{request_id:'running'}];
   if(sql.includes('variant_catalog_cache')){const values=rows.get(key)??[];return (sql.includes('DESC')?[...values].reverse():values).slice(0,sql.includes('LIMIT 1')?1:2);}assert.fail(sql);},
   async $executeRawUnsafe(sql,...args){if(sql.includes('pg_advisory'))return 1;if(sql.includes('INSERT INTO')){const [key,snapshot,snapshot_hash]=args;
@@ -47,6 +55,32 @@ test('every returned sale gets a photo reading; any company/fractional grade/new
  const repeated=await f.label({...f,job:{...f.job,card_id:'different physical copy'}});assert.deepEqual(repeated,out);assert.deepEqual(f.calls,{images:10,model:2});
  const codex=[...f.rows.entries()].filter(([k])=>k.startsWith('atlas-codex-market-reading:')&&!k.endsWith(':reservation')).map(([,v])=>JSON.parse(v[0].snapshot));
  assert.equal(codex.length,10);assert(codex.every(r=>r.image.url&&r.image.sha256===r.reading.sha256&&r.target.canonicalPrintingKey));
+});
+test('reviewed rarity preserves the exact historical model target and reuses its paid reading for catalog and identity targets',async()=>{
+ const proof={side:'BACK',imageSha256:'a'.repeat(64),observation:'Synthetic printed facts.'},privateAttributes=emptyAtlasSportsAttributes();
+ privateAttributes.serial={presence:'PRESENT',...atlasPrintedSerial('007/099'),evidence:[proof]};
+ privateAttributes.autograph={presence:'PRESENT',type:'ON_CARD',evidence:[proof]};
+ privateAttributes.relic={presence:'PRESENT',windows:[{position:'Lower left',material:'Patch',manufacturerStatement:'Not associated with a specific player, game or event.',use:'NOT_ASSOCIATED',evidence:[proof]}],evidence:[proof]};
+ const attributes=projectAtlasSportsAttributes(privateAttributes),identity={playerName:'Synthetic Player',year:'2026',manufacturer:'Fixture',productSet:'Local Set',cardNumber:'007',parallel:'Base',insert:null,sportsAttributes:attributes};
+ const features=[{kind:'CASE_HIT'},{kind:'SHORT_PRINT'},{kind:'SUPER_SHORT_PRINT'}];
+ for(const confirmed of [true,false]){
+  const f=await fixture({photos:1,sportsIdentity:structuredClone(identity),confirmed}),original=structuredClone(f.source);
+  const first=await f.label(f),target=JSON.parse(f.requests[0].input[1].content[0].text).target;
+  assert.deepEqual(f.source,original);assert.deepEqual(target.identity.sportsAttributes,attributes);
+  assert.equal(target.key,`approved-attributes:${digest(canonical({choice:confirmed?target.canonicalPrintingKey:null,identity:target.identity}))}`);
+  const retained=[...f.rows].map(([key,values])=>[key,structuredClone(values)]);
+  f.source.packet.report.identity.sportsAttributes.specialFeatures=features;
+  f.source.publicHash=digest(JSON.stringify(f.source.packet));const before=structuredClone(f.source);
+  assert.equal(publishedMarketQuery(f.source).query,f.response.query);
+  const reused=await f.label({...f,job:{...f.job,card_id:'another physical copy'}});
+  assert.deepEqual(reused,first);assert.deepEqual(f.calls,{images:1,model:1});assert.deepEqual([...f.rows],retained);
+  assert.deepEqual(f.source,before,'The approved classification remains in the source packet');
+  const cold=await fixture({photos:1,sportsIdentity:structuredClone(f.source.packet.report.identity),confirmed}),coldBefore=structuredClone(cold.source);
+  await cold.label(cold);
+  assert.deepEqual(JSON.parse(cold.requests[0].input[1].content[0].text).target,target);
+  assert.doesNotMatch(JSON.stringify(cold.requests[0]),/specialFeatures|CASE_HIT|SHORT_PRINT/);
+  assert.deepEqual(cold.source,coldBefore);assert.deepEqual(cold.calls,{images:1,model:1});
+ }
 });
 test('saved model response recovers after interrupted projection/publication without another call',async()=>{
  const f=await fixture({failPublication:true});await assert.rejects(f.label(f),/publication interruption/);assert.equal(f.calls.model,1);

@@ -72,6 +72,7 @@ function harness(extraProps = {}) {
     if (name === './Shell') return { __esModule: true, default: 'Shell' };
     if (name === './ApprovedCardMedia') return { __esModule: true, default: 'ApprovedCardMedia' };
     if (name === './StaffCompCuration') return { __esModule: true, default: 'StaffCompCuration' };
+    if (name === './StaffCompSearch') return { __esModule: true, default: 'StaffCompSearch' };
     if (name === '@atlas/manual-workspace/sold-references') return soldReferences;
     if (name === '@atlas/grading-core/identity') return identity;
     if (name === '@atlas/site-router/report-entry') return { ...reportEntry, rememberCardDetailReportClick: (...args) => f.reportEntries.push(args) };
@@ -290,4 +291,53 @@ test('replaced staff, transport, disabled curation and departed tab refuse stale
     f.render(); old(); f.render();
     assert.match(f.text(), /ATLAS-ABCDEF123456/, change); assert.doesNotMatch(f.text(), /Sign in again/, change); f.dispose();
   }
+});
+
+test('fresh pool reload waits for chosen or unresolved selection and rejects a stale search callback', async () => {
+  const request = () => assert.fail('Parent does not dispatch');
+  const f = harness({ compCurationEnabled: true, compCurationRequest: request, compSearchEnabled: true, compSearchRequest: request }); await f.flush();
+  assert.equal(f.find(node => node.type === 'StaffCompSearch'), null);
+  f.find(node => node.props?.id === 'card-tab-comps').props.onClick(); f.render();
+  const search = () => f.find(node => node.type === 'StaffCompSearch').props;
+  const curation = () => f.find(node => node.type === 'StaffCompCuration').props;
+  const before = curation().refreshToken;
+  curation().onPendingChange(true); f.render(); assert.equal(search().isSelectionPending(), true);
+  search().onReady({ previewId: 'new-pool', approvalActionId: action }); f.render(); assert.equal(curation().refreshToken, before);
+  curation().onPendingChange(false); f.render(); assert.equal(curation().refreshToken, before + 1); assert.equal(search().isSelectionPending(), false);
+  search().onReady({ previewId: 'new-pool', approvalActionId: action }); f.render(); assert.equal(curation().refreshToken, before + 1);
+  const old = search().onReady; f.props.compSearchRequest = () => assert.fail('Replaced transport'); f.render();
+  old({ previewId: 'stale-pool', approvalActionId: action }); f.render(); assert.equal(curation().refreshToken, before + 1);
+  f.dispose();
+});
+
+
+test('staff history offers closed native audit details with exact references and no new request', async () => {
+  const f = harness(); await f.flush(); const count = f.calls.length, data = fixture(), event = data.history.events[0];
+  event.occurredAt = '2026-10-20T00:00:00.123456Z'; event.recordedAt = '2026-10-20T00:05:00.654321Z';
+  event.source = { type: 'PUBLICATION', cardId, approvalActionId: action, reportHash: 'a'.repeat(64),
+    publicHash: 'b'.repeat(64), manifestHash: 'c'.repeat(64), unrelated: 'PRIVATE_NOT_FOR_DISPLAY' };
+  const tree = f.component('HistoryTimeline', { data });
+  const details = findNode(tree, node => node.type === 'details');
+  assert.ok(details); assert.equal(details.props.open, undefined); assert.equal(details.props.onToggle, undefined);
+  assert.equal(findNode(details, node => node.type === 'summary').props['aria-label'], 'Record details: Report version 2 · ATLAS 8.5');
+  const text = JSON.stringify(details);
+  for (const expected of [event.eventId, action, '2026-10-20 00:00:00.123456 UTC', '2026-10-20 00:05:00.654321 UTC', 'c'.repeat(64)]) assert.ok(text.includes(expected));
+  assert.doesNotMatch(text, /PRIVATE_NOT_FOR_DISPLAY/);
+  assert.equal(findNode(details, node => node.type === 'a' || node.type === 'button'), null, 'audit values do not become URLs or mutations');
+  const sparse = fixture();
+  const missing = JSON.stringify(f.component('HistoryTimeline', { data: sparse }));
+  assert.match(missing, /Source details were not recorded/); assert.match(missing, /Not recorded/);
+  assert.equal(f.calls.length, count); f.dispose();
+});
+
+test('overview distinguishes last recorded physical handoff from an unknown current holder', async () => {
+  const f = harness(); await f.flush();
+  const custody = { status: 'RECORDED', currentPhysicalHolder: 'UNKNOWN', latestRecorded: {
+    eventId: `custody:${randomUUID()}`, kind: 'ATLAS_RECEIVED', sequence: 3,
+    occurredAt: '2026-10-20T00:00:00.123456Z', recordedAt: '2026-10-20T00:05:00.654321Z' } };
+  const text = JSON.stringify(f.component('CardOverview', { card: fixture().card, custody, orderLinks: false }));
+  assert.match(text, /Current physical holder/); assert.match(text, /Unknown/);
+  assert.match(text, /Last recorded handoff/); assert.match(text, /Atlas Received · 2026-10-20 00:00:00.123456 UTC/);
+  assert.match(text, /A recorded handoff does not confirm present custody/);
+  assert.doesNotMatch(text, /Currently at|Verified owner/); f.dispose();
 });

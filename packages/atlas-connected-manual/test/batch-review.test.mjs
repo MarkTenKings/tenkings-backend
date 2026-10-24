@@ -113,7 +113,7 @@ async function fixture({ count = 2, native = false, unmeasurable = false, outsid
     // Keep the fixture's valid proposal/trace binding while using independently
     // frozen measurements and scores from the retired category policy.
     report.findings[0] = { ...report.findings[0], defectType: finding.defectType,
-      measurementRegions: [{ zone: finding.zone, canonicalContour: finding.canonicalContour, measurement: finding.measurement }] };
+      measurementRegions: finding.measurementRegions ?? [{ zone: finding.zone, canonicalContour: finding.canonicalContour, measurement: finding.measurement }] };
     Object.assign(report, { ruleVersion: saved.ruleVersion, grade: saved.grade,
       proposedGrade: saved.finalGrade, finalGradePolicy: saved.finalGradePolicy });
   }
@@ -276,16 +276,19 @@ test('retained machine report under the old rule is readable but requires a new 
   assert.equal(current.report.originalMachineReportHash, f.input.reportHash);
   assert.equal(current.explanation.ruleVersion, ATLAS_RULE_VERSION);
 });
-test('queued October 13 corner scores remain historical until human review uses the quarter multiplier and approves a new report', async () => {
-  const { report: historical } = JSON.parse(await readFile(new URL('../../atlas-grading-core/test/fixtures/category-damage-v1.json', import.meta.url), 'utf8'));
+for (const [date, fixtureName, category, factor, oldSide, oldSubgrade, oldAward] of [
+  ['October 13', 'category-damage-v1.json', 'corners', .5, 6, 7.2, 9],
+  ['October 21', 'category-damage-2026-10-21.json', 'edges', 1, 1, 3.7, 8],
+]) test(`queued ${date} ${category} scores remain historical until human review uses the quarter multiplier and approves a new report`, async () => {
+  const { report: historical } = JSON.parse(await readFile(new URL(`../../atlas-grading-core/test/fixtures/${fixtureName}`, import.meta.url), 'utf8'));
   const f = await fixture({ count: 1, historicalCategoryReport: historical });
   const original = clone(f.report), view = await f.review.detail(f.staff, f.job.key);
   assert.equal(view.reviewRequiredReason, 'BATCH_SCORING_POLICY_UPDATED');
-  assert.equal(view.report.ruleVersion, 'ATLAS_2026_10_13_CATEGORY_DAMAGE_V1');
-  assert.equal(view.explanation.policy.categoryDamageMultipliers.CORNERS, .5);
-  assert.equal(view.report.grade.front.corners.score, 6);
-  assert.equal(view.report.grade.subgrades.corners, 7.2);
-  assert.equal(view.report.proposedGrade, 9);
+  assert.equal(view.report.ruleVersion, historical.ruleVersion);
+  assert.equal(view.explanation.policy.categoryDamageMultipliers[category.toUpperCase()], factor);
+  assert.equal(view.report.grade.front[category].score, oldSide);
+  assert.equal(view.report.grade.subgrades[category], oldSubgrade);
+  assert.equal(view.report.proposedGrade, oldAward);
   assert.equal(f.commits.length, 0);
   const execute = action => f.workflow.service.execute(f.staff, f.card.cardId, {
     actionId: randomUUID(), expectedRevision: f.card.revision, action });
@@ -294,12 +297,12 @@ test('queued October 13 corner scores remain historical until human review uses 
   const current = await f.review.detail(f.staff, f.job.key);
   assert.deepEqual(state.finalReview.report, original);
   assert.equal(current.report.ruleVersion, ATLAS_RULE_VERSION);
-  assert.equal(current.explanation.policy.categoryDamageMultipliers.CORNERS, .25);
-  assert.equal(current.report.grade.front.corners.score, 9);
-  assert.equal(current.report.grade.subgrades.corners, 9.3);
+  assert.equal(current.explanation.policy.categoryDamageMultipliers[category.toUpperCase()], .25);
+  assert.equal(current.report.grade.front[category].score, 9);
+  assert.equal(current.report.grade.subgrades[category], 9.3);
   assert.equal(current.report.proposedGrade, 10);
-  for (const category of ['centering', 'edges', 'surface'])
-    assert.equal(current.report.grade.subgrades[category], original.grade.subgrades[category]);
+  for (const unchanged of ['centering', 'corners', 'edges', 'surface'].filter(value => value !== category))
+    assert.equal(current.report.grade.subgrades[unchanged], original.grade.subgrades[unchanged]);
   assert.equal(f.approvals.size, 0);
   await execute({ type: 'CONFIRM_GEOMETRY', reviewed: true,
     base: Object.fromEntries(sides.map(side => [side, geometryBase(state.geometry, side, 'REVIEW')])) });
@@ -316,7 +319,7 @@ test('queued October 13 corner scores remain historical until human review uses 
   await execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: final.reportHash });
   const approved = f.approvals.values().next().value.report;
   assert.equal(approved.ruleVersion, ATLAS_RULE_VERSION);
-  assert.equal(approved.grade.subgrades.corners, 9.3);
+  assert.equal(approved.grade.subgrades[category], 9.3);
   assert.equal(approved.finalGrade, 10);
   assert.deepEqual((await f.workflow.hydrate(f.card)).finalReview.report, original);
 });

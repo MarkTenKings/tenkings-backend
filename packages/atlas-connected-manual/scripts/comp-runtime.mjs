@@ -6,11 +6,22 @@ import { createCompArtifactReader } from '../src/comp-artifact-reader.mjs';
 import { bufferResponse, failure } from '../../../frontend/atlas-app/lib/server/staff-comp-curation-transport-boundary.mjs';
 const valid = ok => requireThat(ok, 503, 'COMP_NOT_CONFIGURED');
 const environmentNames = ['ATLAS_STAFF_COMP_CURATION', 'ATLAS_COMP_DATABASE_URL', 'ATLAS_COMP_DATABASE_ROLE', 'ATLAS_COMP_SCHEMA_OWNER',
-  'ATLAS_COMP_SCHEMA_SHA256', 'ATLAS_COMP_STORAGE_ENDPOINT', 'ATLAS_COMP_STORAGE_REGION', 'ATLAS_COMP_STORAGE_BUCKET',
+  'ATLAS_COMP_SCHEMA_SHA256', 'ATLAS_COMP_GUARD_VERSION', 'ATLAS_COMP_EVIDENCE_SELECTION', 'ATLAS_COMP_ARCHIVE_ACCESS', 'ATLAS_COMP_DESIGNATION_REVIEWS', 'ATLAS_COMP_STORAGE_ENDPOINT', 'ATLAS_COMP_STORAGE_REGION', 'ATLAS_COMP_STORAGE_BUCKET',
   'ATLAS_COMP_STORAGE_PREFIX', 'ATLAS_COMP_STORAGE_ACCESS_KEY', 'ATLAS_COMP_STORAGE_SECRET_KEY', 'ATLAS_MANUAL_SERVICE_KEY',
-  'ATLAS_MANUAL_STORAGE_ACCESS_KEY', 'ATLAS_MANUAL_STORAGE_SECRET_KEY', 'ATLAS_CUSTOMER_STORAGE_ACCESS_KEY', 'ATLAS_CUSTOMER_STORAGE_SECRET_KEY'];
+  'ATLAS_MANUAL_STORAGE_ACCESS_KEY', 'ATLAS_MANUAL_STORAGE_SECRET_KEY', 'ATLAS_CUSTOMER_STORAGE_ACCESS_KEY', 'ATLAS_CUSTOMER_STORAGE_SECRET_KEY',
+  'ATLAS_STAFF_ARCHIVE_COMP_SEARCH'];
 export function createServingCompCuration({ env, auth, staffConfig, Client, nonceStore, ObjectClient = S3Client, ReadCommand = GetObjectCommand }) {
   if (env?.ATLAS_STAFF_COMP_CURATION !== '1') return null;
+  for (const name of ['ATLAS_COMP_EVIDENCE_SELECTION', 'ATLAS_COMP_ARCHIVE_ACCESS', 'ATLAS_COMP_DESIGNATION_REVIEWS'])
+    valid(env[name] === undefined || env[name] === '0' || env[name] === '1');
+  const guardVersion = env.ATLAS_COMP_GUARD_VERSION === undefined ? 'SQL011' : env.ATLAS_COMP_GUARD_VERSION;
+  const selectionPolicy = env.ATLAS_COMP_EVIDENCE_SELECTION === '1' ? Object.freeze({
+    version: 'atlas-comp-evidence-selection-policy-v1', status: 'LOCAL_PROPOSAL', method: 'private-saved-sold-evidence-v1', recencyDays: null, rightsStatus: 'UNRESOLVED',
+  }) : null;
+  const archiveCompAccess = env.ATLAS_COMP_ARCHIVE_ACCESS === '1';
+  const designationReviewsEnabled = env.ATLAS_COMP_DESIGNATION_REVIEWS === '1';
+  valid(selectionPolicy === null || guardVersion === 'EVIDENCE_SELECTION_V1');
+  valid(!designationReviewsEnabled || selectionPolicy !== null && archiveCompAccess && env.ATLAS_STAFF_ARCHIVE_COMP_SEARCH === '1');
   valid(typeof Client === 'function' && typeof ObjectClient === 'function' && typeof ReadCommand === 'function');
   const values = environmentNames.map(name => env[name]);
   const check = () => valid(environmentNames.every((name, i) => env[name] === values[i]));
@@ -27,7 +38,7 @@ export function createServingCompCuration({ env, auth, staffConfig, Client, nonc
   }, createClient(settings) { check(); return new ObjectClient(settings); }, GetObjectCommand: ReadCommand });
   const runtime = createNativeCompCurationRuntime({ enabled: true, environment: env, auth, staffConfig, nonceStore,
     settings: { databaseUrl: env.ATLAS_COMP_DATABASE_URL, role: env.ATLAS_COMP_DATABASE_ROLE, schemaOwner: env.ATLAS_COMP_SCHEMA_OWNER,
-      schemaSha256: env.ATLAS_COMP_SCHEMA_SHA256, get origin() { check(); return staffConfig.origin; }, transportKey: key },
+      schemaSha256: env.ATLAS_COMP_SCHEMA_SHA256, guardVersion, selectionPolicy, archiveCompAccess, designationReviewsEnabled, get origin() { check(); return staffConfig.origin; }, transportKey: key },
     createClient({ databaseUrl }) {
       check(); const url = new URL(databaseUrl); url.searchParams.set('connection_limit', '2');
       url.searchParams.set('pool_timeout', '3'); url.searchParams.set('connect_timeout', '5');

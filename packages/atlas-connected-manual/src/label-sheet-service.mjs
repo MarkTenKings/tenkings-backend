@@ -1,6 +1,8 @@
 import { canonical, digest, object, requireThat, uuid, revision } from '@atlas/manual-service/contract';
-import { renderLabelV4, renderLabelV4Png, LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
-import { renderLabelSheetPng, renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg,
+import { renderApprovedBLabel, LABEL_APPROVED_B_RENDERER_PROFILE_HASH, isApprovedBRendererProfile } from '@atlas/finishing/label-approved-b';
+import { APPROVED_B_LAYOUT, APPROVED_B_MARKER, validateApprovedBArtwork, renderApprovedBBack, colorApprovedBArtwork } from '@atlas/finishing/label-approved-b-artwork';
+import { renderLabelSheetPng, renderLabelV4Png, renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg, renderLabelCardColorFoilSvg, renderLabelCardColorFoilPreviewSvg, renderLabelExportSvg,
+  LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES,
   LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1,
   LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
@@ -11,9 +13,23 @@ const jigHash = LABEL_JIG_V1.jigHash;
 export const LABEL_EXPORT_PROFILES = Object.freeze({ SHEET: LABEL_EXPORT_PROFILE_V1.id, SINGLE: LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id });
 export const LABEL_BLACK_INK_EXPORT_PROFILES = Object.freeze({ SHEET: LABEL_BLACK_INK_EXPORT_PROFILE_V1.id, SINGLE: LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1.id });
 const exportProfiles = Object.freeze({
-  SHEET: Object.freeze([LABEL_EXPORT_PROFILES.SHEET, LABEL_BLACK_INK_EXPORT_PROFILES.SHEET]),
-  SINGLE: Object.freeze([LABEL_EXPORT_PROFILES.SINGLE, LABEL_BLACK_INK_EXPORT_PROFILES.SINGLE]),
+  SHEET: LABEL_SHEET_EXPORT_PROFILES.map(value => value.id),
+  SINGLE: LABEL_SINGLE_EXPORT_PROFILES.map(value => value.id),
 });
+const profileFor = id => [...LABEL_SHEET_EXPORT_PROFILES, ...LABEL_SINGLE_EXPORT_PROFILES].find(value => value.id === id);
+const needsApprovedB = profile => profile?.side === 'BACK' || profile?.outputMode === 'COLOR_PRINT';
+const backArtworkHash = digest(renderApprovedBBack());
+export const LABEL_ARTWORK_MODES = Object.freeze(['preview','print','preview-foil','print-foil','preview-back','print-back',
+  'preview-back-foil','print-back-foil','print-color','print-back-color','preview-card-foil','print-card-foil']);
+function requireApprovedB(item, { back = false } = {}) {
+  requireThat(isApprovedBRendererProfile(item.renderer_profile_hash), 409, 'LABEL_APPROVED_B_REQUIRED');
+  requireThat(typeof item.snapshot === 'string' && digest(item.snapshot) === item.snapshot_hash, 503, 'LABEL_STORED_CONTENT_INVALID');
+  const snapshot = JSON.parse(item.snapshot);
+  requireThat(snapshot?.layoutVersion === APPROVED_B_LAYOUT && (!back || snapshot.backArtworkHash === backArtworkHash)
+    && item.print_svg?.includes('data-side="FRONT"'), 409, 'LABEL_APPROVED_B_REQUIRED');
+  validateApprovedBArtwork({ printSvg: item.print_svg, artworkHash: item.artwork_hash });
+  return snapshot;
+}
 const hash = value => requireThat(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value), 400, 'LABEL_HASH_INVALID');
 const exact = (input, required, optional = []) => {
   requireThat(input && Object.getPrototypeOf(input) === Object.prototype && required.every(k => Object.hasOwn(input,k))
@@ -21,19 +37,30 @@ const exact = (input, required, optional = []) => {
 };
 const binding = row => ({ exportId: row.id, manifestHash: row.manifest_hash, kind: row.kind });
 
-export function createLabelService({ boundary, repository, finishing, storage,
-  renderer = { label: renderLabelV4, sheet: renderLabelSheetPng, individual: renderLabelV4Png },
+export function createLabelService({ boundary, repository, finishing, storage, styler = null,
+  renderer = { label: renderApprovedBLabel, sheet: renderLabelSheetPng, individual: renderLabelV4Png },
   materials = { SPORTS: { id: 'atlas-v4-gold-v1', preview: 'gold' }, POKEMON: { id: 'atlas-v4-holo-v1', preview: 'holo' } } }) {
   requireThat(repository?.pendingCandidates && finishing?.loadPacket && storage?.write && storage?.download && boundary?.machineOwner
     && renderer?.label && renderer?.sheet && renderer?.individual, 500, 'LABEL_CONFIGURATION_INVALID');
+  const exportValidator = profileId => {
+    const profile = profileFor(profileId);
+    return needsApprovedB(profile) ? items => {
+      for (const item of items) {
+        requireApprovedB(item, { back: profile.side === 'BACK' });
+        if (profile.outputMode === 'COLOR_PRINT') requireThat(Object.values(materials).some(value => value.id === item.material_profile_id
+          && ['gold','holo'].includes(value.preview)), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+      }
+    } : undefined;
+  };
   let running = null;
   async function renderItem(staff, id) {
-    let attemptedProfile = { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, jigHash, materialProfileId: null };
+    let attemptedProfile = { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH, jigHash, materialProfileId: null };
     const claimed = await repository.claimItem(staff, id, attemptedProfile); if (!claimed) return false;
     try {
       // This adapter proves exact approval/action/draft lineage and reauthenticates
       // after the immutable public packet is read from object storage.
-      const { packet, row } = await finishing.loadPacket(staff, claimed.card_id, claimed.action_id);
+      const approvedSource = await finishing.loadPacket(staff, claimed.card_id, claimed.action_id);
+      const { packet, row } = approvedSource;
       let result, replacement = null;
       if (claimed.purpose === 'REPRINT') {
         const original = await repository.item(staff, claimed.original_item_id);
@@ -44,17 +71,31 @@ export function createLabelService({ boundary, repository, finishing, storage,
       }
       if (!result) {
         const report = packet.report, material = materials[report.cardProfile];
+        // New artwork must be printable before any paid style work. Historical
+        // COPY replacements retain their original grade and bypass this branch.
+        requireThat(Number.isInteger(report.finalGrade) && report.finalGrade >= 1 && report.finalGrade <= 10,
+          409, 'LABEL_WHOLE_GRADE_REQUIRED');
         requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
-        if (replacement?.kind === 'REFRESH') requireThat(replacement.target.rendererProfileHash === LABEL_V4_RENDERER_PROFILE_HASH
+        if (replacement?.kind === 'REFRESH') requireThat(replacement.target.rendererProfileHash === LABEL_APPROVED_B_RENDERER_PROFILE_HASH
           && replacement.target.materialProfileId === material.id && replacement.target.jigHash === jigHash, 409, 'LABEL_RENDERER_CHANGED');
         attemptedProfile = { ...attemptedProfile, materialProfileId: material.id };
+        const style=styler?await styler.resolve(approvedSource,{signal:AbortSignal.timeout(18*60*1000)}):null;
+        if(style?.state==='PENDING') { await repository.deferItem(staff,claimed);return false; }
+        if(styler) {
+          const after=await finishing.loadPacket(staff,claimed.card_id,claimed.action_id);
+          requireThat(after.publicHash===approvedSource.publicHash,409,'LABEL_SOURCE_CHANGED');
+        }
         const rendered = await renderer.label({ identity: report.identity, finalGrade: report.finalGrade,
-          reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, cardProfile: report.cardProfile }, { previewMaterial: material.preview });
-        result = { ...rendered, rendererProfileHash: rendered.rendererProfileHash ?? LABEL_V4_RENDERER_PROFILE_HASH,
+          reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, cardProfile: report.cardProfile },
+          { previewMaterial: material.preview,...(style?{styleSpec:style.styleSpec,textures:style.textures,wordmarks:style.wordmarks}:{}) });
+        result = { ...rendered, rendererProfileHash: rendered.rendererProfileHash ?? LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
           code: rendered.diagnostics?.code ?? 'LABEL_NEEDS_LAYOUT', materialProfileId: material.id, jigHash,
           snapshot: { identity: report.identity, grade: report.finalGrade, finalGrade: report.finalGrade, cardProfile: report.cardProfile,
             reportNumber: packet.reportNumber, approvalVersion: packet.approvalVersion, reportHref: `https://atlasgrading.com/reports/${packet.publicToken}?v=${packet.approvalVersion}`,
-            previewMaterial: material.preview, source: rendered.source, diagnostics: rendered.diagnostics ?? [] } };
+            previewMaterial: material.preview, source: rendered.source, diagnostics: rendered.diagnostics ?? [],
+            ...(style?{labelStyle:style.receipt,styleSpec:style.styleSpec}:{}),
+            ...((rendered.layoutVersion ?? rendered.diagnostics?.layoutVersion) ? { layoutVersion: rendered.layoutVersion ?? rendered.diagnostics.layoutVersion } : {}),
+            ...(rendered.backPrintSvg ? { backArtworkHash: digest(rendered.backPrintSvg) } : {}) } };
       }
       await repository.finishItem(staff, claimed, { ...result, row }); return true;
     } catch (error) { await repository.failItem(staff, claimed, attemptedProfile); throw error; }
@@ -66,18 +107,23 @@ export function createLabelService({ boundary, repository, finishing, storage,
     // bounded attempts. A storage failure cannot create repeated generations.
     const snapshot = item.snapshot ? JSON.parse(item.snapshot) : null, material = materials[snapshot?.cardProfile];
     requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
-    const key = digest(canonical({ operation: 'automatic-layout-recovery/v1', itemId: id, rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }));
+    const key = digest(canonical({ operation: 'automatic-layout-recovery/v1', itemId: id, rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH }));
     const requestId = `${key.slice(0,8)}-${key.slice(8,12)}-4${key.slice(13,16)}-${((parseInt(key[16],16)&3)|8).toString(16)}${key.slice(17,20)}-${key.slice(20,32)}`;
-    await repository.retryLayout(staff, id, { requestId, expectedFailureHash: labelFailureHash(item), expectedRendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH },
-      { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, materialProfileId: material.id, jigHash }, { automatic: true });
+    await repository.retryLayout(staff, id, { requestId, expectedFailureHash: labelFailureHash(item), expectedRendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH },
+      { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH, materialProfileId: material.id, jigHash }, { automatic: true });
     return true;
   }
   async function renderExport(staff, id) {
     const claimed = await repository.claimExport(staff, id); if (!claimed) return false;
     try {
+      const profile = profileFor(claimed.row.profile_id);
       const labels = claimed.items.map(item => {
         requireThat(digest(item.print_svg) === item.artwork_hash, 503, 'LABEL_ARTWORK_INVALID');
-        return { slot: claimed.row.kind === 'SHEET' ? item.slot : 1, artworkHash: item.artwork_hash, printSvg: item.print_svg };
+        if (needsApprovedB(profile)) requireApprovedB(item, { back: profile.side === 'BACK' });
+        const material = Object.values(materials).find(value => value.id === item.material_profile_id);
+        if (profile?.outputMode === 'COLOR_PRINT') requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
+        return { slot: claimed.row.kind === 'SHEET' ? item.slot : 1, artworkHash: item.artwork_hash, printSvg: item.print_svg,
+          ...(material ? { previewMaterial: material.preview } : {}) };
       });
       const options = { exportProfileId: claimed.row.profile_id };
       const result = claimed.row.kind === 'SHEET' ? await renderer.sheet(labels, options) : await renderer.individual(labels[0], options);
@@ -97,32 +143,44 @@ export function createLabelService({ boundary, repository, finishing, storage,
     return result;
   }
   return Object.freeze({
-    list: async (staff, options) => ({ ...await repository.list(staff, { ...options, rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }), rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }),
+    list: async (staff, options) => ({ ...await repository.list(staff, { ...options, rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH }), rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH }),
     sheet: (staff, sheetId) => repository.sheet(staff, uuid(sheetId)),
     reconciliation: (staff, input) => repository.reconciliation(staff, input),
     async artwork(staff, { itemId, mode = 'preview' }) {
-      requireThat(['preview','print','preview-foil','print-foil'].includes(mode), 400, 'LABEL_ARTWORK_MODE_INVALID');
+      requireThat(LABEL_ARTWORK_MODES.includes(mode), 400, 'LABEL_ARTWORK_MODE_INVALID');
       const item = await repository.item(staff, uuid(itemId)); requireThat(item.state === 'READY', 409, 'LABEL_NOT_READY');
       requireThat(typeof item.print_svg === 'string' && digest(item.print_svg) === item.artwork_hash, 503, 'LABEL_ARTWORK_INVALID');
-      const artwork = { printSvg: item.print_svg, artworkHash: item.artwork_hash };
-      let svg;
-      if (mode === 'preview-foil') {
-        const material = Object.values(materials).find(value => value.id === item.material_profile_id);
+      const approved = item.print_svg.includes(`data-renderer="${APPROVED_B_MARKER}"`), back = mode.includes('-back');
+      let snapshot;
+      if (approved || back || mode.endsWith('-color')) snapshot = requireApprovedB(item, { back });
+      const material = Object.values(materials).find(value => value.id === item.material_profile_id);
+      if (mode === 'preview-foil' || mode === 'preview-card-foil' || back && mode.startsWith('preview') || mode.endsWith('-color') || approved && mode === 'preview')
         requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
-        svg = renderLabelBlackInkPreviewSvg(artwork, { previewMaterial: material.preview });
-      } else svg = mode === 'print-foil' ? renderLabelBlackInkSvg(artwork) : mode === 'print' ? item.print_svg : item.preview_svg;
+      const artwork = { printSvg: item.print_svg, artworkHash: item.artwork_hash, previewMaterial: material?.preview };
+      let svg;
+      if (mode === 'print-card-foil') svg = renderLabelCardColorFoilSvg(artwork);
+      else if (mode === 'preview-card-foil') svg = renderLabelCardColorFoilPreviewSvg(artwork, { previewMaterial: material.preview });
+      else if (back || mode.endsWith('-color')) {
+        svg = renderLabelExportSvg(artwork, { side: back ? 'BACK' : 'FRONT', blackInkTransparent: mode.endsWith('-foil'), color: mode.endsWith('-color') });
+        if (mode.startsWith('preview')) svg = colorApprovedBArtwork(svg, material.preview);
+      } else if (mode === 'preview-foil') svg = renderLabelBlackInkPreviewSvg(artwork, { previewMaterial: material.preview });
+      else svg = mode === 'print-foil' ? renderLabelBlackInkSvg(artwork) : mode === 'print' ? item.print_svg : item.preview_svg;
+      // A retained preview may contain only the exact material background and
+      // pinned image URIs derivable from its immutable, validated print source.
+      if (approved && mode === 'preview') requireThat(snapshot.previewMaterial === material.preview
+        && svg === colorApprovedBArtwork(item.print_svg, material.preview), 503, 'LABEL_ARTWORK_INVALID');
       requireThat(typeof svg === 'string' && Buffer.byteLength(svg) <= 1048576, 503, 'LABEL_ARTWORK_INVALID');
-      return { bytes: Buffer.from(svg), contentType: 'image/svg+xml', sha256: digest(svg) };
+      return { bytes: Buffer.from(svg), contentType: 'image/svg+xml', sha256: digest(svg), embeddedImages: approved };
     },
     prepareSheetExport(staff, sheetId, input) {
       exact(input, ['requestId','expectedSheetRevision','exportProfileId']); uuid(input.requestId); revision(input.expectedSheetRevision); uuid(sheetId);
       requireThat(exportProfiles.SHEET.includes(input.exportProfileId), 400, 'LABEL_PROFILE_INVALID');
-      return repository.prepareExport(staff, { kind: 'SHEET', id: sheetId, input });
+      return repository.prepareExport(staff, { kind: 'SHEET', id: sheetId, input, validateItems: exportValidator(input.exportProfileId) });
     },
     prepareIndividualExport(staff, itemId, input) {
       exact(input, ['requestId','expectedLabelHash','exportProfileId']); uuid(input.requestId); hash(input.expectedLabelHash); uuid(itemId);
       requireThat(exportProfiles.SINGLE.includes(input.exportProfileId), 400, 'LABEL_PROFILE_INVALID');
-      return repository.prepareExport(staff, { kind: 'SINGLE', id: itemId, input });
+      return repository.prepareExport(staff, { kind: 'SINGLE', id: itemId, input, validateItems: exportValidator(input.exportProfileId) });
     },
     async exportStatus(staff, target) { return (await checkedExport(staff, target, false)).view; },
     async download(staff, { input, ...target }) {
@@ -148,7 +206,7 @@ export function createLabelService({ boundary, repository, finishing, storage,
       const { packet } = await finishing.loadPacket(staff, item.card_id, item.action_id);
       const material = materials[packet.report.cardProfile];
       requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
-      return repository.retryLayout(staff, itemId, input, { rendererProfileHash:LABEL_V4_RENDERER_PROFILE_HASH,materialProfileId:material.id,jigHash });
+      return repository.retryLayout(staff, itemId, input, { rendererProfileHash:LABEL_APPROVED_B_RENDERER_PROFILE_HASH,materialProfileId:material.id,jigHash });
     },
     reprint(staff, itemId, input) {
       exact(input, ['requestId','expectedLabelHash','reason']); uuid(input.requestId); uuid(itemId); hash(input.expectedLabelHash);
@@ -164,12 +222,12 @@ export function createLabelService({ boundary, repository, finishing, storage,
       const material = materials[packet.report.cardProfile];
       requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
       return repository.refreshLayout(staff, itemId, input,
-        { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH, materialProfileId: material.id, jigHash });
+        { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH, materialProfileId: material.id, jigHash });
     },
     runPending({ limit = 4 } = {}) {
       if (running) return running;
       running = (async () => {
-        const candidates = await repository.pendingCandidates(limit, { rendererProfileHash: LABEL_V4_RENDERER_PROFILE_HASH }); let count = 0;
+        const candidates = await repository.pendingCandidates(limit, { rendererProfileHash: LABEL_APPROVED_B_RENDERER_PROFILE_HASH }); let count = 0;
         for (const candidate of candidates) {
           try { const staff = boundary.machineOwner({ ownerId: candidate.actor_id, accessVersion: candidate.access_version });
             if (await (candidate.kind === 'ITEM' ? renderItem(staff, candidate.id)

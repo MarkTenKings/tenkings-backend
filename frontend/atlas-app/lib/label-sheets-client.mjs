@@ -1,13 +1,58 @@
 /** Browser-only label sheet API. No allocation, artwork rendering or hardware effects. */
 import { LABEL_JIG_V1 } from '@atlas/finishing/label-sheet-geometry';
+import { LABEL_25_CURRENT_PROFILE_DEFINITIONS, getLabel25Profile, selectLabel25Items } from '@atlas/finishing/label-sheet-25';
 export const LABEL_SHEETS_PATH = '/api/staff/manual-connected/label-sheets';
 export const LABEL_ITEMS_PATH = '/api/staff/manual-connected/labels';
 export const LABEL_INDIVIDUAL_PROFILE = 'atlas-v4-individual-2400ppi-v1';
-export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v2';
+export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v3';
 export const LABEL_PRINT_FORMATS = Object.freeze({
-  foil: Object.freeze({ label: 'Black ink + transparent foil', sheet: 'atlas-v4-sheet-800ppi-black-ink-transparent-v1', individual: 'atlas-v4-individual-2400ppi-black-ink-transparent-v1' }),
-  original: Object.freeze({ label: 'Original black, gray + white', sheet: LABEL_EXPORT_PROFILE, individual: LABEL_INDIVIDUAL_PROFILE }),
+  cardFoil: Object.freeze({ label: 'Card colors + transparent foil', side: 'Front', previewMode: 'preview-card-foil', printMode: 'print-card-foil',
+    sheet: 'atlas-v4-sheet-800ppi-card-colors-transparent-v1', individual: 'atlas-v4-individual-2400ppi-card-colors-transparent-v1',
+    description: 'Variant and special text retain their card colors and textures. Other lettering and fine details keep the existing foil finish.', printCaption: 'Card colors + black ink · transparent foil' }),
+  foil: Object.freeze({ label: 'Black ink + transparent foil', side: 'Front', previewMode: 'preview-foil', printMode: 'print-foil',
+    sheet: 'atlas-v4-sheet-800ppi-black-ink-transparent-v2', individual: 'atlas-v4-individual-2400ppi-black-ink-transparent-v1',
+    description: 'Only black ink prints. Lettering and fine details are transparent, revealing your gold or holographic foil.', printCaption: 'Black ink only · transparent foil' }),
+  original: Object.freeze({ label: 'Original black, gray + white', side: 'Front', previewMode: 'preview', printMode: 'print',
+    sheet: LABEL_EXPORT_PROFILE, individual: LABEL_INDIVIDUAL_PROFILE,
+    description: 'Includes opaque white lettering and gray details. Use this format only when printing those inks.', printCaption: 'Original black, gray + white ink' }),
+  color: Object.freeze({ label: 'Color front', side: 'Front', previewMode: 'preview', printMode: 'print-color', requiresApprovedB: true,
+    sheet: 'atlas-approved-b-sheet-800ppi-color-front-v2', individual: 'atlas-approved-b-individual-2400ppi-color-front-v1',
+    description: 'Prints the approved front in color, including its gold or silver appearance.', printCaption: 'Color front artwork' }),
+  foilBack: Object.freeze({ label: 'Back · black ink + transparent foil', side: 'Back', previewMode: 'preview-back-foil', printMode: 'print-back-foil', requiresApprovedB: true,
+    sheet: 'atlas-approved-b-sheet-800ppi-black-ink-transparent-back-v1', individual: 'atlas-approved-b-individual-2400ppi-black-ink-transparent-back-v1',
+    description: 'Prints the shared back in black ink. Clear details reveal the foil underneath.', printCaption: 'Black back ink only · transparent foil' }),
+  originalBack: Object.freeze({ label: 'Back · original black artwork', side: 'Back', previewMode: 'preview-back', printMode: 'print-back', requiresApprovedB: true,
+    sheet: 'atlas-approved-b-sheet-800ppi-original-back-v1', individual: 'atlas-approved-b-individual-2400ppi-original-back-v1',
+    description: 'Prints the shared back as black artwork on a transparent background. It contains no white ink.', printCaption: 'Original black back artwork · transparent background' }),
+  colorBack: Object.freeze({ label: 'Color back', side: 'Back', previewMode: 'preview-back', printMode: 'print-back-color', requiresApprovedB: true,
+    sheet: 'atlas-approved-b-sheet-800ppi-color-back-v1', individual: 'atlas-approved-b-individual-2400ppi-color-back-v1',
+    description: 'Prints the approved shared back in color. The logo, QR code and spacing stay as approved.', printCaption: 'Color back artwork' }),
 });
+const legacySheetFormats = Object.freeze({
+  'atlas-v4-sheet-800ppi-diagnostic-v2': 'original',
+  'atlas-v4-sheet-800ppi-black-ink-transparent-v1': 'foil',
+  'atlas-approved-b-sheet-800ppi-color-front-v1': 'color',
+});
+const sheetMode = format => format === 'cardFoil' ? 'card-colors-transparent' : format.startsWith('foil') ? 'black-ink-transparent' : format.startsWith('color') ? 'color' : 'original';
+export function labelSupportsPrintFormat(item, format = 'cardFoil') {
+  const profile = LABEL_PRINT_FORMATS[format];
+  return Boolean(profile && (!profile.requiresApprovedB || item?.snapshot?.layoutVersion === 'atlas-approved-b-v1'));
+}
+export function labelSheetProfile(format = 'cardFoil', template = '50', page = 1) {
+  const value = LABEL_PRINT_FORMATS[format];
+  if (!value) return null;
+  if (template === '50') return value.sheet;
+  if (template !== '25') return null;
+  const mode = sheetMode(format);
+  return LABEL_25_CURRENT_PROFILE_DEFINITIONS.find(profile => profile.page === page && profile.mode === mode && profile.side === value.side.toUpperCase())?.id ?? null;
+}
+export function labelPrintFormatForProfile(id) {
+  const pageProfile = getLabel25Profile(id);
+  return LABEL_PRINT_FORMATS[legacySheetFormats[id]] ?? Object.entries(LABEL_PRINT_FORMATS).find(([key, value]) => value.sheet === id || value.individual === id
+    || pageProfile && sheetMode(key) === pageProfile.mode && value.side.toUpperCase() === pageProfile.side)?.[1] ?? null;
+}
+const sheetProfile = id => getLabel25Profile(id) ?? Object.values(LABEL_PRINT_FORMATS).find(format => format.sheet === id)
+  ?? LABEL_PRINT_FORMATS[legacySheetFormats[id]];
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const fail = code => Object.assign(new Error(code), { code });
@@ -15,7 +60,9 @@ const check = (value, code = 'LABEL_REPLY_INVALID') => { if (!value) throw fail(
 export const labelName = item => item?.snapshot?.identity?.playerName || item?.snapshot?.identity?.cardName || item?.identity?.playerName || item?.identity?.cardName || 'Approved card';
 export const labelSheetName = sheet => sheet?.number == null ? 'Saved sheet' : `Sheet ${String(sheet.number).padStart(3, '0')}`;
 export function labelArtworkHref(item, basePath = '', mode = 'preview') {
-  if (!uuid(item?.itemId) || !['preview', 'print', 'preview-foil', 'print-foil'].includes(mode) || item?.state !== 'READY') return null;
+  const formats = Object.values(LABEL_PRINT_FORMATS).filter(format => [format.previewMode, format.printMode].includes(mode));
+  if (!uuid(item?.itemId) || !formats.length || item?.state !== 'READY'
+    || formats.every(format => format.requiresApprovedB) && item?.snapshot?.layoutVersion !== 'atlas-approved-b-v1') return null;
   return `${basePath}${LABEL_ITEMS_PATH}/${item.itemId}/artwork?mode=${mode}`;
 }
 export function labelSheetMessage(error) {
@@ -38,11 +85,14 @@ export function labelSheetMessage(error) {
     LABEL_FAILURE_CHANGED: 'This label changed. Refresh before retrying its layout.',
     LABEL_RENDERER_CHANGED: 'The label layout was updated. Refresh before retrying.',
     LABEL_PROFILE_INVALID: 'This saved export used an older print profile. Refresh labels and prepare a new export.',
+    LABEL_PROFILE_UNAVAILABLE: 'This format is available for approved B labels. Choose an original front format for this saved label.',
+    LABEL_APPROVED_B_REQUIRED: 'This format requires approved B labels throughout the selection. Refresh labels or choose an original front format.',
     LABEL_ITEM_NOT_FOUND: 'This label is no longer available. Refresh to view the current labels.',
     LABEL_SHEET_NOT_FOUND: 'This sheet is no longer available. Refresh to view the current sheets.',
     LABEL_EXPORT_NOT_FOUND: 'This export is no longer available. Refresh and prepare a new export.',
     LABEL_NOT_READY: 'The label is still preparing or needs attention. Refresh its saved status.',
     LABEL_SHEET_NOT_READY: 'This sheet is not ready to export. Check its saved label statuses.',
+    LABEL_SHEET_PAGE_EMPTY: 'This template page has no labels. Choose a page with saved labels before exporting.',
     LABEL_EXPORT_NOT_READY: 'The saved export is still preparing or changed. Refresh its status before downloading.',
     LABEL_ACCESS_DENIED: 'Your current access does not permit this label action.',
     LABEL_REQUEST_CONFLICT: 'The saved request conflicts with a recorded action. Refresh the saved sheet before continuing.',
@@ -88,10 +138,12 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
     catch (error) {
       // These named CAS refusals occur before reservation. Unknown outcomes keep
       // the exact intent, including across reload and other-tab completion.
-      const definiteConflict = error?.status === 409 && ['LABEL_SHEET_STALE', 'LABEL_SHEET_REVISION_STALE', 'LABEL_REQUEST_CONFLICT', 'LABEL_REVISION_CHANGED', 'LABEL_SOURCE_SUPERSEDED', 'LABEL_SHEET_NOT_READY', 'LABEL_EXPORT_NOT_READY', 'LABEL_ACCESS_DENIED', 'LABEL_SOURCE_CHANGED', 'LABEL_PUBLISHED_PRODUCTION_REQUIRED', 'LABEL_EXPORT_RETRY_LIMIT', 'LABEL_EXPORT_CHANGED', 'LABEL_REPRINT_SOURCE_INVALID', 'LABEL_NOT_READY'].includes(error.code);
+      const definiteConflict = error?.status === 409 && ['LABEL_SHEET_STALE', 'LABEL_SHEET_REVISION_STALE', 'LABEL_REQUEST_CONFLICT', 'LABEL_REVISION_CHANGED', 'LABEL_SOURCE_SUPERSEDED', 'LABEL_SHEET_NOT_READY', 'LABEL_SHEET_PAGE_EMPTY', 'LABEL_EXPORT_NOT_READY', 'LABEL_ACCESS_DENIED', 'LABEL_SOURCE_CHANGED', 'LABEL_PUBLISHED_PRODUCTION_REQUIRED', 'LABEL_EXPORT_RETRY_LIMIT', 'LABEL_EXPORT_CHANGED', 'LABEL_REPRINT_SOURCE_INVALID', 'LABEL_NOT_READY'].includes(error.code);
       const unavailableSource = error?.status === 404 && ['LABEL_EXPORT_NOT_FOUND', 'LABEL_ITEM_NOT_FOUND', 'LABEL_SHEET_NOT_FOUND', 'MANUAL_CARD_NOT_FOUND'].includes(error.code) || error?.status === 410 && error.code === 'INTAKE_CARD_DELETED' || error?.status === 403 && error.code === 'LABEL_ACCESS_DENIED';
       const rejectedLayout = saved.kind === 'layout-retry' && error?.status === 409 && ['LABEL_LAYOUT_ALREADY_RETRIED', 'LABEL_LAYOUT_RETRY_UNAVAILABLE', 'LABEL_LAYOUT_RETRY_LIMIT', 'LABEL_FAILURE_CHANGED', 'LABEL_RENDERER_CHANGED'].includes(error.code);
-      const rejectedProfile = ['export', 'individual-export'].includes(saved.kind) && error?.status === 400 && error.code === 'LABEL_PROFILE_INVALID';
+      const rejectedProfile = ['export', 'individual-export'].includes(saved.kind)
+        && (error?.status === 400 && error.code === 'LABEL_PROFILE_INVALID'
+          || [400, 409].includes(error?.status) && error.code === 'LABEL_APPROVED_B_REQUIRED');
       if (definiteConflict || unavailableSource || rejectedLayout || rejectedProfile) clear(saved);
       throw error;
     }
@@ -99,9 +151,9 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
     clear(saved);
     return { kind: saved.kind, result, ...(saved.kind === 'individual-export' ? { itemId: saved.path.split('/').at(-2) } : {}) };
   };
-  const mutate = (kind, path, body) => exclusive(async () => {
+  const mutate = (kind, path, body, metadata = {}) => exclusive(async () => {
     check(!pending(), 'LABEL_REQUEST_PENDING');
-    const saved = { version: 1, staffId, kind, path, body: { requestId: cryptoImpl.randomUUID(), ...body } };
+    const saved = { version: 1, staffId, kind, path, ...metadata, body: { requestId: cryptoImpl.randomUUID(), ...body } };
     check(validPath(saved), 'LABEL_REPLY_INVALID'); save(saved); return commit(saved);
   });
   return Object.freeze({
@@ -124,16 +176,23 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
     },
     exportSheet: (sheet, exportProfileId = LABEL_EXPORT_PROFILE) => {
       check(uuid(sheet?.sheetId) && Number.isInteger(sheet.revision));
-      check(Object.values(LABEL_PRINT_FORMATS).some(format => format.sheet === exportProfileId), 'LABEL_PROFILE_INVALID');
+      check(sheetProfile(exportProfileId), 'LABEL_PROFILE_INVALID');
+      const format = labelPrintFormatForProfile(exportProfileId);
+      const items = Array.isArray(sheet.items) ? selectLabel25Items(sheet.items, exportProfileId) : [];
+      check(items.length > 0, 'LABEL_SHEET_PAGE_EMPTY');
+      check(!format.requiresApprovedB || items.every(item => item.snapshot?.layoutVersion === 'atlas-approved-b-v1'), 'LABEL_PROFILE_UNAVAILABLE');
       return mutate('export', `${LABEL_SHEETS_PATH}/${sheet.sheetId}/exports`, { expectedSheetRevision: sheet.revision, exportProfileId });
     },
     downloadSheet: (sheet, output) => {
       check(uuid(sheet?.sheetId) && uuid(output?.exportId) && output.state === 'READY' && hash(output.sha256));
-      return mutate('download', `${LABEL_SHEETS_PATH}/${sheet.sheetId}/exports/${output.exportId}/download`, { expectedExportSha256: output.sha256 });
+      check(sheetProfile(output.exportProfileId), 'LABEL_PROFILE_INVALID');
+      return mutate('download', `${LABEL_SHEETS_PATH}/${sheet.sheetId}/exports/${output.exportId}/download`, { expectedExportSha256: output.sha256 }, { expectedExportProfileId: output.exportProfileId });
     },
     exportLabel: (item, exportProfileId = LABEL_INDIVIDUAL_PROFILE) => {
       check(uuid(item?.itemId) && item.state === 'READY' && hash(item.labelHash));
-      check(Object.values(LABEL_PRINT_FORMATS).some(format => format.individual === exportProfileId), 'LABEL_PROFILE_INVALID');
+      const format = Object.values(LABEL_PRINT_FORMATS).find(format => format.individual === exportProfileId);
+      check(format, 'LABEL_PROFILE_INVALID');
+      check(!format.requiresApprovedB || item.snapshot?.layoutVersion === 'atlas-approved-b-v1', 'LABEL_PROFILE_UNAVAILABLE');
       return mutate('individual-export', `${LABEL_ITEMS_PATH}/${item.itemId}/exports`, { expectedLabelHash: item.labelHash, exportProfileId });
     },
     readLabelExport: async (itemId, exportId) => {
@@ -146,7 +205,8 @@ export function createLabelSheetsClient({ staffId, csrf, request, storage, crypt
     },
     recordPrint: (sheet, output, successfulSlots) => {
       check(uuid(sheet?.sheetId) && uuid(output?.exportId) && output.state === 'READY' && hash(output.sha256) && hash(output.manifestHash));
-      const occupied = new Set(sheet.items.map(item => item.slot));
+      check(sheetProfile(output.exportProfileId), 'LABEL_PROFILE_INVALID');
+      const occupied = new Set(selectLabel25Items(sheet.items, output.exportProfileId).map(item => item.slot));
       check(Array.isArray(successfulSlots) && successfulSlots.length > 0 && new Set(successfulSlots).size === successfulSlots.length && successfulSlots.every(slot => occupied.has(slot)));
       return mutate('print', `${LABEL_SHEETS_PATH}/${sheet.sheetId}/print-confirmations`, { exportId: output.exportId, exportSha256: output.sha256, manifestHash: output.manifestHash,
         successfulSlots: [...successfulSlots].sort((a, b) => a - b), failedSlots: [] });
@@ -179,7 +239,8 @@ function validateResult(saved, result) {
   if (saved.kind.endsWith('download') || saved.kind === 'download') {
     let url; try { url = new URL(result?.url); } catch { throw fail('LABEL_DOWNLOAD_INVALID'); }
     check(url.protocol === 'https:' && !url.username && !url.password && Number.isFinite(Date.parse(result.expiresAt)) && Date.parse(result.expiresAt) > Date.now(), 'LABEL_DOWNLOAD_INVALID');
-    check(Object.values(LABEL_PRINT_FORMATS).some(format => format[saved.kind === 'individual-download' ? 'individual' : 'sheet'] === result.exportProfileId), 'LABEL_DOWNLOAD_INVALID');
+    check(saved.kind === 'individual-download' ? Object.values(LABEL_PRINT_FORMATS).some(format => format.individual === result.exportProfileId) : Boolean(sheetProfile(result.exportProfileId)), 'LABEL_DOWNLOAD_INVALID');
+    check(!saved.expectedExportProfileId || saved.expectedExportProfileId === result.exportProfileId, 'LABEL_DOWNLOAD_INVALID');
   } else if (saved.kind === 'export' || saved.kind === 'individual-export') {
     check(uuid(result?.exportId) && ['PREPARING', 'READY', 'FAILED'].includes(result.state) && result.exportProfileId === saved.body.exportProfileId);
   } else if (saved.kind === 'print') {

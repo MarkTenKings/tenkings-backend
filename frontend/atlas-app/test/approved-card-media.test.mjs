@@ -17,10 +17,24 @@ const fixture = () => {
     media: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { url: `/api/reports/${publicToken}/images/${side}?v=3`, provenance: 'APPROVED_GRADING_PHOTOGRAPH' }])) };
   const grant = side => ({ version: 'atlas-approved-image-access-v1', publicToken, approvalVersion: 3, publicHash: report.publicHash, side,
     image: { url: `${INSPECTION_STORAGE_ORIGIN}/${side}?synthetic=1`, sha256: hash(bytes), byteCount: bytes.length, width: 1350, height: 1858, mime: 'image/webp' } });
+  const previewBytes = Buffer.from('ffd8ff73796e746865746963', 'hex');
+  const previewGrant = side => {
+    const value = grant(side);
+    value.image.preview = { url: `${INSPECTION_STORAGE_ORIGIN}/${side}-preview?synthetic=1`, sha256: hash(previewBytes), byteCount: previewBytes.length,
+      width: 558, height: 768, mime: 'image/jpeg', sourceSha256: value.image.sha256, policyVersion: 'atlas-inspection-preview-v1' };
+    return value;
+  };
+  const alphaBytes = Buffer.concat([bytes, Buffer.from('alpha')]);
+  const alphaGrant = side => {
+    const value = previewGrant(side);
+    value.image.alphaPreview = { ...value.image.preview, url: `${INSPECTION_STORAGE_ORIGIN}/${side}-alpha?synthetic=1`,
+      sha256: hash(alphaBytes), byteCount: alphaBytes.length, mime: 'image/webp', policyVersion: 'atlas-inspection-alpha-preview-v1' };
+    return value;
+  };
   const response = side => new Response(JSON.stringify(grant(side)), { headers: { 'content-type': 'application/json' } });
   const labelId = '33333333-3333-4333-8333-333333333333';
   card.media.LABEL = { itemId: labelId, url: `/admin/api/staff/manual-connected/labels/${labelId}/artwork?mode=preview`, provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
-  return { card, bytes, grant, response, front: approvedMediaSource(card, 'FRONT'), back: approvedMediaSource(card, 'BACK') };
+  return { card, bytes, grant, previewBytes, previewGrant, alphaBytes, alphaGrant, response, front: approvedMediaSource(card, 'FRONT'), back: approvedMediaSource(card, 'BACK') };
 };
 
 function loader(fetchImpl, options = {}) {
@@ -43,6 +57,20 @@ test('exact published media routes refuse another side, version, publication, la
   assert.equal(approvedMediaSource(badLabel, 'LABEL'), null);
   const changed = structuredClone(f.card); changed.report.publicHash = 'd'.repeat(64);
   assert.notEqual(approvedMediaIdentity(changed), approvedMediaIdentity(f.card));
+});
+
+test('approved back label is bound to the saved approved-B front item and exact back route', () => {
+  const { card } = fixture();
+  assert.equal(approvedMediaSource(card, 'LABEL_BACK'), null);
+  card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+  card.media.LABEL_BACK = { ...card.media.LABEL, url: card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
+  assert.deepEqual(approvedMediaSource(card, 'LABEL_BACK'), { kind: 'LABEL_BACK', url: card.media.LABEL_BACK.url, layoutVersion: 'atlas-approved-b-v1' });
+  for (const mutate of [c => { delete c.media.LABEL.layoutVersion; }, c => { delete c.media.LABEL; },
+    c => { c.media.LABEL_BACK.url = c.media.LABEL.url; }, c => { c.media.LABEL_BACK.url += '&extra=1'; },
+    c => { c.media.LABEL_BACK.provenance = 'APPROVED_GRADING_PHOTOGRAPH'; },
+    c => { c.media.LABEL_BACK.itemId = c.cardId; c.media.LABEL_BACK.url = `/admin/api/staff/manual-connected/labels/${c.cardId}/artwork?mode=preview-back`; }]) {
+    const changed = structuredClone(card); mutate(changed); assert.equal(approvedMediaSource(changed, 'LABEL_BACK'), null);
+  }
 });
 
 test('503 and rate limit recover within three attempts and exact bytes are verified without credentials to storage', async () => {
@@ -122,6 +150,17 @@ test('label preview uses the exact authenticated route, stays bounded and revoke
   await assert.rejects(huge.load(source), /APPROVED_MEDIA_TOO_LARGE/); assert.equal(huge.created.length, 0);
 });
 
+test('back-label loading uses its authenticated saved route and independent disposal', async () => {
+  const { card } = fixture(); card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+  card.media.LABEL_BACK = { ...card.media.LABEL, url: card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
+  const source = approvedMediaSource(card, 'LABEL_BACK');
+  const l = loader(async (url, init) => {
+    assert.equal(url, source.url); assert.equal(init.credentials, 'same-origin');
+    return new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', { headers: { 'content-type': 'image/svg+xml' } });
+  });
+  const loaded = await l.load(source); assert.equal(l.created.length, 1); loaded.dispose(); assert.deepEqual(l.revoked, [loaded.url]);
+});
+
 test('private 401/403 ends access once and never retries or exposes an image', async () => {
   for (const status of [401, 403]) {
     const f = fixture(); let calls = 0, revoked = 0;
@@ -185,4 +224,380 @@ test('a late verified asset arriving after timeout is revoked instead of publish
   const l = loader(async () => f.response('FRONT'), { timeoutMs: 15, verify: () => gate.promise });
   await assert.rejects(l.load(f.front), /APPROVED_MEDIA_TIMEOUT/);
   gate.resolve({ url: 'blob:late', dispose() { disposed++; } }); await pause(0); assert.equal(disposed, 1);
+});
+
+test('preview delivery verifies only the saved small rendition and exposes its distinct source lineage', async () => {
+  for (const side of ['FRONT', 'BACK']) {
+    const f = fixture(), grant = f.previewGrant(side), source = approvedMediaSource(f.card, side, { delivery: 'preview' }), calls = [];
+    const l = loader(async (url, init) => {
+      calls.push(url); assert.equal(init.cache, 'no-store'); assert.equal(init.credentials, 'omit');
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.preview.url); return new Response(f.previewBytes);
+    });
+    const asset = await l.load(source);
+    assert.equal(calls.length, 2); assert.equal(asset.representation, 'preview');
+    assert.equal(asset.sha256, hash(f.previewBytes)); assert.equal(asset.sourceSha256, hash(f.bytes));
+    assert.equal(asset.width, 558); assert.equal(asset.height, 768); assert.equal(asset.byteCount, f.previewBytes.length);
+    assert.equal(l.created[0].blob.type, 'image/jpeg'); asset.dispose(); assert.deepEqual(l.revoked, [asset.url]);
+    assert.equal(approvedMediaSource(f.card, side).delivery, 'full');
+    assert.equal(approvedMediaSource(f.card, side, { delivery: 'thumbnail' }), null);
+  }
+});
+
+test('explicit full delivery never substitutes a preview, and a missing preview uses the exact full source', async () => {
+  for (const delivery of ['full', 'preview']) {
+    const f = fixture(), grant = delivery === 'full' ? f.previewGrant('FRONT') : f.grant('FRONT'), calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.url); return new Response(f.bytes);
+    });
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery }));
+    assert.equal(calls.length, 2); assert.equal(asset.representation, 'full');
+    assert.equal(asset.sha256, hash(f.bytes)); assert.equal(asset.sourceSha256, hash(f.bytes));
+    assert.equal(asset.width, 1350); assert.equal(asset.height, 1858); asset.dispose();
+  }
+});
+
+test('transparent preview wins for stills while explicit full delivery retains original bytes', async () => {
+  for (const delivery of ['preview', 'full']) {
+    const f = fixture(), grant = f.alphaGrant('FRONT'), calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, delivery === 'preview' ? grant.image.alphaPreview.url : grant.image.url);
+      return new Response(delivery === 'preview' ? f.alphaBytes : f.bytes);
+    });
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery }));
+    assert.equal(calls.length, 2); assert.equal(asset.representation, delivery);
+    assert.equal(asset.sha256, hash(delivery === 'preview' ? f.alphaBytes : f.bytes));
+    assert.equal(asset.sourceSha256, hash(f.bytes)); assert.equal(l.created[0].blob.type, 'image/webp');
+    asset.dispose(); assert.deepEqual(l.revoked, [asset.url]);
+  }
+});
+
+test('unavailable transparent preview falls through only the verified same-grant JPEG then full', async () => {
+  for (const jpegAvailable of [true, false]) {
+    const f = fixture(), grant = f.alphaGrant('FRONT'), calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      if (url === grant.image.alphaPreview.url || url === grant.image.preview.url && !jpegAvailable)
+        return new Response(null, { status: 404 });
+      return new Response(jpegAvailable ? f.previewBytes : f.bytes);
+    });
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }));
+    assert.deepEqual(calls.slice(1), [grant.image.alphaPreview.url, grant.image.preview.url, ...(!jpegAvailable ? [grant.image.url] : [])]);
+    assert.equal(asset.sha256, hash(jpegAvailable ? f.previewBytes : f.bytes)); asset.dispose();
+  }
+});
+
+test('transparent preview corruption, wrong lineage and cancellation never bypass verification', async () => {
+  for (const mode of ['lineage', 'bytes', 'abort']) {
+    const f = fixture(), grant = f.alphaGrant('FRONT'), calls = [], controller = new AbortController();
+    if (mode === 'lineage') grant.image.alphaPreview.sourceSha256 = 'e'.repeat(64);
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.alphaPreview.url);
+      if (mode === 'abort') { controller.abort(); throw new TypeError('fetch aborted'); }
+      return new Response(f.bytes);
+    });
+    await assert.rejects(l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), { signal: controller.signal }));
+    assert.equal(calls.length, mode === 'lineage' ? 1 : 2); assert.equal(l.created.length, 0);
+  }
+});
+
+test('pending alpha is advertised only on the displayed legacy preview, never on exact full bytes', async () => {
+  for (const [delivery, withJpeg] of [['preview', true], ['preview', false], ['full', true]]) {
+    const f = fixture(), grant = f.previewGrant('FRONT'); grant.image.alphaPreviewPending = true;
+    if (!withJpeg) delete grant.image.preview;
+    const l = loader(async url => url.includes('delivery=direct') ? new Response(JSON.stringify(grant))
+      : new Response(delivery === 'preview' && withJpeg ? f.previewBytes : f.bytes));
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery }));
+    assert.equal(asset.alphaPreviewPending, delivery === 'preview' && withJpeg ? true : undefined); asset.dispose();
+  }
+});
+
+test('alpha-only rechecks never download a JPEG or full fallback when alpha is pending or unavailable', async () => {
+  for (const mode of ['pending', 'missing', 'network']) {
+    const f = fixture(), grant = mode === 'pending' ? f.previewGrant('FRONT') : f.alphaGrant('FRONT'), calls = [];
+    if (mode === 'pending') grant.image.alphaPreviewPending = true;
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.alphaPreview.url);
+      if (mode === 'network') throw new TypeError('network unavailable');
+      return new Response(null, { status: 404 });
+    }, { retryDelays: [] });
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }),
+      { alphaOnly: true, expectedSourceSha256: hash(f.bytes) });
+    assert.equal(asset, null); assert.equal(calls.length, mode === 'pending' ? 1 : 2); assert.equal(l.created.length, 0);
+  }
+});
+
+test('alpha-only rechecks reject a changed full-source hash before downloading any replacement bytes', async () => {
+  const f = fixture(), grant = f.alphaGrant('FRONT'), calls = [];
+  grant.image.sha256 = 'd'.repeat(64); grant.image.preview.sourceSha256 = grant.image.sha256;
+  grant.image.alphaPreview.sourceSha256 = grant.image.sha256;
+  const l = loader(async url => { calls.push(url); return new Response(JSON.stringify(grant)); });
+  await assert.rejects(l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }),
+    { alphaOnly: true, expectedSourceSha256: hash(f.bytes) }), { code: 'APPROVED_MEDIA_SOURCE_CHANGED' });
+  assert.equal(calls.length, 1); assert.equal(l.created.length, 0);
+});
+
+test('background alpha rechecks take lower shared admission priority than a still and saved label', async () => {
+  const f = fixture(), calls = [], gate = deferred();
+  const l = loader(async url => {
+    calls.push(url);
+    if (url.includes('/labels/')) return new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } });
+    return new Response(JSON.stringify(f.alphaGrant(url.includes('BACK') ? 'BACK' : 'FRONT')));
+  }, { verify: async descriptor => { await gate.promise; return { url: `blob:${descriptor.url}`, dispose() {} }; } });
+  const alpha = l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), { alphaOnly: true });
+  const still = l.load(approvedMediaSource(f.card, 'BACK', { delivery: 'preview' }));
+  const label = l.load(approvedMediaSource(f.card, 'LABEL'));
+  await pause(0);
+  assert.deepEqual(calls, [`${f.back.url}&delivery=direct`, approvedMediaSource(f.card, 'LABEL').url, `${f.front.url}&delivery=direct`]);
+  gate.resolve(); (await Promise.all([alpha, still, label])).forEach(asset => asset.dispose());
+});
+
+test('a cold transparent preview upgrades the visible JPEG without another JPEG or full download', async () => {
+  const f = fixture(), calls = [], views = [], upgraded = deferred(); let grants = 0;
+  const l = loader(async url => {
+    calls.push(url);
+    if (url.includes('delivery=direct')) {
+      const grant = ++grants < 3 ? f.previewGrant('FRONT') : f.alphaGrant('FRONT');
+      if (grants < 3) grant.image.alphaPreviewPending = true;
+      return new Response(JSON.stringify(grant));
+    }
+    return new Response(url.includes('-alpha?') ? f.alphaBytes : f.previewBytes);
+  });
+  const resource = createApprovedMediaResource({ load: l.load, alphaRetryDelays: [1, 1, 1] });
+  try {
+    await resource.read(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), state => {
+      views.push(state); if (state.sha256 === hash(f.alphaBytes)) upgraded.resolve();
+    });
+    assert.equal(views.at(-1).sha256, hash(f.previewBytes)); assert.deepEqual(l.revoked, []);
+    await upgraded.promise; await pause(5);
+    assert.equal(grants, 3); assert.equal(views.length, 3); assert.equal(views.at(-1).error, null);
+    assert.deepEqual(calls.filter(url => !url.includes('delivery=direct')),
+      [f.previewGrant('FRONT').image.preview.url, f.alphaGrant('FRONT').image.alphaPreview.url]);
+    assert.deepEqual(l.revoked, ['blob:approved-0']); assert.equal(views.at(-1).url, 'blob:approved-1');
+  } finally { resource.dispose(); }
+  assert.deepEqual(l.revoked, ['blob:approved-0', 'blob:approved-1']);
+});
+
+test('a cache that stays pending gets at most three background checks and leaves the still usable', async () => {
+  const f = fixture(), grant = f.previewGrant('FRONT'), checked = deferred(), calls = [], views = []; let grants = 0;
+  grant.image.alphaPreviewPending = true;
+  const l = loader(async url => {
+    calls.push(url);
+    if (url.includes('delivery=direct')) { if (++grants === 4) checked.resolve(); return new Response(JSON.stringify(grant)); }
+    return new Response(f.previewBytes);
+  });
+  const resource = createApprovedMediaResource({ load: l.load, alphaRetryDelays: [1, 1, 1] });
+  try {
+    await resource.read(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), state => views.push(state));
+    await checked.promise; await pause(5);
+    assert.equal(grants, 4); assert.equal(views.length, 2); assert.equal(views.at(-1).error, null);
+    assert.equal(calls.filter(url => !url.includes('delivery=direct')).length, 1); assert.deepEqual(l.revoked, []);
+  } finally { resource.dispose(); }
+});
+
+test('corrupt alpha or a changed approved source cannot replace the retained still or schedule further checks', async () => {
+  for (const mode of ['source', 'bytes']) {
+    const f = fixture(), attempted = deferred(), calls = [], views = []; let grants = 0;
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) {
+        const grant = ++grants === 1 ? f.previewGrant('FRONT') : f.alphaGrant('FRONT');
+        if (grants === 1) grant.image.alphaPreviewPending = true;
+        else if (mode === 'source') {
+          grant.image.sha256 = 'd'.repeat(64); grant.image.preview.sourceSha256 = grant.image.sha256;
+          grant.image.alphaPreview.sourceSha256 = grant.image.sha256;
+        }
+        return new Response(JSON.stringify(grant));
+      }
+      if (url.includes('-alpha?')) { const corrupt = Buffer.from(f.alphaBytes); corrupt[corrupt.length - 1] ^= 1; return new Response(corrupt); }
+      return new Response(f.previewBytes);
+    });
+    const resource = createApprovedMediaResource({ alphaRetryDelays: [1, 1, 1], load: async (source, options) => {
+      try { return await l.load(source, options); } finally { if (options.alphaOnly) attempted.resolve(); }
+    } });
+    try {
+      await resource.read(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), state => views.push(state));
+      await attempted.promise; await pause(5);
+      assert.equal(grants, 2); assert.equal(views.length, 2); assert.equal(views.at(-1).sha256, hash(f.previewBytes));
+      assert.equal(views.at(-1).error, null); assert.deepEqual(l.revoked, []); assert.equal(l.created.length, 1);
+      assert.equal(calls.length, mode === 'source' ? 3 : 4);
+    } finally { resource.dispose(); }
+  }
+});
+
+test('disposal, replacement and decode failure abort optional checks and revoke late alpha without publishing', async () => {
+  for (const action of ['dispose', 'replace', 'fail']) {
+    const f = fixture(), source = approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' });
+    const started = deferred(), late = deferred(), views = [], revoked = []; let upgradeSignal;
+    const resource = createApprovedMediaResource({ alphaRetryDelays: [1, 1, 1], load: async (requested, options) => {
+      if (options.alphaOnly) { upgradeSignal = options.signal; started.resolve(); return late.promise; }
+      const changed = requested !== source;
+      return { url: changed ? 'blob:new-source' : 'blob:jpeg', representation: 'preview', sourceSha256: hash(f.bytes),
+        alphaPreviewPending: !changed, dispose() { revoked.push(changed ? 'new-source' : 'jpeg'); } };
+    } });
+    await resource.read(source, value => views.push(value)); await started.promise;
+    if (action === 'dispose') resource.dispose();
+    if (action === 'replace') await resource.read({ ...source, binding: { ...source.binding, publicHash: 'd'.repeat(64) } }, value => views.push(value));
+    if (action === 'fail') resource.fail('FRONT', 'blob:jpeg', 'preview');
+    assert.equal(upgradeSignal.aborted, true); const count = views.length;
+    late.resolve({ url: 'blob:late-alpha', representation: 'preview', sourceSha256: hash(f.bytes), dispose() { revoked.push('late-alpha'); } });
+    await pause(5); assert.equal(views.length, count); assert.deepEqual(revoked, ['jpeg', 'late-alpha']);
+    resource.dispose();
+  }
+  const f = fixture(); let calls = 0;
+  const resource = createApprovedMediaResource({ alphaRetryDelays: [1, 1, 1], load: async () => {
+    calls++; return { url: 'blob:jpeg', sourceSha256: hash(f.bytes), alphaPreviewPending: true, dispose() {} };
+  } });
+  await resource.read(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), () => {});
+  resource.dispose(); await pause(5); assert.equal(calls, 1, 'unmount cancels the timer before any optional request');
+});
+
+test('unavailable preview falls back once to the independently verified full photograph from the same grant', async () => {
+  for (const mode of ['missing', 'network']) {
+    const f = fixture(), grant = f.previewGrant('FRONT'), calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      if (url === grant.image.preview.url) {
+        if (mode === 'network') throw new TypeError('fetch failed');
+        return new Response(null, { status: 404 });
+      }
+      assert.equal(url, grant.image.url); return new Response(f.bytes);
+    });
+    const asset = await l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }));
+    assert.equal(calls.filter(url => url.includes('delivery=direct')).length, 1);
+    assert.equal(calls.filter(url => url === grant.image.url).length, 1);
+    assert.equal(calls.filter(url => url === grant.image.preview.url).length, mode === 'network' ? 3 : 1);
+    assert.equal(asset.representation, 'full'); assert.equal(asset.sha256, hash(f.bytes)); asset.dispose();
+  }
+});
+
+test('invalid preview lineage and corrupt preview bytes fail closed without fetching another image', async () => {
+  const cases = [
+    ['lineage', g => { g.image.preview.sourceSha256 = 'e'.repeat(64); }, undefined, 1],
+    ['side', g => { g.side = 'BACK'; }, undefined, 1],
+    ['version', g => { g.approvalVersion++; }, undefined, 1],
+    ['hash', g => { g.image.preview.sha256 = 'd'.repeat(64); }, undefined, 2],
+    ['length', g => { g.image.preview.byteCount++; }, undefined, 2],
+    ['format', g => { g.image.preview.sha256 = hash(Buffer.alloc(11)); }, Buffer.alloc(11), 2],
+  ];
+  for (const [name, mutate, bytes, expectedCalls] of cases) {
+    const f = fixture(), grant = f.previewGrant('FRONT'); mutate(grant); const calls = [];
+    const l = loader(async url => {
+      calls.push(url);
+      if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+      assert.equal(url, grant.image.preview.url, name); return new Response(bytes ?? f.previewBytes);
+    });
+    await assert.rejects(l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' })), undefined, name);
+    assert.equal(calls.length, expectedCalls, name); assert.equal(l.created.length, 0, name);
+  }
+});
+
+test('preview cancellation and the original deadline cannot trigger a full fallback or publish late bytes', async () => {
+  for (const mode of ['abort', 'timeout']) {
+    const f = fixture(), gate = deferred(), controller = new AbortController(), calls = []; let released = 0;
+    const l = loader(async url => { calls.push(url); return new Response(JSON.stringify(f.previewGrant('FRONT'))); },
+      { timeoutMs: mode === 'timeout' ? 15 : 1000, verify: () => gate.promise });
+    const pending = l.load(approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' }), { signal: controller.signal });
+    const rejected = assert.rejects(pending); await pause(0);
+    if (mode === 'abort') controller.abort();
+    await rejected; gate.resolve({ url: 'blob:late-preview', dispose() { released++; } }); await pause(0);
+    assert.equal(calls.length, 1); assert.equal(released, 1);
+  }
+});
+
+test('small photographs and saved labels share prompt FIFO admission ahead of optional full media', async () => {
+  const f = fixture(), calls = [], gate = deferred();
+  f.card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+  f.card.media.LABEL_BACK = { ...f.card.media.LABEL, url: f.card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
+  const l = loader(async url => {
+    calls.push(url);
+    if (url.includes('/labels/')) return new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } });
+    return new Response(JSON.stringify(f.previewGrant(url.includes('BACK') ? 'BACK' : 'FRONT')));
+  }, { verify: async descriptor => { await gate.promise; return { url: `blob:${descriptor.url}`, dispose() {} }; } });
+  const full = l.load(f.front), label = l.load(approvedMediaSource(f.card, 'LABEL'));
+  const preview = l.load(approvedMediaSource(f.card, 'BACK', { delivery: 'preview' }));
+  const backLabel = l.load(approvedMediaSource(f.card, 'LABEL_BACK'));
+  await pause(0);
+  assert.deepEqual(calls, [approvedMediaSource(f.card, 'LABEL').url, `${f.back.url}&delivery=direct`,
+    approvedMediaSource(f.card, 'LABEL_BACK').url, `${f.front.url}&delivery=direct`]);
+  gate.resolve(); (await Promise.all([full, label, preview, backLabel])).forEach(asset => asset.dispose());
+});
+
+test('independent preview and full slots preserve stills on full failure, retry and decode failure', async () => {
+  const f = fixture(), preview = approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' });
+  const calls = [], views = { preview: [], full: [] }, released = []; let failFull = true;
+  const resource = createApprovedMediaResource({ load: async source => {
+    calls.push(source.delivery);
+    if (source.delivery === 'full' && failFull) throw new Error('full unavailable');
+    return { url: `blob:${source.delivery}`, representation: source.delivery, width: source.delivery === 'full' ? 1350 : 558,
+      dispose() { released.push(source.delivery); } };
+  } });
+  await resource.read(preview, value => views.preview.push(value));
+  await resource.read(f.front, value => views.full.push(value));
+  assert.equal(views.preview.at(-1).url, 'blob:preview'); assert.ok(views.full.at(-1).error);
+  failFull = false; await resource.read(f.front, value => views.full.push(value));
+  assert.equal(views.preview.length, 2); assert.equal(views.full.at(-1).representation, 'full');
+  resource.fail('FRONT', 'blob:full'); assert.deepEqual(released, ['full']); assert.equal(views.preview.length, 2);
+  resource.fail('FRONT', 'blob:stale'); assert.equal(views.preview.length, 2);
+  resource.dispose(); assert.deepEqual(released, ['full', 'preview']); assert.deepEqual(calls, ['preview', 'full', 'full']);
+});
+
+test('re-reading an owned slot publishes pending and ready state to the current callback without another transfer', async () => {
+  const f = fixture(), gate = deferred(), original = [], latest = [], ready = []; let calls = 0;
+  const resource = createApprovedMediaResource({ load: async () => { calls++; return gate.promise; } });
+  const first = resource.read(f.front, value => original.push(value)); await pause(0);
+  const second = resource.read(f.front, value => latest.push(value));
+  assert.equal(first, second); assert.equal(latest.at(-1).loading, true);
+  gate.resolve({ url: 'blob:full', representation: 'full', sourceSha256: hash(f.bytes), dispose() {} }); await first;
+  assert.equal(original.length, 1); assert.equal(latest.at(-1).url, 'blob:full');
+  await resource.read(f.front, value => ready.push(value));
+  assert.equal(calls, 1); assert.deepEqual(ready, [latest.at(-1)]); resource.dispose();
+});
+
+test('failed full delivery never fetches an available preview as replacement evidence', async () => {
+  const f = fixture(), grant = f.previewGrant('FRONT'), calls = [];
+  const l = loader(async url => {
+    calls.push(url);
+    if (url.includes('delivery=direct')) return new Response(JSON.stringify(grant));
+    assert.equal(url, grant.image.url); return new Response(null, { status: 404 });
+  });
+  await assert.rejects(l.load(f.front), /VERIFIED_IMAGE_UNAVAILABLE/);
+  assert.deepEqual(calls, [`${f.front.url}&delivery=direct`, grant.image.url]); assert.equal(l.created.length, 0);
+});
+
+test('leaving 3D cancels only pending full reads, preserves completed media and discards late full results', async () => {
+  const f = fixture(), preview = approvedMediaSource(f.card, 'FRONT', { delivery: 'preview' });
+  const gates = [], views = [], released = [], calls = [];
+  const resource = createApprovedMediaResource({ load: async (source, { signal }) => {
+    calls.push(`${source.kind}:${source.delivery}`);
+    if (source.kind === 'FRONT' && source.delivery === 'full') {
+      const gate = deferred(); gates.push({ ...gate, signal }); return gate.promise;
+    }
+    return { url: `blob:${source.kind}:${source.delivery}`, dispose() { released.push(`${source.kind}:${source.delivery}`); } };
+  } });
+  await resource.read(preview, () => {}); await resource.read(f.back, () => {});
+  const pending = resource.read(f.front, value => views.push(value)); await pause(0);
+  resource.cancel('FRONT'); resource.cancel('BACK');
+  assert.equal(gates[0].signal.aborted, true); assert.deepEqual(released, []);
+  assert.deepEqual(views.at(-1), { loading: false, url: null, error: null, cancelled: true });
+  const count = views.length;
+  gates[0].resolve({ url: 'blob:late-full', dispose() { released.push('late-full'); } }); await pending;
+  assert.equal(views.length, count); assert.deepEqual(released, ['late-full']);
+  const resumed = resource.read(f.front, value => views.push(value)); await pause(0);
+  assert.equal(gates[1].signal.aborted, false); assert.equal(views.at(-1).loading, true);
+  gates[1].resolve({ url: 'blob:resumed-full', dispose() { released.push('resumed-full'); } }); await resumed;
+  resource.cancel('FRONT'); assert.equal(views.at(-1).url, 'blob:resumed-full');
+  resource.dispose();
+  assert.deepEqual(calls, ['FRONT:preview', 'BACK:full', 'FRONT:full', 'FRONT:full']);
+  assert.deepEqual(released, ['late-full', 'FRONT:preview', 'BACK:full', 'resumed-full']);
 });

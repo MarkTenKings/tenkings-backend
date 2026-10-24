@@ -33,6 +33,27 @@ test('new access request is signed and versioned without accepting arbitrary obj
     assert.throws(() => signManualPublicRequest(config, { ...request, ...change }));
 });
 
+test('transparent preview is additive, source-bound and restricted to its WebP policy', () => {
+  const value = access();
+  value.image.alphaPreview = { ...value.image.preview, url: `${INSPECTION_STORAGE_ORIGIN}/alpha?grant=fixture`,
+    mime: 'image/webp', policyVersion: 'atlas-inspection-alpha-preview-v1' };
+  assert.deepEqual(parseInspectionAccess(value), value);
+  assert.deepEqual(parseInspectionAccess(value).image.preview, access().image.preview);
+  for (const patch of [{ sourceSha256: publicHash }, { mime: 'image/jpeg' }, { policyVersion: 'atlas-inspection-preview-v1' },
+    { byteCount: 1048577 }, { width: 768 }, { url: 'https://other.invalid/alpha' }]) {
+    const changed = structuredClone(value); Object.assign(changed.image.alphaPreview, patch);
+    assert.throws(() => parseInspectionAccess(changed));
+  }
+  delete value.image.preview;
+  assert.deepEqual(parseInspectionAccess(value), value);
+  value.image.alphaPreviewPending = true;
+  assert.throws(() => parseInspectionAccess(value));
+  delete value.image.alphaPreview;
+  assert.deepEqual(parseInspectionAccess(value), value);
+  value.image.alphaPreviewPending = 'true';
+  assert.throws(() => parseInspectionAccess(value));
+});
+
 
 test('Photoroom direct access allows bounded full resolution with exact approval and output bindings', () => {
   const value={...access(),version:'atlas-approved-report-image-access-v1',execution:'PHOTOROOM_PLUS_API',

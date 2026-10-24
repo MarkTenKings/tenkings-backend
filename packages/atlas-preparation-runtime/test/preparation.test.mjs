@@ -382,6 +382,32 @@ test('human outer-quad correction keeps observed source silhouette but recompute
  assert.deepEqual(two.frame.materialContour,expected);
 });
 
+test('inward human corner correction prepares a valid clipped silhouette without changing photo pixels or source evidence',async()=>{
+ const {validMaterialContour}=await import('../../atlas-manual-workspace/src/material-contour.mjs');
+ const {preparedPointToOriginal}=await import('../../atlas-manual-workspace/src/geometry-actions.mjs');
+ const ready=adoptGeometryPreparation(workspace,prepared).state;
+ // Rounded corner samples straddle the corrected bottom-left corner. The old
+ // per-coordinate clamp collapses several of them onto (0,1).
+ const canonical=[[.01,0],[.99,0],[1,.01],[1,.99],[.99,1],[.01,1],[.004,.999],[.001,.996],[0,.99],[0,.01]];
+ const materialContour=canonical.map(([x,y])=>preparedPointToOriginal(ready,'FRONT',{x:x*1269/1270,y:y*1777/1778}));
+ const quad=workspace.sides.FRONT.physical.quad.map((p,i)=>i===3?{x:p.x+.015,y:p.y-.015}:{...p});
+ const edited=applyGeometryEdit(workspace,{side:'FRONT',kind:'PHYSICAL',base:geometryBase(workspace,'FRONT','PHYSICAL'),quad,materialContour,actor:'HUMAN'}).state;
+ const before=structuredClone(edited),result=await prepareGeometry(input({workspace:edited}));
+ const[a,b,c,d,e,f,g,h,i]=result.frame.sourceToRectified,{width,height}=source.frame.raster.dimensions;
+ const clamped=materialContour.map(p=>{const x=p.x*width,y=p.y*height,w=g*x+h*y+i;return{x:Math.max(0,Math.min(1,(a*x+b*y+c)/w/1269)),y:Math.max(0,Math.min(1,(d*x+e*y+f)/w/1777))};});
+ assert.equal(validMaterialContour(clamped),false,'the actual native transform reproduces the old failure');
+ assert.equal(validMaterialContour(result.frame.materialContour),true);
+ assert.deepEqual(edited,before);
+ const adopted=adoptGeometryPreparation(edited,result).state;
+ assert.deepEqual(adopted.sides.FRONT.physical.materialContour,materialContour);
+ assert.deepEqual(adopted.sides.BACK,workspace.sides.BACK);
+ assert.equal(adopted.sides.FRONT.printed,null);assert.equal(adopted.sides.FRONT.confirmation,null);
+ const withoutContour=structuredClone(edited);delete withoutContour.sides.FRONT.physical.materialContour;
+ const unchangedPixels=await prepareGeometry(input({workspace:withoutContour}));
+ for(const name of Object.keys(result.outputs))assert.equal(result.outputs[name].sha256,unchangedPixels.outputs[name].sha256);
+ assert.deepEqual(result.frame.sourceToRectified,unchangedPixels.frame.sourceToRectified);
+});
+
 test('fresh photographic contours survive native preparation, measurement, reviewed report and public packet projection',async()=>{
  const {confirmBothGeometry}=await import('../../atlas-manual-workspace/src/geometry-actions.mjs');
  const {createDefectWorkspace,beginDefectEdit,applyDefectMeasurement,defectBase,markDefectSideInspected,confirmDefectFindings,previewDefectReport}=await import('../../atlas-manual-workspace/src/defect-actions.mjs');

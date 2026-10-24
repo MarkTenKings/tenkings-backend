@@ -4,10 +4,10 @@ import { canonical, requireThat } from '@atlas/manual-service/contract';
 import { createStaffCompCurationNativeComposition } from '../lib/server/staff-comp-curation-native-composition.mjs';
 import { curationFixture, deferred } from './staff-comp-curation-fixture.mjs';
 
-async function fixture() {
+async function fixture(selectionPolicy) {
   const f = await curationFixture();
   let actor = f.staff, authCalls = 0;
-  const options = { enabled: true, environment: {}, ...Object.fromEntries(['boundary', 'approved', 'artifacts', 'validateAccess'].map(key => [key, f.options[key]])),
+  const options = { enabled: true, environment: {}, ...(selectionPolicy === undefined ? {} : { selectionPolicy }), ...Object.fromEntries(['boundary', 'approved', 'artifacts', 'validateAccess'].map(key => [key, f.options[key]])),
     origin: 'http://127.0.0.1:4318',
     auth: { async authenticate(cookie, csrf) {
       authCalls++; await f.hooks.auth?.(authCalls);
@@ -47,7 +47,9 @@ test('enabled composition refuses serverless hosts, policy/provider injection an
     assert.throws(() => createStaffCompCurationNativeComposition({ ...f.options, ...extra }), { code: 'COMP_NOT_CONFIGURED' });
   }
   assert.equal(f.authCalls, 0); assert.equal(f.calls.insert, 0);
-  assert(Object.isFrozen(f.composition)); assert.deepEqual(Object.keys(f.composition).sort(), ['close', 'handler', 'policy', 'status', 'visibility']);
+  assert(Object.isFrozen(f.composition)); assert.deepEqual(Object.keys(f.composition).sort(), ['archiveCompAccess', 'close', 'handler', 'policy', 'selectionPolicy', 'status', 'visibility']);
+  assert.equal(f.composition.selectionPolicy, null);
+  assert.equal(f.composition.archiveCompAccess, false);
 });
 
 test('actual service/HTTP composition reads saved evidence and records only private null-policy decisions', async () => {
@@ -103,4 +105,17 @@ test('ingress and current approval/access refusals remain independent from priva
   assert.equal((await f.request(null, { syntheticAdmitted: false })).status, 403); assert.equal(f.authCalls, 0);
   f.row.state = 'PENDING'; assert.equal((await f.request()).status, 409); assert.equal((await f.request(f.decision('SKIP'))).status, 409);
   f.row.state = 'PUBLISHED'; f.setActor(null); assert.equal((await f.request()).status, 401); assert.equal(f.calls.insert, 0);
+});
+
+test('explicit evidence-only native opt-in retains null pricing and detects later policy substitution', async () => {
+  const selectionPolicy = { version: 'atlas-comp-evidence-selection-policy-v1', status: 'LOCAL_PROPOSAL',
+    method: 'private-saved-sold-evidence-v1', recencyDays: null, rightsStatus: 'UNRESOLVED' };
+  const f = await fixture(selectionPolicy), state = await f.request();
+  assert.equal(state.status, 200); assert.equal(state.body.result.availability, 'READY');
+  assert.equal(f.composition.policy, null); assert.deepEqual(f.composition.selectionPolicy, selectionPolicy);
+  const saved = await f.request(f.input({ expectedPolicyHash: state.body.result.policyHash }));
+  assert.equal(saved.status, 200); assert.equal(saved.body.result.outcome, 'SELECTED'); assert.equal(saved.body.result.guidance, null);
+  assert.equal(f.calls.insert, 1);
+  selectionPolicy.recencyDays = 90;
+  assert.equal((await f.request()).status, 503); assert.equal(f.calls.insert, 1);
 });

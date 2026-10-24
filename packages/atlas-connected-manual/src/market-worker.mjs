@@ -2,6 +2,7 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { EbaySoldCompsV2Error } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarket, publishedMarketQuery, marketPreviewHash } from './presentation-market.mjs';
 import { marketHasRetiredReclassification } from './market-job-store.mjs';
+import { ARCHIVE_MARKET_ORIGIN, assertMarketArchiveSearchCapability } from './market-archive-search.mjs';
 
 // Only typed provider refusals prove there was no successful paid result.
 export function marketProviderFailure(error) {
@@ -51,25 +52,39 @@ export function mergeMarketPages(prior, current, previousPreviewId) {
 /** Cold construction. Only start/cycle executes durable, human-admitted jobs.
  * Leases bound process concurrency, never the number of approved cards. */
 export function createMarketWorker({ store, approved, publication, artifacts, provider, authorityFor, labelMarket = null,
-  concurrency = 2, intervalMs = 2000, heartbeatMs = 30000, timers = globalThis, onError = () => {} }) {
+  concurrency = 2, intervalMs = 2000, heartbeatMs = 30000, timers = globalThis, onError = () => {}, archiveSearch = null }) {
   requireThat(typeof provider === 'function' && typeof authorityFor === 'function' && Number.isInteger(concurrency)
     && concurrency >= 1 && concurrency <= 16 && Number.isInteger(intervalMs) && intervalMs >= 10
     && Number.isInteger(heartbeatMs) && heartbeatMs >= 10, 500, 'MARKET_WORKER_CONFIG_INVALID');
+  if (archiveSearch) {
+    assertMarketArchiveSearchCapability(archiveSearch, { artifacts });
+    requireThat(store.archiveSearch === archiveSearch, 500, 'MARKET_ARCHIVE_CONFIGURATION_INVALID');
+  }
   const market = createPresentationMarket();
   const tasks = new Set(); let stopped = true, cycling = null, timer = null;
   const emit = error => { try { onError({ code: /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'MARKET_WORKER_INTERRUPTED' }); } catch { /* Logging cannot change receipts. */ } };
   async function execute(job) {
+    // Even a mixed-origin/custom store cannot make an unconfigured worker
+    // reinterpret a new durable authorization as an old publication job.
+    if (job.origin === ARCHIVE_MARKET_ORIGIN && !archiveSearch) {
+      emit({ code: 'MARKET_ARCHIVE_CONFIGURATION_REQUIRED' }); return;
+    }
     let dispatched = false, responseSaved = Boolean(job.response), providerFailed = null, leaseLost = false, renewing = Promise.resolve();
     const heartbeat = timers.setInterval(() => { renewing = renewing.then(async () => {
       if (!await store.renew(job)) leaseLost = true;
     }).catch(error => { leaseLost = true; emit(error); }); }, heartbeatMs); heartbeat.unref?.();
     try {
       requireThat(!marketHasRetiredReclassification(job), 409, 'MARKET_RECLASSIFICATION_RETIRED');
-      const staff = await authorityFor(job);
-      // This is delivery of the exact already human-approved snapshot. It
-      // cannot create an approval or alter approved grade/report bytes.
-      await publication.publish(staff, job.card_id, job.approval_action_id);
-      const source = await approved.loadPacket(staff, job.card_id, job.approval_action_id);
+      let source;
+      if (job.origin === ARCHIVE_MARKET_ORIGIN) {
+        assertMarketArchiveSearchCapability(archiveSearch, { artifacts });
+        source = await archiveSearch.loadJobPacket(job);
+      } else {
+        const staff = await authorityFor(job);
+        // Preserve the existing delivery path for APPROVAL/BACKFILL/REFRESH.
+        await publication.publish(staff, job.card_id, job.approval_action_id);
+        source = await approved.loadPacket(staff, job.card_id, job.approval_action_id);
+      }
       requireThat(!leaseLost && await store.bind(job, source), 409, 'MARKET_LEASE_LOST');
       let response = job.response;
       const previous = typeof store.pageContext === 'function' ? await store.pageContext(job) : null;
@@ -91,6 +106,7 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       requireThat(!response.pagination || response.query === context.query && response.pagination.page === page, 502, 'MARKET_PROVIDER_RESULT_INVALID');
       requireThat(!leaseLost, 409, 'MARKET_LEASE_LOST');
       requireThat(typeof labelMarket === 'function', 503, 'MARKET_LABEL_PROVIDER_REQUIRED');
+      if (job.origin === ARCHIVE_MARKET_ORIGIN) requireThat(await store.renew(job), 409, 'MARKET_ARCHIVE_ACCESS_ENDED');
       const evidence = await labelMarket({ source, response: structuredClone(response), job,
         onProgress: async progress => {
           // Progress is advisory. A failed checkpoint must not repeat a paid

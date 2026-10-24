@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import * as media from '../lib/approved-card-media.mjs';
 import * as graded from '../lib/graded-cards-client.mjs';
+import * as photoFrame from '../lib/slab-photo-frame.mjs';
 
 const require = createRequire(new URL('../package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
@@ -27,12 +28,16 @@ function nodes(value, match, found = []) {
   }
   return found;
 }
-function fixture(mode = 'detail', { label = false, slab = false } = {}) {
+function fixture(mode = 'detail', { label = false, backLabel = false, slab = false } = {}) {
   const token = `ar_${'Q'.repeat(24)}`, card = { cardId: '11111111-1111-4111-8111-111111111111', approvalActionId: '22222222-2222-4222-8222-222222222222',
     identity: { playerName: 'Synthetic fixture' }, report: { state: 'PUBLISHED', publicToken: token, version: 2, publicHash: 'c'.repeat(64) },
     media: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { url: `/api/reports/${token}/images/${side}?v=2`, provenance: 'APPROVED_GRADING_PHOTOGRAPH' }])) };
   if (label) card.media.LABEL = { itemId: '33333333-3333-4333-8333-333333333333',
     url: '/admin/api/staff/manual-connected/labels/33333333-3333-4333-8333-333333333333/artwork?mode=preview', provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
+  if (backLabel) {
+    card.media.LABEL.layoutVersion = 'atlas-approved-b-v1';
+    card.media.LABEL_BACK = { ...card.media.LABEL, url: card.media.LABEL.url.replace('mode=preview', 'mode=preview-back') };
+  }
   if (slab) card.media.SLAB = { url: `/api/reports/${token}/presentation/image?v=2&revision=1`, presentationRevision: 1,
     provenance: 'ACTUAL_SLAB_PHOTOGRAPH', sha256: 'd'.repeat(64), byteCount: 1024, contentType: 'image/jpeg' };
   const slots = [], effects = [], window = new EventTarget(), loads = [], disposed = []; let cursor = 0, dirty = false, tree, lazyFailure = null;
@@ -52,9 +57,10 @@ function fixture(mode = 'detail', { label = false, slab = false } = {}) {
     if (name.endsWith('.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => `${name.includes('GradedCards') ? 'archive' : 'media'}.${String(key)}` }) };
     if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/admin' };
     if (name.endsWith('/graded-cards-client.mjs')) return graded;
+    if (name.endsWith('/slab-photo-frame.mjs')) return photoFrame;
     if (name.endsWith('/approved-card-media.mjs')) return { ...media, createApprovedMediaResource: () => media.createApprovedMediaResource({
       load: (source, { signal }) => new Promise((resolve, reject) => loads.push({ source, signal, reject,
-        resolve(url = `blob:${source.kind}:${loads.length}`) { resolve({ url, dispose() { disposed.push(url); } }); } })),
+        resolve(url = `blob:${source.kind}:${loads.length}`, metadata = {}) { resolve({ url, representation: source.delivery, ...metadata, dispose() { disposed.push(url); } }); } })),
     }) };
     return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
   } });
@@ -121,7 +127,7 @@ test('detail preserves the gallery front composition and adds an optional 3D con
   assert.equal(JSON.stringify(presentation(detail)), JSON.stringify(presentation(gallery)));
   assert.deepEqual(detail.find(node => node.type === 'img').map(node => [node.props.className, node.props.src]), [
     ['archive.slabShell', '/admin/brand/archive/slab-shell-front.svg'], ['archive.slabCard', 'blob:FRONT'],
-    [undefined, '/admin/brand/archive/nfc-tag-reference.jpg'], ['archive.slabLabel', 'blob:LABEL'],
+    [undefined, '/admin/brand/archive/nfc-tag-reference-384.webp'], ['archive.slabLabel', 'blob:LABEL'],
   ]);
   assert.deepEqual(detail.find(node => node.type === 'button').map(node => text(node)), ['Front', 'Back', '3D']);
   assert.equal(detail.find(node => node.type === 'Slab3D').length, 0);
@@ -155,8 +161,9 @@ test('Back uses only its verified photograph and the same shell, never the front
 test('label failure preserves the approved front photo and retry restores the saved composition independently', async () => {
   const f = fixture('detail', { label: true }); await f.flush();
   f.loads[0].resolve('blob:front'); f.loads[1].resolve('blob:back'); f.loads[2].reject(new Error('label unavailable')); await f.flush();
-  assert.equal(f.find(node => node.type === 'img').length, 1);
-  assert.equal(f.find(node => node.type === 'img')[0].props.src, 'blob:front');
+  assert.equal(f.find(node => node.type === 'img').length, 2);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:front').length);
+  assert.ok(f.find(node => node.type === 'span' && node.props.className === 'archive.slab').length);
   assert.ok(f.find(node => node.type === 'p' && /Saved label artwork unavailable\./.test(text(node))).length);
   f.button('Retry preview').props.onClick(); await f.flush();
   assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL']);
@@ -197,13 +204,78 @@ test('3D mounts only when selected with the verified Front/Back pair, never a sl
   assert.ok(f.find(node => node.type === 'strong' && /Staff access ended/.test(text(node))).length); f.close();
 });
 
+test('verified inspection photos exclude only canonical padding in both stills and the 3D handoff', async () => {
+  const f = fixture('detail', { label: true }); await f.flush();
+  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`, { width: 558, height: 768, sourceSha256: 'a'.repeat(64) }));
+  await f.flush();
+  const frame = photoFrame.INSPECTION_SLAB_FRAME.version;
+  assert.equal(f.find(node => node.props['data-photo-frame'] === frame).length, 1);
+  assert.equal(f.find(node => node.props.className === 'archive.slabCardImage')[0].props.src, 'blob:FRONT');
+  f.button('Back').props.onClick(); f.render();
+  assert.equal(f.find(node => node.props['data-photo-frame'] === frame).length, 1);
+  assert.equal(f.find(node => node.props.className === 'archive.slabCardImage')[0].props.src, 'blob:BACK');
+  f.button('3D').props.onClick(); await f.flush();
+  let scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontPhotoFrame, frame); assert.equal(scene.props.backPhotoFrame, frame);
+  for (const load of f.loads.filter(load => load.source.delivery === 'full')) {
+    load.resolve(`blob:full-${load.source.kind}`, { width: 1350, height: 1858, sourceSha256: 'a'.repeat(64) });
+  }
+  await f.flush(); scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontUrl, 'blob:full-FRONT');
+  assert.equal(scene.props.frontPhotoFrame, frame); assert.equal(scene.props.backPhotoFrame, frame);
+  f.close();
+});
+
+test('saved approved-B back label appears on Back and in 3D without front NFC or stretched placement', async () => {
+  const f = fixture('detail', { label: true, backLabel: true }); await f.flush();
+  assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK']);
+  f.loads.forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  // The requested presentation overlay sits over B's opaque circle; source
+  // label bytes are unchanged, and the reference never appears on the back.
+  const nfc = f.find(node => node.props.className === 'archive.slabNfc')[0];
+  assert.equal(nfc.props.style.zIndex, 3);
+  assert.ok(parseFloat(nfc.props.style.left) > 65);
+  f.button('Back').props.onClick(); f.render();
+  const artwork = f.find(node => node.type === 'img' && node.props.className === 'archive.slabLabel')[0];
+  assert.equal(artwork.props.src, 'blob:LABEL_BACK');
+  assert.equal(f.find(node => node.props.className === 'archive.slabNfc').length, 0);
+  assert.match(f.find(node => node.type === 'span' && node.props.role === 'img')[0].props['aria-label'], /saved ATLAS back label/);
+  assert.equal(f.find(node => /Reverse label artwork not recorded/.test(text(node))).length, 0);
+  f.button('3D').props.onClick(); f.render();
+  const scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.labelUrl, 'blob:LABEL'); assert.equal(scene.props.backLabelUrl, 'blob:LABEL_BACK');
+  assert.equal(scene.props.labelLayoutVersion, 'atlas-approved-b-v1');
+  f.revoke(); await f.flush(); assert.ok(f.disposed.includes('blob:LABEL_BACK')); assert.equal(f.find(node => node.type === 'img').length, 0); f.close();
+});
+
+test('back-label decode retry preserves both photographs and front artwork', async () => {
+  const f = fixture('detail', { label: true, backLabel: true }); await f.flush();
+  f.loads.slice(0, 3).forEach(load => load.resolve(`blob:${load.source.kind}`)); await f.flush();
+  f.button('Back').props.onClick(); f.render();
+  assert.match(f.find(node => node.type === 'span' && node.props.role === 'img')[0].props['aria-label'], /Saved back label artwork is loading/);
+  f.loads[3].resolve('blob:LABEL_BACK'); await f.flush();
+  f.find(node => node.type === 'img' && node.props.src === 'blob:LABEL_BACK')[0].props.onError(); f.render();
+  assert.deepEqual(f.disposed, ['blob:LABEL_BACK']);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:BACK').length);
+  assert.ok(f.find(node => node.type === 'p' && /Saved back label artwork unavailable/.test(text(node))).length);
+  assert.match(f.find(node => node.type === 'span' && node.props.role === 'img')[0].props['aria-label'], /Saved back label artwork is unavailable/);
+  f.button('Retry preview').props.onClick(); await f.flush();
+  assert.deepEqual(f.loads.map(load => load.source.kind), ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK', 'LABEL_BACK']);
+  f.loads.at(-1).resolve('blob:back-label-retry'); await f.flush();
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:back-label-retry').length);
+  f.button('Front').props.onClick(); f.render();
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:FRONT').length);
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:LABEL').length); f.close();
+});
+
 test('3D retains a usable photograph and independent retry when Back is absent; missing label never becomes reverse artwork', async () => {
   const f = fixture(); await f.flush(); f.loads[0].resolve('blob:front'); f.loads[1].reject(new Error('missing back')); await f.flush();
   f.button('3D').props.onClick(); f.render();
   assert.equal(f.find(node => node.type === 'Slab3D').length, 0);
   assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:front').length);
   assert.ok(f.find(node => node.type === 'p' && /3D needs both saved photographs/.test(text(node))).length);
-  f.button('Retry preview').props.onClick(); await f.flush(); f.loads[2].resolve('blob:back'); await f.flush();
+  f.button('Retry preview').props.onClick(); await f.flush();
+  f.loads.findLast(load => load.source.kind === 'BACK' && load.source.delivery === 'preview').resolve('blob:back'); await f.flush();
   const scene = f.find(node => node.type === 'Slab3D')[0]; assert.equal(scene.props.labelUrl, null);
   assert.equal(scene.props.backUrl, 'blob:back'); assert.equal(scene.props.reverseLabelUrl, undefined); f.close();
 });
@@ -219,4 +291,85 @@ test('a rejected lazy 3D chunk is contained inside the optional view and Front/B
   f.button('Back').props.onClick(); f.render(); assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:BACK').length);
   f.button('Front').props.onClick(); f.render(); assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:FRONT').length);
   f.close();
+});
+
+test('small stills and labels load first; only selecting 3D starts full detail and progressive replacement retains ready sides', async () => {
+  const f = fixture('detail', { label: true }); await f.flush();
+  assert.deepEqual(f.loads.map(({ source }) => [source.kind, source.delivery]), [['FRONT', 'preview'], ['BACK', 'preview'], ['LABEL', undefined]]);
+  f.loads.forEach(load => load.resolve(`blob:small-${load.source.kind}`)); await f.flush();
+  f.button('Back').props.onClick(); await f.flush(); assert.equal(f.loads.length, 3);
+  f.button('3D').props.onClick(); await f.flush();
+  assert.deepEqual(f.loads.slice(3).map(({ source }) => [source.kind, source.delivery]), [['FRONT', 'full'], ['BACK', 'full']]);
+  let scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontUrl, 'blob:small-FRONT'); assert.equal(scene.props.backUrl, 'blob:small-BACK');
+  f.loads[3].resolve('blob:full-FRONT'); await f.flush();
+  scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontUrl, 'blob:full-FRONT'); assert.equal(scene.props.backUrl, 'blob:small-BACK');
+  f.loads[4].reject(new Error('full unavailable')); await f.flush();
+  assert.equal(f.find(node => node.type === 'Slab3D')[0].props.backUrl, 'blob:small-BACK');
+  f.button('Retry high detail').props.onClick(); await f.flush();
+  assert.equal(f.loads.length, 6); assert.equal(f.loads[5].source.kind, 'BACK'); assert.equal(f.loads[5].source.delivery, 'full');
+  f.loads[5].resolve('blob:full-BACK'); await f.flush();
+  assert.equal(f.find(node => node.type === 'Slab3D')[0].props.backUrl, 'blob:full-BACK');
+  f.button('Front').props.onClick(); await f.flush();
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:small-FRONT').length);
+  f.button('3D').props.onClick(); await f.flush(); assert.equal(f.loads.length, 6);
+  f.revoke(); await f.flush();
+  assert.equal(f.find(node => node.type === 'Slab3D' || node.type === 'img').length, 0);
+  assert.deepEqual(f.disposed.sort(), ['blob:full-BACK', 'blob:full-FRONT', 'blob:small-BACK', 'blob:small-FRONT', 'blob:small-LABEL'].sort()); f.close();
+});
+
+test('3D waits for a pending preview decision and reuses an older approval full fallback without downloading it twice', async () => {
+  const f = fixture(); await f.flush();
+  f.button('3D').props.onClick(); await f.flush(); assert.equal(f.loads.length, 2);
+  f.loads[0].resolve('blob:legacy-front-full', { representation: 'full' });
+  f.loads[1].resolve('blob:legacy-back-full', { representation: 'full' }); await f.flush();
+  assert.equal(f.loads.length, 2);
+  const scene = f.find(node => node.type === 'Slab3D')[0];
+  assert.equal(scene.props.frontUrl, 'blob:legacy-front-full'); assert.equal(scene.props.backUrl, 'blob:legacy-back-full'); f.close();
+});
+
+test('verified optional full media can recover a failed still without substituting failed preview bytes', async () => {
+  const f = fixture(); await f.flush();
+  f.loads[0].reject(new Error('preview corrupt')); f.loads[1].resolve('blob:small-back'); await f.flush();
+  f.button('3D').props.onClick(); await f.flush();
+  f.loads.find(load => load.source.kind === 'FRONT' && load.source.delivery === 'full').resolve('blob:verified-full-front'); await f.flush();
+  assert.equal(f.find(node => node.type === 'Slab3D')[0].props.frontUrl, 'blob:verified-full-front');
+  f.button('Front').props.onClick(); await f.flush();
+  assert.ok(f.find(node => node.type === 'img' && node.props.src === 'blob:verified-full-front').length); f.close();
+});
+
+test('leaving 3D cancels unfinished high-detail transfers and a later visit resumes only missing full sides', async () => {
+  const f = fixture(); await f.flush(); f.loads.forEach(load => load.resolve(`blob:small-${load.source.kind}`)); await f.flush();
+  f.button('3D').props.onClick(); await f.flush();
+  f.loads[2].resolve('blob:full-front'); await f.flush();
+  f.button('Back').props.onClick(); await f.flush();
+  assert.equal(f.loads[3].signal.aborted, true);
+  assert.equal(f.disposed.length, 0);
+  f.loads[3].resolve('blob:late-full-back'); await f.flush(); assert.deepEqual(f.disposed, ['blob:late-full-back']);
+  f.button('3D').props.onClick(); await f.flush();
+  assert.equal(f.loads.length, 5); assert.equal(f.loads[4].source.kind, 'BACK');
+  assert.equal(f.find(node => node.type === 'Slab3D')[0].props.frontUrl, 'blob:full-front');
+  f.loads[4].resolve('blob:full-back'); await f.flush(); f.close();
+});
+
+test('a different side settling does not silently retry a failed full download', async () => {
+  const f = fixture(); await f.flush(); f.loads[0].resolve('blob:small-front'); await f.flush();
+  f.button('3D').props.onClick(); await f.flush();
+  f.loads[2].reject(new Error('full front failed')); await f.flush();
+  f.loads[1].resolve('blob:small-back'); await f.flush();
+  assert.equal(f.loads.filter(load => load.source.kind === 'FRONT' && load.source.delivery === 'full').length, 1);
+  assert.equal(f.loads.filter(load => load.source.kind === 'BACK' && load.source.delivery === 'full').length, 1); f.close();
+});
+
+
+test('the first photograph already occupies the slab when its saved label is still loading', async () => {
+  const f = fixture('detail', { label: true }); await f.flush();
+  f.loads[0].resolve('blob:small-front'); await f.flush();
+  assert.ok(f.find(node => node.type === 'span' && node.props.className === 'archive.slab').length);
+  assert.ok(f.find(node => node.type === 'img' && node.props.className === 'archive.slabCard').length);
+  assert.equal(f.find(node => node.type === 'img' && node.props.className === 'archive.slabLabel').length, 0);
+  f.loads[2].resolve('blob:label'); await f.flush();
+  assert.ok(f.find(node => node.type === 'img' && node.props.className === 'archive.slabCard').length);
+  assert.ok(f.find(node => node.type === 'img' && node.props.className === 'archive.slabLabel').length); f.close();
 });

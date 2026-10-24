@@ -38,6 +38,7 @@ export function mountedCompJourney(props){
    if(path==='react')return react;if(path==='next/link')return 'a';
    if(path==='./Shell'||path==='./ApprovedCardMedia')return {__esModule:true,default:path.slice(2)};
    if(path==='./StaffCompCuration')return compile('StaffCompCuration');
+   if(path==='./StaffCompSearch')return {__esModule:true,default:'StaffCompSearch'};
    if(path.endsWith('.css'))return {__esModule:true,default:new Proxy({},{get:(_t,k)=>k})};
    const mapped={'../lib/card-history-client.mjs':history,'../lib/graded-cards-client.mjs':archive,'../lib/routes.mjs':routes,
     '../lib/order-desk-client.mjs':orderDesk,'../lib/staff-comp-curation-controller.mjs':controller,
@@ -59,8 +60,8 @@ export function mountedCompJourney(props){
   click(label){const button=find(label);assert(button,`${label}: ${words(tree).slice(-500)}`);assert(!button.props.disabled,label);button.props.onClick();render();},
   async until(pattern,observed=()=>true){const deadline=Date.now()+20000;do{
    // A browser event ends before the next user event. Yield before *every*
-   // observation, including the first: act() deliberately queues a microtask,
-   // so the old matching text cannot count as completion of the new action.
+   // observation, including the first: old matching text cannot count as
+   // completion of the newly admitted asynchronous action.
    await new Promise(r=>setTimeout(r,15));render();
    if(pattern.test(words(tree))&&!/Saving the private decision|Checking the exact saved decision|Reading saved evidence/.test(words(tree))&&observed())return tree;
   }while(Date.now()<deadline);assert.fail(`Did not reach ${pattern}: ${words(tree).slice(-1600)}`);},
@@ -138,8 +139,9 @@ export async function runMountedSchedulingGuard() {
   f.hooks.response=async({method})=>{if(method==='GET'){readEntered=true;entered.resolve();await gate.promise;completed=true;}};
   const posts=f.traffic.filter(r=>r.method==='POST').length;
   h.click('Check recorded decision');
-  // This was the old driver's premature success condition, before act() runs.
-  assert.match(h.text(),/Save outcome not confirmed/);assert.equal(readEntered,false);assert.equal(h.find('Retry this same save').props.disabled,false);
+  // Admission now locks sibling actions synchronously; observing the prior
+  // unresolved message still cannot establish that this read has completed.
+  assert.match(h.text(),/Save outcome not confirmed/);assert.equal(readEntered,false);assert.equal(h.find('Retry this same save').props.disabled,true);
   const waiting=h.until(/Save outcome not confirmed/,()=>completed&&h.find('Retry this same save')?.props.disabled===false).then(()=>{settled=true;});
   await entered.promise;await flush();h.render();
   assert.equal(settled,false);assert.equal(completed,false);assert.equal(h.find('Retry this same save').props.disabled,true);
@@ -148,8 +150,8 @@ export async function runMountedSchedulingGuard() {
   f.hooks.response=null;h.click('Retry this same save');await h.until(/Skipped for now/);
   const sent=f.traffic.filter(r=>r.method==='POST');assert.equal(sent.length,posts+1);assert.deepEqual(sent.at(-1).body,original);
   assert.equal(f.calls.insert,2);assert.equal(f.rows.length,2);assert.match(h.text(),/Revision 1/);
-  return {prematureOldViewObserved:true,deferredReadEntered:true,waitStayedPendingUntilReadCompleted:true,
-   retryEnabledAfterCompletion:true,replayedOriginalRequest:true,posts:sent.length,insertedReceipts:2,productChanged:false,database:false};
+  return {synchronousAdmission:true,deferredReadEntered:true,waitStayedPendingUntilReadCompleted:true,
+   retryEnabledAfterCompletion:true,replayedOriginalRequest:true,posts:sent.length,insertedReceipts:2,database:false};
  }finally {gate.resolve();f.hooks.response=null;h.dispose();}
 }
 

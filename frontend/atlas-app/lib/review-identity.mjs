@@ -17,7 +17,7 @@ export function reviewIdentityFields(identity) {
 const text = value => String(value ?? '').trim();
 export function reviewIdentityChanged(current, edited) {
   return reviewIdentityFields(current).some(({ key }) => text(current[key]) !== text(edited[key]))
-    || JSON.stringify(current.sportsAttributes) !== JSON.stringify(edited.sportsAttributes);
+    || Object.hasOwn(edited, 'sportsAttributes') && JSON.stringify(current.sportsAttributes) !== JSON.stringify(edited.sportsAttributes);
 }
 
 /** The command takes a complete canonical identity. Never manufacture a no-op revision. */
@@ -37,6 +37,7 @@ export function reviewIdentityEdit(current, edited) {
  * as human evidence for intake originals when facts enter the review draft. */
 export function reviewSportsAttributesProposal(proposal, sourceHash) {
   if (!proposal || proposal.version !== 'atlas-sports-attributes-proposal-v1' || proposal.authority !== 'MACHINE_PROPOSAL' || proposal.sourceHash !== sourceHash) return null;
+  if (proposal.attributes && Object.hasOwn(proposal.attributes, 'specialFeatures')) return null;
   try { return { ...proposal, attributes: parseAtlasSportsAttributes(proposal.attributes) }; } catch { return null; }
 }
 export function draftSportsAttributesProposal(proposal, sourceHash) {

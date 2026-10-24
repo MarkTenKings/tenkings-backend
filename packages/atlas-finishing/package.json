@@ -21,12 +21,16 @@
     "./station-wire": "./src/station-wire.mjs",
     "./label-v4": "./src/label-v4.mjs",
     "./label-sheet": "./src/label-sheet.mjs",
-    "./label-sheet-geometry": "./src/label-sheet-geometry.mjs"
+    "./label-sheet-geometry": "./src/label-sheet-geometry.mjs",
+    "./label-approved-b": "./src/label-approved-b.mjs",
+    "./label-approved-b-artwork": "./src/label-approved-b-artwork.mjs",
+    "./label-sheet-25": "./src/label-sheet-25.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@atlas/grading-core": "workspace:*",
     "pdfkit": "0.17.2",
     "qrcode": "1.5.4",
     "svg-to-pdfkit": "0.1.8",

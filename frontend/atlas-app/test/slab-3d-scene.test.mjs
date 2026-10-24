@@ -1,10 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Box3, Texture, Vector3, SRGBColorSpace, NoToneMapping } from 'three';
+import { readFile } from 'node:fs/promises';
+import { Box3, Raycaster, Texture, Vector3, SRGBColorSpace, NoToneMapping } from 'three';
 import { SLAB_MODEL, INITIAL_SLAB_ANGLE, createSlabModel, disposeSlabModel, fitSlabPhoto, assertSlabTextureSize,
-  createSlabScene, slabFacing } from '../lib/slab-3d-scene.mjs';
+  createSlabScene, slabFacing, createSlabStudioEnvironment, SLAB_STUDIO } from '../lib/slab-3d-scene.mjs';
+import { INSPECTION_SLAB_FRAME } from '../lib/slab-photo-frame.mjs';
 
 const texture = (width = 1350, height = 1858) => new Texture({ width, height, naturalWidth: width, naturalHeight: height });
+
+test('still and 3D card placement have equal top/bottom and left/right clear spacing', async () => {
+  const css = await readFile(new URL('../components/GradedCards.module.css', import.meta.url), 'utf8');
+  const rule = /\.slabCard\{left:([\d.]+)%;top:([\d.]+)%;width:([\d.]+)%;height:([\d.]+)%;/.exec(css);
+  assert.ok(rule);
+  const [left, top, width, height] = rule.slice(1).map(Number).map((n, i) => n / 100 * (i % 2 ? SLAB_MODEL.height : SLAB_MODEL.width));
+  // The SVG label bay ends at y279; its clear inner frame ends at y1324.82.
+  const labelBottom = 27.9, innerBottom = 132.482, innerLeft = 2.9;
+  assert.ok(Math.abs((top - labelBottom) - (innerBottom - top - height)) < 1e-5);
+  assert.ok(Math.abs((left - innerLeft) - (SLAB_MODEL.width - innerLeft - left - width)) < 1e-5);
+  assert.ok(Math.abs(SLAB_MODEL.height / 2 - top - height / 2 - SLAB_MODEL.cardY) < 1e-5);
+  assert.ok(Math.abs(width - SLAB_MODEL.cardWidth) < 1e-5);
+  assert.ok(Math.abs(height - SLAB_MODEL.cardHeight) < 1e-5);
+  assert.ok(Math.abs(top - labelBottom - 7.841) < 1e-5);
+  assert.ok(Math.abs(left - innerLeft - 5.482) < 1e-5);
+});
 
 test('procedural slab has the owner exterior, actual rounded bevel depth and bounded reusable geometry', () => {
   const model = createSlabModel({ front: texture(), back: texture(), label: texture(2048, 602), nfc: texture(512, 512) });
@@ -40,6 +58,100 @@ test('Front and Back use uncropped unlit source textures, with the Back facing o
   disposeSlabModel(model);
 });
 
+test('verified inspection framing maps only its canonical card bounds for preview and full textures without changing pixels', () => {
+  const frame = INSPECTION_SLAB_FRAME;
+  const expected = [frame.x / frame.width, 1 - frame.y / frame.height,
+    (frame.x + frame.cardWidth) / frame.width, 1 - frame.y / frame.height,
+    frame.x / frame.width, 1 - (frame.y + frame.cardHeight) / frame.height,
+    (frame.x + frame.cardWidth) / frame.width, 1 - (frame.y + frame.cardHeight) / frame.height];
+  for (const [width, height] of [[558, 768], [1350, 1858]]) {
+    const front = texture(width, height), back = texture(width, height);
+    const model = createSlabModel({ front, back, frontPhotoFrame: frame.version, backPhotoFrame: frame.version });
+    model.updateMatrixWorld(true);
+    for (const [side, source, sign] of [['front', front, 1], ['back', back, -1]]) {
+      const face = model.getObjectByName(`${side}-approved-photograph`);
+      assert.equal(face.material.map, source); assert.equal(face.material.toneMapped, false);
+      assert.deepEqual([source.image.width, source.image.height], [width, height]);
+      assert.deepEqual(source.offset.toArray(), [0, 0]); assert.deepEqual(source.repeat.toArray(), [1, 1]);
+      assert.ok(Math.abs(face.geometry.parameters.width / face.geometry.parameters.height - 5 / 7) < 1e-12);
+      assert.equal(face.geometry.parameters.width, SLAB_MODEL.cardWidth); assert.equal(face.geometry.parameters.height, SLAB_MODEL.cardHeight);
+      Array.from(face.geometry.attributes.uv.array).forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 1e-7));
+      assert.ok(new Vector3(0, 0, 1).transformDirection(face.matrixWorld).z * sign > .99);
+    }
+    disposeSlabModel(model);
+  }
+  const unknown = createSlabModel({ front: texture(), back: texture(), frontPhotoFrame: 'unknown-frame' });
+  assert.deepEqual(Array.from(unknown.getObjectByName('front-approved-photograph').geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
+  disposeSlabModel(unknown);
+});
+
+test('continuous clear interior stays behind both photo faces without a white opening gap or opaque carrier caps', () => {
+  const model = createSlabModel({ front: texture(), back: texture(), frontPhotoFrame: INSPECTION_SLAB_FRAME.version, backPhotoFrame: INSPECTION_SLAB_FRAME.version });
+  model.updateMatrixWorld(true);
+  const sheet = model.getObjectByName('clear-inner-sheet'), carrier = model.getObjectByName('generic-card-carrier');
+  for (const sign of [1, -1]) {
+    for (const [x, y] of [[0, SLAB_MODEL.cardY], [31.7, SLAB_MODEL.cardY], [32.2, SLAB_MODEL.cardY], [0, SLAB_MODEL.cardY - 45.2]]) {
+      const ray = new Raycaster(new Vector3(x, y, sign * 100), new Vector3(0, 0, -sign));
+      const innerHits = ray.intersectObject(sheet); assert.ok(innerHits.length > 0, 'the former white opening gap has a continuous clear field');
+      assert.ok(innerHits.every(hit => Math.abs(hit.point.z) < 1e-9));
+      assert.equal(ray.intersectObject(carrier).length, 0, 'no opaque cap can show through source alpha');
+      if (Math.abs(x) < SLAB_MODEL.cardWidth / 2 && Math.abs(y - SLAB_MODEL.cardY) < SLAB_MODEL.cardHeight / 2) {
+        const face = model.getObjectByName(`${sign > 0 ? 'front' : 'back'}-approved-photograph`);
+        assert.ok(ray.intersectObject(face)[0].distance < innerHits[0].distance, 'clear interior cannot overlay evidence');
+      }
+    }
+  }
+  const edgeHit = new Raycaster(new Vector3(100, SLAB_MODEL.cardY, 0), new Vector3(-1, 0, 0)).intersectObject(carrier);
+  assert.ok(edgeHit.length > 0, 'physical side edge remains');
+  const size = new Box3().setFromObject(carrier).getSize(new Vector3());
+  assert.ok(Math.abs(size.z - .34) < 1e-7); assert.equal(sheet.material.transparent, true); assert.equal(sheet.material.depthWrite, false);
+  disposeSlabModel(model);
+});
+
+test('oblique perspective rays reach both saved photo faces before the inner sheet and card edges', () => {
+  const model = createSlabModel({ front: texture(), back: texture(), frontPhotoFrame: INSPECTION_SLAB_FRAME.version, backPhotoFrame: INSPECTION_SLAB_FRAME.version });
+  const camera = new Vector3(0, 0, 400);
+  const sheet = model.getObjectByName('clear-inner-sheet'), carrier = model.getObjectByName('generic-card-carrier');
+  for (const degrees of [0, 15, 45, 75, 85, 89, 91, 95, 105, 135, 180, 225, 255, 269, 271, 285, 315, 345]) {
+    model.rotation.y = degrees * Math.PI / 180; model.updateMatrixWorld(true);
+    const sign = Math.cos(model.rotation.y) > 0 ? 1 : -1;
+    const face = model.getObjectByName(`${sign > 0 ? 'front' : 'back'}-approved-photograph`);
+    for (const x of [-31.7, 0, 31.7]) for (const y of [-44.4, 0, 44.4]) {
+      const target = new Vector3(x, SLAB_MODEL.cardY + y, sign * .181).applyMatrix4(model.matrixWorld);
+      const ray = new Raycaster(camera, target.sub(camera).normalize());
+      const photoHits = ray.intersectObject(face);
+      assert.ok(photoHits.length > 0, `saved ${sign > 0 ? 'Front' : 'Back'} remains outward-facing at ${degrees}°`);
+      for (const hit of ray.intersectObjects([sheet, carrier])) {
+        assert.ok(hit.distance > photoHits[0].distance, `${hit.object.name} cannot cover saved photo pixels at ${degrees}°`);
+      }
+    }
+  }
+  disposeSlabModel(model);
+});
+
+test('saved back label faces outward and the separate NFC overlays the approved-B circle without changing saved art', () => {
+  for (const layout of [undefined, 'atlas-approved-b-v1']) {
+    const front = texture(), back = texture(), label = texture(2048, 602), backLabel = texture(2048, 602);
+    const model = createSlabModel({ front, back, label, backLabel, nfc: texture(512, 512), labelLayoutVersion: layout });
+    model.updateMatrixWorld(true);
+    const reverse = model.getObjectByName('back-saved-label-artwork');
+    assert.equal(reverse.material.map, backLabel); assert.equal(reverse.material.toneMapped, false);
+    assert.deepEqual([reverse.geometry.parameters.width, reverse.geometry.parameters.height], [68.342, 20.082]);
+    assert.ok(new Vector3(0, 0, 1).transformDirection(reverse.matrixWorld).z < -.99);
+    assert.deepEqual(Array.from(reverse.geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
+    const nfc = model.getObjectByName('illustrative-front-nfc-reference');
+    assert.equal(model.getObjectByName('front-saved-label-artwork').material.map, label);
+    assert.equal(nfc.material.type, 'MeshBasicMaterial'); assert.equal(nfc.material.toneMapped, false);
+    assert.equal(nfc.geometry.parameters.radius, 5.1);
+    if (layout) {
+      assert.equal(nfc.position.x, 51.8 - SLAB_MODEL.labelWidth / 2);
+      assert.equal(nfc.position.y, SLAB_MODEL.labelY + SLAB_MODEL.labelHeight / 2 - 9.75);
+      assert.equal(nfc.position.z, .26); assert.ok(nfc.position.z > model.getObjectByName('front-saved-label-artwork').position.z);
+    } else { assert.equal(nfc.position.x, 17.08); assert.equal(nfc.position.y, SLAB_MODEL.labelY); assert.equal(nfc.position.z, .205); }
+    disposeSlabModel(model);
+  }
+});
+
 test('shared model resources are disposed exactly once and textures remain caller owned', () => {
   const front = texture(), back = texture(), model = createSlabModel({ front, back });
   const counts = new Map();
@@ -70,12 +182,12 @@ class Element extends EventTarget {
   focus() { this.focused = true; }
 }
 function fixture(extra = {}) {
-  const host = new Element(), win = new EventTarget(), doc = new EventTarget(), pending = [], frames = new Map(), errors = [], ready = [], facing = [], canvases = [];
+  const host = new Element(), win = new EventTarget(), doc = new EventTarget(), pending = [], frames = new Map(), errors = [], assetErrors = [], ready = [], facing = [], canvases = [];
   let serial = 0;
   win.devicePixelRatio = 3; win.requestAnimationFrame = callback => { frames.set(++serial, callback); return serial; };
   win.cancelAnimationFrame = key => frames.delete(key); doc.hidden = false;
   doc.createElement = name => {
-    assert.equal(name, 'canvas'); const canvas = { width: 0, height: 0, draws: [], getContext: () => ({ drawImage: (...args) => canvas.draws.push(args) }) }; canvases.push(canvas); return canvas;
+    assert.equal(name, 'canvas'); const canvas = { width: 0, height: 0, draws: [], getContext: () => extra.failCanvas ? null : ({ drawImage: (...args) => canvas.draws.push(args) }) }; canvases.push(canvas); return canvas;
   };
   class ImageFixture {
     constructor() { this.naturalWidth = 0; this.naturalHeight = 0; }
@@ -91,11 +203,11 @@ function fixture(extra = {}) {
     setPixelRatio(value) { this.pixelRatio = value; }, setSize(width, height) { this.size = [width, height]; },
     dispose() { this.disposed++; }, forceContextLoss() { this.contextLosses++; } };
   const scene = createSlabScene(host, { frontUrl: 'blob:front', backUrl: 'blob:back', ...extra.sources,
-    onReady: value => ready.push(value), onError: value => errors.push(value), onFacing: value => facing.push(value) },
+    onAssetError: (failure, metadata) => assetErrors.push({ failure, ...metadata }), onReady: value => ready.push(value), onError: value => errors.push(value), onFacing: value => facing.push(value) },
   { window: win, document: doc, renderer, ImageClass: ImageFixture });
   const flush = () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback()); };
   const emit = (target, type, props = {}) => { const event = new Event(type, { cancelable: true }); Object.assign(event, props); target.dispatchEvent(event); return event; };
-  return { host, win, doc, pending, frames, renderer, ready, errors, facing, canvases, scene, flush, emit,
+  return { host, win, doc, pending, frames, renderer, ready, errors, assetErrors, facing, canvases, scene, flush, emit,
     async load() { pending.forEach(image => image.resolve()); await scene.started; flush(); } };
 }
 
@@ -104,13 +216,66 @@ test('scene keeps native photographs, renders on demand at bounded DPR and relea
   assert.equal(f.ready.length, 1); assert.deepEqual(f.ready[0].photos, [{ width: 1350, height: 1858 }, { width: 1350, height: 1858 }]);
   assert.equal(f.renderer.pixelRatio, 2); assert.equal(f.renderer.outputColorSpace, SRGBColorSpace); assert.equal(f.renderer.toneMapping, NoToneMapping);
   assert.equal(f.renderer.renders, 1); assert.equal(f.frames.size, 0); f.flush(); assert.equal(f.renderer.renders, 1);
+  const environment = f.renderer.scene.environment; let environmentReleases = 0; environment.addEventListener('dispose', () => environmentReleases++);
   const maps = new Set(); f.renderer.scene.traverse(item => { if (item.material?.map) maps.add(item.material.map); });
-  let releases = 0; maps.forEach(map => { assert.equal(map.colorSpace, SRGBColorSpace); assert.equal(map.anisotropy, 8); map.addEventListener('dispose', () => releases++); });
+  let releases = 0; maps.forEach(map => { if (map.image.naturalWidth) { assert.equal(map.colorSpace, SRGBColorSpace); assert.equal(map.anisotropy, 8); } map.addEventListener('dispose', () => releases++); });
   f.scene.rotateBy(Math.PI / 6); f.scene.rotateBy(Math.PI / 6); assert.equal(f.frames.size, 1);
   f.flush(); assert.equal(f.renderer.renders, 2); assert.equal(f.frames.size, 0);
-  f.scene.dispose(); f.scene.dispose(); assert.equal(releases, 2); assert.equal(f.renderer.disposed, 1); assert.equal(f.renderer.contextLosses, 1);
+  f.scene.dispose(); f.scene.dispose(); assert.equal(releases, 3); assert.equal(f.renderer.disposed, 1); assert.equal(f.renderer.contextLosses, 1); assert.equal(environmentReleases, 1); assert.equal(f.renderer.scene.environment, null);
   assert.equal(f.host.children.length, 0); assert.ok(f.pending.every(image => image.cleared));
   f.scene.rotateBy(1); f.emit(f.win, 'resize'); assert.equal(f.frames.size, 0);
+});
+
+test('perspective camera contains every holder vertex throughout a full turn at wide and narrow viewport sizes', async () => {
+  const f = fixture(); await f.load();
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), point = new Vector3();
+  for (const [width, height] of [[600, 540], [292, 438], [180, 540]]) {
+    f.host.clientWidth = width; f.host.clientHeight = height; f.emit(f.win, 'resize'); f.flush();
+    const distance = f.renderer.camera.position.z;
+    for (const degrees of [0, 15, 30, 45, 60, 90, 135, 180, 225, 270, 315]) {
+      f.scene.reset(); f.scene.rotateBy(degrees * Math.PI / 180 - INITIAL_SLAB_ANGLE); f.flush();
+      model.updateMatrixWorld(true); f.renderer.camera.updateMatrixWorld(true);
+      let maxX = 0, maxY = 0;
+      model.traverse(part => {
+        const positions = part.geometry?.attributes.position; if (!positions) return;
+        for (let i = 0; i < positions.count; i++) {
+          point.fromBufferAttribute(positions, i).applyMatrix4(part.matrixWorld).project(f.renderer.camera);
+          maxX = Math.max(maxX, Math.abs(point.x)); maxY = Math.max(maxY, Math.abs(point.y));
+        }
+      });
+      assert.ok(maxX <= 1 / 1.03 + 1e-5 && maxY <= 1 / 1.03 + 1e-5, `${width}×${height} at ${degrees}°: ${maxX}, ${maxY}`);
+      assert.equal(f.renderer.camera.position.z, distance, 'turning does not pump the camera distance');
+    }
+  }
+  f.scene.dispose();
+});
+
+test('perspective depth precision separates saved photos from the inner sheet and labels from their carrier', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:label', labelLayoutVersion: 'atlas-approved-b-v1', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
+  await f.load(); f.pending[2].resolve(68342, 20082); await settle(); f.pending[3].resolve(384, 512); await settle(); f.flush();
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version);
+  for (const [width, height] of [[600, 540], [292, 438], [180, 540]]) {
+    f.host.clientWidth = width; f.host.clientHeight = height; f.emit(f.win, 'resize'); f.flush();
+    for (const degrees of [0, 15, 45, 75, 180, 195, 225, 255]) {
+      f.scene.reset(); f.scene.rotateBy(degrees * Math.PI / 180 - INITIAL_SLAB_ANGLE); f.flush();
+      model.updateMatrixWorld(true); f.renderer.camera.updateMatrixWorld(true);
+      const sign = Math.cos(degrees * Math.PI / 180) > 0 ? 1 : -1;
+      for (const [name, y, faceZ, carrierZ] of [['photo', SLAB_MODEL.cardY, .181, 0], ['label', SLAB_MODEL.labelY, .22, .19]]) {
+        for (const x of [-30, 0, 30]) {
+          const projectedDepth = z => (new Vector3(x, y, sign * z).applyMatrix4(model.matrixWorld).project(f.renderer.camera).z + 1) / 2;
+          const separation = projectedDepth(carrierZ) - projectedDepth(faceZ);
+          assert.ok(separation > 32 / 2 ** 24, `${name} ${width}×${height} at ${degrees}° has only ${separation * 2 ** 24} depth levels`);
+        }
+      }
+      if (sign > 0) {
+        const nfc = model.getObjectByName('illustrative-front-nfc-reference'), label = model.getObjectByName('front-saved-label-artwork');
+        const nfcDepth = nfc.position.clone().applyMatrix4(model.matrixWorld).project(f.renderer.camera).z;
+        const labelDepth = new Vector3(nfc.position.x, nfc.position.y, label.position.z).applyMatrix4(model.matrixWorld).project(f.renderer.camera).z;
+        assert.ok((labelDepth - nfcDepth) / 2 > 32 / 2 ** 24, `NFC overlay remains distinct from saved label at ${degrees}°`);
+      }
+    }
+  }
+  f.scene.dispose();
 });
 
 test('pointer supports a full turn and vertical touch movement remains available to page scrolling', async () => {
@@ -167,22 +332,176 @@ test('unsupported photo resolution returns fallback instead of a silently reduce
 
 test('saved SVG and decorative NFC have separate bounded rasters while card images remain native', async () => {
   const f = fixture({ sources: { labelUrl: 'blob:label', nfcUrl: '/admin/brand/archive/nfc-tag-reference.jpg' } });
-  f.pending[0].resolve(); f.pending[1].resolve(); f.pending[2].resolve(258, 76); f.pending[3].resolve(3024, 4032); await f.scene.started; f.flush();
+  f.pending[0].resolve(); f.pending[1].resolve(); await f.scene.started; f.flush();
+  f.pending[2].resolve(258, 76); await Promise.resolve(); await Promise.resolve();
+  f.pending[3].resolve(384, 512); await Promise.resolve(); await Promise.resolve(); f.flush();
   assert.equal(f.errors.length, 0); assert.deepEqual(f.canvases.map(canvas => [canvas.width, canvas.height]), [[2048, 602], [512, 512]]);
   assert.deepEqual(f.pending.slice(0, 2).map(image => [image.naturalWidth, image.naturalHeight]), [[1350, 1858], [1350, 1858]]);
   const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version);
   assert.ok(model.getObjectByName('front-saved-label-artwork')); assert.equal(model.getObjectByName('back-saved-label-artwork'), undefined);
-  assert.ok(f.ready[0].estimatedTextureBytes < 40 * 1024 * 1024); f.scene.dispose(); assert.ok(f.canvases.every(canvas => canvas.width === 0 && canvas.height === 0));
+  assert.ok(Number(f.renderer.domElement.dataset.slabSourceTextureBytes) < 40 * 1024 * 1024); f.scene.dispose(); assert.ok(f.canvases.every(canvas => canvas.width === 0 && canvas.height === 0));
 });
 
 test('unverified remote photograph URLs never construct a renderer or load an image', () => {
   assert.throws(() => createSlabScene(null, { frontUrl: 'https://example.com/front.jpg', backUrl: 'blob:back' }), { code: 'SLAB_APPROVED_SOURCE_REQUIRED' });
+  assert.throws(() => createSlabScene(null, { frontUrl: 'blob:front', backUrl: 'blob:back', backLabelUrl: 'https://example.com/label.svg' }), { code: 'SLAB_APPROVED_SOURCE_REQUIRED' });
 });
 
-test('a slow decorative NFC reference cannot delay the interactive photographs and late completion is disposable', async () => {
-  const f = fixture({ sources: { labelUrl: 'blob:label', nfcUrl: '/admin/brand/archive/nfc-tag-reference.jpg' } });
-  f.pending.slice(0, 3).forEach(image => image.resolve()); await f.scene.started; f.flush();
-  assert.equal(f.ready.length, 1); assert.equal(f.renderer.scene.getObjectByName('illustrative-front-nfc-reference'), undefined);
-  f.scene.dispose(); const pending = f.pending[3]; assert.ok(pending.cleared); pending.resolve(3024, 4032);
-  await Promise.resolve(); await Promise.resolve(); f.flush(); assert.equal(f.renderer.renders, 1); assert.equal(f.errors.length, 0);
+test('both saved label textures preserve image proportions and release their own rasters', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:label', backLabelUrl: 'blob:back-label', labelLayoutVersion: 'atlas-approved-b-v1' } });
+  f.pending[0].resolve(); f.pending[1].resolve(); await f.scene.started; f.flush();
+  f.pending[2].resolve(68342, 20082); f.pending[3].resolve(68342, 20082); await settle(); f.flush();
+  assert.equal(f.errors.length, 0); assert.equal(f.canvases.length, 2);
+  for (const canvas of f.canvases) {
+    const [, x, y, width, height] = canvas.draws[0];
+    assert.ok(x >= 0 && y >= 0); assert.ok(width <= canvas.width && height <= canvas.height);
+    assert.ok(Math.abs(width / height - 68342 / 20082) < 1e-12);
+  }
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version);
+  assert.ok(model.getObjectByName('back-saved-label-artwork')); assert.ok(model.getObjectByName('front-saved-label-artwork'));
+  f.scene.dispose(); assert.ok(f.canvases.every(canvas => canvas.width === 0 && canvas.height === 0));
+  assert.ok(f.pending.every(image => image.cleared));
+});
+
+test('NFC placement follows only a successfully displayed B or historical label without replacing evidence', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:label', labelLayoutVersion: 'atlas-approved-b-v1', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
+  await f.load(); const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), photo = model.getObjectByName('front-approved-photograph').material.map;
+  f.pending[2].resolve(68342, 20082); await settle(); f.flush();
+  assert.equal(f.pending.length, 4); f.pending[3].resolve(384, 512); await settle(); f.flush();
+  const nfc = model.getObjectByName('illustrative-front-nfc-reference'); assert.equal(nfc.position.z, .26);
+  f.scene.rotateBy(.6); f.flush(); const angle = f.renderer.domElement.dataset.slabAngle;
+  f.scene.updateAssets({ labelUrl: 'blob:legacy-label', labelLayoutVersion: undefined }); f.pending[4].resolve(258, 76); await settle(); f.flush();
+  assert.equal(nfc.position.x, 17.08); assert.equal(nfc.position.y, SLAB_MODEL.labelY); assert.equal(nfc.position.z, .205);
+  let nfcDisposed = 0; nfc.material.map.addEventListener('dispose', () => nfcDisposed++);
+  f.scene.updateAssets({ labelUrl: 'blob:replacement-b-label', labelLayoutVersion: 'atlas-approved-b-v1' });
+  f.pending[5].reject(); await settle(); f.flush();
+  assert.equal(model.getObjectByName('illustrative-front-nfc-reference'), nfc, 'failed replacement retains the historical label reference');
+  assert.equal(nfc.position.z, .205);
+  f.scene.retryAssets(['labelUrl']); f.pending[6].resolve(68342, 20082); await settle(); f.flush();
+  assert.equal(model.getObjectByName('illustrative-front-nfc-reference'), nfc); assert.equal(nfc.position.z, .26); assert.equal(nfcDisposed, 0);
+  assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(model.getObjectByName('front-approved-photograph').material.map, photo);
+  assert.equal(f.renderer.domElement.dataset.slabAngle, angle); assert.equal(f.renderer.disposed, 0); f.scene.dispose(); assert.equal(nfcDisposed, 1);
+});
+
+test('NFC arriving after a label replacement uses the displayed layout and is removed with the label', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:historical-label', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
+  await f.load(); f.pending[2].resolve(258, 76); await settle();
+  const nfc = f.pending[3];
+  f.scene.updateAssets({ labelUrl: 'blob:approved-b-label', labelLayoutVersion: 'atlas-approved-b-v1' });
+  f.pending[4].resolve(68342, 20082); await settle(); f.flush();
+  assert.equal(nfc.cleared, undefined); nfc.resolve(384, 512); await settle(); f.flush();
+  const tag = f.renderer.scene.getObjectByName('illustrative-front-nfc-reference');
+  assert.equal(tag.position.x, 51.8 - SLAB_MODEL.labelWidth / 2); assert.equal(tag.position.z, .26);
+  f.scene.updateAssets({ labelUrl: null }); f.flush();
+  assert.equal(f.renderer.scene.getObjectByName('illustrative-front-nfc-reference'), undefined);
+  assert.equal(f.assetErrors.length, 0); assert.equal(f.errors.length, 0); f.scene.dispose();
+});
+
+test('slow label and decorative NFC cannot delay the photographs; late completion is disposable', async () => {
+  const f = fixture({ sources: { labelUrl: 'blob:label', nfcUrl: '/admin/brand/archive/nfc-tag-reference-384.webp' } });
+  f.pending.slice(0, 2).forEach(image => image.resolve()); await f.scene.started; f.flush();
+  assert.equal(f.ready.length, 1); assert.equal(f.renderer.scene.getObjectByName('front-saved-label-artwork'), undefined);
+  f.pending[2].resolve(258, 76); await Promise.resolve(); await Promise.resolve(); f.flush();
+  assert.equal(f.renderer.scene.getObjectByName('illustrative-front-nfc-reference'), undefined);
+  const pending = f.pending[3]; f.scene.dispose(); assert.ok(pending.cleared); pending.resolve(384, 512);
+  await Promise.resolve(); await Promise.resolve(); f.flush(); assert.equal(f.renderer.renders, 2); assert.equal(f.errors.length, 0);
+});
+
+const settle = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+
+test('progressive photo replacement preserves the model, camera angle, single renderer and exact new pixels', async () => {
+  const f = fixture(); f.pending.forEach(image => image.resolve(558, 768)); await f.scene.started; f.flush();
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), face = model.getObjectByName('front-approved-photograph'), old = face.material.map;
+  let disposed = 0; old.addEventListener('dispose', () => disposed++);
+  f.scene.rotateBy(.7); f.flush(); const angle = f.renderer.domElement.dataset.slabAngle;
+  f.scene.updateAssets({ frontUrl: 'blob:full-front', backUrl: 'blob:full-back' });
+  f.pending[2].resolve(1350, 1858); await settle(); f.flush();
+  assert.equal(face.material.map.image.naturalWidth, 1350); assert.equal(disposed, 1); assert.ok(f.pending[0].cleared);
+  assert.equal(model.getObjectByName('back-approved-photograph').material.map.image.naturalWidth, 558);
+  f.pending[3].resolve(1350, 1858); await settle(); f.flush();
+  assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(f.renderer.domElement.dataset.slabAngle, angle);
+  assert.equal(f.renderer.disposed, 0); assert.equal(f.ready.length, 1); assert.equal(f.frames.size, 0); f.scene.dispose();
+});
+
+test('verified frame updates and preview-to-full replacement preserve UV bounds, model and angle', async () => {
+  const f = fixture(); f.pending.forEach(image => image.resolve(558, 768)); await f.scene.started; f.flush();
+  const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), face = model.getObjectByName('front-approved-photograph'), original = face.material.map;
+  f.scene.rotateBy(.8); f.flush(); const angle = f.renderer.domElement.dataset.slabAngle;
+  f.scene.updateAssets({ frontPhotoFrame: INSPECTION_SLAB_FRAME.version, backPhotoFrame: INSPECTION_SLAB_FRAME.version }); f.flush();
+  const framed = Array.from(face.geometry.attributes.uv.array);
+  assert.notDeepEqual(framed, [0, 1, 1, 1, 0, 0, 1, 0]); assert.equal(face.material.map, original);
+  f.scene.updateAssets({ frontUrl: 'blob:full-front', backUrl: 'blob:full-back' });
+  f.pending[2].resolve(1350, 1858); f.pending[3].resolve(1350, 1858); await settle(); f.flush();
+  assert.deepEqual(Array.from(face.geometry.attributes.uv.array), framed);
+  assert.equal(face.geometry.parameters.height, SLAB_MODEL.cardHeight); assert.equal(face.material.map.image.naturalWidth, 1350);
+  assert.deepEqual(Array.from(model.getObjectByName('back-approved-photograph').geometry.attributes.uv.array), framed);
+  assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); assert.equal(f.renderer.domElement.dataset.slabAngle, angle);
+  f.scene.updateAssets({ frontPhotoFrame: 'unknown-frame' }); f.flush();
+  assert.deepEqual(Array.from(face.geometry.attributes.uv.array), [0, 1, 1, 1, 0, 0, 1, 0]);
+  assert.equal(f.renderer.disposed, 0); f.scene.dispose();
+});
+
+test('oversized or failed full-photo updates retain an interactive preview on a 1024 texture-limit GPU', async () => {
+  const f = fixture({ maxTextureSize: 1024 }); f.pending.forEach(image => image.resolve(558, 768)); await f.scene.started; f.flush();
+  const face = f.renderer.scene.getObjectByName('front-approved-photograph'), original = face.material.map;
+  f.scene.updateAssets({ frontUrl: 'blob:too-large', backUrl: 'blob:failed' });
+  f.pending[2].resolve(1350, 1858); f.pending[3].reject(); await settle(); f.flush();
+  assert.equal(face.material.map, original); assert.equal(f.renderer.disposed, 0); assert.equal(f.errors.length, 0);
+  assert.deepEqual(f.assetErrors.map(value => value.failure.code).sort(), ['SLAB_IMAGE_DECODE', 'SLAB_TEXTURE_LIMIT']);
+  f.scene.rotateBy(.5); f.flush(); assert.equal(f.renderer.renders, 2); f.scene.dispose();
+});
+
+test('superseded updates and late callbacks after disposal cannot install pixels or leak requests', async () => {
+  const f = fixture(); await f.load();
+  f.scene.updateAssets({ frontUrl: 'blob:obsolete' }); const stale = f.pending[2], callback = stale.onload;
+  f.scene.updateAssets({ frontUrl: 'blob:current' }); assert.ok(stale.cleared);
+  stale.naturalWidth = 10; stale.naturalHeight = 20; callback();
+  f.pending[3].resolve(); await settle(); f.flush();
+  assert.equal(f.renderer.scene.getObjectByName('front-approved-photograph').material.map.image, f.pending[3]);
+  f.scene.updateAssets({ backLabelUrl: 'blob:late-reverse' }); const late = f.pending[4], onload = late.onload;
+  f.scene.dispose(); late.naturalWidth = 258; late.naturalHeight = 76; onload(); await settle();
+  assert.ok(late.cleared); assert.equal(f.host.children.length, 0); assert.equal(f.errors.length, 0); assert.equal(f.assetErrors.length, 0);
+});
+
+test('saved reverse artwork is optional, unlit, outward-facing and replaceable without inventing a reverse label', async () => {
+  const f = fixture(); await f.load(); assert.equal(f.renderer.scene.getObjectByName('back-saved-label-artwork'), undefined);
+  f.scene.updateAssets({ backLabelUrl: 'blob:saved-reverse' }); f.pending[2].resolve(258, 76); await settle(); f.flush();
+  const reverse = f.renderer.scene.getObjectByName('back-saved-label-artwork'); reverse.updateMatrixWorld(true);
+  assert.equal(reverse.material.type, 'MeshBasicMaterial'); assert.equal(reverse.material.toneMapped, false);
+  assert.ok(f.renderer.scene.getObjectByName('saved-label-carrier'));
+  assert.ok(new Vector3(0, 0, 1).transformDirection(reverse.matrixWorld).z < -.9);
+  f.scene.updateAssets({ backLabelUrl: null }); assert.equal(f.renderer.scene.getObjectByName('back-saved-label-artwork'), undefined);
+  assert.ok(f.renderer.scene.getObjectByName('plain-label-carrier-no-reverse-artwork')); f.scene.dispose();
+});
+
+test('studio is neutral, bounded and caller-owned; optical plastic is nonmetallic and reflection mode has no transmission pass', () => {
+  const studio = createSlabStudioEnvironment(); assert.equal(studio.name, SLAB_STUDIO.version);
+  assert.equal(studio.image.data.byteLength, 256 * 128 * 4 * 4);
+  const levels = new Set(); for (let i = 0; i < studio.image.data.length; i += 4) {
+    const d = studio.image.data; assert.equal(d[i], d[i + 1]); assert.equal(d[i], d[i + 2]); levels.add(d[i]);
+  }
+  assert.ok(levels.size > 50);
+  const model = createSlabModel({ front: texture(), back: texture() });
+  model.getObjectByName('clear-two-piece-shell').traverse(part => { if (part.material) {
+    assert.equal(part.material.metalness, 0); assert.equal(part.material.transmission, 0); assert.equal(part.material.ior, 1.49);
+  } });
+  const transmission = createSlabModel({ front: texture(), back: texture(), materialMode: 'transmission' });
+  assert.equal(transmission.getObjectByName('front-beveled-shell').material.transmission, .96);
+  disposeSlabModel(model); disposeSlabModel(transmission); studio.dispose();
+});
+
+test('late saved-label decode or raster failure stays isolated and a deliberate slot retry restores the exact artwork', async () => {
+  for (const rasterFailure of [false, true]) {
+    const options = { sources: { labelUrl: 'blob:saved-label' }, failCanvas: rasterFailure }, f = fixture(options);
+    await f.load(); const model = f.renderer.scene.getObjectByName(SLAB_MODEL.version), face = model.getObjectByName('front-approved-photograph');
+    const original = face.material.map;
+    if (rasterFailure) f.pending[2].resolve(258, 76); else f.pending[2].reject();
+    await settle(); f.flush();
+    assert.equal(f.assetErrors.length, 1); assert.equal(f.assetErrors[0].slot, 'labelUrl');
+    assert.equal(f.assetErrors[0].failure.code, rasterFailure ? 'SLAB_TEXTURE_UNAVAILABLE' : 'SLAB_IMAGE_DECODE');
+    assert.equal(f.errors.length, 0); assert.equal(face.material.map, original); assert.equal(f.renderer.disposed, 0);
+    options.failCanvas = false; f.scene.retryAssets(['labelUrl']); f.pending[3].resolve(258, 76); await settle(); f.flush();
+    assert.ok(model.getObjectByName('front-saved-label-artwork')); assert.equal(face.material.map, original);
+    assert.equal(f.renderer.scene.getObjectByName(SLAB_MODEL.version), model); f.scene.dispose();
+  }
 });

@@ -7,9 +7,17 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { renderLabelV4 } from '../../../packages/atlas-finishing/src/label-v4.mjs';
+import { renderApprovedBLabel } from '../../../packages/atlas-finishing/src/label-approved-b.mjs';
+import { encodeInspectionAlphaPreview } from '../../../packages/atlas-connected-manual/src/inspection-alpha-preview-encoder.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..'), app = resolve(root, 'frontend/atlas-app');
 const require = createRequire(resolve(root, 'packages/atlas-manual-workspace/package.json'));
 const { build } = require('esbuild');
+const sharp = createRequire(resolve(app, 'package.json'))('sharp');
+const materialMode = process.env.ATLAS_SLAB_MATERIAL_COMPARE || 'reflection';
+if (!['reflection', 'transmission'].includes(materialMode)) throw Error('Invalid slab material comparison.');
+// Keep a shared review link usable across fixture rebuilds when requested.
+const firstCardId = process.env.ATLAS_ARCHIVE_FIXTURE_CARD_ID;
+if (firstCardId && !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(firstCardId)) throw Error('Invalid fixture card ID.');
 // The fixture uses exact, hash-verified copies of already public approved
 // photographs. Its card IDs, staff, submissions and event history are synthetic.
 const references = process.env.ATLAS_ARCHIVE_APPROVED_REFERENCES;
@@ -25,7 +33,20 @@ const samples = await Promise.all(manifest.records.map(async record => {
     const descriptor = record.images[side], bytes = await readFile(resolve(references, descriptor.file));
     if (descriptor.mime !== 'image/webp' || descriptor.width !== 1350 || descriptor.height !== 1858
       || descriptor.byteCount !== bytes.length || descriptor.sha256 !== createHash('sha256').update(bytes).digest('hex')) throw Error('Reference photo changed.');
-    images[side] = { descriptor, bytes };
+    // Display-only local rendition, bound to the exact public source bytes.
+    // Retain the legacy JPEG alongside the shared transparent display encoder;
+    // this exercises both transport paths without writing any saved record.
+    // Match production preparation_encoding.py: transparent inspection padding
+    // is composited on white before JPEG encoding, never implicit black.
+    const previewBytes = await sharp(bytes).flatten({ background: '#ffffff' }).resize(558, 768).jpeg({ quality: 78 }).toBuffer();
+    const preview = { bytes: previewBytes, descriptor: { sha256: createHash('sha256').update(previewBytes).digest('hex'),
+      byteCount: previewBytes.length, mime: 'image/jpeg', width: 558, height: 768,
+      sourceSha256: descriptor.sha256, policyVersion: 'atlas-inspection-preview-v1' } };
+    const alphaBytes = await encodeInspectionAlphaPreview(bytes, { signal: AbortSignal.timeout(8000) });
+    const alphaPreview = { bytes: alphaBytes, descriptor: { sha256: createHash('sha256').update(alphaBytes).digest('hex'),
+      byteCount: alphaBytes.length, mime: 'image/webp', width: 558, height: 768,
+      sourceSha256: descriptor.sha256, policyVersion: 'atlas-inspection-alpha-preview-v1' } };
+    images[side] = { descriptor, bytes, preview, alphaPreview };
   }
   const content = reportContent?.records?.find(value => value.publicToken === record.binding.publicToken);
   if (reportContent && (!content || content.publicHash !== record.binding.publicHash
@@ -35,7 +56,7 @@ const samples = await Promise.all(manifest.records.map(async record => {
 }));
 const staff = { id: randomUUID(), name: 'Fixture reviewer', role: 'REVIEWER', mode: 'LOCAL_FIXTURE', customerOperationsEnabled: true };
 const cards = Array.from({ length: 26 }, (_, index) => {
-  const sample = index % 4, reference = samples[sample], token = `ar_${String(index).padStart(24, '0')}`, cardId = randomUUID();
+  const sample = index % 4, reference = samples[sample], token = `ar_${String(index).padStart(24, '0')}`, cardId = index === 0 && firstCardId ? firstCardId : randomUUID();
   const published = index !== 5;
   return { cardId, identity: reference.identity,
     finalGrade: reference.finalGrade, approvedAt: `2026-10-${String(26 - index).padStart(2, '0')}T12:00:00.000000Z`,
@@ -54,13 +75,17 @@ const fixtureLabels = new Map();
 for (const [index, card] of cards.entries()) {
   if (card.report.state !== 'PUBLISHED' || index === 6) continue;
   const itemId = randomUUID();
-  const rendered = renderLabelV4({ identity: card.identity, finalGrade: card.finalGrade,
+  // Retain one historical front-only example alongside the current saved
+  // front/back contract. These labels remain synthetic qualification records.
+  const rendered = (index === 2 ? renderLabelV4 : renderApprovedBLabel)({ identity: card.identity, finalGrade: card.finalGrade,
     reportNumber: card.certificateNumber, approvalVersion: card.report.version,
     cardProfile: card.identity.category });
   if (rendered.state !== 'READY') throw Error('Synthetic label needs layout.');
-  fixtureLabels.set(itemId, rendered.previewSvg);
+  fixtureLabels.set(itemId, { preview: rendered.previewSvg, 'preview-back': rendered.backPreviewSvg });
   card.media.LABEL = { itemId, url: `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview`,
-    provenance: 'REPORT_BOUND_LABEL_ARTWORK' };
+    provenance: 'REPORT_BOUND_LABEL_ARTWORK', layoutVersion: rendered.layoutVersion };
+  if (rendered.backPreviewSvg) card.media.LABEL_BACK = { ...card.media.LABEL,
+    url: `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview-back` };
 }
 // A clearly synthetic sold-reference case exercises UI without fetching eBay,
 // inventing a market estimate, or attaching fixture sales to a real card record.
@@ -82,7 +107,7 @@ import {ApprovedReportView} from '@atlas/manual-workspace/report-review';
 import {useInspectionImages} from '../atlas-public/components/useInspectionImages.mjs';
 import ReportEntryNavigation from '../atlas-public/components/ReportEntryNavigation.jsx';
 // Only synthetic fixture grants resolve to loopback; parsers and byte verification are unchanged.
-const fixtureFetch=globalThis.fetch.bind(globalThis);globalThis.fetch=(input,options)=>{const url=new URL(typeof input==='string'?input:input.url,location.origin);return fixtureFetch(url.origin===${JSON.stringify(storageOrigin)}&&/^\\/atlas-detail-fixture\\/[a-f0-9-]+\\/(FRONT|BACK)$/.test(url.pathname)?'/fixture-storage'+url.pathname:input,options)};
+const fixtureFetch=globalThis.fetch.bind(globalThis);globalThis.fetch=(input,options)=>{const url=new URL(typeof input==='string'?input:input.url,location.origin);return fixtureFetch(url.origin===${JSON.stringify(storageOrigin)}&&/^\\/atlas-detail-fixture\\/[a-f0-9-]+\\/(FRONT|BACK)$/.test(url.pathname)?'/fixture-storage'+url.pathname+url.search:input,options)};
 const reports=${JSON.stringify(fixtureReports)};
 function FixtureReport({packet,publicHash,explanation}){const images=useInspectionImages(packet,publicHash);const path='/reports/'+packet.publicToken+'?v='+packet.approvalVersion;
 return <main className="public-manual-report" style={{background:'#fff',color:'#1d1d1f',minHeight:'100vh',padding:'20px clamp(12px,3vw,48px) 40px'}}>
@@ -93,16 +118,29 @@ const id=/^\\/admin\\/graded-cards\\/([a-f0-9-]+)$/.exec(location.pathname)?.[1]
 const token=/^\\/reports\\/(ar_[A-Za-z0-9_-]{24})$/.exec(location.pathname)?.[1];
 createRoot(document.getElementById('app')).render(token&&reports[token]?<FixtureReport {...reports[token]}/>:id?<CardHistory staff={${JSON.stringify(staff)}} cardId={id}/>:<GradedCards staff={${JSON.stringify(staff)}}/>);`;
 const bundle = await build({ logLevel: 'error', stdin: { contents: source, resolveDir: app, sourcefile: 'graded-cards-fixture.jsx', loader: 'jsx' }, bundle: true, splitting: true, entryNames: 'entry', chunkNames: 'chunks/[name]-[hash]', jsx: 'automatic', write: false, outdir: '/fixture', format: 'esm', platform: 'browser', target: 'chrome120', define: { 'process.env.NODE_ENV': '"production"', 'process.env': '{}' }, external: ['/admin/brand/*'], plugins: [{ name: 'isolated-next-runtime', setup(build) {
+  // Comparison is injected only into this disposable loopback bundle. Product
+  // routes expose no material/debug query parameter or alternate render path.
+  if (materialMode === 'transmission') build.onLoad({ filter: /slab-3d-scene\.mjs$/ }, async args => {
+    const contents = await readFile(args.path, 'utf8'), marker = '}, overrides = {}) {';
+    if (!contents.includes(marker)) throw Error('Slab comparison adapter changed.');
+    return { contents: contents.replace(marker, "}, overrides = { materialMode: 'transmission' }) {"), loader: 'js' };
+  });
   build.onResolve({ filter: /^next\/(link|head|router)$/ }, args => ({ path: args.path, namespace: 'fixture-next' }));
   build.onLoad({ filter: /.*/, namespace: 'fixture-next' }, args => ({ contents: args.path === 'next/link' ? `export default function Link({href,children,...props}){return <a href={'/admin'+href}{...props}>{children}</a>}` : args.path === 'next/head' ? `export default function Head(){return null}` : `export function useRouter(){return {pathname:'/graded-cards',query:{}}}`, loader: 'jsx', resolveDir: app }));
 } }] });
 const js = bundle.outputFiles.find(file => file.path.endsWith('/entry.js')).text, css = bundle.outputFiles.find(file => file.path.endsWith('/entry.css')).text;
 const bundleFiles = new Map(bundle.outputFiles.map(file => [file.path.replace('/fixture', ''), file]));
 let failure = null, hold = false, held = [], denySession = false, brokenPhoto = false, brokenBack = false, corruptBack = false, transientPhotos = 0, failSlabChunk = false;
+let fullDelayMs = 0, brokenPreview = false, alphaAvailableAt = 0;
 const requests = [];
 const server = createServer(async (req, res) => {
+  res.setHeader('cache-control', 'no-store');
   const url = new URL(req.url, 'http://127.0.0.1'), json = (data, status = 200) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(data)); };
-  requests.push({ method: req.method, url: req.url });
+  const requestRecord = { method: req.method, url: req.url, at: Date.now() }; requests.push(requestRecord);
+  const end = res.end.bind(res);
+  res.end = (body, ...args) => { requestRecord.bytes = typeof body === 'string' ? Buffer.byteLength(body) : body?.byteLength ?? 0; return end(body, ...args); };
+  res.on('finish', () => { requestRecord.status = res.statusCode; requestRecord.completed = true; requestRecord.durationMs = Date.now() - requestRecord.at; });
+  res.on('close', () => { if (!requestRecord.completed) requestRecord.cancelled = true; });
   if (req.method !== 'GET') { json({ error: 'READ_ONLY_FIXTURE' }, 405); return; }
   if (url.pathname === '/fixture-requests') { json({ requests }); return; }
   if (url.pathname === '/fixture-controls') {
@@ -118,25 +156,30 @@ const server = createServer(async (req, res) => {
     if (action === 'break-back') brokenBack = true;
     if (action === 'corrupt-back') corruptBack = true;
     if (action === 'restore-photos') { brokenPhoto = false; brokenBack = false; corruptBack = false; transientPhotos = 0; }
+    if (action === 'delay-full') fullDelayMs = 6000;
+    if (action === 'restore-full') fullDelayMs = 0;
+    if (action === 'break-preview') brokenPreview = true;
+    if (action === 'restore-preview') brokenPreview = false;
+    if (action === 'cold-alpha-cache') alphaAvailableAt = Date.now() + 6000;
     json({ failure, hold, held: held.length, denySession, brokenPhoto, brokenBack, corruptBack, transientPhotos, reads: requests.length, writes: requests.filter(request => request.method !== 'GET').length }); return;
   }
   const localReportToken = /^\/reports\/(ar_[A-Za-z0-9_-]{24})$/.exec(url.pathname)?.[1];
   if (req.url === '/' || /^\/admin\/graded-cards(?:\/[a-f0-9-]+)?$/.test(url.pathname)
     || localReportToken && fixtureReports[localReportToken] && url.searchParams.get('v') === String(fixtureReports[localReportToken].packet.approvalVersion)) {
     res.setHeader('content-type', 'text/html; charset=utf-8');
-    const controls = ['fail-read', 'hold-reads', 'release-reads', 'deny-session', 'allow-session', 'break-photos', 'fail-next-photo', 'break-back', 'corrupt-back', 'restore-photos', 'fail-next-slab-chunk'];
+    const controls = ['fail-read', 'hold-reads', 'release-reads', 'deny-session', 'allow-session', 'break-photos', 'fail-next-photo', 'break-back', 'corrupt-back', 'restore-photos', 'fail-next-slab-chunk', 'cold-alpha-cache'];
     res.end('<!doctype html><meta charset="utf-8"><title>ATLAS graded cards · synthetic qualification</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><div id="fixture-controls" style="background:#fff;color:#334155;padding:8px 4%;font:11px system-ui;border-bottom:1px solid #ddd"><details><summary>Local qualification · synthetic records, copies of approved public photos</summary><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+controls.map(action=>'<button type="button" data-fixture-action="'+action+'" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">'+action+'</button>').join('')+'<button type="button" id="lose-3d-context" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">lose-3d-context</button><button type="button" id="revoke-access" style="background:#fff;color:#334155;border:1px solid #cbd5e1;border-radius:4px;padding:8px">revoke-access</button></div><pre id="fixture-status" style="white-space:pre-wrap"></pre></details></div><div id="app"></div><script type="module" src="/bundle.js"></script><script>document.querySelectorAll("[data-fixture-action]").forEach(button=>button.addEventListener("click",async()=>{document.getElementById("fixture-status").textContent=JSON.stringify(await(await fetch("/fixture-controls?action="+button.dataset.fixtureAction)).json())}));document.getElementById("lose-3d-context").addEventListener("click",()=>document.querySelector("canvas")?.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext());document.getElementById("revoke-access").addEventListener("click",()=>window.dispatchEvent(new Event("atlas:verified-image-access-ended")));</script>'); return;
   }
   if (req.url === '/bundle.js' || req.url === '/style.css') { res.setHeader('content-type', req.url.endsWith('.js') ? 'text/javascript' : 'text/css'); res.end(req.url.endsWith('.js') ? js : css); return; }
   if (failSlabChunk && /^\/chunks\/Slab3D-/.test(url.pathname)) { failSlabChunk = false; json({ error: 'LOCAL_SLAB_CHUNK_FAILURE' }, 503); return; }
   if (bundleFiles.has(url.pathname)) { const file = bundleFiles.get(url.pathname); res.setHeader('content-type', file.path.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(file.contents); return; }
-  if (/^\/admin\/brand\/(?:atlas-grading-logo\.png|fonts\/original-[1-4]\.woff2|archive\/(?:slab-shell-front\.svg|nfc-tag-reference\.jpg))$/.test(url.pathname)) { const file = resolve(app, 'public', url.pathname.slice('/admin/'.length)); res.setHeader('content-type', file.endsWith('.png') ? 'image/png' : file.endsWith('.svg') ? 'image/svg+xml' : file.endsWith('.jpg') ? 'image/jpeg' : 'font/woff2'); res.end(await readFile(file)); return; }
+  if (/^\/admin\/brand\/(?:atlas-grading-logo\.png|fonts\/original-[1-4]\.woff2|archive\/(?:slab-shell-front\.svg|nfc-tag-reference\.jpg|nfc-tag-reference-384\.webp))$/.test(url.pathname)) { const file = resolve(app, 'public', url.pathname.slice('/admin/'.length)); res.setHeader('content-type', file.endsWith('.png') ? 'image/png' : file.endsWith('.svg') ? 'image/svg+xml' : file.endsWith('.webp') ? 'image/webp' : file.endsWith('.jpg') ? 'image/jpeg' : 'font/woff2'); res.end(await readFile(file)); return; }
   if (url.pathname === '/admin/api/staff/session') { json(denySession ? { error: 'SIGN_IN_REQUIRED' } : { staff, csrf: 'synthetic' }, denySession ? 401 : 200); return; }
   const labelArtwork = /^\/admin\/api\/staff\/manual-connected\/labels\/([a-f0-9-]+)\/artwork$/.exec(url.pathname);
   if (labelArtwork) {
     if (denySession) { json({ error: 'SIGN_IN_REQUIRED' }, 401); return; }
-    const artwork = fixtureLabels.get(labelArtwork[1]);
-    if (!artwork || url.searchParams.get('mode') !== 'preview') { json({ error: 'ARTWORK_UNAVAILABLE' }, 404); return; }
+    const artwork = fixtureLabels.get(labelArtwork[1])?.[url.searchParams.get('mode')];
+    if (!artwork) { json({ error: 'ARTWORK_UNAVAILABLE' }, 404); return; }
     res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' }); res.end(artwork); return;
   }
   if (url.pathname === '/admin/api/staff/manual-connected/graded-cards') {
@@ -180,10 +223,13 @@ const server = createServer(async (req, res) => {
     const card = cards.find(card => card.report.publicToken === photo[1]), side = photo[2];
     if (transientPhotos > 0) { transientPhotos--; json({ error: 'TEMPORARILY_UNAVAILABLE' }, 503); return; }
     if (!card?.media[side] || brokenPhoto || brokenBack && side === 'BACK') { json({ error: 'PHOTO_UNAVAILABLE' }, 404); return; }
-    const { descriptor, bytes } = samples[card.sample].images[side];
+    const { descriptor, bytes, preview, alphaPreview } = samples[card.sample].images[side];
     if (url.searchParams.get('delivery') === 'direct') {
       json({ version: 'atlas-approved-image-access-v1', publicToken: card.report.publicToken, approvalVersion: card.report.version, publicHash: card.report.publicHash, side,
-        image: { url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}`, sha256: descriptor.sha256, byteCount: bytes.length, mime: descriptor.mime, width: descriptor.width, height: descriptor.height } }); return;
+        image: { url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}`, sha256: descriptor.sha256, byteCount: bytes.length, mime: descriptor.mime, width: descriptor.width, height: descriptor.height,
+          preview: { ...preview.descriptor, url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}?preview=1` },
+          ...(Date.now() < alphaAvailableAt ? { alphaPreviewPending: true } : {
+            alphaPreview: { ...alphaPreview.descriptor, url: `${storageOrigin}/atlas-detail-fixture/${card.cardId}/${side}?preview=alpha` } }) } }); return;
     }
     res.setHeader('content-type', descriptor.mime); res.end(bytes); return;
   }
@@ -191,7 +237,11 @@ const server = createServer(async (req, res) => {
   if (storage) {
     const card = cards.find(card => card.cardId === storage[1]);
     if (!card?.media[storage[2]]) { json({ error: 'PHOTO_UNAVAILABLE' }, 404); return; }
-    const { bytes, descriptor } = samples[card.sample].images[storage[2]];
+    const source = samples[card.sample].images[storage[2]], rendition = url.searchParams.get('preview');
+    const small = rendition === '1' || rendition === 'alpha';
+    if (small && brokenPreview) { json({ error: 'PREVIEW_UNAVAILABLE' }, 404); return; }
+    if (!small && fullDelayMs) await new Promise(done => setTimeout(done, fullDelayMs));
+    const { bytes, descriptor } = rendition === 'alpha' ? source.alphaPreview : small ? source.preview : source;
     res.setHeader('content-type', descriptor.mime);
     res.end(corruptBack && storage[2] === 'BACK' ? Buffer.alloc(bytes.length) : bytes); return;
   }

@@ -6,6 +6,7 @@ import {resolve,extname} from 'node:path';
 import {createRequire} from 'node:module';
 import config from '../next.config.mjs';
 import {capacityView} from '../../../docs/atlas/design/experience/site/weekly-capacity.mjs';
+import {renderApprovedBBack} from '../../../packages/atlas-finishing/src/label-approved-b-artwork.mjs';
 const root=resolve(import.meta.dirname,'../public');
 const html=readFileSync(resolve(root,'homepage/index.html'),'utf8');
 const release=JSON.parse(readFileSync(resolve(root,'homepage/release.json')));
@@ -43,6 +44,26 @@ test('homepage retains ATLAS identity and submission routes without historic car
 test('public package retains only the current release and excludes retired evidence assets',()=>{
  assert.deepEqual(readdirSync(resolve(root,'homepage'),{withFileTypes:true}).filter(entry=>entry.isDirectory()).map(entry=>entry.name),[release.version]);
  assert(names.every(name=>!name.startsWith('hero-assets/')&&!/report-screen|reports\/approved\.json/.test(name)));
+});
+test('packaged illustrations use the shared approved label artwork without invented approvals or stretched dimensions',()=>{
+ const label=readFileSync(resolve(root,'homepage',release.version,'assets/alakazam-label-sample.svg'),'utf8');
+ const back=readFileSync(resolve(root,'homepage',release.version,'assets/atlas-label-back-sample.svg'),'utf8');
+ const brand=readFileSync(resolve(root,'homepage',release.version,'assets/atlas-label-brand-sample.svg'),'utf8');
+ for(const svg of [label,back,brand]){
+  assert.match(svg,/width="68\.342mm" height="20\.082mm" viewBox="0 0 68\.342 20\.082"/);
+  assert.match(svg,/data-renderer="atlas-approved-b-label-v1"/);
+  assert.match(svg,/data-fixture="ILLUSTRATIVE_NOT_CERTIFIED"/);
+  assert.match(svg,/data-atlas-artwork="PREVIEW_ONLY"/);
+  assert.doesNotMatch(svg,/<text\b|font-family=|width="2\.73in"/);
+ }
+ assert.match(label,/<title>ATLAS Alakazam Base Set design sample, illustrative grade 9, not a certification<\/title>/);
+ const artwork=svg=>svg.replace(' data-fixture="ILLUSTRATIVE_NOT_CERTIFIED"','').replace(/<title>[^]*?<\/title>/,'');
+ assert.equal(artwork(back),artwork(renderApprovedBBack({previewMaterial:'holo'})));
+ assert.match(brand,/no card certification or awarded grade/);
+ assert.doesNotMatch(brand,/data-part="(?:name|grade|certificate)"/);
+ assert.equal((html.match(/class="release-label"/g)||[]).length,4);
+ const slab=readFileSync(resolve(root,'homepage',release.version,'slab.js'),'utf8');
+ assert.match(slab,/6\.8342,2\.0082/);assert.doesNotMatch(slab,/makeNfcLabel|ctx\.font|6\.93,2\.107/);
 });
 test('complete content digest includes every dependency and all local references resolve',()=>{
  const hash=createHash('sha256').update('atlas-experience-v1\n').update(readFileSync(resolve(import.meta.dirname,'../scripts/build-homepage.mjs')));

@@ -5,6 +5,7 @@ export const ATLAS_PUBLIC_SPORTS_ATTRIBUTES_VERSION = 'atlas-sports-attributes-p
 export const ATLAS_SPORTS_ATTRIBUTE_PRESENCE = ['UNKNOWN', 'PRESENT', 'ABSENT'] as const;
 export const ATLAS_AUTOGRAPH_TYPES = ['UNKNOWN', 'ON_CARD', 'STICKER', 'CUT', 'FACSIMILE'] as const;
 export const ATLAS_RELIC_USE = ['UNKNOWN', 'GAME_USED', 'PLAYER_WORN', 'EVENT_WORN', 'NOT_ASSOCIATED', 'UNSPECIFIED'] as const;
+export const ATLAS_SPORTS_SPECIAL_FEATURE_KINDS = ['CASE_HIT', 'SHORT_PRINT', 'SUPER_SHORT_PRINT'] as const;
 const side = z.enum(['FRONT', 'BACK']);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const text = (max: number) => z.string().min(1).max(max).refine(value => value === value.trim()
@@ -12,6 +13,18 @@ const text = (max: number) => z.string().min(1).max(max).refine(value => value =
 const presence = z.enum(ATLAS_SPORTS_ATTRIBUTE_PRESENCE);
 const evidence = z.array(z.strictObject({ side, imageSha256: hash, observation: text(600) })).max(2)
   .refine(values => new Set(values.map(value => value.side)).size === values.length, 'Use one observation per side.');
+const specialFeatureKind = z.enum(ATLAS_SPORTS_SPECIAL_FEATURE_KINDS);
+const referenceUrl = z.string().min(1).max(2048).refine(value => {
+  if (value !== value.trim() || !/^https:\/\//i.test(value) || /[\\\s\u0000-\u001f\u007f]/u.test(value)) return false;
+  try { const url = new URL(value); return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password; }
+  catch { return false; }
+}, 'Use an HTTPS reference URL without credentials.');
+const reviewedReference = z.strictObject({ type: z.literal('REVIEWED_REFERENCE'), sourceTitle: text(160), sourceUrl: referenceUrl, matchNote: text(600) });
+const uniqueFeatures = <T extends { kind: string }>(values: T[]) => new Set(values.map(value => value.kind)).size === values.length;
+const specialFeatures = z.array(z.strictObject({ kind: specialFeatureKind, evidence: reviewedReference })).min(1).max(3)
+  .refine(uniqueFeatures, 'Record each special feature once.');
+const publicSpecialFeatures = z.array(z.strictObject({ kind: specialFeatureKind })).min(1).max(3)
+  .refine(uniqueFeatures, 'Record each special feature once.');
 const serialFacts = { presence, printed: text(30).nullable(), numerator: z.number().int().min(1).max(999999).nullable(), denominator: z.number().int().min(1).max(999999).nullable() };
 const autographFacts = { presence, type: z.enum(ATLAS_AUTOGRAPH_TYPES) };
 const windowFacts = { position: text(80), material: text(120).nullable(), manufacturerStatement: text(600).nullable(), use: z.enum(ATLAS_RELIC_USE) };
@@ -53,12 +66,15 @@ function checkFacts(value: Facts, context: z.RefinementCtx) {
 }
 
 /** Authorship is recorded by the existing authenticated identity-edit receipt.
- * This block holds only reviewed card facts and their saved photograph basis. */
+ * Printed facts keep their saved photographs; special classifications require
+ * an explicit reviewed reference matching the exact card and printing. */
 export const atlasSportsAttributesSchema = z.strictObject({
   version: z.literal(ATLAS_SPORTS_ATTRIBUTES_VERSION),
   serial: z.strictObject({ ...serialFacts, evidence }),
   autograph: z.strictObject({ ...autographFacts, evidence }),
   relic: z.strictObject({ presence, windows: z.array(z.strictObject({ ...windowFacts, evidence })).max(12), evidence }),
+  // Do not default this optional key: historical identity bytes must stay exact.
+  specialFeatures: specialFeatures.optional(),
 }).superRefine((value, context) => {
   checkFacts(value, context);
   for (const key of ['serial', 'autograph', 'relic'] as const) {
@@ -92,17 +108,20 @@ export function assertAtlasSportsAttributePhotos(value: unknown, photos: Partial
 
 /** Public output excludes staff observations, source hashes and review authority.
  * The report's own approval binding establishes which card facts were approved. */
-export const atlasPublicSportsAttributesSchema = z.strictObject({ version: z.literal(ATLAS_PUBLIC_SPORTS_ATTRIBUTES_VERSION), ...facts }).superRefine(checkFacts);
+export const atlasPublicSportsAttributesSchema = z.strictObject({ version: z.literal(ATLAS_PUBLIC_SPORTS_ATTRIBUTES_VERSION), ...facts,
+  specialFeatures: publicSpecialFeatures.optional() }).superRefine(checkFacts);
 export type AtlasPublicSportsAttributes = z.output<typeof atlasPublicSportsAttributesSchema>;
 export function projectAtlasSportsAttributes(value: unknown): AtlasPublicSportsAttributes {
   const attributes = parseAtlasSportsAttributes(value);
   return atlasPublicSportsAttributesSchema.parse({ version: ATLAS_PUBLIC_SPORTS_ATTRIBUTES_VERSION,
     serial: { presence: attributes.serial.presence, printed: attributes.serial.printed, numerator: attributes.serial.numerator, denominator: attributes.serial.denominator },
     autograph: { presence: attributes.autograph.presence, type: attributes.autograph.type },
-    relic: { presence: attributes.relic.presence, windows: attributes.relic.windows.map(({ position, material, manufacturerStatement, use }) => ({ position, material, manufacturerStatement, use })) } });
+    relic: { presence: attributes.relic.presence, windows: attributes.relic.windows.map(({ position, material, manufacturerStatement, use }) => ({ position, material, manufacturerStatement, use })) },
+    ...(attributes.specialFeatures ? { specialFeatures: attributes.specialFeatures.map(({ kind }) => ({ kind })) } : {}) });
 }
 
 export const ATLAS_SPORTS_ATTRIBUTE_LABELS: Record<string, string> = {
   UNKNOWN: 'Unknown', PRESENT: 'Present', ABSENT: 'Reviewed absent', ON_CARD: 'On-card', STICKER: 'Sticker', CUT: 'Cut', FACSIMILE: 'Facsimile',
   GAME_USED: 'Game-used', PLAYER_WORN: 'Player-worn', EVENT_WORN: 'Event-worn', NOT_ASSOCIATED: 'Not associated with a specific player, game or event', UNSPECIFIED: 'Use or wear not specified',
+  CASE_HIT: 'Case hit', SHORT_PRINT: 'Short print (SP)', SUPER_SHORT_PRINT: 'Super short print (SSP)',
 };

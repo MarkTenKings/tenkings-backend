@@ -37,6 +37,8 @@
 .toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:20px 0 16px}
 .toolbar>p{font-size:12px;margin:0;color:#4d5664;line-height:1.6}
 .toolbar>p>span{color:#727b86;font-size:10px;margin-left:14px}
+.archiveActions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px}
+.shell .page .export{padding:10px 12px;max-width:100%;white-space:normal}
 .viewSwitch{display:flex;padding:3px;gap:3px;border:1px solid #e3e6eb;background:#f5f6f8;border-radius:7px}
 .shell .page .viewSwitch button{border:0;background:transparent;min-width:68px;padding:8px 12px;min-height:38px;font-size:11px;color:#67707d;border-radius:4px}
 .shell .page .viewSwitch button[aria-pressed=true]{background:#fff;color:#20242c;box-shadow:0 1px 5px #1a263b12}
@@ -48,9 +50,13 @@
 .slabPhoto{height:100%;object-fit:contain}
 .mediaCaption{display:block;text-align:center;min-height:24px;font-size:8px;color:#727b86;line-height:1.5;padding-top:8px}
 .slab{display:block;width:100%;position:relative;aspect-ratio:80.264/135.382;isolation:isolate;line-height:0}
-.slabShell,.slabCard,.slabLabel{position:absolute;display:block;object-fit:contain;pointer-events:none;filter:none;border:0;box-shadow:none;padding:0;margin:0;background:transparent}
+.slabShell,.slabCard,.slabCardImage,.slabLabel{position:absolute;display:block;object-fit:contain;pointer-events:none;filter:none;border:0;box-shadow:none;padding:0;margin:0;background:transparent}
 .slabShell{inset:0;width:100%;height:100%;z-index:0;filter:drop-shadow(0 3px 3px #0f172a1a)}
-.slabCard{left:10.4426%;top:24.634%;width:79.1144%;height:65.6661%;z-index:1}
+/* Same 63.5×88.9 mm viewport as SLAB_MODEL: centered horizontally and between
+   the label bay bottom (27.9 mm) and inner bottom edge (132.482 mm). */
+.slabCard{left:10.443038%;top:26.400112%;width:79.113924%;height:65.666041%;z-index:1}
+.slabCardWindow{overflow:hidden}
+.slabCardImage{max-width:none;object-fit:fill}
 .slabLabel{left:7.4267%;top:4.8766%;width:85.1466%;height:14.8336%;z-index:2}
 .slabNfc{position:absolute;left:64.925%;top:8.526%;width:12.708%;aspect-ratio:1;overflow:hidden;border-radius:50%;z-index:1;background:#d18c0c;pointer-events:none}
 .slabNfc img{position:absolute;display:block;width:195.43%;height:260.57%;max-width:none;left:-50.86%;top:-54.71%;object-fit:fill;margin:0;padding:0;border:0;border-radius:0;filter:none}
@@ -93,6 +99,7 @@
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));max-width:580px;gap:30px 22px}.page{padding:26px 4%}.heading{align-items:flex-start;gap:12px}.shell :global(.mc-shell-header){padding:12px 4%;gap:12px}.shell :global(.mc-shell-header nav){width:100%;justify-content:flex-start!important;column-gap:18px;row-gap:5px!important}.shell :global(.mc-shell-header nav a){min-height:38px;display:flex;align-items:center}.toolbar>p>span{display:block;margin:3px 0 0}.dateNote{padding-top:0}.filterRow>label{flex:1}.filterRow>label:first-child{flex-basis:100%}.errorBox{align-items:flex-start;flex-direction:column}}
 @media(max-width:480px){.page{padding-top:24px}.heading{flex-direction:column;gap:6px;margin-bottom:20px}.heading h1{font-size:29px}.heading>div>p:last-child{font-size:12px}.shell .page .refresh{min-height:38px;font-size:11px}.shell .page input,.shell .page select{font-size:16px}.searchRow{gap:8px}.searchRow>.primary{padding-inline:13px}.search input::placeholder{font-size:12px}.filterRow{gap:10px}.filterRow>label{min-width:0;font-size:10px}.filterRow input[type=date]{min-width:0;max-width:100%;padding:9px 7px;font-size:14px}.grid{gap:28px 12px}.galleryCard{--slab-width:86%}.metadata{padding-top:10px}.titleLink h2{font-size:15px}.subtitle{font-size:10px}.variation{font-size:9px}.certificate{font-size:8px}.gradeLine{gap:7px}.gradeLine>strong{font-size:8px}.gradeLine>strong>span{font-size:23px;margin-left:4px}.gradeLine>span{font-size:8px}.shell .page .metadata>.primary{font-size:11px;padding:10px 6px;gap:10px}.mediaCaption{font-size:7px}.toolbar{gap:10px}.toolbar>p{font-size:10px}.toolbar>p>span{font-size:9px}.shell .page .viewSwitch button{min-width:53px;padding:7px 8px;font-size:10px}.empty h2{font-size:23px}.empty p{font-size:12px}.archiveNote{font-size:9px}}
 @media(max-width:480px){
+  .toolbar{flex-wrap:wrap}.archiveActions{width:100%;justify-content:space-between}
   .filterRow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 10px;align-items:end}
   .filterRow>label:first-child{grid-column:1/-1;min-width:0}
   .filterRow>label{width:100%}

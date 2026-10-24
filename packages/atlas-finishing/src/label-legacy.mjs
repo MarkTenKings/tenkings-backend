@@ -1,5 +1,6 @@
 // Browser-safe deterministic SVG renderer. Text measurement and QR generation are
 // injected by the existing browser/printer adapter; no remote font/image needed.
+import { atlasPublicSportsAttributesSchema } from '@atlas/grading-core/identity';
 export const MANUAL_LABEL_GEOMETRY = Object.freeze({ widthInches: 2.73, heightInches: 0.83, width: 196.56, height: 59.76,
   nfcReserve: Object.freeze({ x: 134.25, y: 14.29, width: 31.18, height: 31.18, diameterMm: 11, guideDiameterMm: 9, cx: 149.84, cy: 29.88 }) });
 const fail = code => { throw new Error(code); };
@@ -23,7 +24,8 @@ export function validateManualLabel(label) {
     || required.some(key => !text(identity[key], 180, true))
     || nullableMetadata.some(key => !text(identity[key], key === 'year' ? 24 : 180, true))
     || optional.some(key => identity[key] !== '' && !text(identity[key], 120, true))
-    || Object.keys(identity).some(key => ![...required, ...nullableMetadata, ...optional, ...(!sports ? ['layoutType', 'manufacturer'] : [])].includes(key))
+    || Object.keys(identity).some(key => ![...required, ...nullableMetadata, ...optional, ...(sports ? ['sportsAttributes'] : ['layoutType', 'manufacturer'])].includes(key))
+    || sports && Object.hasOwn(identity, 'sportsAttributes') && !atlasPublicSportsAttributesSchema.safeParse(identity.sportsAttributes).success
     || !sports && identity.manufacturer !== undefined && !text(identity.manufacturer, 120)
     || !sports && identity.layoutType != null && !['POKEMON', 'TRAINER', 'ENERGY'].includes(identity.layoutType)) fail('MANUAL_LABEL_IDENTITY_INVALID');
   return label;

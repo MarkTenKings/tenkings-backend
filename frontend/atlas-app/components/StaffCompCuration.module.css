@@ -28,3 +28,15 @@
 .confirmed { background: #f0f8f3; border: 1px solid #bad8c6; border-radius: 12px; padding: 20px; line-height: 1.6; font-size: 14px; }
 .confirmed ul { padding-left: 20px; }.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 @media (max-width: 480px) { .sale { padding: 13px; }.actions > button { width: 100%; }.saleTop strong { flex-basis: 100%; }.notice, .confirmed { padding: 13px; } }
+
+.designationReview { margin-top: 12px; }
+.labelReview { margin-top: 12px; padding: 16px; background: #f7faf8; border: 1px solid #d9e5df; border-radius: 10px; font-size: 13px; line-height: 1.6; }
+.labelReview > p:first-child { margin-top: 0; }
+.labelPhoto { display: grid; place-items: center; min-height: 160px; background: #fff; border: 1px solid #dce6df; border-radius: 8px; }
+.labelPhoto img { display: block; max-width: 100%; width: auto; height: auto; max-height: 620px; object-fit: contain; }
+.labelReview summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.labelText { white-space: pre-wrap; overflow-wrap: anywhere; }
+.designationChoice { display: grid; gap: 6px; margin: 12px 0; font-weight: 600; }
+.designationChoice select { width: 100%; min-width: 0; min-height: 44px; padding: 10px; color: #132c25; background: #fff; border: 1px solid #c9d8cf; border-radius: 8px; font: inherit; }
+.panel :is(select, summary):focus-visible { outline: 3px solid #a77d2f; outline-offset: 3px; }
+@media (max-width: 480px) { .labelReview { padding: 12px; }.labelPhoto img { max-height: 480px; } }

@@ -945,7 +945,7 @@ test('actual public grade animation restarts while playing, pauses, resumes and 
 
 test('new report calculations show each category factor, policy bands and base weighted-area allowance on screen and paper', () => {
   const props = fixture(), before = structuredClone(props.preview), explanation = props.preview.review.explanation;
-  assert.deepEqual(explanation.policy.categoryDamageMultipliers, { CORNERS: .25, EDGES: 1, SURFACE: 2 });
+  assert.deepEqual(explanation.policy.categoryDamageMultipliers, { CORNERS: .25, EDGES: .25, SURFACE: 2 });
   assert.equal(explanation.policy.conditionBands.find(band => band.score === 10).upperPercent, .01);
   const f = harness(props); f.ready();
   const values = node => all(node, item => item.type === 'data').map(item => item.props.value);

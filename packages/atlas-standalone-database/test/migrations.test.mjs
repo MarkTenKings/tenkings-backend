@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import {registeredMigrations,validateLedger} from '../registered-migrations.mjs';
 const baseline=JSON.parse(await readFile(new URL('../baseline.manifest.json',import.meta.url),'utf8'));
 test('registered additive suffix seals SQL independently of original baseline',async()=>{
- const migrations=await registeredMigrations();assert.equal(migrations.length,10);
+ const migrations=await registeredMigrations();assert.equal(migrations.length,11);
+ assert.equal(migrations[10].version,'atlas-standalone-012-optional-comp-archive');
  assert.equal(migrations[9].version,'atlas-standalone-011-comp-curation');
  assert.equal(migrations[8].version,'atlas-standalone-010-collection-foundation');
  assert.equal(migrations[7].version,'atlas-standalone-009-card-provenance');
@@ -34,4 +36,22 @@ test('ledger accepts exact known prefix only; rejects tampered, unknown and miss
  const m=await registeredMigrations(),b={version:baseline.version,checksum:baseline.sqlSha256},v={version:m[0].version,checksum:m[0].sqlSha256};
  assert.equal(validateLedger([b],baseline,m).size,1);assert.equal(validateLedger([v,b],baseline,m).size,2);
  for(const rows of [[],[v],[b,{...v,checksum:'0'.repeat(64)}],[b,{version:'unknown',checksum:v.checksum}],[b,b]])assert.throws(()=>validateLedger(rows,baseline,m),/LEDGER_INVALID/);
+});
+
+test('optional comp suffix retains qualified bodies and earlier entries without owning the transaction',async()=>{
+ const migrations=await registeredMigrations(),migration=migrations.at(-1),sha=value=>createHash('sha256').update(value).digest('hex');
+ assert.equal(sha(JSON.stringify(migrations.slice(0,-1).map(({sql,...entry})=>entry))),'b1c7c295859cf9ff4f29a72e33c10f3f37ef128110c4fec38bab41d8b16bbb31');
+ const sql=migration.sql;
+ assert.equal(migration.sqlSha256,'b2da5f767389d07a3b2afa76b69c8443b0a9304a2ff431e6f2b7e0ee54a284c8');
+ assert.doesNotMatch(sql,/^\s*(?:BEGIN|COMMIT|ROLLBACK)\s*;/mi);
+ assert.doesNotMatch(sql,/^\s*(?:GRANT|INSERT INTO|DELETE FROM|TRUNCATE|UPDATE\s+atlas_|ALTER ROLE)\b/mi);
+ const curation=await readFile(new URL('../../atlas-connected-manual/sql/comp-evidence-selection-migration-candidate.sql',import.meta.url),'utf8');
+ assert.ok(sql.includes(curation.slice(curation.indexOf('DO $precondition$'),curation.lastIndexOf('COMMIT;'))));
+ const search=await readFile(new URL('../../atlas-connected-manual/sql/archive-market-search-authority-proposal.sql',import.meta.url),'utf8');
+ assert.ok(sql.includes(search.slice(search.indexOf('ALTER TABLE atlas_manual_connected.market_job'))));
+ assert.equal(sha(sql.match(/comp_curation_guard\(\).*?AS \$\$(.*?)\$\$;/s)[1]),'8d2b7e0da7e1309334cce43a3c7382fdb4c63e48d771b95971aa23833a410e51');
+ assert.equal(sha(sql.match(/CREATE FUNCTION atlas_manual_connected.market_archive_search_guard\(\).*?AS \$function\$(.*?)\$function\$;/s)[1]),'68e34910409967fc0fd54b6f802b48e7f4442da866e2e3267f82ff77501cfe2c');
+ const ledger=[{version:baseline.version,checksum:baseline.sqlSha256},...migrations.map(m=>({version:m.version,checksum:m.sqlSha256}))];
+ assert.equal(validateLedger(ledger,baseline,migrations).size,12);
+ assert.throws(()=>validateLedger(ledger.filter(row=>row.version!=='atlas-standalone-011-comp-curation'),baseline,migrations),/LEDGER_INVALID/);
 });

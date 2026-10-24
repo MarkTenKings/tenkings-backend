@@ -1,5 +1,20 @@
 # Ten Kings Master Product Context
 
+> October 24, 2026 source composition only: the R2 successor now incorporates qualified R1 source `cf4a5b64` while retaining R2 `246dcbc3` proof/marketplace work. Current R1 grading, reports, label/Rush, slab, comp and registered-schema implementations are preserved. No deployment, schema installation, credential change or activation occurs in this merge. Production status belongs to the release lead’s fresh observations; dated sections below preserve history, not current execution authority. Claims/history and marketplace pricing remain off.
+
+## Current Atlas slab and card presentation — October 22, 2026
+
+Application source `20b747badb8ad34c510673c446cf326396bdeeac` is deployed on native, staff and public. Existing and future eligible approved cards use the shared staff archive/detail renderer with the improved slab, equal card spacing, Front/Back views, front NFC reference and optional higher-resolution 3D. Exact approved inspection photographs and matching saved labels remain the source; recorded physical slab photos keep precedence. Small source-bound transparent previews are cached privately and verified on delivery; full-detail 3D is loaded on selection, with verified media fallbacks.
+
+Live acceptance passed103 canonical checks, four retained reports/eight original hashes and eight decoded transparent previews. Native health and all37 protected business-table commitments passed; admission was explicitly released and absence proved, so grading may resume. No migration, reapproval, regrade or saved-photo/label rewrite occurred. Predecessor additive009 is already installed; the older local-only SQL009/detail paragraph below is historical. Production identities and evidence are in [Deploy Runbook](../runbooks/DEPLOY_RUNBOOK.md). Owner-approved local visuals are recorded separately from production signed-in UI acceptance, which remains unobserved in this release.
+
+Durable paired original-upload masters, calibrated physical-holder geometry, ownership/My Collection and marketplace transactions remain future work. This renderer uses the approved1350×1858 inspection photographs; it does not claim those are untouched intake masters. Earlier dated “current” deployment identities below are historical.
+
+
+### Retained historical R2 branch release checkpoints
+
+The following branch records retain their original observations. Their serving identities are historical; use the newer dated release evidence above and in SESSION_LOG.
+
 > Latest verified ATLAS checkpoint: the slab technical release `20b747ba` is complete on native/staff/public, image `2ed7f709…`, controls Staff144/Public106/STAFF SMS112. Customer remains `c68e9ea7`/83/35 and SQL009/ledger9. Release and holder absence, native health, immutable Vercel targets and database controls are reconciled in `resume-02/successor-slab-checkpoint.json` (7206b067; observations 19:57–19:59 UTC). Slab authenticated positive acceptance remains marked pending. R1 candidate `a537f922` preserves the slab successor and adds the reviewed managed-role fix. All three web builds, 63 affected web checks and 57 Linux checks pass; native image `2c871804…` completed at20:12UTC with existing containers/images preserved. Three actual restricted local logins pass. The separately failed optional negative packet is reconciled without claiming its unexecuted cases. Independent schema preservation review passes with explicit composite-evidence limits; unchanged schema/storage qualification is reused. Live schema/role/admission/control/provider/runtime/session gates remain. No R1 production migration, roles, grants, runtime credentials or activation. Grading, labels and photos are preserved; ownership claims/history stay disabled pending Fingerprint. Ten Kings and Set Ops unchanged. Earlier checkpoints below are historical.
 
 ## Historical ATLAS Workspace review-entry release — October 21, 2026 Pacific

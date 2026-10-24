@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readCardHistory, mergeCardHistory } from '../lib/card-history-client.mjs';
+import { readCardHistory, mergeCardHistory, historyAuditRows, historyAuditTime } from '../lib/card-history-client.mjs';
 
 const hash = 'a'.repeat(64), snapshot = '2026-10-21T00:00:00.000000Z', approvedAt = '2026-10-20T00:00:00.000000Z';
 function fixture() {
@@ -71,4 +71,77 @@ test('historical replies without optional summary/comps fields retain their orig
   assert.equal(readCardHistory(value, value.card.cardId).card.identity.sportsAttributes, undefined);
   value.card.approvedSummary = { state: 'UNAVAILABLE' }; value.card.savedComparables = { state: 'UNAVAILABLE' };
   assert.equal(readCardHistory(value, value.card.cardId), value);
+});
+
+
+function custodyFixture() {
+  const value = fixture(), eventId = randomUUID();
+  const event = { eventId: `custody:${eventId}`, category: 'CUSTODY', kind: 'ATLAS_RECEIVED', verification: 'VERIFIED_RECORD', sequence: 3,
+    occurredAt: '2026-10-20T00:00:00.123456Z', recordedAt: '2026-10-20T00:05:00.654321Z',
+    source: { type: 'CUSTODY', cardId: value.card.cardId, eventId, submissionCardId: randomUUID(), receivedEventId: eventId,
+      inputHash: hash, linkedAt: '2026-10-20T00:06:00.000000Z' } };
+  value.history.events.push(event);
+  value.custody = { status: 'RECORDED', currentPhysicalHolder: 'UNKNOWN', latestRecorded: Object.fromEntries(
+    ['eventId', 'kind', 'sequence', 'occurredAt', 'recordedAt'].map(key => [key, event[key]])) };
+  return value;
+}
+
+test('audit rows retain exact UTC precision and only named reader-authorized source fields', () => {
+  const value = custodyFixture(), event = value.history.events[1];
+  assert.equal(readCardHistory(value, value.card.cardId), value);
+  event.source.unrelatedPrivateValue = 'MUST_NOT_RENDER';
+  event.evidence = { note: 'MUST_NOT_RENDER' };
+  const rows = Object.fromEntries(historyAuditRows(event));
+  assert.equal(rows['Occurred (UTC)'], '2026-10-20 00:00:00.123456 UTC');
+  assert.equal(rows['Recorded (UTC)'], '2026-10-20 00:05:00.654321 UTC');
+  assert.equal(rows['Custody sequence'], 3);
+  assert.equal(rows['Receipt event reference'], event.source.receivedEventId);
+  assert.equal(rows['Saved input hash'], hash);
+  assert.doesNotMatch(JSON.stringify(rows), /MUST_NOT_RENDER/);
+  assert.equal(historyAuditTime(undefined), null);
+  delete event.source; delete event.occurredAt; value.custody.latestRecorded = null;
+  assert.equal(readCardHistory(value, value.card.cardId), value, 'historical sparse replies stay readable');
+  assert.equal(Object.fromEntries(historyAuditRows(event))['Occurred (UTC)'], null);
+});
+
+test('newly displayed audit source fields reject malformed values without requiring absent historical fields', () => {
+  for (const change of [
+    event => event.source.submissionCardId = 'not-an-id', event => event.source.receivedEventId = randomUUID() + '/other',
+    event => event.source.inputHash = 'https://example.invalid', event => event.source.linkedAt = 'invalid',
+    event => event.source.linkedAt = '2026-10-22T00:00:00.000000Z',
+  ]) {
+    const value = custodyFixture(); change(value.history.events[1]);
+    assert.throws(() => readCardHistory(value, value.card.cardId), { code: 'CARD_HISTORY_REPLY_INVALID' });
+  }
+  for (const key of ['publicHash', 'manifestHash']) {
+    const value = fixture(); value.history.events[0].source[key] = { unexpected: true };
+    assert.throws(() => readCardHistory(value, value.card.cardId), { code: 'CARD_HISTORY_REPLY_INVALID' });
+  }
+  const value = fixture(), event = value.history.events[0];
+  event.kind = 'REPORT_APPROVED'; event.eventId = `approval:${value.card.approvalActionId}`;
+  event.source.type = 'APPROVAL'; event.report.path = null;
+  event.source.sourceRevision = 1; event.source.sourceHash = hash;
+  assert.equal(readCardHistory(value, value.card.cardId), value);
+  const rows = Object.fromEntries(historyAuditRows(event));
+  assert.equal(rows['Source revision'], 1); assert.equal(rows['Approval source hash'], hash);
+  for (const [key, bad] of [['sourceRevision', 0], ['sourceHash', 'invalid']]) {
+    const changed = structuredClone(value); changed.history.events[0].source[key] = bad;
+    assert.throws(() => readCardHistory(changed, changed.card.cardId), { code: 'CARD_HISTORY_REPLY_INVALID' });
+  }
+});
+
+test('latest recorded handoff cannot assert current custody, a declaration, a future record or contradict its event', () => {
+  for (const change of [
+    value => value.custody.currentPhysicalHolder = 'ATLAS', value => value.custody.status = 'UNKNOWN',
+    value => value.custody.latestRecorded.kind = 'DEPOSIT_DECLARED', value => value.custody.latestRecorded.kind = 'DELAY_RESOLVED',
+    value => value.custody.latestRecorded.sequence = 0, value => value.custody.latestRecorded.sequence = 4,
+    value => value.custody.latestRecorded.eventId = `approval:${randomUUID()}`,
+    value => value.custody.latestRecorded.recordedAt = '2026-10-22T00:00:00.000000Z',
+    value => value.custody.latestRecorded.occurredAt = '2026-10-20T00:00:00.123457Z',
+  ]) {
+    const value = custodyFixture(); change(value);
+    assert.throws(() => readCardHistory(value, value.card.cardId), { code: 'CARD_HISTORY_REPLY_INVALID' });
+  }
+  const value = custodyFixture(); value.history.events.pop();
+  assert.equal(readCardHistory(value, value.card.cardId), value, 'latest handoff may be on an unloaded history page');
 });

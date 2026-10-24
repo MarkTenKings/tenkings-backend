@@ -2,6 +2,8 @@ import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 import { loadVerifiedImage } from '../../../packages/atlas-manual-workspace/src/verified-image.mjs';
 
 export const APPROVED_MEDIA_ACCESS_ENDED = 'atlas:verified-image-access-ended';
+export const APPROVED_LABEL_LAYOUT = Object.freeze({ version: 'atlas-approved-b-v1', width: 68.342, height: 20.082,
+  nfc: Object.freeze({ x: 51.8, y: 9.75, radius: 5.1 }) });
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const positive = value => Number.isSafeInteger(value) && value > 0 && value <= 2147483647;
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
@@ -9,20 +11,26 @@ const failure = code => Object.assign(new Error(code), { code });
 const check = (value, code = 'APPROVED_MEDIA_INVALID') => { if (!value) throw failure(code); };
 
 /** Paths and grants are bound to this saved approval, never to "latest". */
-export function approvedMediaSource(card, kind) {
+export function approvedMediaSource(card, kind, { delivery = 'full' } = {}) {
   const report = card?.report, media = card?.media?.[kind];
   if (report?.state !== 'PUBLISHED' || !/^ar_[A-Za-z0-9_-]{24}$/.test(report.publicToken ?? '')
     || !positive(report.version) || !hash(report.publicHash) || !media) return null;
   const binding = { publicToken: report.publicToken, approvalVersion: report.version, publicHash: report.publicHash };
   if (['FRONT', 'BACK'].includes(kind)) {
+    if (!['preview', 'full'].includes(delivery)) return null;
     const url = `/api/reports/${report.publicToken}/images/${kind}?v=${report.version}`;
     return media.url === url && media.provenance === 'APPROVED_GRADING_PHOTOGRAPH'
-      ? { kind, url, binding: { ...binding, side: kind } } : null;
+      ? { kind, url, delivery, binding: { ...binding, side: kind } } : null;
   }
-  if (kind === 'LABEL') {
-    const url = `/admin/api/staff/manual-connected/labels/${media.itemId}/artwork?mode=preview`;
-    return uuid(media.itemId) && media.url === url && media.provenance === 'REPORT_BOUND_LABEL_ARTWORK'
-      ? { kind, url } : null;
+  if (kind === 'LABEL' || kind === 'LABEL_BACK') {
+    const url = `/admin/api/staff/manual-connected/labels/${media.itemId}/artwork?mode=${kind === 'LABEL_BACK' ? 'preview-back' : 'preview'}`;
+    if (!uuid(media.itemId) || media.url !== url || media.provenance !== 'REPORT_BOUND_LABEL_ARTWORK') return null;
+    if (kind === 'LABEL_BACK') {
+      const front = approvedMediaSource(card, 'LABEL');
+      if (!front || front.layoutVersion !== APPROVED_LABEL_LAYOUT.version || media.itemId !== card.media.LABEL.itemId) return null;
+      return { kind, url, layoutVersion: front.layoutVersion };
+    }
+    return { kind, url, ...(media.layoutVersion === APPROVED_LABEL_LAYOUT.version ? { layoutVersion: media.layoutVersion } : {}) };
   }
   if (kind === 'SLAB') {
     const url = `/api/reports/${report.publicToken}/presentation/image?v=${report.version}&revision=${media.presentationRevision}`;
@@ -106,26 +114,53 @@ export function createApprovedMediaLoader({ fetchImpl = (...args) => fetch(...ar
     }
   }
 
-  return async function load(source, { signal = new AbortController().signal } = {}) {
-    check(source && ['FRONT', 'BACK', 'LABEL', 'SLAB'].includes(source.kind));
-    const controller = new AbortController(), deadlineAt = Date.now() + timeoutMs;
-    const timer = setTimeout(() => controller.abort(failure('APPROVED_MEDIA_TIMEOUT')), timeoutMs);
+  return async function load(source, { signal = new AbortController().signal, alphaOnly = false, expectedSourceSha256 } = {}) {
+    check(source && ['FRONT', 'BACK', 'LABEL', 'LABEL_BACK', 'SLAB'].includes(source.kind));
+    const photograph = source.kind === 'FRONT' || source.kind === 'BACK';
+    check(!photograph || ['preview', 'full'].includes(source.delivery ?? 'full'));
+    check(!alphaOnly || photograph && source.delivery === 'preview');
+    check(expectedSourceSha256 === undefined || alphaOnly && hash(expectedSourceSha256));
+    const budgetMs = alphaOnly ? Math.min(timeoutMs, 8000) : timeoutMs;
+    const controller = new AbortController(), deadlineAt = Date.now() + budgetMs;
+    const timer = setTimeout(() => controller.abort(failure('APPROVED_MEDIA_TIMEOUT')), budgetMs);
     const bounded = AbortSignal.any([signal, controller.signal]);
     const retryFetch = (url, options) => request(url, options, bounded, deadlineAt);
     try {
       return await enqueue(async () => {
-        let descriptor = source.descriptor;
-        if (source.kind === 'FRONT' || source.kind === 'BACK') {
+        let descriptor = source.descriptor, full;
+        if (photograph) {
           const response = await retryFetch(`${source.url}&delivery=direct`, { method: 'GET', credentials: 'omit',
             cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer' });
           check(response.ok && !response.redirected, 'APPROVED_MEDIA_UNAVAILABLE');
           const grant = parseInspectionAccess(await waitFor(() => response.json(), bounded), source.binding);
-          bounded.throwIfAborted(); descriptor = grant.image;
+          bounded.throwIfAborted(); full = grant.image;
+          check(expectedSourceSha256 === undefined || full.sha256 === expectedSourceSha256, 'APPROVED_MEDIA_SOURCE_CHANGED');
+          if (alphaOnly && !full.alphaPreview) return null;
+          descriptor = alphaOnly ? full.alphaPreview : source.delivery === 'preview' ? full.alphaPreview || full.preview || full : full;
         }
         if (descriptor) {
-          const asset = await verify(descriptor, { signal: bounded, fetchImpl: retryFetch, urlImpl, origin: origin(), timeoutMs });
-          if (bounded.aborted) { asset.dispose(); throw bounded.reason; }
-          return asset;
+          const verified = async selected => {
+            const asset = await verify(selected, { signal: bounded, fetchImpl: retryFetch, urlImpl, origin: origin(), timeoutMs: budgetMs });
+            if (bounded.aborted) { asset.dispose(); throw bounded.reason; }
+            return { ...asset, width: selected.width, height: selected.height,
+              sha256: selected.sha256, byteCount: selected.byteCount,
+              ...(full ? { representation: selected === full ? 'full' : 'preview', sourceSha256: full.sha256 } : {}),
+              ...(full?.alphaPreviewPending && selected === full.preview ? { alphaPreviewPending: true } : {}) };
+          };
+          const candidates = !alphaOnly && full && source.delivery === 'preview'
+            ? [full.alphaPreview, full.preview, full].filter(Boolean) : [descriptor];
+          for (const [index, candidate] of candidates.entries()) {
+            try { return await verified(candidate); }
+            catch (error) {
+              // Only unavailable transport may try another independently
+              // verified rendition from this grant. Corrupt bytes/lineage,
+              // cancellation and deadlines never downgrade verification.
+              if (bounded.aborted
+                || !(error?.code === 'VERIFIED_IMAGE_UNAVAILABLE' || error?.name === 'TypeError')) throw error;
+              if (alphaOnly) return null;
+              if (index === candidates.length - 1) throw error;
+            }
+          }
         }
         // Saved label preview bytes have no image hash in the current contract;
         // their exact authenticated item route is authoritative. The print hash
@@ -145,39 +180,89 @@ export function createApprovedMediaLoader({ fetchImpl = (...args) => fetch(...ar
           const url = urlImpl.createObjectURL(new Blob(chunks, { type: 'image/svg+xml' })); let disposed = false;
           return { url, byteCount: size, dispose() { if (!disposed) { disposed = true; urlImpl.revokeObjectURL(url); } } };
         } finally { try { Promise.resolve(reader.cancel()).catch(() => {}); } catch {} }
-      }, bounded, ['FRONT', 'BACK'].includes(source.kind) ? 0 : 1);
+      // A complete still needs its saved label as promptly as its small photo.
+      // Optional large media never jumps ahead of either in the shared queue.
+      }, bounded, !alphaOnly && (['LABEL', 'LABEL_BACK'].includes(source.kind) || source.delivery === 'preview') ? 0 : 1);
     } finally { clearTimeout(timer); }
   };
 }
 
 export const loadApprovedMedia = createApprovedMediaLoader();
 
-/** One mounted card owns all sides independently. Disposed/late loads cannot
- * publish; retrying one side cannot clear another side's already loaded image. */
-export function createApprovedMediaResource({ load = loadApprovedMedia } = {}) {
+/** One mounted approval owns its media, including independent preview/full
+ * photo slots. Full detail cannot evict a still or silently substitute a small
+ * rendition. The caller remounts on approvedMediaIdentity changes; nothing is
+ * retained across that boundary. Disposed/late loads cannot publish. */
+export function createApprovedMediaResource({ load = loadApprovedMedia, alphaRetryDelays = [2000, 3000, 4000] } = {}) {
+  check(Array.isArray(alphaRetryDelays) && alphaRetryDelays.length <= 3
+    && alphaRetryDelays.every(delay => Number.isSafeInteger(delay) && delay >= 0 && delay <= 8000));
   const entries = new Map(); let disposed = false;
-  const release = entry => { entry?.controller.abort(); entry?.asset?.dispose(); };
+  const release = entry => { clearTimeout(entry?.alphaTimer); entry?.controller.abort(); entry?.asset?.dispose(); };
+  const slot = source => ['FRONT', 'BACK'].includes(source.kind) ? `${source.kind}:${source.delivery ?? 'full'}` : source.kind;
+  const publishState = (entry, state) => { entry.state = state; entry.publish(state); };
+  const publishAsset = entry => {
+    const { url, representation, width, height, sourceSha256, sha256, byteCount } = entry.asset;
+    publishState(entry, { loading: false, url, error: null, representation, width, height, sourceSha256, sha256, byteCount });
+  };
+  function upgradeAlpha(entry, current) {
+    if (entry.source.delivery !== 'preview' || !entry.asset.alphaPreviewPending || !hash(entry.asset.sourceSha256)) return;
+    const sourceSha256 = entry.asset.sourceSha256; let attempt = 0;
+    const schedule = () => {
+      if (!current() || attempt >= alphaRetryDelays.length) return;
+      entry.alphaTimer = setTimeout(() => {
+        entry.alphaTimer = null;
+        if (!current()) return;
+        Promise.resolve().then(() => {
+          entry.controller.signal.throwIfAborted();
+          return load(entry.source, { signal: entry.controller.signal, alphaOnly: true, expectedSourceSha256: sourceSha256 });
+        }).then(asset => {
+          if (!asset) { schedule(); return; }
+          if (!current()) { asset.dispose(); return; }
+          if (asset.sourceSha256 !== sourceSha256 || asset.representation !== 'preview') { asset.dispose(); return; }
+          const previous = entry.asset; entry.asset = asset;
+          try { publishAsset(entry); } finally { previous.dispose(); }
+        }).catch(error => {
+          // Transient access failure can use the next bounded check. A changed
+          // binding or corrupt image stops upgrades while retaining the still.
+          if (['APPROVED_MEDIA_UNAVAILABLE', 'APPROVED_MEDIA_TIMEOUT'].includes(error?.code) || error?.name === 'TypeError') schedule();
+        });
+      }, alphaRetryDelays[attempt++]);
+    };
+    schedule();
+  }
   return {
     read(source, publish) {
       if (disposed || !source) return Promise.resolve();
-      const key = JSON.stringify(source), previous = entries.get(source.kind);
-      if (previous?.key === key && (previous.asset || previous.pending)) return previous.promise ?? Promise.resolve();
+      const key = JSON.stringify(source), entrySlot = slot(source), previous = entries.get(entrySlot);
+      if (previous?.key === key && (previous.asset || previous.pending)) {
+        previous.publish = publish; publish(previous.state);
+        return previous.promise ?? Promise.resolve();
+      }
       release(previous);
       const entry = { key, controller: new AbortController(), pending: true, publish, source };
-      entries.set(source.kind, entry); publish({ loading: true, url: null, error: null });
-      const current = () => !disposed && entries.get(source.kind) === entry && !entry.controller.signal.aborted;
+      entries.set(entrySlot, entry); publishState(entry, { loading: true, url: null, error: null });
+      const current = () => !disposed && entries.get(entrySlot) === entry && !entry.controller.signal.aborted;
       entry.promise = Promise.resolve().then(() => { entry.controller.signal.throwIfAborted(); return load(source, { signal: entry.controller.signal }); })
         .then(asset => {
           if (!current()) { asset.dispose(); return; }
-          entry.asset = asset; entry.pending = false; publish({ loading: false, url: asset.url, error: null });
-        }, error => { if (current()) { entry.pending = false; publish({ loading: false, url: null, error }); } });
+          entry.asset = asset; entry.pending = false;
+          publishAsset(entry); upgradeAlpha(entry, current);
+        }, error => { if (current()) { entry.pending = false; publishState(entry, { loading: false, url: null, error }); } });
       return entry.promise;
     },
-    fail(kind, url) {
-      const entry = entries.get(kind);
-      if (!entry || disposed || url && entry.asset?.url !== url) return;
-      release(entry); entries.delete(kind);
-      entry.publish({ loading: false, url: null, error: failure('APPROVED_MEDIA_DECODE') });
+    cancel(kind, delivery = 'full') {
+      const entrySlot = slot({ kind, delivery }), entry = entries.get(entrySlot);
+      if (disposed || !entry?.pending) return;
+      release(entry); entries.delete(entrySlot);
+      publishState(entry, { loading: false, url: null, error: null, cancelled: true });
+    },
+    fail(kind, url, delivery = 'full') {
+      if (disposed) return;
+      for (const [entrySlot, entry] of entries) {
+        if (entry.source.kind !== kind || (url ? entry.asset?.url !== url : entrySlot !== slot({ kind, delivery }))) continue;
+        release(entry); entries.delete(entrySlot);
+        publishState(entry, { loading: false, url: null, error: failure('APPROVED_MEDIA_DECODE') });
+      }
     },
     dispose() { disposed = true; entries.forEach(release); entries.clear(); },
   };

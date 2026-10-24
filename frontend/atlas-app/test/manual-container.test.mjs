@@ -6,7 +6,7 @@ import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,LABEL_V4_SOURCES} from '../scripts/package-manual-container.mjs';
+import {collectManualSource,packageManualContainer,CPU_SOURCES,VENDOR_SOURCES,LABEL_V4_SOURCES,LABEL_APPROVED_B_SOURCES} from '../scripts/package-manual-container.mjs';
 import {manufacturerRuntimeFiles} from '../../../packages/card-catalog-evidence/src/manufacturer-runtime-files.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -15,7 +15,15 @@ test('actual clean serving closure contains current workers and camera but no hi
  assert(packages.includes('packages/atlas-connected-manual'));assert(!packages.includes('packages/database'));
  assert(!packages.includes('packages/atlas-standalone-database'));
  for(const name of CPU_SOURCES)assert(paths.has('backend/ai-grader-speedster-service/'+name),name);
- for(const path of LABEL_V4_SOURCES)assert(paths.has(path),path);
+ for(const path of [...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES])assert(paths.has(path),path);
+ const fontRoot='packages/atlas-finishing/assets/approved-b/fonts/';
+ for(const name of ['BebasNeue-Regular.ttf','OFL-BebasNeue.txt','README.md','Knewave-Regular.ttf','Lacquer-Regular.ttf',
+  'OFL-Knewave.txt','OFL-Lacquer.txt','label-style-provenance.json','ATLAS-Rush-Regular.ttf','LICENSE-ATLAS-Rush.txt','PROVENANCE-ATLAS-Rush.md'])assert(paths.has(fontRoot+name),`Missing variant font runtime/provenance input: ${name}`);
+ assert.equal(files.find(file=>file.path===fontRoot+'BebasNeue-Regular.ttf').sha256,'830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04');
+ assert.match(files.find(file=>file.path===fontRoot+'OFL-BebasNeue.txt').bytes.toString(),/SIL Open Font License, Version 1\.1/);
+ assert.equal(files.find(file=>file.path===fontRoot+'ATLAS-Rush-Regular.ttf').sha256,'5ac5303a4fd8c8956d379891fe7dc0a265d39d1071210fbe06478d0034149aec');
+ assert.match(files.find(file=>file.path===fontRoot+'LICENSE-ATLAS-Rush.txt').bytes.toString(),/Copyright 2026 ATLAS \/ Ten Kings/);
+ for(const module of ['label-approved-b.mjs','label-approved-b-artwork.mjs'])assert(paths.has('packages/atlas-finishing/src/'+module),module);
  assert.equal(CPU_SOURCES.length,8);assert(paths.has('frontend/atlas-shared/RapidCardCamera.jsx'));
  assert.deepEqual([...paths].filter(path=>path.startsWith('packages/card-catalog-evidence/data/')).sort(),await manufacturerRuntimeFiles(root));
  for(const path of paths)assert(!/(?:^|\/)(?:tests?|fixtures|test-fixtures|sql|migrations|node_modules|dist|\.generated|\.next)(?:\/|$)|\.env|atlas_photo_geometry\.py|preparation_core\.py/.test(path),path);
@@ -57,6 +65,30 @@ test('isolated packaged catalog resolves Jordan, Nick Kurtz and LaMelo offline a
   }
  }finally{await rm(temporary,{recursive:true,force:true});await rm(temporary+'.manifest.json',{force:true});}
 });
+test('isolated approved B package verifies exact assets and rejects changed artwork, variant font or provenance bytes',async()=>{
+ const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-label-')),manifestPath=temporary+'.manifest.json';
+ try{
+  const {files}=await collectManualSource(),included=files.filter(file=>LABEL_APPROVED_B_SOURCES.includes(file.path)
+   ||file.path.startsWith('frontend/atlas-app/assets/label-templates/')
+   ||['label-approved-b-artwork.mjs','label-style-artwork.mjs','label-style-png.mjs','label-sheet.mjs','label-sheet-geometry.mjs','label-sheet-25.mjs'].some(name=>file.path===`packages/atlas-finishing/src/${name}`)
+   ||file.path==='frontend/atlas-app/scripts/verify-manual-container.mjs');
+  for(const file of included){const path=join(temporary,file.path);await mkdir(dirname(path),{recursive:true});await writeFile(path,file.bytes);}
+  await writeFile(manifestPath,JSON.stringify({version:'atlas-clean-manual-source-v1',packages:['packages/atlas-finishing'],files:included.map(({bytes,...file})=>file)}));
+  const script=join(temporary,'frontend/atlas-app/scripts/verify-manual-container.mjs'),run=()=>spawnSync(process.execPath,[script,manifestPath],{encoding:'utf8',timeout:15000});
+  const complete=run();assert.equal(complete.status,0,complete.stderr);const result=JSON.parse(complete.stdout);
+  assert.equal(result.approvedLabelAssets.version,'atlas-approved-b-static-assets-v1');assert.equal(result.approvedLabelAssets.files,5);
+  assert.equal(result.approvedLabelFonts.atlasRushSha256,'5ac5303a4fd8c8956d379891fe7dc0a265d39d1071210fbe06478d0034149aec');
+  assert.equal(result.labelJig25.positions,25);assert.equal(result.labelJig25.backFiles,3);
+  for(const name of ['back-black.png','fonts/BebasNeue-Regular.ttf','fonts/OFL-BebasNeue.txt','fonts/README.md',
+    'style-front-black.png','style-front-inverted.png','style-artwork-manifest.json','fonts/Knewave-Regular.ttf','fonts/Lacquer-Regular.ttf',
+    'fonts/ATLAS-Rush-Regular.ttf','fonts/LICENSE-ATLAS-Rush.txt','fonts/PROVENANCE-ATLAS-Rush.md']){
+   const asset=join(temporary,'packages/atlas-finishing/assets/approved-b',name),original=await readFile(asset),bytes=Buffer.from(original);
+   bytes[bytes.length-1]^=1;await writeFile(asset,bytes);
+   const changed=run();assert.notEqual(changed.status,0,name);assert(changed.stderr.includes(name),changed.stderr);
+   await writeFile(asset,original);
+  }
+ }finally{await rm(temporary,{recursive:true,force:true});await rm(manifestPath,{force:true});}
+});
 test('isolated serving router closure resolves every exported entry including detail report return',async()=>{
  const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-router-'));
  try{
@@ -95,5 +127,30 @@ test('source verification rejects changed bytes, path escape and external symlin
   await writeFile(source,'changed');assert.notEqual(run().status,0);await writeFile(source,bytes);
   data.files[0].path='../escape.txt';await save();assert.notEqual(run().status,0);data.files[0].path='current.txt';await save();
   const external=join(temporary,'other.txt');await writeFile(external,bytes);await rm(source);await symlink(external,source);assert.notEqual(run().status,0);
+ }finally{await rm(temporary,{recursive:true,force:true});}
+});
+
+test('packaged canonical auth resolves its cold C0 dependency without loading a host or credentials',async()=>{
+ const temporary=await mkdtemp(join(tmpdir(),'atlas-packaged-c0-auth-'));
+ try{
+  const {files,packages}=await collectManualSource();assert(packages.includes('packages/atlas-marketplace'));
+  const required=['frontend/atlas-app/lib/server/access/auth.mjs','frontend/atlas-app/lib/server/policy.mjs',
+   'frontend/atlas-app/lib/server/api-failure.mjs','frontend/atlas-app/lib/server/access/session-policy.mjs',
+   'frontend/atlas-app/lib/phone.mjs','frontend/atlas-app/lib/routes.mjs',
+   'packages/atlas-marketplace/src/auth-r1.mjs','packages/atlas-marketplace/src/contract.mjs'];
+  for(const path of required){
+   const file=files.find(value=>value.path===path);assert.ok(file,`Missing canonical auth dependency: ${path}`);
+   const target=join(temporary,path);await mkdir(dirname(target),{recursive:true});await writeFile(target,file.bytes);
+  }
+  const probe=[
+   "import assert from 'node:assert/strict';",
+   "const {DurableStaffAuth}=await import('./frontend/atlas-app/lib/server/access/auth.mjs');",
+   "const {r1ProofLogout}=await import('./packages/atlas-marketplace/src/auth-r1.mjs');",
+   "assert.equal(typeof DurableStaffAuth,'function');assert.equal(r1ProofLogout({}),null);",
+  ].join('\n');
+  const run=()=>spawnSync(process.execPath,['--input-type=module','-e',probe],{cwd:temporary,encoding:'utf8'});
+  const result=run();assert.equal(result.status,0,result.stderr);
+  await rm(join(temporary,'packages/atlas-marketplace/src/auth-r1.mjs'));
+  const missing=run();assert.notEqual(missing.status,0);assert.match(missing.stderr,/ERR_MODULE_NOT_FOUND/);
  }finally{await rm(temporary,{recursive:true,force:true});}
 });

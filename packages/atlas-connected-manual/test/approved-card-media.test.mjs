@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { archiveApprovedMedia } from '../src/approved-card-media.mjs';
+import { LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-approved-b';
 
 const hash = character => character.repeat(64);
 function fixture() {
@@ -40,11 +41,41 @@ test('archive projects the exact versioned pair, optional actual slab photo and 
   }
   assert.equal(result.SLAB.sha256, hash('f')); assert.equal(result.SLAB.presentationRevision, 2);
   assert.equal(result.SLAB.provenance, 'ACTUAL_SLAB_PHOTOGRAPH');
-  assert.equal(result.LABEL.url, `/admin/api/staff/manual-connected/labels/${input.labelItem.id}/artwork?mode=preview`);
+  assert.equal(result.LABEL.url, `/admin/api/staff/manual-connected/labels/${input.labelItem.id}/artwork?mode=preview-card-foil`);
   assert.equal(result.LABEL.artworkHash, hash('d')); assert.equal(result.LABEL.sha256, undefined);
   assert.equal(result.LABEL.provenance, 'REPORT_BOUND_LABEL_ARTWORK');
+  assert.equal(result.LABEL.layoutVersion, undefined); assert.equal(result.LABEL_BACK, undefined);
   assert.doesNotMatch(JSON.stringify(result), /private|actor|original|nfcVerified|printed|humanApproved/);
   assert.deepEqual(input, before); assert.deepEqual(archiveApprovedMedia(input), result);
+});
+
+test('current and retained approved-B profiles project paired labels with the same approval-bound item', () => {
+  for (const profile of [LABEL_APPROVED_B_RENDERER_PROFILE_HASH, 'a0491ff4f0a86166371f950c658c3e08397e688fe13f9e60f28abbda88b764ab']) {
+  const input = fixture(); input.labelItem.renderer_profile_hash = profile;
+  const before = structuredClone(input), result = archiveApprovedMedia(input);
+  assert.equal(result.LABEL.layoutVersion, 'atlas-approved-b-v1');
+  assert.deepEqual(result.LABEL_BACK, { ...result.LABEL,
+    url: `/admin/api/staff/manual-connected/labels/${input.labelItem.id}/artwork?mode=preview-back` });
+  assert.equal(result.LABEL_BACK.itemId, input.labelItem.id); assert.equal(result.LABEL_BACK.sha256, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /private_field|snapshot|actor_id|print_svg|preview_svg/);
+  assert.deepEqual(input, before);
+  // Untrusted snapshot/display claims cannot upgrade an old renderer profile.
+  input.labelItem.renderer_profile_hash = hash('e'); input.labelItem.layoutVersion = 'atlas-approved-b-v1';
+  input.labelItem.snapshot = canonical({ layoutVersion: 'atlas-approved-b-v1' }); input.labelItem.snapshot_hash = digest(input.labelItem.snapshot);
+  const historical = archiveApprovedMedia(input);
+  assert.equal(historical.LABEL.layoutVersion, undefined); assert.equal(historical.LABEL_BACK, undefined);
+  }
+});
+
+test('approved-B reverse artwork is omitted together with any invalid or stale front-label binding', () => {
+  for (const [field, value] of [['card_id', randomUUID()], ['action_id', randomUUID()], ['approval_version', 4],
+    ['source_revision', 13], ['source_hash', hash('d')], ['report_hash', hash('d')], ['public_hash', hash('d')],
+    ['artwork_hash', null], ['material_profile_id', 'unknown/value'], ['state', 'NEEDS_LAYOUT'], ['current', false]]) {
+    const input = fixture(); input.labelItem.renderer_profile_hash = LABEL_APPROVED_B_RENDERER_PROFILE_HASH;
+    input.labelItem[field] = value; const result = archiveApprovedMedia(input);
+    assert.equal(result.LABEL, undefined, field); assert.equal(result.LABEL_BACK, undefined, field);
+    assert.ok(result.FRONT && result.BACK, field);
+  }
 });
 
 test('unpublished reports never expose media and missing optional assets leave only the approved pair', () => {

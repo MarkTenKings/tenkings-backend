@@ -11,10 +11,12 @@ const publish=f=>f.publication.publish({},f.cardId,f.actionId);
 test('new sports facts reach public report while private evidence and approval bytes remain exact', async () => {
  const attributes=emptyAtlasSportsAttributes();
  attributes.serial={presence:'PRESENT',...atlasPrintedSerial('007/099'),evidence:[{side:'BACK',imageSha256:'a'.repeat(64),observation:'Private staff observation: back serial 007/099.'}]};
+ attributes.specialFeatures=[{kind:'CASE_HIT',evidence:{type:'REVIEWED_REFERENCE',sourceTitle:'Private reviewed checklist',sourceUrl:'https://example.com/checklist',matchNote:'Exact card and printing match the case-hit entry.'}}];
  const f=await publicationFixture({identity:{playerName:'Synthetic serial card',year:'2026',manufacturer:'Fixture',productSet:'Local only',sportsAttributes:attributes}});
  const before={report:f.row.report,reportHash:f.row.report_hash,result:f.row.result},privateBefore=structuredClone({full:f.full,approval:f.approval});await publish(f);const p=await packet(f);
  assert.equal(p.report.identity.sportsAttributes.serial.printed,'007/099');assert.equal(p.report.identity.sportsAttributes.serial.denominator,99);
- assert.doesNotMatch(JSON.stringify(p.report.identity),/Private staff|imageSha256|observation|evidence/);
+ assert.deepEqual(p.report.identity.sportsAttributes.specialFeatures,[{kind:'CASE_HIT'}]);
+ assert.doesNotMatch(JSON.stringify(p.report.identity),/Private staff|imageSha256|observation|evidence|sourceTitle|sourceUrl|matchNote|REVIEWED_REFERENCE/);
  assert.deepEqual(p.report.grade,f.full.grade);assert.equal(p.report.finalGrade,f.full.finalGrade);
  assert.deepEqual({report:f.row.report,reportHash:f.row.report_hash,result:f.row.result},before);
  assert.deepEqual(parsePublicManualReport(p),p);

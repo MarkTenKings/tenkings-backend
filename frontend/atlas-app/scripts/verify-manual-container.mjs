@@ -27,6 +27,41 @@ if(mode==='source'){
   await walk(root);assert.deepEqual(all.sort(),manifest.files.map(file=>file.path).sort(),'Source closure has unmanifested or missing files');
 }
 const result={status:'CLEAN_MANUAL_SOURCE_VERIFIED',sourceFiles:manifest.files.length,sourceManifestSha256:hash(await readFile(manifestPath)),node:process.version};
+if(manifest.packages?.includes('packages/atlas-finishing')){
+  const {APPROVED_B_ASSETS,renderApprovedBBack,validateApprovedBArtwork}=await import('../../../packages/atlas-finishing/src/label-approved-b-artwork.mjs');
+  for(const [name,file]of Object.entries(APPROVED_B_ASSETS.files)){
+    const bytes=await readFile(resolve(root,'packages/atlas-finishing/assets/approved-b',name));
+    assert.equal(bytes.length,file.byteCount,name);assert.equal(hash(bytes),file.sha256,name);
+  }
+  const back=renderApprovedBBack(),backArtworkHash=hash(back);
+  assert.equal(validateApprovedBArtwork({printSvg:back,artworkHash:backArtworkHash}),back);
+  result.approvedLabelAssets={version:APPROVED_B_ASSETS.version,files:Object.keys(APPROVED_B_ASSETS.files).length,backArtworkHash};
+  const fontsDirectory=resolve(root,'packages/atlas-finishing/assets/approved-b/fonts');
+  const fonts=JSON.parse(await readFile(resolve(fontsDirectory,'label-style-provenance.json'),'utf8'));
+  for(const file of fonts.files){
+    assert(/^[A-Za-z0-9_-]+\.(?:ttf|txt|md)$/.test(file.file),'Invalid packaged font provenance path');
+    const bytes=await readFile(resolve(fontsDirectory,file.file));
+    assert.equal(bytes.length,file.bytes,file.file);assert.equal(hash(bytes),file.sha256,file.file);
+  }
+  for(const name of ['ATLAS-Rush-Regular.ttf','LICENSE-ATLAS-Rush.txt','PROVENANCE-ATLAS-Rush.md'])
+    assert.equal(fonts.files.find(file=>file.file===name)?.license,'LicenseRef-ATLAS-Rush-Proprietary',name);
+  const rush=fonts.files.find(file=>file.file==='ATLAS-Rush-Regular.ttf');
+  assert.equal(rush.sha256,'5ac5303a4fd8c8956d379891fe7dc0a265d39d1071210fbe06478d0034149aec');
+  result.approvedLabelFonts={files:fonts.files.length,atlasRushSha256:rush.sha256};
+  const {LABEL_JIG_25}=await import('../../../packages/atlas-finishing/src/label-sheet-25.mjs');
+  const {LABEL_25_EXPORT_PROFILES}=await import('../../../packages/atlas-finishing/src/label-sheet.mjs');
+  const directory=resolve(root,'frontend/atlas-app/assets/label-templates');
+  const backs=JSON.parse(await readFile(resolve(directory,'atlas-25-backs-manifest.json'),'utf8'));
+  assert.equal(backs.jigHash,LABEL_JIG_25.jigHash);assert.equal(backs.artworkHash,backArtworkHash);
+  assert.deepEqual(backs.outputs.map(row=>row.filename),['atlas-25-back-black.png','atlas-25-back-gold.png','atlas-25-back-silver.png']);
+  for(const row of backs.outputs){
+    const bytes=await readFile(resolve(directory,row.filename));
+    assert.equal(hash(bytes),row.sha256);assert.equal(bytes.length,row.byteCount);
+    assert.equal(bytes.readUInt32BE(16),9764);assert.equal(bytes.readUInt32BE(20),12598);
+    assert.equal(row.renderProfileHash,LABEL_25_EXPORT_PROFILES.find(p=>p.id===row.exportProfileId)?.hash);
+  }
+  result.labelJig25={jigHash:LABEL_JIG_25.jigHash,positions:LABEL_JIG_25.slots.length,backFiles:backs.outputs.length};
+}
 if(manifest.packages?.includes('packages/card-catalog-evidence')){
   const {manufacturerRuntimeFiles}=await import(new URL('../../../packages/card-catalog-evidence/src/manufacturer-runtime-files.mjs',import.meta.url));
   const catalogFiles=await manufacturerRuntimeFiles(root);
@@ -75,14 +110,21 @@ if(mode==='native'){
   assert.equal(nativeBuild.libheif,'1.23.2');assert.equal(nativeBuild.platform,process.platform);assert.equal(nativeBuild.arch,process.arch);
   const sharp=require('sharp'),png=await sharp({create:{width:16,height:16,channels:4,background:{r:40,g:90,b:150,alpha:.5}}}).png().toBuffer();
   assert.equal((await sharp(png).metadata()).width,16);
-  // Verify the packaged fonts, vector artwork and native label child together.
-  const {renderLabelV4}=await import('../../../packages/atlas-finishing/src/label-v4.mjs');
-  const {renderLabelV4Png}=await import('../../../packages/atlas-finishing/src/label-sheet.mjs');
-  const label=renderLabelV4({identity:{playerName:'Kobe Bryant',year:'1996–97',manufacturer:'Topps',productSet:'Basketball',cardNumber:'138'},finalGrade:9.5,reportNumber:'ATLAS-0123456789AB',approvalVersion:1,cardProfile:'SPORTS'});
+  // Verify the packaged exact artwork, approved fonts and native child together.
+  const {renderApprovedBLabel}=await import('../../../packages/atlas-finishing/src/label-approved-b.mjs');
+  const {renderLabelV4Png,LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1}=await import('../../../packages/atlas-finishing/src/label-sheet.mjs');
+  const label=renderApprovedBLabel({identity:{playerName:'Kobe Bryant',year:'1996–97',manufacturer:'Topps',productSet:'Basketball',cardNumber:'138'},finalGrade:9,reportNumber:'ATLAS-0123456789AB',approvalVersion:1,cardProfile:'SPORTS'});
   assert.equal(label.state,'READY');
   const labelPng=await renderLabelV4Png(label),labelMetadata=await sharp(labelPng.bytes).metadata();
   assert.equal(labelMetadata.width,6458);assert.equal(labelMetadata.height,1898);assert.equal(labelMetadata.hasAlpha,true);
   result.labelRenderer={artworkHash:label.artworkHash,rendererProfileHash:label.rendererProfileHash,sha256:labelPng.sha256,byteCount:labelPng.bytes.length,width:labelMetadata.width,height:labelMetadata.height};
+  result.labelRenderer.additionalOutputs=[];
+  for(const profile of [LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1]){
+    const output=await renderLabelV4Png(label,{exportProfileId:profile.id}),metadata=await sharp(output.bytes).metadata();
+    assert.equal(metadata.width,6458);assert.equal(metadata.height,1898);assert.equal(metadata.hasAlpha,true);
+    assert.equal(output.manifest.exportProfileId,profile.id);assert.equal(hash(output.bytes),output.sha256);
+    result.labelRenderer.additionalOutputs.push({exportProfileId:profile.id,sha256:output.sha256,byteCount:output.bytes.length});
+  }
   const script=[
     'import sys,json,pathlib,hashlib',
     'sys.path.insert(0,sys.argv[1])',

@@ -1,6 +1,7 @@
 // Browser-safe transport contract. A grant never changes approved evidence.
 export const INSPECTION_STORAGE_ORIGIN = 'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com';
 export const INSPECTION_PREVIEW_POLICY = 'atlas-inspection-preview-v1';
+export const INSPECTION_ALPHA_PREVIEW_POLICY = 'atlas-inspection-alpha-preview-v1';
 const sha = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const check = value => { if (!value) throw new Error('INSPECTION_ACCESS_INVALID'); };
 function readUrl(value) {
@@ -9,15 +10,21 @@ function readUrl(value) {
   check(url.origin === INSPECTION_STORAGE_ORIGIN && !url.username && !url.password && !url.hash);
   return url.href;
 }
-export function parseInspectionPreview(value, sourceSha256) {
-  check(value && value.policyVersion === INSPECTION_PREVIEW_POLICY && value.sourceSha256 === sourceSha256
-    && sha(sourceSha256) && sha(value.sha256) && value.mime === 'image/jpeg'
+function parsePreview(value, sourceSha256, policyVersion, mime) {
+  check(value && value.policyVersion === policyVersion && value.sourceSha256 === sourceSha256
+    && sha(sourceSha256) && sha(value.sha256) && value.mime === mime
     && Number.isSafeInteger(value.byteCount) && value.byteCount > 0 && value.byteCount <= 1024 * 1024
     && Number.isSafeInteger(value.width) && Number.isSafeInteger(value.height)
     && value.width > 0 && value.height > 0 && Math.max(value.width, value.height) <= 768
     && Math.abs(value.width * 1858 - value.height * 1350) <= 1858);
   return { url: readUrl(value.url), sha256: value.sha256, byteCount: value.byteCount,
-    mime: value.mime, width: value.width, height: value.height, sourceSha256, policyVersion: INSPECTION_PREVIEW_POLICY };
+    mime: value.mime, width: value.width, height: value.height, sourceSha256, policyVersion };
+}
+export function parseInspectionPreview(value, sourceSha256) {
+  return parsePreview(value, sourceSha256, INSPECTION_PREVIEW_POLICY, 'image/jpeg');
+}
+export function parseInspectionAlphaPreview(value, sourceSha256) {
+  return parsePreview(value, sourceSha256, INSPECTION_ALPHA_PREVIEW_POLICY, 'image/webp');
 }
 export function parseInspectionAccess(value, expected = {}) {
   check(value?.version === 'atlas-approved-image-access-v1' && /^ar_[A-Za-z0-9_-]{24}$/.test(value.publicToken)
@@ -30,10 +37,14 @@ export function parseInspectionAccess(value, expected = {}) {
     && Number.isSafeInteger(image.byteCount) && image.byteCount > 0 && image.byteCount <= 50 * 1024 * 1024);
   if (expected.sha256 !== undefined) check(image.sha256 === expected.sha256);
   if (expected.byteCount !== undefined) check(image.byteCount === expected.byteCount);
+  if (image.alphaPreviewPending !== undefined) check(typeof image.alphaPreviewPending === 'boolean'
+    && !(image.alphaPreviewPending && image.alphaPreview));
   return { version: value.version, publicToken: value.publicToken, approvalVersion: value.approvalVersion,
     publicHash: value.publicHash, side: value.side, image: { url: readUrl(image.url), sha256: image.sha256,
       byteCount: image.byteCount, mime: image.mime, width: image.width, height: image.height,
-      ...(image.preview ? { preview: parseInspectionPreview(image.preview, image.sha256) } : {}) } };
+      ...(image.preview ? { preview: parseInspectionPreview(image.preview, image.sha256) } : {}),
+      ...(image.alphaPreviewPending !== undefined ? { alphaPreviewPending: image.alphaPreviewPending } : {}),
+      ...(image.alphaPreview ? { alphaPreview: parseInspectionAlphaPreview(image.alphaPreview, image.sha256) } : {}) } };
 }
 
 // Full-resolution Photoroom presentation is separate from canonical inspection

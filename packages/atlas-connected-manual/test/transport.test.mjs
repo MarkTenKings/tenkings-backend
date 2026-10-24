@@ -304,14 +304,14 @@ test('inbound order desk PDF crosses signed host and browser with exact saved ha
   }
 });
 
-test('V4 SVG and export requests cross the signed private host with independent auth and no hardware effects',async t=>{
+test('Legacy and B SVG and export requests cross the signed private host with independent auth and no hardware effects',async t=>{
  const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1"/></svg>');
  const artwork=`/api/staff/manual-connected/labels/${card}/artwork?mode=preview`,exportPath=`/api/staff/manual-connected/label-sheets/${card}/exports`;
- const principal={},calls=[],artworkModes=[];
+ const principal={},calls=[],artworkModes=[],modes=['preview','print','preview-foil','print-foil','preview-back','print-back','preview-back-foil','print-back-foil','print-color','print-back-color','preview-card-foil','print-card-foil'];
  const boundary={async authenticate(cookie,csrf){
   if(cookie!=='label-cookie'||csrf!==undefined&&csrf!=='label-csrf')throw Object.assign(new Error(),{status:401,code:'SIGN_IN_REQUIRED'});return principal;
  }};
- const connected={workflow:{service:{}},labels:{async artwork(staff,input){assert.equal(staff,principal);artworkModes.push(input.mode);return{bytes:svg,contentType:'image/svg+xml'};},
+ const connected={workflow:{service:{}},labels:{async artwork(staff,input){assert.equal(staff,principal);artworkModes.push(input.mode);return{bytes:svg,contentType:'image/svg+xml',embeddedImages:input.mode.includes('-back')||input.mode.endsWith('-color')};},
   async prepareSheetExport(staff,id,body){assert.equal(staff,principal);calls.push({id,body});return{exportId:card,state:'PREPARING'};}},labelWorker:{wake(){calls.push('wake');}},station:{finish(){assert.fail('No hardware');}}};
  const server=createPrivateManualServer({connected,boundary,origin,key});server.listen(0,'127.0.0.1');await once(server,'listening');
  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
@@ -319,11 +319,11 @@ test('V4 SVG and export requests cross the signed private host with independent 
  const proxy=createManualServiceProxy({origin:'https://private.test',key,fetchImpl:(url,init)=>{const target=new URL(url);return fetch(local+target.pathname+target.search,init);}});
  const read={method:'GET',url:artwork,headers:{cookie:'label-cookie'}};
  let res;
- for(const mode of ['preview','print','preview-foil','print-foil']) {
+ for(const mode of modes) {
   res=response();await proxy({...read,url:artwork.replace('mode=preview',`mode=${mode}`)},res);
-  assert.equal(res.statusCode,200);assert.deepEqual(res.bytes,svg);assert.match(res.headers['content-security-policy'],/sandbox/);
+  assert.equal(res.statusCode,200);assert.deepEqual(res.bytes,svg);assert.equal(res.headers['content-security-policy'],mode.includes('-back')||mode.endsWith('-color')?"default-src 'none'; img-src data:; sandbox":"default-src 'none'; sandbox");
  }
- assert.deepEqual(artworkModes,['preview','print','preview-foil','print-foil']);
+ assert.deepEqual(artworkModes,modes);
  res=response();await proxy({...read,headers:{cookie:'wrong'}},res);assert.equal(res.statusCode,401);
  const body={requestId:card,expectedSheetRevision:2,exportProfileId:'atlas-v4-sheet-800ppi-diagnostic-v2'};
  res=response();await proxy({method:'POST',url:exportPath,body,headers:{cookie:'label-cookie',origin,'content-type':'application/json','x-atlas-csrf':'label-csrf'}},res);
