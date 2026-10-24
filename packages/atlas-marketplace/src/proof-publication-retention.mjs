@@ -3,14 +3,19 @@ import {canonicalJSON,hash} from './contract.mjs';
 import {decoderExact,decoderFreeze} from './proof-decoder-profile.mjs';
 import {publicationData,publicationSessionBinding,publicationStageBinding,publicationOperation,lifecycleCheck as check,lifecycleUUID as uuid,lifecycleDigest as digest,PUBLICATION_LIFECYCLE_LIMITS as L} from './proof-publication-lifecycle.mjs';
 import {retentionPreparedOperation,retentionWriterBinding} from './proof-retention-postgres-writer.mjs';
+import {RETENTION_PROTECTED_CLOSURE_HASH,RETENTION_PROTECTED_DATABASE,RETENTION_PROTECTED_ROLE,RETENTION_PROTECTED_OWNER} from './proof-retention-protected-catalog.mjs';
 const same=(a,b)=>canonicalJSON(a)===canonicalJSON(b),positive=v=>Number.isSafeInteger(v)&&v>0,integer=v=>Number.isSafeInteger(v)&&v>=0;
 const markers=v=>check(v.classification==='UNQUALIFIED'&&v.customerPublicationAuthority===false&&v.retentionAuthority===false);
 export const RETENTION_KINDS=Object.freeze(['RETENTION_MIGRATE','RETAIN_DISPATCH','RETAIN_UNRESOLVED','RETAIN_SETTLE']);
 export function publicationRetentionWriterBinding(input){
  const v=publicationData(input,['schema','classification','customerPublicationAuthority','retentionAuthority','intakeBinding','connection','maxOperations']);markers(v);check(v.schema==='atlas-proof-retention-writer-binding-v1'&&positive(v.maxOperations)&&v.maxOperations<=4096);retentionWriterBinding(v.intakeBinding);
- const c=v.connection;decoderExact(c,['schema','database','role','functionOwner','endpoint','driverInventoryHash','functionDefinitionHashes','bindingHash']);check(c.schema==='atlas-proof-retention-postgres-connection-v1'&&[c.database,c.role,c.functionOwner].every(x=>typeof x==='string'&&/^[a-z][a-z0-9_]{0,62}$/.test(x))&&c.role!==c.functionOwner&&digest(c.driverInventoryHash)&&digest(c.bindingHash));
+ const c=v.connection,protectedMode=c.schema==='atlas-proof-retention-protected-connection-v1';
+ decoderExact(c,['schema','database','role','functionOwner','endpoint','driverInventoryHash',...(protectedMode?['protectedCatalogHash','installedBinding']:['functionDefinitionHashes']),'bindingHash']);
+ check((protectedMode||c.schema==='atlas-proof-retention-postgres-connection-v1')&&[c.database,c.role,c.functionOwner].every(x=>typeof x==='string'&&/^[a-z][a-z0-9_]{0,62}$/.test(x))&&c.role!==c.functionOwner&&digest(c.driverInventoryHash)&&digest(c.bindingHash));
+ if(protectedMode){decoderExact(c.installedBinding,['binding','maxOperations']);check(c.database===RETENTION_PROTECTED_DATABASE&&c.role===RETENTION_PROTECTED_ROLE&&c.functionOwner===RETENTION_PROTECTED_OWNER&&c.protectedCatalogHash===RETENTION_PROTECTED_CLOSURE_HASH&&same(c.installedBinding.binding,v.intakeBinding)&&c.installedBinding.maxOperations===v.maxOperations&&v.intakeBinding.environment==='SYNTHETIC_LOCAL','PUBLICATION_RETENTION_BINDING');}
+
  const {bindingHash,...raw}=c;check(hash(raw)===bindingHash);const e=c.endpoint;if(e.kind==='LOCAL_UNIX'){decoderExact(e,['kind','directory','port']);check(typeof e.directory==='string'&&e.directory.startsWith('/')&&e.directory.length<=100);}else{decoderExact(e,['kind','hostname','port','caHash']);check(e.kind==='VERIFIED_TLS'&&typeof e.hostname==='string'&&e.hostname.length<=253&&digest(e.caHash));}check(positive(e.port)&&e.port<=65535);
- decoderExact(c.functionDefinitionHashes,['read_state()','lock_state()','commit_state(bigint, text, jsonb, text, bigint)']);check(Object.values(c.functionDefinitionHashes).every(digest));return decoderFreeze(v);
+ if(!protectedMode){decoderExact(c.functionDefinitionHashes,['read_state()','lock_state()','commit_state(bigint, text, jsonb, text, bigint)']);check(Object.values(c.functionDefinitionHashes).every(digest));}return decoderFreeze(v);
 }
 export function publicationRetentionPrepared(input,writerBinding){
  const v=publicationData(input,['schema','classification','customerPublicationAuthority','retentionAuthority','writerBindingHash','operationHash','operation']);markers(v);const b=publicationRetentionWriterBinding(writerBinding),o=retentionPreparedOperation(v.operation,b.intakeBinding);check(v.schema==='atlas-proof-retention-prepared-v1'&&v.writerBindingHash===hash(b)&&v.operationHash===hash(o));return decoderFreeze(v);

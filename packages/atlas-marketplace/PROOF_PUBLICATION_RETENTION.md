@@ -4,9 +4,10 @@ This default-off v4 candidate performs owned local storage transactions and
 records concrete PostgreSQL producer outcomes. It remains UNQUALIFIED and grants
 no customer, actor, reviewer, canonical fence, decoder or publication authority.
 The generic PostgreSQL adapter in this tranche accepts **SYNTHETIC_LOCAL only**.
-A real protected gateway adapter, complete installed SQL/helper/trigger closure
-audit and genuine request/fence producers remain implementation and installation
-work. The earlier generic three-function role is never production authority.
+The separate protected adapter now has a complete installed SQL/helper/trigger
+closure audit and isolated PostgreSQL evidence, as recorded below. Genuine
+request/fence producers and their installation remain unfinished. The earlier
+generic three-function role is never production authority.
 
 `proof-retention-postgres-connection.mjs` owns the real pg8.16.3 Client and its
 141-file exact public dependency inventory. `configuration.driverDirectory`
@@ -28,9 +29,9 @@ close, without claiming complete JavaScript string erasure. One connection is
 active at a time, without a queue or retry. Connect/query/client lifetimes and
 request/response bytes are bounded. Every acquired connection checks exact
 function-definition pins before the existing unchanged store performs its full
-role/grant/owner/search-path audit. The future protected gateway needs a separate
-fixed audit mode covering helpers, common CAS, schemas, immutable binding and
-triggers; supplying only its three public function hashes is insufficient.
+role/grant/owner/search-path audit. The separate protected adapter uses a fixed
+audit covering helpers, common CAS, schemas, immutable binding and triggers;
+supplying only its public function hashes is insufficient.
 
 `createProofRetentionPostgresWriter({enabled,configuration,binding,maxOperations})`
 creates that connection owner, the existing audited store and C1 journal itself.
@@ -161,3 +162,67 @@ and all participating revocation writers remain required. A new separate default
 SYNTHETIC_LOCAL protected adapter candidate is described in
 `PROOF_RETENTION_PROTECTED_ADAPTER.md`; its fresh PostgreSQL17.11 harness passed20 groups/15 refusals. That result does not establish this physical join. Existing D1 metadata passed on its frozen
 8b37c773 closure; D2 does not alter that immutable target evidence.
+
+## Prepared protected PostgreSQL → publisher join
+
+The new `qualify-proof-publication-protected-join.mjs` is source-only and **NOT_RUN**.
+Its only runtime change is a closed protected-connection branch in
+`publicationRetentionWriterBinding`: it requires the exact source-owned catalog
+hash, fixed database/roles, and installed intake tuple/capacity equal to the
+writer binding. The old generic schema remains separately accepted without
+changing stored bytes. This is historical data validation; live dispatch and
+settlement still require the existing genuine private writer/handle/outcome.
+No old hold, lock, seal or history is changed.
+
+The operator has five fresh fixtures: real COMMIT and terminal settlement;
+real exact-ID cancellation; operator-suppressed response after real COMMIT,
+UNKNOWN then original LOOKUP; operator-suppressed COMMIT, UNKNOWN then
+ABSENT_HOLD and real exact-ID cancellation; and self-SIGKILL after real PostgreSQL
+COMMIT but before publisher settlement. The unknown cases retain their first
+UNRESOLVED observation, drain through a scope barrier, and settle only from the
+same still-owned writer. Four clean cases verify exact same-ledger history and a
+clean successor. The crash case retains its original writer lock, one dispatch,
+one hold and zero settlements. Verification only reads that ledger and retained
+original; it never reopens a writer or imports diagnostic JSON as authority.
+
+Each fixture publishes the fixed public PNG through real v4 original storage
+before producing its seed metadata. The C1 identity derives the actual
+publication ledger/session/operation/revision/evidence, original hash/key and
+manifest. Decoder validation, actor access, policy and qualification fields are
+explicit synthetic setup data, with no qualifying producer. The root operator
+seeds all five fresh VALIDATED rows and one immutable installed binding in one
+short admin transaction, only if state/commits/events/binding are all absent.
+This is the unimplemented initial-intake/C0 boundary, not production seeding.
+
+Modes are `prepare` (root), `case CONFIG NAME`, `seed CONFIG` and `verify CONFIG`
+(numeric UID/GID65530). All five case processes publish and emit
+`SYNTHETIC_SEED_READY`, then wait at most 120 seconds for exactly `SEEDED\n`.
+No RETAIN stage exists during that setup wait. After the single seed process
+exits successfully, the outer operator releases one case at a time in this
+order: `clean`, `cancel`, `lost_after`, `lost_before`, `crash`. Each RETAIN stage
+gets its original 15-second BOOTTIME deadline once, with the same request ID and
+a distinct stage ID/revision. Neither that deadline nor the completed PUBLISH
+stage is refreshed. Reconciliation may settle an existing obligation after its
+deadline; it grants no new admission. There are no concurrent DB writers,
+dispatch queues or retries. The outer operator must bound and reap all owned
+children and preserve any failure rather than rerun/reset it.
+
+The fixed synthetic deployment uses Node22.16.0, pg8.16.3 and PostgreSQL17.11,
+the genuine pinned runtime08 native addon, storage under
+`/var/lib/atlas-r2-protected-publisher-join-01`, PG data under
+`/var/lib/atlas-r2-pg-publisher-join-01/data`, and the private Unix socket directory
+`/run/atlas-r2-pg-publisher-join-01` on port55496 with TCP disabled. Publisher and
+PG use numeric UID/GID65530 in separate 0700 directories. Sharing the UID is a
+synthetic fixture convenience and makes no OS-isolation claim. The explicit DB
+superuser `atlas_r2_protected_fixture_owner` is not an assumed OS username.
+Source/configuration/addon are root-owned and read-only; the key is the public
+fixture value 0x51. The script installs no roles, schemas, services or binaries.
+
+The two focused binding-projection cases passed locally: protected installed
+identity/capacity/closure refusals and unchanged generic history acceptance.
+The first protected test had an aliased synthetic test object; fixing only that
+fixture and rerunning only the failed case passed. No prior metadata or database
+case was rerun. Syntax checks do not establish the five-case join. Actual
+LinuxPG→publisher execution, canonical authorization, initial intake, decoder
+qualification, cross-process authority/revocation and power-loss behavior remain
+unestablished by this candidate.
