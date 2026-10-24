@@ -330,8 +330,8 @@ ownership authority.
 
 | Case ID | Evidence lane and required variants | Status |
 | --- | --- | --- |
-| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: small/alpha/16M completed under original pins;10MiB accepted with FINALIZED cleanup in corpus05; full final-runtime evidence binding pending |
-| `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | INCOMPLETE: three genuine broker submissions completed in corpus02; full variant/evidence binding to final runtime pending |
+| `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: ordinary-valid-pair01 now completes the small PNG on runtime08/repaired101965ad with SUCCESS/COMPLETE_CLEAN/FINALIZED9; alpha/16M and10MiB retain their earlier recorded pins; full variant/evidence binding pending |
+| `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | INCOMPLETE: ordinary-valid-pair01 now completes baseline JPEG on runtime08/repaired101965ad with SUCCESS/COMPLETE_CLEAN/FINALIZED9; progressive/orientation retain corpus02 evidence; full variant/evidence binding pending |
 | `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE:16M accepted earlier; corpus05 accepted10MiB with FINALIZED cleanup, refused+1byte before submission and rejected16M+1pixel with FINALIZED cleanup; corpus06 also rejected PNG bytes declared as JPEG with FINALIZED cleanup; fresh prepared count/hash mismatches refused with private no-start dispositions in prepared-source-negatives01; unsupported-MIME refused with private KNOWN_NO_START_SENT and no new job/Engine effect in publication-dispatch-effects01; remaining final binding variants remain |
 | `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: earlier variants finalized under their recorded pins; EOI-preserved entropy truncation failed its client oracle despite finalized cleanup. A separate diagnostic observed the exact VipsJpeg premature-data-segment message and finalized cleanup; exact classification repair passed its fresh affected broker check with INVALID_IMAGE/COMPLETE_CLEAN/FINALIZED9; final runtime binding remains |
 | `FORGED_DUPLICATE_OR_TRAILING_OUTPUT` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Distinct malicious-output probe emits wrong request/hash, early one-byte stdout prefix, duplicate/trailing/oversize/partial PDW1 and stderr flood. Actual broker refusal/hold; never claim this is normal worker output. | NOT_RUN |
@@ -350,7 +350,7 @@ ownership authority.
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
 | `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
 | `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | NOT_RUN |
-| `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | INCOMPLETE: IPC admission/disconnect01 retained exactly one RESERVED0 request; concurrent genuine prepared client received private KNOWN_NO_START_SENT, no second job or queue, and a later request was refused after poison. Accepted worker/finalized release composition remains separate |
+| `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | INCOMPLETE: IPC admission/disconnect01 retained exactly one RESERVED0 request; concurrent genuine prepared client received private KNOWN_NO_START_SENT, no second job or queue, and a later request was refused after poison. ordinary-valid-pair01 additionally observes two sequential accepted workers and finalized capacity release before the next request under the current repaired-worker plan; combined concurrency/final evidence binding remains |
 | `IPC_PEER_AND_DIRECTORY_INTEGRITY` | CONTROL_FAULT: Wrong UID/GID, peer exit/PID reuse, replaced/symlink/insecure directories and sockets, stale guard frames, target Engine fixed inode replacement; actual native pidfd and protected-path refusal. No fake observer/controller brands. | INCOMPLETE: IPC admission/disconnect01 observed independent wrong UID0/GID0 rejected with no input, followed by genuine65530 client flow. Directory/socket tamper, PID reuse and other identity variants remain unrun |
 
 The new three-mode extension batch (`ops/control-probe-extensions-01/stdout.txt`,
@@ -517,3 +517,60 @@ including failed01. The new26th ledger remains held; Engine and broker directory
 are empty, guard stopped, parent empty/frozen and latch retained. No worker
 input or Engine effect occurred, so no external cleanup was needed. Application
 death with an executing worker and final runtime binding remain separate gates.
+
+
+## Resume reconciliation and ordinary valid pair — October24,2026
+
+The read-only `ops/runtime-resume-readonly-01` reconciled the stopped isolated
+target against all26 prior decoder ledger sets, publisher holds and380 immutable
+file pins, plus44 runtime/native source checks. No target children or Engine
+containers remained; the fixed parent was empty/frozen, the guard stopped, and
+actual recovery enrollment absent. The image inventory contained exactly the five
+previously known images. The latest target directory remained the completed
+app-partial-frame-death02 stage. Its stdout SHA256 is
+`c269af074711e6b98d063ace86c7d4056ccfdbc8d9ca94966d528ff425425637`.
+
+The separate blocked `malicious-output-lane/source-01/source-ready.json` remains
+source-only/NOT_RUN. No corresponding target build/import/run artifact was
+observed. Automatic safety screening had stopped that probe task; this resume
+did not execute, repackage or retry it. No missing result is treated as a pass.
+
+`ops/ordinary-valid-pair-01` then passed two ordinary existing valid fixtures:
+74-byte5×7 PNG and1356-byte27×19 baseline JPEG. The existing broker/client harness
+changed only three expected-count assertions from1 to2; runtime08, nativee7,
+repaired worker101965ad, profileec13460a and original15s deadlines stayed pinned.
+Both requests returned original-bound SUCCESS/COMPLETE_CLEAN, with distinct
+request/job identities, known CREATE201/START204/WAIT0/REMOVE204, exact absence,
+and native empty observation before the original deadline. Both rows reached
+FINALIZED revision9; sequential capacity reuse was observed. The broker37186
+and uid/gid65530 client37197 exited0. No production/runtime authority follows
+from these transport observations.
+
+Remote receipt SHA256 is
+`144492b260bc2147a1b17f86aa61639c8eb117182008e64c312c213491e002fb`; stdout SHA256
+is `a2e47d8e33ef5ba67b9285e9042bc75eb7dbd6460cec220e4b462333fe40e48c`.
+All26 prior ledger sets and publisher holds remain byte/inode unchanged. The
+27th retained ledger has two finalized rows and20events; ordinary guard shutdown
+left its barrier closed/poisoned with GUARD_SHUTDOWN. Final target state has no
+containers, the parent empty/frozen, the guard MainPID0/failed-exit-code1, retained
+quarantine latch, empty broker directory and no enrolled recovery tree. No extra
+resource cleanup is required. Consumed run and effect intents must not be replayed.
+
+All22 matrix cases remain incomplete or NOT_RUN at their full required scope.
+The six entirely unrun rows are output-integrity probes, host-path access,
+cross-job access, ignored-TERM/descendant containment, unknown-effect quarantine
+and epoch/profile tamper. Partial rows still require their recorded final source
+and variant joins, including blocked-call/upload/header deadline variants,
+running-worker app death, direct guard death, path/peer integrity, and full
+positive/boundary corpus binding. No unaffected broad suite was replayed.
+
+Enrolled restart/coordinator/Engine recovery remains NOT_RUN beyond the earlier
+native lock primitive. The saved recipe requires finishing legacy-runtime cases
+before installing its permanent fixed catalog; that prerequisite is unmet.
+Pending CREATE/START, late resource appearance, sidecar/partial enrollment,
+finalized contradiction, and uncertain DELETE-response recovery remain open.
+Host enrollment was not installed to bypass those gates. Finally, the target
+evidence assessor deliberately returns UNVERIFIED even for a complete document;
+a genuine runtime-qualification capability and its physical-intake composition
+remain separate required work. Existing grading, slabs, labels and reports are
+unchanged; claims/history/pricing guidance stay off and comps remain optional.
