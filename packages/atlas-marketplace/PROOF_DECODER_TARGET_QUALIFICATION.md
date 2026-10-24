@@ -345,13 +345,13 @@ ownership authority.
 | `PID_THREAD_FD_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native pthread growth and pids.events with pids.max32; process fork denied separately. FD opening to RLIMIT_NOFILE64 and EMFILE. Positive ordinary worker thread needs must still pass. | INCOMPLETE: ordinary2 joined 31 threads/EAGAIN to sampled32tasks and pids.max event; FD soft/hard64 and61opens/EMFILE observed; extension01 separately denied process fork/clone; final variant binding remains |
 | `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | INCOMPLETE: ordinary2 observed8MiB ENOSPC and denied executable maps for each private tmpfs/shm canary with native pre-input mount controls; extension01 joined a4MiB temporary file to exact4MiB shmem/file charge increases; mmap-fault/residue and final evidence binding remain |
 | `CANCEL_IGNORED_TERM_AND_DESCENDANTS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Running loop ignores TERM, application cancels; kernel guard freezes/kills and observes all threads/descendants empty. Fork denial under production profile is tested separately. An independently root-created owned descendant containment test is separate control evidence, not permission added to worker seccomp. | NOT_RUN |
-| `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | NOT_RUN |
+| `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | INCOMPLETE: IPC admission/disconnect01 observed authenticated close before START with no job, then half-close after one RESERVED0 request with no input/Engine effects; immutable row and poisoned capacity1 remain. Process death/during-upload/running-worker variants remain unrun |
 | `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | NOT_RUN |
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
 | `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
 | `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | NOT_RUN |
-| `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | NOT_RUN |
-| `IPC_PEER_AND_DIRECTORY_INTEGRITY` | CONTROL_FAULT: Wrong UID/GID, peer exit/PID reuse, replaced/symlink/insecure directories and sockets, stale guard frames, target Engine fixed inode replacement; actual native pidfd and protected-path refusal. No fake observer/controller brands. | NOT_RUN |
+| `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | INCOMPLETE: IPC admission/disconnect01 retained exactly one RESERVED0 request; concurrent genuine prepared client received private KNOWN_NO_START_SENT, no second job or queue, and a later request was refused after poison. Accepted worker/finalized release composition remains separate |
+| `IPC_PEER_AND_DIRECTORY_INTEGRITY` | CONTROL_FAULT: Wrong UID/GID, peer exit/PID reuse, replaced/symlink/insecure directories and sockets, stale guard frames, target Engine fixed inode replacement; actual native pidfd and protected-path refusal. No fake observer/controller brands. | INCOMPLETE: IPC admission/disconnect01 observed independent wrong UID0/GID0 rejected with no input, followed by genuine65530 client flow. Directory/socket tamper, PID reuse and other identity variants remain unrun |
 
 The new three-mode extension batch (`ops/control-probe-extensions-01/stdout.txt`,
 SHA256 `dd1cb05ff09945554cfce246d9683cabfd51f2acbd0067c448267f28af25feb1`)
@@ -414,3 +414,29 @@ byte/inode unchanged. No original WAIT was backfilled, capacity released,
 epoch reset, host recovery enrollment, restart or thaw occurred. This consumed
 resource operation must not be replayed. Full target qualification and physical
 publication remain separate gates.
+
+
+`ops/ipc-admission-disconnect-01` completed six distinct observed states with
+actual root broker35626 and uid/gid65530 client35637, both waited at exit0.
+Independent UID0/GID0 connected to the exact broker peer and was rejected with
+no input or response bytes. The genuine client first closed after HELLO before
+START, leaving zero jobs. It then obtained one RESERVED revision0 request with
+its original14second deadline; a concurrent genuine prepared client received
+private KNOWN_NO_START_SENT with no second reservation. The first client's
+half-close before DATA left the exact row unchanged and poisoned capacity1.
+A further fresh request received private KNOWN_NO_START_SENT. All snapshots
+retain zero executor jobs/Engine effects, no container identity, no original
+image bytes sent, and the final Engine inventory is empty. All21 previous ledger
+sets/publisher holds remain unchanged; the new22nd held ledger is captured.
+
+The outer operator is nevertheless **FAILED**: its socket-retirement postcheck
+attempted lstat after broker close and found the socket already absent. No
+operator unlink was performed; the final preservation check independently
+required an empty broker directory and passed. Both processes were already
+waited, guard stopped, parent empty/frozen and latch retained. Original receipt
+SHA256 is `70a80d1af48b030fa1a53e84d8ddc52e10829b7018d1a43684d6a89981572f5a`.
+A pure join of those saved actual records passes with SHA256
+`ee11ff7df14b9a3cd64bc826df0403a65ff9a396fdc8e978b0f5ef9930da895f`.
+It preserves the failed outer classification and does not rerun any target
+action or create runtime/publication authority. No worker execution,
+process-death, partial-upload or directory-tamper coverage is inferred.
