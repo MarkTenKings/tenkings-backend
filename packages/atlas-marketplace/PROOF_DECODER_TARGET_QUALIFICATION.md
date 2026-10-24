@@ -345,7 +345,7 @@ ownership authority.
 | `PID_THREAD_FD_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native pthread growth and pids.events with pids.max32; process fork denied separately. FD opening to RLIMIT_NOFILE64 and EMFILE. Positive ordinary worker thread needs must still pass. | INCOMPLETE: ordinary2 joined 31 threads/EAGAIN to sampled32tasks and pids.max event; FD soft/hard64 and61opens/EMFILE observed; extension01 separately denied process fork/clone; final variant binding remains |
 | `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | INCOMPLETE: ordinary2 observed8MiB ENOSPC and denied executable maps for each private tmpfs/shm canary with native pre-input mount controls; extension01 joined a4MiB temporary file to exact4MiB shmem/file charge increases; mmap-fault/residue and final evidence binding remain |
 | `CANCEL_IGNORED_TERM_AND_DESCENDANTS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Running loop ignores TERM, application cancels; kernel guard freezes/kills and observes all threads/descendants empty. Fork denial under production profile is tested separately. An independently root-created owned descendant containment test is separate control evidence, not permission added to worker seccomp. | NOT_RUN |
-| `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | INCOMPLETE: IPC admission/disconnect01 observed authenticated close before START with no job, then half-close after one RESERVED0 request with no input/Engine effects; immutable row and poisoned capacity1 remain. Process death/during-upload/running-worker variants remain unrun |
+| `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | INCOMPLETE: IPC admission/disconnect01 observed authenticated close before START with no job, then half-close after one RESERVED0 request with no input/Engine effects; immutable row and poisoned capacity1 remain. Actual pre-START client pidfd death left0jobs in failedouter app-death01; fresh partial-frame-death02 passed with live RESERVED0, client pidfd death, immutable row/quarantine and emptyfrozenparent54.6ms later. Running-worker appdeath/final binding remain open |
 | `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | INCOMPLETE: supervisor SIGKILL with actual running worker; independent worker pidfd exited and parent empty/frozen observed43.6ms later before any operator containment and original deadline. Separate supervisor+guard SIGSTOP case observed systemd Result=watchdog, guard/worker pidfd deaths and emptyfrozenparent992.9ms later while supervisor remained stopped. Direct guard SIGKILL/final binding remain open |
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
 | `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
@@ -487,3 +487,33 @@ All24 ledger sets/publisher holds remain byte/inode unchanged, guard is stopped
 with its actual watchdog result retained, parent empty/frozen and latch present.
 No original outcome, WAIT, cleanup, lock, capacity or deadline was changed.
 These are separate fault observations, not runtime or publication authority.
+
+
+`ops/app-upload-death-01` observed genuine uid/gid65530 client36468 pidfd
+SIGKILL/wait-9 after HELLO before START, leaving zero jobs and a healthy empty
+parent. Its subsequent partial-upload harness was incorrect: a completed
+one-byte DATA frame was rejected because the collector requires74bytes for
+that frame. The broker correctly poisoned the newly RESERVED0 row with
+BROKER_PROTOCOL. The operator failed its expected-live assertion; that original
+failed receipt remains unchanged:
+`e1a88ee5e1cecde1822622d0c78f7b2a80a3289021706123b0b379883db9bea9`.
+Broker36457 and partialclient36479 were then owned-pidfd killed/waited-9 by the
+finalizer. All24 previous ledger sets/publisher holds remained unchanged.
+No worker or Engine effect occurred, and the new25th held ledger was retained.
+
+A distinct corrected `ops/app-partial-frame-death-02` passed without replaying
+the earlier pre-START death. The authenticated client36620 sent a correctly
+sized74byte DATA frame's eight-byte header plus one payload byte, then remained
+alive while the genuine broker observed live/unpoisoned RESERVED0. No INPUT_END
+was sent. After exact client pidfd SIGKILL/wait-9, the broker retained the same
+row and poisoned it with BROKER_PROTOCOL as the incomplete frame ended. Empty
+frozen parent was observed54,595,659ns later, before the original14second
+deadline and any operator containment. Broker36609 exited0. This does not
+attribute refusal solely to native pidfd polling rather than socket EOF/parser
+refusal. Receipt SHA256 is
+`212e562439b22e2837a823f447cbabf7f37d1022cefcbd75e09ab7c78ca1b13f`.
+All25 previous ledger sets/publisher holds stayed byte/inode unchanged,
+including failed01. The new26th ledger remains held; Engine and broker directory
+are empty, guard stopped, parent empty/frozen and latch retained. No worker
+input or Engine effect occurred, so no external cleanup was needed. Application
+death with an executing worker and final runtime binding remain separate gates.
