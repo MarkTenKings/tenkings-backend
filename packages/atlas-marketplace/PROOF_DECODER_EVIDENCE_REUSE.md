@@ -50,7 +50,10 @@ frames and peer/PID variants remain open.
 
 Output-integrity, required host-secret/proof/Docker-path canaries, cross-job
 access, ignored-TERM/descendants, uncertain CREATE/START/REMOVE/late effects and
-profile/epoch tamper remain unrun at their required scope. The blocked output
+profile/epoch tamper remain incomplete at their required scope. The later
+stale-client-binding01 run covers only genuine client HELLO refusal for stale
+epoch, binding hash and saved profile; installed-artifact/server-side variants
+remain unrun. The blocked output
 probe is untouched. Native recovery-lock observations do not cover enrolled
 catalog/coordinator/Engine recovery; permanent installation prerequisites remain
 unmet. No authority, enrollment or physical-intake requirement is loosened.

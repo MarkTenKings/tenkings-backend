@@ -352,7 +352,7 @@ The [saved-evidence reuse audit](PROOF_DECODER_EVIDENCE_REUSE.md) defines joins 
 | `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | COVERED finite lifecycle variants by J6 plus guard-death01: supervisor SIGKILL43.6ms; supervisor/guard SIGSTOP with systemd watchdog992.9ms; direct guard pidfd SIGKILL with supervisor held stopped233.7ms. Each observed active-worker death/empty frozen parent before original deadline/operator containment; original holds retained. |
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
 | `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
-| `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | NOT_RUN |
+| `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | PARTIAL — stale-client-binding01 directly covers genuine client HELLO refusal for prior epoch, prior binding hash and exact saved old profile: KNOWN_NO_START_SENT,0reservations/worker input/Engine mutations; broker healthy afterward. Remaining: installed artifact/parent/boot/deadline/job/output variants and server-side tamper enforcement; client refusal does not establish them. |
 | `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | COVERED finite variants by J6, current valid-pair and active-app-overlap01: second genuine client KNOWN_NO_START_SENT while first ordinary worker pidfd remains live/RUNNING4; exactly1request/reservation/active connection and1rejection, no queue or second reservation. Prior RESERVED and poisoned refusal, sequential FINALIZED release and replay refusal retain their own observations. |
 | `IPC_PEER_AND_DIRECTORY_INTEGRITY` | CONTROL_FAULT: Wrong UID/GID, peer exit/PID reuse, replaced/symlink/insecure directories and sockets, stale guard frames, target Engine fixed inode replacement; actual native pidfd and protected-path refusal. No fake observer/controller brands. | PARTIAL — covered/bound J6: wrong UID0/GID0 rejected, genuine65530 flow and owned peer death. Remaining: directory/socket replacement/symlink/mode, PID reuse, stale guard frames and Engine endpoint identity variants. |
 
@@ -650,3 +650,44 @@ SHA256 `1031c0f4592ad2ac1bc661b9406081e4441df624589da3d9f3f94f948649bc83`; its a
 `active-app-overlap-01/baseline-29.json`, SHA256
 `43b3384d6911ed28db0fd9d470d6fc2f35fb570ef16dfb975104c16630d40a8a`. It verifies each saved operation/source/stdout/stderr hash and
 exact unchanged current plan/source-binding pins without rerunning a case.
+
+
+## Stale client binding refusal and recovery boundary — October24,2026
+
+`ops/stale-client-binding-01` reused the ordinary genuine broker/client runner
+on the unchanged current runtime, profile and original deadline. Three separate
+uid65530 clients presented the genuine prior ACTIVE_APP_OVERLAP_1 epoch, that
+prior epoch's binding hash, or exact saved old plan
+`ebef30cf5dbf1ce52c84b5ccae5ada355d3f83ea07c233551d0f4058def232c4`
+(profilec22457f0). The old plan has identical IPC/resource limits; no installed
+artifact was modified and no old image was launched. Each client rejected the
+live broker HELLO mismatch with DECODER_BROKER_PROTOCOL and private
+KNOWN_NO_START_SENT. After each refusal the broker remained healthy, with0
+requests/reservations/jobs/active connections; no original input or Engine
+mutation occurred. Broker60468 and all three clients60479/60490/60501 exited0.
+
+Remote receipt SHA256 is
+`a8de449bd6cdcce4a88cb280a8b963761356464770b7f4bd0c08ccb78bcf560c`;
+stdout SHA256 is
+`48b0cd71ddb1ac883aba374fdf763baebc68d40bfb6c6698acf9cce049f8f9c6`.
+All29 prior ledger sets/publisher holds were byte/inode unchanged. The new30th
+ledger contains0rows/0events and retains its writer lock; ordinary shutdown
+recorded GUARD_SHUTDOWN poison/barrier. Final target has emptyEngine/broker
+directory, stoppedguard/MainPID0/failed-exit-code1, empty frozen parent and latch;
+no resource cleanup was needed. Additive baseline30 is
+`stale-client-binding-01/baseline-30.json`, SHA256
+`20b7331c5af2fa7852435398988426b2b75ddc737d35029a17d165e51830a5c3`. No historical receipt/status/time was rewritten.
+
+This covers only the three genuine client refusal variants. Installed
+image/seccomp/template/compiler artifacts, parent/boot/deadline/job/output
+identity and server-side tamper enforcement remain unrun. The matrix retains
+10 covered finite scopes and12 partial/unrun scopes; this is no authority grant.
+
+The saved `restart-reconciliation-lane/target-harness-01/RECIPE.txt` has a
+permanent fixed catalog/native187 prerequisite and requires completing remaining
+legacy-runtime cases first. Its intent-cut branch needs an owned durable-intent
+observer; current legacy runners provide no lost CREATE/START/REMOVE response
+injector. Existing held REMOVE history and external resource absence cannot be
+relabeled as a lost-wire-response or enrolled-recovery pass. No catalog was
+installed, old uncertain operation replayed, new fault machinery introduced, or
+screened probe resumed. Those real recovery/UNKNOWN execution gates remain open.
