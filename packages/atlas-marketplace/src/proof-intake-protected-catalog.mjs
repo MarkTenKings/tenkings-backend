@@ -18,12 +18,30 @@ export const INTAKE_PROTECTED_CATALOG_QUERIES=Object.freeze(Object.fromEntries(O
 export function validateIntakeProtectedCatalog(input){return validateExtension(input,ROLE);}
 export function validateRetentionIntakeProtectedCatalog(input){return validateExtension(input,RETENTION);}
 const INSTALLED_FUNCTION_HASHES=Object.freeze({"check_intake_configuration_v1(jsonb)":"0e8df35618b67c1bc1c17b352822efe2af095de44a79464b51a138c7d311ee39","project_intake_operation_v1(jsonb, jsonb, jsonb, jsonb)":"b4e28226dd84215cbbc8697884f50d08d96c154372e6ae6ad32ff086088114a8","read_intake_configuration_v1()":"d065b77bd0dbfea199a73768a6128c2c0e5846bbdbceb3773456553225b4c184","read_intake_state_v1()":"e36032db17566b7c0866b242875b711e7133aceee0aebd2acb5d3f657e86bea0","lookup_intake_operation_v1(uuid, text)":"33144a7df3710a39537c110caab2e3d1f06ee26950b2cba32ce19940886aff06","read_intake_capacity_v1()":"92b6f8c207f61f4ef8a27f228899bc0998e6cf1b56282e30d84b403bbeb4e5d6","commit_intake_operation_v1(bigint, text, jsonb, jsonb, text)":"9d0cc4515a697a1df1d601a4f565bc8507b5fa50c2e3b5119f0977bc7d164071","read_intake_accounting_configuration_v1()":"9d56189239ae5a91f7538667143e5d9992b80d6094d63b9d2f54715f683f2077","intake_accounting_initial_v1(jsonb, jsonb)":"df5d8f7b59875eff8f44b5584bda78281bc3453c4f50e251bafbbf589a871f43","intake_accounting_apply_v1(jsonb, jsonb)":"1a9c8fead6fa520f2b3789b5d43b7ff89680f26eb9918b1f89e049fc2a97ca2a","check_intake_accounting_entry_v1(jsonb, jsonb)":"1e93ae94cbae6e3574061238bdec1b4f50039297e096a2f6d82a56c31290aa75","read_intake_accounting_v1(uuid, text)":"1d132f52eb5fb94afc3ca22fcc16e0ac6e9bffcc1887ec0aec6852d335dababc","intake_accounting_head_hash_v1(jsonb)":"0e38fa4c520015daafd94961f41c86bee71ea8a068168b622473031375d33131","commit_intake_accounting_v1(uuid, text, text, jsonb, jsonb)":"e62edd26203a3b7aaf47ec33abedf10823087f201a7e1c10b1689861bf9662d0","check_intake_accounted_validation_v1(jsonb)":"85ad8eb44f9a29c9213fe4fed59e3d1efb6c3dc3149401c34c3e834438acc416","commit_accounted_intake_validation_v1(bigint, text, jsonb, jsonb, text)":"6812fe80093308e73eef3967a00d473a9c71befe5dd07640b24a82e80bb31c7f"});
-export function validateR1IntakeInstalledCatalog(input,database){return validateExtension(input,ROLE,database);}
-export function validateR1RetentionIntakeInstalledCatalog(input,database){return validateExtension(input,RETENTION,database);}
-function validateExtension(input,expectedRole,installedDatabase=null){
- const s=decoderContractData(input);decoderExact(s,Object.keys(INTAKE_PROTECTED_CATALOG_QUERIES));
+// Explicit managed installation only. The trusted installer is not a serving
+// principal. ADMIN can change grants/passwords: false INHERIT/SET is no boundary
+// against that administrator. Names come from the independently saved operator
+// catalog; PostgreSQL 17 pins BOOTSTRAP_SUPERUSERID to 10. No observed allowlist.
+export const R1_MANAGED_INSTALLATION_PROFILE='atlas-r2-doadmin-bootstrap-v1';
+const MANAGED_DATABASE='atlas_marketplace';
+const MANAGED_MEMBERSHIPS=decoderFreeze([OWNER,'atlas_marketplace_writer',RETENTION,ROLE].sort().map(role=>({role,member:'doadmin',grantor:'postgres',grantor_oid:10,grantor_super:true,member_login:true,member_super:false,member_create_role:true,admin_option:true,inherit_option:false,set_option:false})));
+export const R1_MANAGED_INTAKE_CATALOG_QUERIES=Object.freeze({...INTAKE_PROTECTED_CATALOG_QUERIES,
+ operator_membership:`SELECT r.rolname AS role,u.rolname AS member,g.rolname AS grantor,g.oid::integer AS grantor_oid,g.rolsuper AS grantor_super,u.rolcanlogin AS member_login,u.rolsuper AS member_super,u.rolcreaterole AS member_create_role,m.admin_option,m.inherit_option,m.set_option FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid=m.roleid JOIN pg_catalog.pg_roles u ON u.oid=m.member JOIN pg_catalog.pg_roles g ON g.oid=m.grantor WHERE r.rolname=ANY(ARRAY['atlas_marketplace_owner','atlas_marketplace_writer','atlas_proof_retention_writer','atlas_proof_intake_writer']) OR u.rolname=ANY(ARRAY['atlas_marketplace_owner','atlas_marketplace_writer','atlas_proof_retention_writer','atlas_proof_intake_writer']) ORDER BY r.rolname,u.rolname,g.rolname LIMIT 5`
+});
+// Pure negative/shape audit, not an operator capability or readiness producer.
+export function validateR1ManagedMembershipCatalog(input,database){
+ const rows=decoderContractData(input);
+ check(database===MANAGED_DATABASE&&same(rows,MANAGED_MEMBERSHIPS),'INTAKE_INSTALLED_MEMBERSHIP');
+}
+export function validateR1IntakeInstalledCatalog(input,database,installationProfile=null){return validateExtension(input,ROLE,database,installationProfile);}
+export function validateR1RetentionIntakeInstalledCatalog(input,database,installationProfile=null){return validateExtension(input,RETENTION,database,installationProfile);}
+function validateExtension(input,expectedRole,installedDatabase=null,installationProfile=null){
+ const managed=installationProfile!==null;
+ if(managed)check(installationProfile===R1_MANAGED_INSTALLATION_PROFILE&&installedDatabase===MANAGED_DATABASE,'INTAKE_INSTALLED_PROFILE');
+ const s=decoderContractData(input);decoderExact(s,Object.keys(managed?R1_MANAGED_INTAKE_CATALOG_QUERIES:INTAKE_PROTECTED_CATALOG_QUERIES));
  check(Buffer.byteLength(canonicalJSON(s))<=262144&&Object.values(s).every(v=>Array.isArray(v)&&v.length<=64));
  check(s.identity.length===1&&s.schema.length===1&&s.identity[0].role===expectedRole&&s.identity[0].session_role===expectedRole,'INTAKE_PROTECTED_IDENTITY');
+ if(managed){validateR1ManagedMembershipCatalog(s.operator_membership,installedDatabase);check(s.identity[0].membership===true,'INTAKE_INSTALLED_MEMBERSHIP');}
  if(installedDatabase!==null)check(typeof installedDatabase==='string'&&/^[a-z][a-z0-9_]{0,62}$/.test(installedDatabase)&&installedDatabase!==RETENTION_PROTECTED_DATABASE&&s.identity[0].database===installedDatabase,'INTAKE_INSTALLED_DATABASE');
  const observedRole={name:ROLE,login:true,super:false,inherit:false,createDb:false,createRole:false,replication:false,bypass:false};
  check(s.identity[0].roles?.filter(r=>r.name===ROLE).length===1&&same(s.identity[0].roles.find(r=>r.name===ROLE),observedRole));
@@ -51,7 +69,11 @@ function validateExtension(input,expectedRole,installedDatabase=null){
  // Only after every extension row is checked is its exact subset removed. The
  // original audit still validates all base functions, owner/grants, hooks,
  // schema/constraints, role membership, PUBLIC/inherited effective privileges.
- const base=structuredClone(s);base.identity[0].role=RETENTION;base.identity[0].session_role=RETENTION;base.identity[0].roles=base.identity[0].roles.filter(r=>r.name!==ROLE);
+ const base=structuredClone(s);
+ // Remove only the independently pinned rows already checked above. Every other
+ // base identity/default/effective-ACL/catalog check still runs unchanged.
+ if(managed){delete base.operator_membership;base.identity[0].membership=false;}
+ base.identity[0].role=RETENTION;base.identity[0].session_role=RETENTION;base.identity[0].roles=base.identity[0].roles.filter(r=>r.name!==ROLE);
  base.privileges=base.privileges.filter(r=>r.role!==ROLE);base.schema[0].acl=base.schema[0].acl.filter(v=>v!==ROLE+':USAGE:false');
  base.functions=base.functions.filter(r=>!FUNCTIONS.some(f=>f.name===r.name));base.relations=base.relations.filter(r=>!Object.hasOwn(tableColumns,r.name));base.indexes=base.indexes.filter(r=>!Object.hasOwn(indexes,r.name));base.constraints=base.constraints.filter(r=>!Object.hasOwn(indexes,r.name)&&!Object.hasOwn(checks,r.name));base.triggers=base.triggers.filter(r=>!Object.hasOwn(triggers,r.name));
  if(installedDatabase!==null)base.identity[0].database=RETENTION_PROTECTED_DATABASE;
@@ -60,3 +82,5 @@ function validateExtension(input,expectedRole,installedDatabase=null){
 export const INTAKE_PROTECTED_CLOSURE_HASH=createHash('sha256').update(canonicalJSON({base:RETENTION_PROTECTED_CLOSURE_HASH,functions:FUNCTIONS,publicFunctions,retentionReadonly:'read_intake_configuration_v1()',tableColumns,indexes,checks,triggers,queries:INTAKE_PROTECTED_CATALOG_QUERIES})).digest('hex');
 
 export const R1_INTAKE_INSTALLED_CLOSURE_HASH=createHash('sha256').update(canonicalJSON({base:INTAKE_PROTECTED_CLOSURE_HASH,installedFunctions:INSTALLED_FUNCTION_HASHES})).digest('hex');
+
+export const R1_MANAGED_INTAKE_CLOSURE_HASH=createHash('sha256').update(canonicalJSON({base:R1_INTAKE_INSTALLED_CLOSURE_HASH,profile:R1_MANAGED_INSTALLATION_PROFILE,database:MANAGED_DATABASE,memberships:MANAGED_MEMBERSHIPS,queries:R1_MANAGED_INTAKE_CATALOG_QUERIES})).digest('hex');

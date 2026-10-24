@@ -7,7 +7,7 @@ import {dirname,isAbsolute,join,resolve} from 'node:path';
 import {canonicalJSON,hash,requireValue} from './contract.mjs';
 import {decoderContractData,decoderExact,decoderFreeze} from './proof-decoder-profile.mjs';
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
-import {INTAKE_PROTECTED_CATALOG_QUERIES,INTAKE_PROTECTED_CLOSURE_HASH,INTAKE_PROTECTED_ROLE,validateIntakeProtectedCatalog,validateRetentionIntakeProtectedCatalog,validateR1IntakeInstalledCatalog,validateR1RetentionIntakeInstalledCatalog,R1_INTAKE_INSTALLED_CLOSURE_HASH} from './proof-intake-protected-catalog.mjs';
+import {INTAKE_PROTECTED_CATALOG_QUERIES,INTAKE_PROTECTED_CLOSURE_HASH,INTAKE_PROTECTED_ROLE,validateIntakeProtectedCatalog,validateRetentionIntakeProtectedCatalog,validateR1IntakeInstalledCatalog,validateR1RetentionIntakeInstalledCatalog,R1_INTAKE_INSTALLED_CLOSURE_HASH,R1_MANAGED_INSTALLATION_PROFILE,R1_MANAGED_INTAKE_CATALOG_QUERIES,R1_MANAGED_INTAKE_CLOSURE_HASH} from './proof-intake-protected-catalog.mjs';
 import {intakeProtectedInstallation} from './proof-intake-protected-protocol.mjs';
 import {intakeAccountingInstallation} from './proof-intake-accounting.mjs';
 import {RETENTION_PROTECTED_CATALOG_QUERIES,RETENTION_PROTECTED_CLOSURE_HASH,RETENTION_PROTECTED_DATABASE,RETENTION_PROTECTED_ROLE,RETENTION_PROTECTED_OWNER,validateRetentionProtectedCatalog} from './proof-retention-protected-catalog.mjs';
@@ -110,10 +110,12 @@ export function createProofRetentionIntakeConnectionOwner(options={}){
 // same fixed minimal roles. SQL/function hashes are source-owned, never copied
 // from the observed catalog or supplied as positive authority by a caller.
 function r1InstalledConfiguration(input,retention){
- const c=decoderContractData(input);decoderExact(c,['schema','driverDirectory','endpoint','database','role','functionOwner','password']);
+ const c=decoderContractData(input),managed=Object.hasOwn(c,'installationProfile');decoderExact(c,['schema','driverDirectory','endpoint','database','role','functionOwner','password',...(managed?['installationProfile']:[])]);
+ if(managed)check(c.installationProfile===R1_MANAGED_INSTALLATION_PROFILE&&c.database==='atlas_marketplace'&&c.endpoint?.kind==='VERIFIED_TLS','INTAKE_INSTALLED_PROFILE');
  check(c.schema===(retention?'atlas-r1-proof-retention-connection-v1':'atlas-r1-proof-intake-connection-v1')&&identifier(c.database)&&c.database!==RETENTION_PROTECTED_DATABASE&&c.role===(retention?RETENTION_PROTECTED_ROLE:INTAKE_PROTECTED_ROLE)&&c.functionOwner===RETENTION_PROTECTED_OWNER,'INTAKE_INSTALLED_CONFIGURATION');
- const checked=retentionPostgresConnectionConfiguration({...c,schema:'atlas-proof-retention-postgres-connection-v1',functionDefinitionHashes:Object.fromEntries(FUNCTION_NAMES.map(n=>[n,'0'.repeat(64)]))});
- const {functionDefinitionHashes,...rest}=checked;return decoderFreeze({...rest,schema:c.schema});
+ const {installationProfile,...connection}=c;
+ const checked=retentionPostgresConnectionConfiguration({...connection,schema:'atlas-proof-retention-postgres-connection-v1',functionDefinitionHashes:Object.fromEntries(FUNCTION_NAMES.map(n=>[n,'0'.repeat(64)]))});
+ const {functionDefinitionHashes,...rest}=checked;return decoderFreeze({...rest,schema:c.schema,...(managed?{installationProfile}:{})});
 }
 export function createR1ProofIntakeAccountedConnectionOwner(options={}){
  const input=engineDataOptions(options,[],['enabled','configuration','installation','accounting']);if(input.enabled!==true)return null;
@@ -131,7 +133,7 @@ function createOwnedConnection(config,protectedScope,intakeScope=null,accounting
   check(process.versions.node==='22.16.0'&&['linux','darwin'].includes(process.platform),'RETENTION_CONNECTION_RUNTIME');
   const Client=loadClient(config.driverDirectory),endpoint=config.endpoint;
   if(endpoint.kind==='LOCAL_UNIX'){directory(endpoint.directory);check((fs.lstatSync(endpoint.directory).mode&0o077)===0,'RETENTION_SOCKET_DIRECTORY');}
-  const secret=Buffer.from(config.password,'utf8'),publicConfig={schema:config.schema,database:config.database,role:config.role,functionOwner:config.functionOwner,endpoint:endpoint.kind==='LOCAL_UNIX'?endpoint:{kind:endpoint.kind,hostname:endpoint.hostname,port:endpoint.port,caHash:sha(Buffer.from(endpoint.ca))},driverInventoryHash:hash(DRIVER_FILES),...(intakeScope?{intakeCatalogHash:installed?R1_INTAKE_INSTALLED_CLOSURE_HASH:INTAKE_PROTECTED_CLOSURE_HASH,installedIntake:intakeScope,...(accountingScope?{installedAccounting:accountingScope}:{}),...(protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}:{})}:protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}: {functionDefinitionHashes:config.functionDefinitionHashes})};
+  const secret=Buffer.from(config.password,'utf8'),publicConfig={schema:config.schema,database:config.database,role:config.role,functionOwner:config.functionOwner,...(config.installationProfile?{installationProfile:config.installationProfile}:{}),endpoint:endpoint.kind==='LOCAL_UNIX'?endpoint:{kind:endpoint.kind,hostname:endpoint.hostname,port:endpoint.port,caHash:sha(Buffer.from(endpoint.ca))},driverInventoryHash:hash(DRIVER_FILES),...(intakeScope?{intakeCatalogHash:installed?(config.installationProfile?R1_MANAGED_INTAKE_CLOSURE_HASH:R1_INTAKE_INSTALLED_CLOSURE_HASH):INTAKE_PROTECTED_CLOSURE_HASH,installedIntake:intakeScope,...(accountingScope?{installedAccounting:accountingScope}:{}),...(protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}:{})}:protectedScope?{protectedCatalogHash:RETENTION_PROTECTED_CLOSURE_HASH,installedBinding:protectedScope}: {functionDefinitionHashes:config.functionDefinitionHashes})};
   let closed=false,current=null,pending=false;const endings=new Set();
   async function waitClosed(){if(!endings.size)return;let timer;try{await Promise.race([Promise.allSettled([...endings]),new Promise((_,reject)=>{timer=setTimeout(()=>reject(failure('RETENTION_CONNECTION_CLOSE_UNKNOWN')),1000);})]);}finally{clearTimeout(timer);}}
   function terminate(state){
@@ -158,10 +160,10 @@ function createOwnedConnection(config,protectedScope,intakeScope=null,accounting
         if(endpoint.kind==='VERIFIED_TLS')check(client.connection.stream.encrypted===true&&client.connection.stream.authorized===true,'RETENTION_TLS_REFUSED');
         if(intakeScope){
           const catalog={};
-          for(const [name,sql] of Object.entries(INTAKE_PROTECTED_CATALOG_QUERIES)){
+          for(const [name,sql] of Object.entries(config.installationProfile?R1_MANAGED_INTAKE_CATALOG_QUERIES:INTAKE_PROTECTED_CATALOG_QUERIES)){
             catalog[name]=(await client.query(sql)).rows;check(Buffer.byteLength(canonicalJSON(catalog))<=262144,'INTAKE_PROTECTED_CATALOG_BOUND');
           }
-          if(installed){if(protectedScope)validateR1RetentionIntakeInstalledCatalog(catalog,config.database);else validateR1IntakeInstalledCatalog(catalog,config.database);}else if(protectedScope)validateRetentionIntakeProtectedCatalog(catalog);else validateIntakeProtectedCatalog(catalog);
+          if(installed){if(protectedScope)validateR1RetentionIntakeInstalledCatalog(catalog,config.database,config.installationProfile);else validateR1IntakeInstalledCatalog(catalog,config.database,config.installationProfile);}else if(protectedScope)validateRetentionIntakeProtectedCatalog(catalog);else validateIntakeProtectedCatalog(catalog);
           const rows=(await client.query('SELECT atlas_marketplace.read_intake_configuration_v1() AS configuration')).rows;
           check(rows.length===1&&canonicalJSON(rows[0])===canonicalJSON({configuration:intakeScope}),'INTAKE_PROTECTED_INSTALLATION');
           if(accountingScope){const observed=(await client.query('SELECT atlas_marketplace.read_intake_accounting_configuration_v1() AS configuration')).rows;check(observed.length===1&&canonicalJSON(observed[0])===canonicalJSON({configuration:accountingScope}),'INTAKE_ACCOUNTING_INSTALLATION');}

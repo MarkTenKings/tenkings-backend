@@ -5,18 +5,20 @@ import {publicationData,publicationSessionBinding,publicationStageBinding,public
 import {retentionPreparedOperation,retentionWriterBinding} from './proof-retention-postgres-writer.mjs';
 import {RETENTION_PROTECTED_CLOSURE_HASH,RETENTION_PROTECTED_DATABASE,RETENTION_PROTECTED_ROLE,RETENTION_PROTECTED_OWNER} from './proof-retention-protected-catalog.mjs';
 import {intakeProtectedInstallation} from './proof-intake-protected-protocol.mjs';
-import {INTAKE_PROTECTED_CLOSURE_HASH,R1_INTAKE_INSTALLED_CLOSURE_HASH} from './proof-intake-protected-catalog.mjs';
+import {INTAKE_PROTECTED_CLOSURE_HASH,R1_INTAKE_INSTALLED_CLOSURE_HASH,R1_MANAGED_INSTALLATION_PROFILE,R1_MANAGED_INTAKE_CLOSURE_HASH} from './proof-intake-protected-catalog.mjs';
 const same=(a,b)=>canonicalJSON(a)===canonicalJSON(b),positive=v=>Number.isSafeInteger(v)&&v>0,integer=v=>Number.isSafeInteger(v)&&v>=0;
 const markers=v=>check(v.classification==='UNQUALIFIED'&&v.customerPublicationAuthority===false&&v.retentionAuthority===false);
 export const RETENTION_KINDS=Object.freeze(['RETENTION_MIGRATE','RETAIN_DISPATCH','RETAIN_UNRESOLVED','RETAIN_SETTLE']);
 export function publicationRetentionWriterBinding(input){
  const v=publicationData(input,['schema','classification','customerPublicationAuthority','retentionAuthority','intakeBinding','connection','maxOperations']);markers(v);check(v.schema==='atlas-proof-retention-writer-binding-v1'&&positive(v.maxOperations)&&v.maxOperations<=4096);retentionWriterBinding(v.intakeBinding);
  const c=v.connection,installedMode=c.schema==='atlas-r1-proof-retention-connection-v1',intakeMode=installedMode||c.schema==='atlas-proof-retention-intake-connection-v1',protectedMode=intakeMode||c.schema==='atlas-proof-retention-protected-connection-v1';
- decoderExact(c,['schema','database','role','functionOwner','endpoint','driverInventoryHash',...(protectedMode?['protectedCatalogHash','installedBinding']:['functionDefinitionHashes']),...(intakeMode?['intakeCatalogHash','installedIntake']:[]),'bindingHash']);
+ const managed=Object.hasOwn(c,'installationProfile');
+ if(managed)check(installedMode&&c.installationProfile===R1_MANAGED_INSTALLATION_PROFILE&&c.database==='atlas_marketplace'&&c.endpoint?.kind==='VERIFIED_TLS','PUBLICATION_RETENTION_BINDING');
+ decoderExact(c,['schema','database','role','functionOwner','endpoint','driverInventoryHash',...(managed?['installationProfile']:[]),...(protectedMode?['protectedCatalogHash','installedBinding']:['functionDefinitionHashes']),...(intakeMode?['intakeCatalogHash','installedIntake']:[]),'bindingHash']);
  check((protectedMode||c.schema==='atlas-proof-retention-postgres-connection-v1')&&[c.database,c.role,c.functionOwner].every(x=>typeof x==='string'&&/^[a-z][a-z0-9_]{0,62}$/.test(x))&&c.role!==c.functionOwner&&digest(c.driverInventoryHash)&&digest(c.bindingHash));
  if(protectedMode){decoderExact(c.installedBinding,['binding','maxOperations']);check((installedMode?c.database!==RETENTION_PROTECTED_DATABASE:c.database===RETENTION_PROTECTED_DATABASE)&&c.role===RETENTION_PROTECTED_ROLE&&c.functionOwner===RETENTION_PROTECTED_OWNER&&c.protectedCatalogHash===RETENTION_PROTECTED_CLOSURE_HASH&&same(c.installedBinding.binding,v.intakeBinding)&&c.installedBinding.maxOperations===v.maxOperations&&(installedMode?['PROVIDER_SANDBOX','PRODUCTION'].includes(v.intakeBinding.environment):v.intakeBinding.environment==='SYNTHETIC_LOCAL'),'PUBLICATION_RETENTION_BINDING');}
 
- if(intakeMode){const installed=intakeProtectedInstallation(c.installedIntake);check(c.intakeCatalogHash===(installedMode?R1_INTAKE_INSTALLED_CLOSURE_HASH:INTAKE_PROTECTED_CLOSURE_HASH)&&same(installed.binding,v.intakeBinding),'PUBLICATION_RETENTION_BINDING');}
+ if(intakeMode){const installed=intakeProtectedInstallation(c.installedIntake);check(c.intakeCatalogHash===(installedMode?(managed?R1_MANAGED_INTAKE_CLOSURE_HASH:R1_INTAKE_INSTALLED_CLOSURE_HASH):INTAKE_PROTECTED_CLOSURE_HASH)&&same(installed.binding,v.intakeBinding),'PUBLICATION_RETENTION_BINDING');}
  const {bindingHash,...raw}=c;check(hash(raw)===bindingHash);const e=c.endpoint;if(e.kind==='LOCAL_UNIX'){decoderExact(e,['kind','directory','port']);check(typeof e.directory==='string'&&e.directory.startsWith('/')&&e.directory.length<=100);}else{decoderExact(e,['kind','hostname','port','caHash']);check(e.kind==='VERIFIED_TLS'&&typeof e.hostname==='string'&&e.hostname.length<=253&&digest(e.caHash));}check(positive(e.port)&&e.port<=65535);
  if(!protectedMode){decoderExact(c.functionDefinitionHashes,['read_state()','lock_state()','commit_state(bigint, text, jsonb, text, bigint)']);check(Object.values(c.functionDefinitionHashes).every(digest));}return decoderFreeze(v);
 }
