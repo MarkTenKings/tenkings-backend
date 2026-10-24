@@ -1,5 +1,33 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+## ATLAS Rush label release — October 24, 2026 UTC
+
+Application source **`8ee3f108d15e085796efc2fb0fcabb5b02e4d9a9`** is live on native/staff/public. This label-only successor was built on actual serving6f3c6d14 and retains current authentication; pending R1 credential candidates were not activated. Mark explicitly waived the physical-print check. Both production gateways now admit the matching color-accent preview/print modes.
+
+| Surface | Deployed identity |
+| --- | --- |
+| Native image | `sha256:5c6b939121dce07693bd734a0449ad3862e9324303d1b407e8ad0caa6b00f26c` |
+| Main | `1351cdf3a154ff706a9008c1aa3d9ef9798a08cb305bee4fb9508b1e2148d2fa` / `atlas-label-live-main-8ee3f108-01` |
+| Worker | `0adb6755e890a560e12ea4eb0f0aa56d632e4f2835bb063471235d4b82bbb5ff` / `atlas-label-live-worker-8ee3f108-01` |
+| Staff | `dpl_CUdAowiiu7wLHWLqSKzMrZMk4e5j` / `atlas-grading-staff-icksk311n-ten-kings.vercel.app` |
+| Public | `dpl_GNfeMJVchA2fbTYaCAitTMyqBCdj` / `atlas-grading-public-qen9q0yrg-ten-kings.vercel.app` |
+| Customer retained | `dpl_6RFr24d3KbnvTu8bhMubXBhkpY7n` / source `a537f922c567795b2a568048c78f595ff8853731` |
+| Controls | Staff151 / Public113 / STAFF SMS119; customer84 / CUSTOMER SMS36 retained |
+
+Evidence root: `~/.codex/atlas-handoffs/atlas-label-feedback-investigation-20261023/release-prep/`. Canonical verification `web-live-signin/canonical-release-verification-cron-retarget.json` SHA256`b8481d074c5cc7db0d86b5cbd5e9b84df7e69397f1c81b84acc9af565713af2c` proves both production targets and aliases, exact served source, homepage/admin/account routes, preserved customer/environment/settings. Empty-cron deployment/timestamp metadata retargeted normally on promotion; definitions and all other settings stayed equal. Neither promotion was replayed. Native start/seal and health passed with the exact packaged static Rush font.
+
+Exactly three release-control rows changed once. A concurrent completed staff login caused the original start preflight to stop before dispatch; the original holder was explicitly aborted, and a separate immutable continuation retained that login and the committed controls. Its start/seal/technical final check passed with zero continuation data writes and exact reconciled data preservation. Final proof `standalone/continuation/gates/technical-release-ready.json` SHA256`d336ec6c2f4977bbdd6a59476027fa7796468261bc5206d4d9e9916cfb777a4c` was observed06:51:17Z.
+
+The continuation holder subsequently failed its connection/verification at06:53:18Z before explicit release could be delivered; the precise underlying exception was not retained. Do not describe this as successful explicit release. Absence proof `standalone/continuation/admission/release-absence.json` SHA256`78c9ecffc1623aa50aaf87a6ac9dc8fb9dd131198f195b125fbda2d8799b1a14` proves the transaction, original locks and replacement holder absent. The failed-ending receipt and final PASS are both retained. Current read-only reconciliation and gateway receipts complete the observed outcome below. No new admission, runtime step, control write or promotion is to be replayed.
+
+Current native readback passed07:05:29Z, SHA256`b02f3fbde709a161590e12c4191b13029b4eb539d4f6b64568af8860de92e996`, proving the same sealed source/image/container identities and healthy main/worker after the holder loss. Both gateways then changed only the artwork-query matcher to include `preview-card-foil` and `print-card-foil`. Inner graceful Caddy restart completed07:06:40Z, installed configuration SHA256`a085841fc9bbd7524e5bed6cb9698c5a385e5ec6ef9361327e3ae08e8ade0879`, receipt `gateways/inner-02/apply.private.json` SHA256`b992db55ef4578ee24ddf13426fd67dc2794ae7141e2232debd22786fabfdfa1`. Outer admin reload completed07:06:54Z with exact loaded/file configuration SHA256`f68c705430e8292475519a05630f0c54c4dc5b0b3fdc030cb62a214cf7ef0c96`, receipt `gateways/outer-02/apply.private.json` SHA256`95a7ced09b43ae6c82cdcdcc39b593717bf51852907e40ae16a2aeb555ece080`. Both preserve authentication and every other configuration value. Existing plans/intents remain consumed evidence.
+
+Final gateway route observation passed: both inner and outer return401 for preview-card-foil and print-card-foil and404 for unsupported mode. Six unsignedGETs, no export/data mutation. Receipt `gateways/route-refusals.json` SHA256`6d32983ace7c57c8ae4895b2ad9655c4b512ac27c87e53b8414cfd1298661d32` confirms new modes route through both gateways while authentication remains enforced. This is network/authorization-boundary evidence; signed-in label/physical acceptance remains with Mark.
+
+Final unheld read-only observation completed2026-10-24T07:08:34Z: `standalone/continuation/ending-observation-01/reconciliation.json` SHA256`6a040a3cf7831d4a8edac5dc1d377676fc1a25df92009478bf1751d03b97c72a`. Compared with the final held checkpoint, changedTables=[] and changedWorkloadSections=[]; controls151/113/119, saved cards/labels and provider observations are unchanged. Zero observation writes/provider calls; no admission reacquisition or effect replay. This reconciles the actual deployed runtime/data success with the distinct failed holder ending and proven absence, without manufacturing a successful explicit-release receipt. Native, canonical web and both gateway technical checks pass. Mark may resume production use; signed-in/physical acceptance remains his requested follow-up.
+
+No migration, credential rotation, grading/reapproval, label refresh, saved-export rewrite, paid model diagnostic or physical print was performed. New label generation adopts Rush/sizing/specials; old artwork is not silently replaced. Future auth releases must preserve this source and both artwork modes. Historical cf4a/0aa replacement-key candidates are not the deployed label source. See [Rush audit](../atlas/audits/2026-10-23/atlas-rush-integration.md) for behavior and focused qualification.
+
 ## Observed production baseline for photo/font work — October 22, 2026 Pacific
 
 Read-only evidence at 2026-10-23 06:26 UTC supersedes the older release headings below: native source is `8070c5f22a843b6d9a8ba8347f5235754cc1daa5`, image `sha256:c2a274de50803b232a71042bb87876c849666d50264d9d076610081f5e03bca8`, main `atlas-r1-main-8070c5f2-02`, worker `atlas-r1-worker-8070c5f2-01`. The completed optional-comp release and effective native recovery are retained at `~/.codex/atlas-handoffs/atlas-r1-optional-comps-20261022/release-01/`. Installed schema012 and the retained customer successor must be preserved; old schema011→012 migration and admission plans must not be replayed.

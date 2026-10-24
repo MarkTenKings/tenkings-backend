@@ -1,6 +1,6 @@
 # ATLAS Rush label integration — October 23, 2026
 
-Status: prepared for a label-only production release. Mark waived the physical-print check and explicitly authorized this lead to deploy independently while preserving current production authentication. Label corrections are based on observed serving source6f3c6d14; the pending R1 authentication transition is excluded. Production activation is still pending.
+Status: deployed on native, staff, public and both production gateways from application source `8ee3f108d15e085796efc2fb0fcabb5b02e4d9a9`. Mark waived the physical-print check and authorized this lead to deploy independently. Current production authentication is retained; the separate R1 credential transition is excluded.
 
 ## Typeface and selection
 
@@ -34,4 +34,13 @@ Rush outer ink: REFRACTOR17.821×2.300mm, X-FRACTOR16.195×2.300mm, YELLOW RAYWA
 
 This change builds on local correction commit1278181c, whose parent6fe0e462 predates serving geometry fixes. Integrate onto the actual release baseline; never deploy this old branch wholesale. R1 reports last verified production6f3c6d14 and corrected auth0aa2cdf6 still unpromoted; credential release is separate. The prior digital/print color correction also requires preview-card-foil and print-card-foil in both external gateway artwork-query allowlists.
 
-The prior cf4a5b64 native/staff/public candidates were built against pending replacement authentication material and remain staged only. This label-only release instead preserves the current6f3 authentication modules and configuration, with label patches28823288 andb8348778. The same completed focused label checks are reused. Fresh native/web artifacts and release bindings are required for this source. No schema or credential change, paid provider request, label replacement/refresh, saved-export rewrite or physical printing is part of the release. Mark will check the production result after deployment.
+The prior cf4a5b64 native/staff/public candidates were built against pending replacement authentication material and remain staged only. This label-only release instead preserves the current6f3 authentication modules and configuration, with label patches28823288 andb8348778. The same completed focused label checks are reused. Fresh native/web artifacts were built and activated for exact source8ee3f108; staff/public/STAFF SMS bindings are151/113/119. Customer remains84/CUSTOMER SMS36, sourcea537f922. No schema or credential change, paid provider request, label replacement/refresh, saved-export rewrite or physical printing is part of the release. Mark will check the production result after deployment.
+
+
+## Observed production outcome
+
+Native image5c6b9391 and both canonical web deployments serve exact8ee3f108. Staff/Public/STAFF SMS control revisions151/113/119 were committed once. Both gateways now admit preview-card-foil/print-card-foil while preserving all other routing/authentication. Current credentials and customer site are retained. Canonical and native health passed; exact focused source/font/render checks were reused rather than expanded into a new suite.
+
+The original start refused a concurrent completed staff login before dispatch; an explicit continuation retained that login and the three already committed controls. Final held preservation passed, then the continuation holder lost its connection/verification before an explicit release could be delivered. Its failed-ending receipt is retained, and fresh absence proves its transaction/locks/replacement holder are gone. Current native readback passed after that ending. This is an observed deployed result with a reconciled holder failure, not a claimed successful explicit release. Full identities, hashes and final observations are in the current [Deploy Runbook](../../../runbooks/DEPLOY_RUNBOOK.md).
+
+Final unheld07:08:34Z observation (`6a040a3c…`) found no table/workload changes versus the final held checkpoint, including controls, cards, labels and provider observations. Both gateways passed their six bounded authorization/invalid-mode checks (`6d32983a…`). Technical deployment is complete.

@@ -1,5 +1,13 @@
 # Ten Kings Master Product Context
 
+## ATLAS Rush and card-colored label deployment — October 24, 2026 UTC
+
+Native main/worker and staff/public web now serve `8ee3f108d15e085796efc2fb0fcabb5b02e4d9a9`, preserving the preceding geometry and Edges0.25 changes and current production sign-in configuration. ATLAS Rush is the default variant/special typeface when the card has no distinctive printed lettering. The renderer applies card-derived paint; the font remains uncolored. Original lettering such as THRILLERS stays supported. Variant/special colors and textures are preserved in digital/material previews and color-accent print output; both production gateways now admit the matching preview/print modes.
+
+New Rush captions target2.3mm visible ink within2–2.6mm, with28.7mm usable inside the29mm text region. Uniform scaling preserves lettering proportions. Confirmed `/500`, AUTO and PATCH facts join the variant line; missing facts are not invented. Long captions keep their facts and require layout attention instead of horizontal squeezing. Texture sampling avoids shallow strips. Existing saved artwork and exports remain immutable; new typography/layout requires newly generated artwork. Mark approved deployment without a physical sample and will check the live result.
+
+The pending R1 credential transition was excluded. Customer, schema and saved card/report/label data were retained. The new application and canonical routes passed technical checks. Detailed runtime identities, the final admission ending and gateway evidence are recorded in [Deploy Runbook](../runbooks/DEPLOY_RUNBOOK.md) and [Rush integration](../atlas/audits/2026-10-23/atlas-rush-integration.md). Earlier dated release identities below are historical.
+
 ## Current Atlas slab and card presentation — October 22, 2026
 
 Application source `20b747badb8ad34c510673c446cf326396bdeeac` is deployed on native, staff and public. Existing and future eligible approved cards use the shared staff archive/detail renderer with the improved slab, equal card spacing, Front/Back views, front NFC reference and optional higher-resolution 3D. Exact approved inspection photographs and matching saved labels remain the source; recorded physical slab photos keep precedence. Small source-bound transparent previews are cached privately and verified on delivery; full-detail 3D is loaded on selection, with verified media fallbacks.
