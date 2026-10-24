@@ -346,7 +346,7 @@ ownership authority.
 | `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | INCOMPLETE: ordinary2 observed8MiB ENOSPC and denied executable maps for each private tmpfs/shm canary with native pre-input mount controls; extension01 joined a4MiB temporary file to exact4MiB shmem/file charge increases; mmap-fault/residue and final evidence binding remain |
 | `CANCEL_IGNORED_TERM_AND_DESCENDANTS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Running loop ignores TERM, application cancels; kernel guard freezes/kills and observes all threads/descendants empty. Fork denial under production profile is tested separately. An independently root-created owned descendant containment test is separate control evidence, not permission added to worker seccomp. | NOT_RUN |
 | `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | INCOMPLETE: IPC admission/disconnect01 observed authenticated close before START with no job, then half-close after one RESERVED0 request with no input/Engine effects; immutable row and poisoned capacity1 remain. Process death/during-upload/running-worker variants remain unrun |
-| `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | INCOMPLETE: supervisor SIGKILL with actual running worker; independent worker pidfd exited and parent empty/frozen observed43.6ms later before any operator containment and original deadline. Guard death/stall/systemd-watchdog variants remain unrun |
+| `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | INCOMPLETE: supervisor SIGKILL with actual running worker; independent worker pidfd exited and parent empty/frozen observed43.6ms later before any operator containment and original deadline. Separate supervisor+guard SIGSTOP case observed systemd Result=watchdog, guard/worker pidfd deaths and emptyfrozenparent992.9ms later while supervisor remained stopped. Direct guard SIGKILL/final binding remain open |
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
 | `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
 | `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | NOT_RUN |
@@ -464,3 +464,26 @@ parent empty/frozen and latch retained. This consumed action cannot be replayed.
 The observation qualifies this supervisor-death containment case only; guard
 stall/systemd watchdog, upload interruption, actual enrolled restart and final
 physical publication remain separate gates.
+
+
+`ops/watchdog-stall-01` then paused the exact retained supervisor36132 and
+new guard36120 pidfds with a real repaired worker running before original input.
+Both stopped states were independently observed; the supervisor remained
+stopped throughout the observation interval. Systemd reported Result=watchdog
+and ExecMainStatus9; both guard and worker pidfds exited, and the parent was
+empty/frozen992,896,122ns after the guard SIGSTOP. This occurred before the
+original15second deadline and any operator containment or service stop. The
+service's configured500ms watchdog period is not a measured500ms shutdown bound.
+The stopped supervisor was then pidfd-killed/waited-9. Engine showed
+exited137/non-OOM/PID0, and the original RUNNING4/false-poison metadata remained
+held. Receipt/stdout SHA256 is
+`64c54b9bf803548d5c7a2d8029090f7cb22820082e703fa4a8c7309417a96dec`.
+All23 previous ledger sets/publisher holds were unchanged.
+
+Separate `ops/watchdog-stall-external-cleanup-01` consumed one exact
+non-force/no-volume DELETE204 followed by404 and empty Engine. Receipt SHA256 is
+`b2fc0adbd039ca33df572002988e51c807926a5ec83080e9ec3d550391fd6230`.
+All24 ledger sets/publisher holds remain byte/inode unchanged, guard is stopped
+with its actual watchdog result retained, parent empty/frozen and latch present.
+No original outcome, WAIT, cleanup, lock, capacity or deadline was changed.
+These are separate fault observations, not runtime or publication authority.

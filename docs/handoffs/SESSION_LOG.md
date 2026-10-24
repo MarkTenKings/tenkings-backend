@@ -49195,3 +49195,22 @@ Focused Node22 auth-r1/host-r1 checks17/17 pass, including actual canonical iden
 
 - External cleanup PASS; receipt `a6f29b1ff5911e50546c0d63bb5ff2ec0fffca2935f8c08b23688fad9de34694`. One exact non-force/no-volume DELETE204 followed by404 and emptyEngine. All23 decoder ledger sets/publisher holds remain byte/inode unchanged; original RUNNING4/false-poison/lock/capacity/deadline retained, with no WAIT/cleanup backfill. Guard stopped, parent empty/frozen, latch retained. This consumed resource action must not be replayed.
 - Updated SUPERVISOR_DEATH_WATCHDOG matrix with the actual active-worker supervisor SIGKILL evidence; guard SIGSTOP/systemd watchdog, process-death during upload and full physical join remain separate open cases. No source behavior changes or unchanged test reruns.
+
+
+### 2026-10-24T04:59:44.316797+00:00 — R2 independent systemd watchdog case planned
+
+- Next isolated one-use action: `ops/run_watchdog_stall_01.py`, SHA `877ffad3a3c626a57dd04d475727a823facf148c256cc16363fa5a5f8a819ae0`, fresh stage `watchdog-stall-01`. Uses actual23-ledger baseline, exact unchanged runtime08/nativee7/service/repaired-worker plan; no old case/build/test replay.
+- After one real worker reaches RUNNING4 before original input, bind owned supervisor, worker and newly started guard pidfds plus exact guard executable/cmdline/unit cgroup. SIGSTOP supervisor and guard only; verify both stopped. Observe at most3s with no operator containment/service stop and original15s deadline unchanged. Require guard/worker pidfd deaths, parent empty/frozen and systemd Result=watchdog while supervisor remains stopped; then kill/wait the owned supervisor. This isolates systemd watchdog/ExecStopPost containment from local owner/guard code.
+- Durable new-epoch intent precedes guard config/latch archive and start. Always finalize stoppedguard/emptyfrozenparent/latch, preserve all23 old ledger sets and publisher holds, retain original new RUNNING4/false-poison history and exact exited resource for separate recorded reconciliation. No originalbytes, validation grant, permanent recovery enrollment, shared/provider/credential actions.
+
+
+### 2026-10-24T05:00:31.932862+00:00 — R2 independent systemd watchdog observed; exact cleanup planned
+
+- Watchdog-stall01 PASS; receipt/stdout `64c54b9bf803548d5c7a2d8029090f7cb22820082e703fa4a8c7309417a96dec`. Retained supervisor36132 and guard36120 pidfds SIGSTOP; supervisor remained stopped throughout. Systemd Result=watchdog/ExecMainStatus9, guard and real worker pidfds exited, parent empty/frozen observed992,896,122ns after guard stop signal before original deadline/operator containment. Supervisor then pidfd SIGKILL/wait-9. Engine exited137/non-OOM; originalinput0. All23 old ledgers/publisher holds unchanged; new24th RUNNING4 retains original false-poison/lock/deadline state.
+- Next one-use exact cleanup: `ops/reconcile_watchdog_stall_resource_01.py`, SHA `a5fbfc2ace5114bf5e83a0ed4a70adeb56bbf1b1e863e872a71919539ce16ec2`, fresh stage `watchdog-stall-external-cleanup-01`. Preserve all24 held ledger sets and actual receipt/source/controls; durable intent then one non-force/no-volume DELETE of exact exited container `6693b24fb7cdaddbad326b5e942d7957f665f7f90a857b8772a01df6938bbb0f`, require204 then404/emptyEngine. No history backfill, hold release, epoch reset/restart/thaw, enrollment or shared/provider/credential effects.
+
+
+### 2026-10-24T05:01:12.967362+00:00 — R2 watchdog exact cleanup observed
+
+- Cleanup PASS; receipt `b2fc0adbd039ca33df572002988e51c807926a5ec83080e9ec3d550391fd6230`. One exact DELETE204→404/emptyEngine; all24 ledger sets and publisher holds byte/inode unchanged. Original RUNNING4/false-poison/lock/capacity/deadline retained. Guard stopped with Result=watchdog/ExecMainStatus9, parent empty/frozen, latch retained. Consumed action is never replayed.
+- Qualification matrix now records distinct actual supervisor-SIGKILL and supervisor+guard-SIGSTOP/systemd-watchdog cases, with observed991ms-scale containment rather than inferring a500ms hard shutdown bound. Full source/evidence binding, other fault variants, enrolled restart and physical join remain open. No source behavior change or unchanged-suite rerun.
