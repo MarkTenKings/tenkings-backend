@@ -346,7 +346,7 @@ ownership authority.
 | `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | INCOMPLETE: ordinary2 observed8MiB ENOSPC and denied executable maps for each private tmpfs/shm canary with native pre-input mount controls; extension01 joined a4MiB temporary file to exact4MiB shmem/file charge increases; mmap-fault/residue and final evidence binding remain |
 | `CANCEL_IGNORED_TERM_AND_DESCENDANTS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Running loop ignores TERM, application cancels; kernel guard freezes/kills and observes all threads/descendants empty. Fork denial under production profile is tested separately. An independently root-created owned descendant containment test is separate control evidence, not permission added to worker seccomp. | NOT_RUN |
 | `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | INCOMPLETE: IPC admission/disconnect01 observed authenticated close before START with no job, then half-close after one RESERVED0 request with no input/Engine effects; immutable row and poisoned capacity1 remain. Process death/during-upload/running-worker variants remain unrun |
-| `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | NOT_RUN |
+| `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | INCOMPLETE: supervisor SIGKILL with actual running worker; independent worker pidfd exited and parent empty/frozen observed43.6ms later before any operator containment and original deadline. Guard death/stall/systemd-watchdog variants remain unrun |
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
 | `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
 | `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | NOT_RUN |
@@ -440,3 +440,27 @@ A pure join of those saved actual records passes with SHA256
 It preserves the failed outer classification and does not rerun any target
 action or create runtime/publication authority. No worker execution,
 process-death, partial-upload or directory-tamper coverage is inferred.
+
+
+`ops/supervisor-death-01` killed only the retained supervisor35822 pidfd
+while the repaired101965ad worker35873 was independently verified running in
+its exact owned cgroup. The worker had received zero original image bytes.
+Worker pidfd death and empty frozen parent were observed43,560,298ns after the
+supervisor SIGKILL, before the original15second deadline and before any
+operator containment write or service stop. Engine independently changed from
+running to exited137/non-OOM/PID0. Receipt/stdout SHA256 is
+`8942ec16eca8aca7e6a433e8f20cd3bcfa9d2d9f9fe6f7328892015f5eacdfd9`.
+All22 previous ledger sets/publisher holds remained unchanged. The new23rd
+RUNNING revision4 row, events, writer lock and original deadline also remain
+unchanged: its metadata is still false-poison because the dead owner wrote
+nothing. Resource containment does not grant validation or release capacity.
+
+Separate `ops/supervisor-death-external-cleanup-01` observed one exact
+non-force/no-volume DELETE204 followed by404 and empty Engine inventory.
+Receipt SHA256 is
+`a6f29b1ff5911e50546c0d63bb5ff2ec0fffca2935f8c08b23688fad9de34694`.
+All23 ledger sets/publisher holds remain byte/inode unchanged; guard stopped,
+parent empty/frozen and latch retained. This consumed action cannot be replayed.
+The observation qualifies this supervisor-death containment case only; guard
+stall/systemd watchdog, upload interruption, actual enrolled restart and final
+physical publication remain separate gates.
