@@ -20,6 +20,7 @@
 #include <linux/magic.h>
 #include <dirent.h>
 #include <sys/sysmacros.h>
+#include <sys/file.h>
 
 #ifndef SO_PEERPIDFD
 #error "Linux headers with SO_PEERPIDFD are required; no PID lookup fallback"
@@ -150,6 +151,68 @@ static int protected_dir(int parent,const char *name) {
   if(fd<0)return -1;
   if(fstat(fd,&st)<0||!S_ISDIR(st.st_mode)||st.st_uid!=0||(st.st_mode&0022)!=0){close(fd);return -1;}
   return fd;
+}
+/* Additive restart fencing. The fixed lock inode is never created, replaced or
+ * unlinked here. A private object retains LOCK_EX until process exit/GC; there
+ * is no caller-selected pathname, PID lookup, unlock or admission operation. */
+static const napi_type_tag recovery_lock_tag={UINT64_C(0xa6c7f20329cb41e1),UINT64_C(0xb521830697804fd2)};
+static _Atomic unsigned int active_recovery_locks=0;
+typedef struct {int directory_fd,lock_fd;dev_t directory_dev,lock_dev;ino_t directory_ino,lock_ino;bool counted;} recovery_lock_record;
+static int recovery_directory(void) {
+  int fd=protected_dir(AT_FDCWD,"/");const char *parts[]={"var","lib","atlas-r2-decoder-recovery"};
+  for(size_t i=0;i<sizeof(parts)/sizeof(parts[0])&&fd>=0;i++){
+    int next=protected_dir(fd,parts[i]);close(fd);fd=next;
+  }
+  struct stat st;
+  if(fd>=0&&(fstat(fd,&st)<0||(st.st_mode&07777)!=0700)){close(fd);fd=-1;}
+  return fd;
+}
+static bool recovery_lock_identity(recovery_lock_record *record) {
+  if(record->directory_fd<0||record->lock_fd<0)return false;
+  int directory=recovery_directory();struct stat dir,lock,current;bool same=false;
+  if(directory>=0&&fstat(directory,&dir)==0&&fstat(record->lock_fd,&lock)==0&&
+     fstatat(directory,"owner.lock",&current,AT_SYMLINK_NOFOLLOW)==0){
+    same=dir.st_dev==record->directory_dev&&dir.st_ino==record->directory_ino&&
+      S_ISREG(lock.st_mode)&&lock.st_uid==0&&lock.st_nlink==1&&(lock.st_mode&07777)==0600&&lock.st_size==0&&
+      lock.st_dev==record->lock_dev&&lock.st_ino==record->lock_ino&&
+      current.st_dev==lock.st_dev&&current.st_ino==lock.st_ino&&current.st_mode==lock.st_mode&&current.st_uid==lock.st_uid;
+  }
+  if(directory>=0)close(directory);
+  return same;
+}
+static void finalize_recovery_lock(napi_env env,void *data,void *hint) {
+  (void)env;(void)hint;recovery_lock_record *record=data;
+  if(record->lock_fd>=0)close(record->lock_fd);
+  if(record->directory_fd>=0)close(record->directory_fd);
+  if(record->counted)atomic_fetch_sub(&active_recovery_locks,1);
+  free(record);
+}
+static napi_value capture_recovery_lock(napi_env env,napi_callback_info info) {
+  size_t argc=1;napi_value arg,value;struct stat dir,lock;
+  NAPI(napi_get_cb_info(env,info,&argc,&arg,NULL,NULL));
+  if(argc!=0||geteuid()!=0||getegid()!=0)return fail(env,"DECODER_NATIVE_RECOVERY_LOCK");
+  if(atomic_fetch_add(&active_recovery_locks,1)!=0){atomic_fetch_sub(&active_recovery_locks,1);return fail(env,"DECODER_NATIVE_RECOVERY_BUSY");}
+  recovery_lock_record *record=calloc(1,sizeof(*record));
+  if(!record){atomic_fetch_sub(&active_recovery_locks,1);return fail(env,"DECODER_NATIVE_MEMORY");}
+  record->counted=true;record->directory_fd=-1;record->lock_fd=-1;
+  record->directory_fd=recovery_directory();
+  if(record->directory_fd<0||fstat(record->directory_fd,&dir)<0)goto refused;
+  record->lock_fd=openat(record->directory_fd,"owner.lock",O_RDWR|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+  if(record->lock_fd<0||fstat(record->lock_fd,&lock)<0||!S_ISREG(lock.st_mode)||lock.st_uid!=0||
+     lock.st_nlink!=1||(lock.st_mode&07777)!=0600||lock.st_size!=0||flock(record->lock_fd,LOCK_EX|LOCK_NB)<0)goto refused;
+  record->directory_dev=dir.st_dev;record->directory_ino=dir.st_ino;record->lock_dev=lock.st_dev;record->lock_ino=lock.st_ino;
+  if(!recovery_lock_identity(record))goto refused;
+  if(napi_create_object(env,&value)!=napi_ok||napi_type_tag_object(env,value,&recovery_lock_tag)!=napi_ok||
+     napi_wrap(env,value,record,finalize_recovery_lock,NULL,NULL)!=napi_ok)goto refused;
+  return value;
+ refused:finalize_recovery_lock(env,record,NULL);return fail(env,"DECODER_NATIVE_RECOVERY_LOCK");
+}
+static napi_value inspect_recovery_lock(napi_env env,napi_callback_info info) {
+  size_t argc=2;napi_value args[2],value;bool tagged=false;void *data=NULL;
+  NAPI(napi_get_cb_info(env,info,&argc,args,NULL,NULL));
+  if(argc!=1||napi_check_object_type_tag(env,args[0],&recovery_lock_tag,&tagged)!=napi_ok||!tagged||
+     napi_unwrap(env,args[0],&data)!=napi_ok||!data)return fail(env,"DECODER_NATIVE_RECOVERY_LOCK");
+  NAPI(napi_get_boolean(env,recovery_lock_identity(data),&value));return value;
 }
 static int cgroup_root(void) {
   int fd=protected_dir(AT_FDCWD,"/");const char *parts[]={"sys","fs","cgroup"};
@@ -637,6 +700,8 @@ static napi_value initialize(napi_env env,napi_value exports) {
     {"close",NULL,close_peer,NULL,NULL,NULL,napi_default,NULL},
     {"boottimeNanoseconds",NULL,boottime,NULL,NULL,NULL,napi_default,NULL},
     {"captureGroup",NULL,capture_group,NULL,NULL,NULL,napi_default,NULL},
+    {"captureRecoveryLock",NULL,capture_recovery_lock,NULL,NULL,NULL,napi_default,NULL},
+    {"inspectRecoveryLock",NULL,inspect_recovery_lock,NULL,NULL,NULL,napi_default,NULL},
     {"groupStatus",NULL,group_status,NULL,NULL,NULL,napi_default,NULL},
     {"freezeAndKillGroup",NULL,freeze_kill_group,NULL,NULL,NULL,napi_default,NULL},
     {"closeGroup",NULL,close_group,NULL,NULL,NULL,napi_default,NULL},
