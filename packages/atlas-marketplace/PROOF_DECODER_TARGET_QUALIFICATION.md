@@ -351,7 +351,7 @@ The [saved-evidence reuse audit](PROOF_DECODER_EVIDENCE_REUSE.md) defines joins 
 | `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | COVERED finite lifecycle variants by J6 plus active-app-overlap01: pre-START close/death leaves0jobs; RESERVED half-close/partial-frame death retains hold/poison; authenticated app pidfd death during a real RUNNING ordinary worker produced worker death/empty frozen parent in71.1ms before the original deadline/operator containment. Original RUNNING4 held, no cleanup backfill. Failed app-death01 remains failed. |
 | `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | COVERED finite lifecycle variants by J6 plus guard-death01: supervisor SIGKILL43.6ms; supervisor/guard SIGSTOP with systemd watchdog992.9ms; direct guard pidfd SIGKILL with supervisor held stopped233.7ms. Each observed active-worker death/empty frozen parent before original deadline/operator containment; original holds retained. |
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
-| `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
+| `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | PARTIAL — unknown-remove-cut01 observed a genuine durable pending REMOVE with null receipt, killed its stopped owner, retained exact CLEANUP7/8events/operation/hash/lock/barrier and app UNKNOWN/capacity1; exact GET found the exited resource. Remaining: sent/lost-wire CREATE/START/REMOVE response cuts, late effects,404/temporary-empty no-release, permanent persisted poison and enrolled recovery. The observed ledger poison bit was false and is not rewritten. |
 | `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | PARTIAL — stale-client-binding01 directly covers genuine client HELLO refusal for prior epoch, prior binding hash and exact saved old profile: KNOWN_NO_START_SENT,0reservations/worker input/Engine mutations; broker healthy afterward. Remaining: installed artifact/parent/boot/deadline/job/output variants and server-side tamper enforcement; client refusal does not establish them. |
 | `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | COVERED finite variants by J6, current valid-pair and active-app-overlap01: second genuine client KNOWN_NO_START_SENT while first ordinary worker pidfd remains live/RUNNING4; exactly1request/reservation/active connection and1rejection, no queue or second reservation. Prior RESERVED and poisoned refusal, sequential FINALIZED release and replay refusal retain their own observations. |
 | `IPC_PEER_AND_DIRECTORY_INTEGRITY` | CONTROL_FAULT: Wrong UID/GID, peer exit/PID reuse, replaced/symlink/insecure directories and sockets, stale guard frames, target Engine fixed inode replacement; actual native pidfd and protected-path refusal. No fake observer/controller brands. | PARTIAL — covered/bound J6: wrong UID0/GID0 rejected, genuine65530 flow and owned peer death. Remaining: directory/socket replacement/symlink/mode, PID reuse, stale guard frames and Engine endpoint identity variants. |
@@ -691,3 +691,54 @@ injector. Existing held REMOVE history and external resource absence cannot be
 relabeled as a lost-wire-response or enrolled-recovery pass. No catalog was
 installed, old uncertain operation replayed, new fault machinery introduced, or
 screened probe resumed. Those real recovery/UNKNOWN execution gates remain open.
+
+
+## Pending REMOVE unknown hold — October24,2026
+
+After root's specific effect-scope review, `ops/unknown-remove-cut-01` used the
+unchanged ordinary broker/client/runtime08/nativee7/repaired image/profile and
+one existing74-byte PNG. A bounded read-only observer watched only the new row.
+At genuine CLEANUP revision7 it observed REMOVE operation
+`43b77b81-aab9-4895-ab2b-4458824ee82d`, request hash
+`efc4d735ede503cefde04e09313ecd8d3633726e323e07a1569479fdfbe56f30`,
+with null receipt. Broker60639 was stopped through its retained pidfd. The same
+committed row and all8events were re-read while stopped, no SQLite sidecar was
+present, and unchanged files/directory were fsynced before pidfd SIGKILL/wait-9.
+No runtime callback, transport proxy, fabricated receipt or profile change was
+introduced; the original REMOVE may or may not have been submitted.
+
+The genuine app60650 returned DECODER_BROKER_UNCERTAIN with private UNKNOWN,
+quarantined=true, occupiedSlots1 and retainedOriginalBytes0, then exited0.
+Independent guard containment left the parent empty/frozen75525225ns after
+SIGSTOP, before the original deadline or operator fallback. The exact original
+CLEANUP7 row/8events/writer lock and closed barrier stayed unchanged. The persisted
+poison bit remained false/reasonnull after owner death; this is recorded as-is,
+not treated as permanent-poison coverage. The case does not establish a sent
+DELETE, lost wire response, CREATE/START uncertainty or enrolled reconciliation.
+
+Remote receipt SHA256 is
+`5a8f7fa1226f18da2d140870a372bb7e833732146729c26ea96da4ed1cb03d89`;
+stdout SHA256 is
+`dbdbef913cedf5cbe4956ce0f95b7f220dcf1cd65909d41c077a78959a367274`.
+All30 prior ledger sets/publisher holds remain byte/inode unchanged. A single
+exact GET200 observed container
+`bc376151abdb92e477684748e85287dc60008aaa36f079cd067b51ad1da65946`
+exited0/nonOOM/PID0 under its exact image/labels/parent; no DELETE was retried and
+no ledger reopened, repaired or finalized. The31st ledger is held. Guard is
+stopped, parent empty/frozen and broker directory empty. At this observation
+checkpoint the exited resource is retained for separate explicit cleanup review;
+`unknown-remove-cut-01/baseline-31-retained-resource.json` SHA256 is
+`b481727f277a4a9bf7d5e036c0929604d6f883dc91edda3dfb82fbac19a29ef8`.
+
+
+Root declined the separate same-resource DELETE proposal because repeating the
+physical operation while the original REMOVE is uncertain violates the no-replay
+constraint. `unknown-remove-cut-01/cleanup-proposal.json` is **NOT_EXECUTED**;
+its operator draft remains inert evidence and must not be dispatched. There is
+no cleanup operation receipt or new absence claim. Final Engine inventory still
+contains the exact exited container above. All31 ledger sets/publisher holds,
+null original receipt, CLEANUP7/8events/lock and closed barrier remain retained.
+No further target case requiring resource clearing was run. Real custody and
+reconciliation capability remains root/C0-owner work. Final handoff is
+`unknown-remove-cut-01/final-handoff.json`, SHA256
+`4a0c7d49d28f749fa894ce94c65371988e7f11fc4346bed6568f985306d6c3fa`.

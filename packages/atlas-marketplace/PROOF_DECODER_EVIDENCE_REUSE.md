@@ -50,7 +50,11 @@ frames and peer/PID variants remain open.
 
 Output-integrity, required host-secret/proof/Docker-path canaries, cross-job
 access, ignored-TERM/descendants, uncertain CREATE/START/REMOVE/late effects and
-profile/epoch tamper remain incomplete at their required scope. The later
+profile/epoch tamper remain incomplete at their required scope. A later
+unknown-remove-cut01 directly covers a committed pending REMOVE/null-receipt
+owner cut and retained private UNKNOWN/row/barrier; it does not establish a
+sent/lost wire response, persisted poison,404/late effects or enrolled recovery.
+The later
 stale-client-binding01 run covers only genuine client HELLO refusal for stale
 epoch, binding hash and saved profile; installed-artifact/server-side variants
 remain unrun. The blocked output
