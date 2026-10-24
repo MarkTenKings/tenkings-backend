@@ -90,7 +90,7 @@ test('packaged font provenance and license bytes match every pinned artifact', (
   assert.match(readFileSync(new URL('OFL-Lacquer.txt', root), 'utf8'), /SIL Open Font License/);
 });
 
-test('a repeated word can have different paints by exact offsets; protected serial remains neutral', () => {
+test('protected serial stays exact and can use a card-derived color without generated paint effects', () => {
   const text = 'ICE · ICE /199';
   const r = painted(text, 'DIAMOND', {
     protectedSpans: [{ start: 10, end: text.length }],
@@ -107,6 +107,10 @@ test('a repeated word can have different paints by exact offsets; protected seri
   for (const v of s.segments.filter(v => v.protected)) {
     assert.equal(v.pattern, 'NONE'); assert.equal(v.scale, 1); assert.equal(v.spanIndex, -1);
   }
+  const colored = shapeLabelStyleText({ text, recipe: r, defaultColor: '#090a0b', protectedColor: '#f14524' });
+  assert.match(colored.paths, /fill="#f14524" data-style-span="-1"/);
+  assert.deepEqual(colored.b, s.b);
+  assert.deepEqual(colored.segments.filter(v => v.protected), s.segments.filter(v => v.protected));
 });
 
 test('optical normalization increases short-word ink height uniformly and never beyond 1.2', () => {

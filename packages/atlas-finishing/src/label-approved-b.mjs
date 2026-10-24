@@ -30,9 +30,10 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE = Object.freeze({
     shaping: 'fontkit-2.0.4-kern-disabled-uniform-v1', baseFontsAccepted: '2026-10-22' },
   nfcClearance: { x: 51.8, y: 9.75, radius: 5.1, padding: .75, fitting: 'per-line-outline-box-v1' },
   name: { x: 17.5, width: 29, targetHeight: 3.35, minimumHeight: 1.9, oneLineTop: 4.8, twoLineTop: 3.05, gap: .62 },
-  detail: { x: 17.5, top: 11, bottom: 16.6, width: 29, targetCapHeight: 1.6, minimumCapHeight: 1.3,
-    lineGap: .25, semanticLines: 2, maximumLines: 2, maximumTokens: 128, fitting: 'independent-centered-slots-v3',
-    variant: { targetCapHeight: 2.5, casing: 'uppercase', color: 'photo-style', font: 'Knewave' } },
+  detail: { x: 17.5, top: 11, bottom: 16.6, width: 29, targetCapHeight: 1.6, minimumCapHeight: 1.3, minimumSecondaryInkHeight: 1.3,
+    lineGap: .25, semanticLines: 2, maximumLines: 2, maximumTokens: 128, fitting: 'optical-role-hierarchy-v4',
+    variant: { targetCapHeight: 2.5, heavyInkHeight: 2.3, brushInkHeight: 2.6,
+      nameGap: .3, secondaryGap: .2, minimumSecondaryGap: .1, casing: 'uppercase', color: 'photo-style', font: 'Knewave' } },
   certificate: { x: 1.9, centerY: 18.35, maxWidth: 13.9, capHeight: 1.3, weight: 500 },
   metadata: 'number-year-brand-set-and-confirmed-features-v2',
   metadataRules: { brand: 'exact-maker-alias-prefix-dedupe-bowman-v1', subset: 'sports-final-spaced-hyphen-v1',
@@ -42,7 +43,7 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE = Object.freeze({
   displayName: 'alakazam-ex-omission-v1',
   colors: approvedBColors, grade: 'retained-grade10-uniform-roboto-other-grades-v1', backQr: 'https://atlasgrading.com/',
   photoStyle: {version: LABEL_STYLE_PAINT_VERSION, wordmark:LABEL_STYLE_WORDMARK_VERSION, contrastVersion:LABEL_STYLE_CONTRAST_VERSION,
-    sourceTexturePolicy:'atlas-label-source-texture-v2', originalRasterPolicy:'atlas-label-wordmark-near-monochrome-v1',
+    sourceTexturePolicy:'atlas-label-source-texture-v3', originalRasterPolicy:'atlas-label-wordmark-near-monochrome-v1',
     wordmarkEdge:'actual-fitted-physical-radius-v1',
     reviewedPreferences:{version:LABEL_STYLE_PREFERENCES_VERSION,sha256:LABEL_STYLE_PREFERENCES_SHA256},
     fonts:LABEL_STYLE_FONT_CATALOG, artwork:LABEL_STYLE_ARTWORK,
@@ -55,7 +56,8 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE_HASH = approvedBHash(stable(LABEL
 export const LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH = 'a0491ff4f0a86166371f950c658c3e08397e688fe13f9e60f28abbda88b764ab';
 export const LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES = Object.freeze([
   LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH, 'b8bb56e7e816b1324b6ba3a1b5d9b683e761fc084ae986f253ae113e88ea6a0a',
-  'df5054cb6e777409dcef8b5938c87df3ec76e980c8553c6edb77567c2f9defbe', LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
+    'df5054cb6e777409dcef8b5938c87df3ec76e980c8553c6edb77567c2f9defbe',
+    'be7680a176376a245fee5ef4d54efbb96dad37ae9799e7378a533bced0f3d5fd', LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
 ]);
 export const isApprovedBRendererProfile = hash => LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES.includes(hash);
 const round = value => Number(value.toFixed(6));
@@ -232,12 +234,14 @@ function styledRow(line, semantic, styleSpec, textures) {
   const spanTextures=usable && allTextures ? original.spans.flatMap((value,i)=>crop([value]).length?[allTextures[i]]:[]):undefined;
   return {recipe,spanTextures};
 }
-function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks) {
+function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks, nameHeight) {
   const box=LABEL_APPROVED_B_RENDERER_PROFILE.detail;
   const slotHeight=lines.length?(box.bottom-box.top-box.lineGap*(lines.length-1))/lines.length:0;
   const recipes=lines.map(line=>styledRow(line,semantic,styleSpec,textures));
   const contrast=recipes.map(({recipe})=>labelStyleContrast({recipe,inverted}));
-  const shapeOptions=lines.map((line,index)=>({text:line.text,...recipes[index],spanColors:contrast[index].spanColors,defaultColor:inverted?'#090a0b':'#ffffff'}));
+  const shapeOptions=lines.map((line,index)=>({text:line.text,...recipes[index],spanColors:contrast[index].spanColors,
+    ...(line.role==='variant'&&contrast[index].spanColors[0]?{protectedColor:contrast[index].spanColors[0].baseColor}:{}),
+    defaultColor:inverted?'#090a0b':'#ffffff'}));
   const wordmarkOptions=index=>({...shapeOptions[index],wordmark:wordmarks?.[lines[index].role],expectedSourceHash:styleSpec.specHash,
     outlineColor:contrast[index].outlineColor});
   const shapes=shapeOptions.map((options,index)=>{
@@ -245,11 +249,21 @@ function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks) 
       ? shapeLabelStyleWordmark(wordmarkOptions(index))
       : shapeLabelStyleText(options);
   });
-  const placements=shapes.map((value,index)=>{
+  const fitRow=(index,maximumInkHeight)=>{
+    let value=shapes[index];
     const variant=lines[index].role==='variant', styled=recipes[index].recipe.spans.length>0;
     const reviewedCap=recipes[index].recipe.reviewedCapMm;
     if(reviewedCap!==undefined&&(!Number.isFinite(reviewedCap)||reviewedCap<1.3||reviewedCap>2.5))throw Error('LABEL_STYLE_REVIEWED_CAP_INVALID');
     const target=reviewedCap??(variant?2.5:styled&&value.emphasis==='LARGE'?2.3:box.targetCapHeight);
+    const traits=recipes[index].recipe.letteringTraits??[];
+    const opticalTarget=variant&&reviewedCap===undefined
+      ? traits.includes('HEAVY')||traits.includes('WIDE')||recipes[index].recipe.fontId==='montserrat-black'
+        ? box.variant.heavyInkHeight
+        : traits.includes('BRUSH')||traits.includes('HAND_DRAWN')?box.variant.brushInkHeight:null
+      : null;
+    // Weight and proportions change apparent size even at identical cap height.
+    // Bound actual ink, while retaining the accepted cap fit for neutral faces.
+    const inkLimit=Math.min(maximumInkHeight,opticalTarget??Infinity);
     if(value.representation==='ALPHA_MASK') {
       // Fit the real ink plus a fixed physical edge. Original assets may have
       // any measured cap height; neither 256 units nor a 2.5mm final fit is assured.
@@ -261,7 +275,8 @@ function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks) 
         const right=distanceY>=radius?box.x+box.width:Math.min(box.x+box.width,circle.x-Math.sqrt(radius*radius-distanceY*distanceY));
         return box.x+width<=right;
       };
-      let scale=Math.min(target/value.capHeight,(box.width-2*edge)/value.width,(slotHeight-2*edge)/value.height);
+      let scale=Math.min(opticalTarget===null?target/value.capHeight:Infinity,
+        (inkLimit-2*edge)/value.height,(box.width-2*edge)/value.width,(slotHeight-2*edge)/value.height);
       if(!fits(scale)) {
         let low=0,high=scale;
         for(let step=0;step<48;step++){const middle=(low+high)/2;if(fits(middle))low=middle;else high=middle;}
@@ -278,30 +293,46 @@ function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks) 
         capHeight:scale*value.capHeight,fontSizePt:scale*value.unitsPerEm/25.4*72,font:value.fontFamily};
     }
     const pad=value.representation!=='ALPHA_MASK' ? contrast[index].outlineMm : 0;
-    const scale=Math.min(target/value.capHeight,(box.width-2*pad)/value.width,(slotHeight-2*pad)/value.height);
+    const scale=Math.min(opticalTarget===null?target/value.capHeight:Infinity,
+      inkLimit/value.height,(box.width-2*pad)/value.width,(slotHeight-2*pad)/value.height);
     const outer=fitClearLine({...value,width:value.width+2*pad/scale,height:value.height+2*pad/scale},
       {x:box.x,width:box.width,centerY:box.top+index*(slotHeight+box.lineGap)+slotHeight/2,height:value.height*scale+2*pad});
     const innerScale=(outer.height-2*pad)/value.height;
     return {...outer,x:outer.x+pad,y:outer.y+pad,width:outer.width-2*pad,height:outer.height-2*pad,scale:innerScale,
       outerBounds:outer,pad,outlineColor:contrast[index].outlineColor,capHeight:innerScale*value.capHeight,fontSizePt:innerScale*(value.unitsPerEm??1000)/25.4*72,font:value.fontFamily};
-  });
+  };
+  const nameLimit=nameHeight-box.variant.nameGap;
+  const placements=shapes.map((_,index)=>fitRow(index,nameLimit));
+  const variants=placements.filter((_,index)=>lines[index].role==='variant');
+  if(variants.length) {
+    const variantHeight=Math.min(...variants.map(p=>p.height));
+    const secondaryLimit=Math.min(variantHeight-box.variant.minimumSecondaryGap,
+      Math.max(box.minimumSecondaryInkHeight,variantHeight-box.variant.secondaryGap));
+    for(const [index,line] of lines.entries())if(line.role!=='variant'&&placements[index].height>secondaryLimit)
+      placements[index]=fitRow(index,secondaryLimit);
+  }
   return {lines,shapes,placements,capHeight:placements.length?Math.min(...placements.map(p=>p.capHeight)):0,
     widths:placements.map(p=>p.width),heights:placements.map(p=>p.height)};
 }
-function fitMetadata(identity, cardProfile, styleSpec, textures, inverted, wordmarks) {
+function fitMetadata(identity, cardProfile, styleSpec, textures, inverted, wordmarks, nameHeight) {
   const box=LABEL_APPROVED_B_RENDERER_PROFILE.detail;
+  // Mixed-case metadata can have taller ink than its H cap. Judge its minimum
+  // by the actual printed height so a long variant need not force tiny text or
+  // unnecessary layout attention merely to satisfy a font-specific metric.
+  const readable=fit=>fit.placements.every((p,index)=>fit.lines[index].role==='variant'||!fit.lines.some(line=>line.role==='variant')
+    ? p.capHeight>=box.minimumCapHeight-1e-6 : p.height>=box.minimumSecondaryInkHeight-1e-6);
   let semantic=metadataProjection(identity,{cardProfile});
   const rows=()=>['identity','variant'].filter(role=>semantic[role]).map(role=>({role,text:semantic[role]}));
   const fitRows=lines=>{
-    const fit=metadataFit(lines,semantic,styleSpec,textures,inverted,wordmarks);
+    const fit=metadataFit(lines,semantic,styleSpec,textures,inverted,wordmarks,nameHeight);
     if(!semantic.variant&&semantic.identityParts.length===2) {
-      const productRows=metadataFit(semantic.identityParts.map(text=>({role:'identity',text})),semantic,styleSpec,textures,inverted,wordmarks);
+      const productRows=metadataFit(semantic.identityParts.map(text=>({role:'identity',text})),semantic,styleSpec,textures,inverted,wordmarks,nameHeight);
       if(productRows.capHeight>fit.capHeight||styleSpec?.lines?.some(line=>line.role==='identity'&&line.emphasis==='LARGE'))return productRows;
     }
     return fit;
   };
   let lines=rows();
-  if(!lines.length)return {...metadataFit([],semantic,styleSpec,textures,inverted,wordmarks),semantic};
+  if(!lines.length)return {...metadataFit([],semantic,styleSpec,textures,inverted,wordmarks,nameHeight),semantic};
   if(lines.reduce((sum,line)=>sum+line.text.split(' ').length,0)>box.maximumTokens)return null;
   let fit=fitRows(lines);
   // Display aliases are selected before model analysis. Never apply a different
@@ -309,7 +340,7 @@ function fitMetadata(identity, cardProfile, styleSpec, textures, inverted, wordm
   const unstyledIdentity=!styleSpec||styleSpec.lines.every(line=>line.role!=='identity'
     ||line.letteringMode==='CATALOG'&&line.styleableSpans.length===0&&line.spans.length===0);
   if(fit.capHeight<box.minimumCapHeight&&unstyledIdentity){semantic=metadataProjection(identity,{cardProfile,abbreviate:true});lines=rows();fit=fitRows(lines);}
-  if(fit.capHeight>=box.minimumCapHeight)return {...fit,semantic};
+  if(readable(fit))return {...fit,semantic};
   const choices=[];
   for(const [row,line] of lines.entries()){
     if(styleSpec?.lines?.some(value=>value.role===line.role&&value.letteringMode==='ORIGINAL_WORDMARK'))continue;
@@ -317,11 +348,12 @@ function fitMetadata(identity, cardProfile, styleSpec, textures, inverted, wordm
     for(let index=1;index<words.length;index++){
       if(words[index-1]==='·'||words[index]==='·')continue;
       const wrapped=[...lines.slice(0,row),{role:line.role,text:words.slice(0,index).join(' ')},{role:line.role,text:words.slice(index).join(' ')},...lines.slice(row+1)];
-      if(wrapped.length<=box.maximumLines)choices.push(metadataFit(wrapped,semantic,styleSpec,textures,inverted,wordmarks));
+      if(wrapped.length<=box.maximumLines)choices.push(metadataFit(wrapped,semantic,styleSpec,textures,inverted,wordmarks,nameHeight));
     }
   }
   choices.sort((a,b)=>b.capHeight-a.capHeight);
-  return choices[0]?.capHeight>=box.minimumCapHeight?{...choices[0],semantic}:null;
+  const chosen=choices.find(readable);
+  return chosen?{...chosen,semantic}:null;
 }
 
 const descriptors = { 1: 'POOR', 1.5: 'FAIR', 2: 'GOOD', 2.5: 'GOOD+', 3: 'VERY GOOD', 3.5: 'VG+',
@@ -374,7 +406,7 @@ export function renderApprovedBLabel(input, { previewMaterial = 'gold', styleSpe
     const names = fit.shapes.map((value, i) => {
       const p = fit.placements[i]; return place(value, p.x, p.y, p.height);
     }).join('');
-    const metadata = fitMetadata(identity, cardProfile, styleSpec, textures, finalGrade===10, wordmarks);
+    const metadata = fitMetadata(identity, cardProfile, styleSpec, textures, finalGrade===10, wordmarks, fit.height);
     if (!metadata) return attention('METADATA_OVERFLOW');
     const bounds = [], metadataPaths = { identity: '', variant: '' };
     metadata.shapes.forEach((value, index) => {

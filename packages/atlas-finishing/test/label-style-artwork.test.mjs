@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { buildLabelStyleFront, validateLabelStyleArtwork, labelStyleBlackInk } from '../src/label-style-artwork.mjs';
+import { buildLabelStyleFront, validateLabelStyleArtwork, labelStyleBlackInk, labelStyleCardColorFoil } from '../src/label-style-artwork.mjs';
 import { shapeLabelStyleWordmark } from '../src/label-style-wordmark.mjs';
 import { renderApprovedBLabel } from '../src/label-approved-b.mjs';
 import { validateApprovedBArtwork } from '../src/label-approved-b-artwork.mjs';
@@ -89,5 +89,27 @@ test('monochrome retains alpha-mask letter counters and validates idempotently f
     const ink = pixel(30.6, 13.5), hole = pixel(32, 14);
     if (inverted) { assert.deepEqual(ink, [0, 0, 0, 255]); assert.notDeepEqual(hole, ink); }
     else { assert.equal(ink[3], 0); assert.equal(hole[3], 255); }
+  }
+});
+
+test('card-color foil keeps original variant paint and alpha lettering while every other pixel retains the monochrome finish', async () => {
+  for (const inverted of [false, true]) {
+    const s = shape(inverted ? 1 : 0), printSvg = buildLabelStyleFront({ title: 'Variant-only color', primary: '', inverted,
+      support: '<path d="M20 13h1v1h-1Z"/>',
+      accents: `<g data-part="metadata"><path fill="#ff0000" d="M22 13h1v1h-1Z"/></g><g data-part="variant"><g transform="translate(30,15) scale(.1,-.1)">${s.paths}</g></g>`, defs: s.defs });
+    const source = item(printSvg), colored = labelStyleCardColorFoil(source), mono = labelStyleBlackInk(source);
+    assert.equal(source.printSvg, printSvg);
+    assert.equal(validateLabelStyleArtwork(item(colored)), colored);
+    assert.ok(colored.includes(`href="data:image/png;base64,${wordmark.maskBase64}"`));
+    const raster = svg => sharp(Buffer.from(svg), { density: 508 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const current = await raster(colored), previous = await raster(mono);
+    let coloredPixels = 0;
+    for (let i = 0; i < current.data.length; i += 4) {
+      const x = (i / 4 % current.info.width) * 68.342 / current.info.width, y = Math.floor(i / 4 / current.info.width) * 20.082 / current.info.height;
+      if (x >= 29.8 && x <= 34.2 && y >= 12.8 && y <= 15.2) {
+        if (current.data[i + 3] && current.data[i + 2] > current.data[i]) coloredPixels++;
+      } else assert.deepEqual(current.data.subarray(i, i + 4), previous.data.subarray(i, i + 4), `ordinary artwork changed at ${x},${y}`);
+    }
+    assert.ok(coloredPixels > 50, 'variant retains its blue paint');
   }
 });

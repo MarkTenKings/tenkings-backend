@@ -49,7 +49,7 @@ test('six reviewed examples keep product and variant on their own rows without c
     assert(Math.abs(certificate.y + certificate.height / 2 - 18.35) < .000001);
     assert.doesNotMatch(result.printSvg, /CERT #|data-part="certificate-frame"/);
     assert.equal(result.diagnostics.grade.value, source.finalGrade);
-    assert(result.diagnostics.metadata.capHeightMm >= 1.3);
+    assert(result.diagnostics.metadata.bounds.every(bounds=>bounds.height>=1.3));
     assert(result.diagnostics.metadata.capHeightMm <= 1.6);
     assert.deepEqual(result.diagnostics.metadata.lineRoles, expected.map((_, index) =>
       index && result.diagnostics.metadata.semanticLines.variant ? 'variant' : 'identity'));
@@ -87,7 +87,8 @@ test('each detail row uses its pinned font metrics, uniform scale and padded cir
       assert(Math.abs(bounds.width - (bbox.maxX - bbox.minX) * scale) < .00002);
       assert(Math.abs(bounds.height - (bbox.maxY - bbox.minY) * scale) < .00002);
       assert(Math.abs(bounds.fontSizePt - scale * face.unitsPerEm / 25.4 * 72) < .00001);
-      assert(bounds.capHeightMm >= 1.3 && bounds.capHeightMm <= (variant ? 2.5 : 1.6));
+      assert((variant?bounds.capHeightMm:bounds.height)>=1.3);
+      assert(bounds.capHeightMm <= (variant ? 2.5 : 1.6));
       assert(bounds.x === 17.5 && bounds.width <= 29.000001);
       assert(bounds.y >= 11 && bounds.y > lastBottom);
       lastBottom = bounds.y + bounds.height;

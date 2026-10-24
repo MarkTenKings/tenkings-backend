@@ -56,7 +56,7 @@ export function archiveApprovedMedia({ cardId, approvalActionId, publicToken, ap
     && label.source_hash === sourceHash && label.report_hash === reportHash && label.public_hash === publicHash
     && matches(HASH, label.artwork_hash) && matches(HASH, label.renderer_profile_hash)
     && typeof label.material_profile_id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(label.material_profile_id)) {
-    media.LABEL = { url: `/admin/api/staff/manual-connected/labels/${label.id}/artwork?mode=preview`,
+    media.LABEL = { url: `/admin/api/staff/manual-connected/labels/${label.id}/artwork?mode=preview-card-foil`,
       provenance: 'REPORT_BOUND_LABEL_ARTWORK', itemId: label.id, artworkHash: label.artwork_hash,
       rendererProfileHash: label.renderer_profile_hash, materialProfileId: label.material_profile_id };
     // Retained approved-B profiles share the same reverse artwork and geometry.

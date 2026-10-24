@@ -10,6 +10,7 @@ export default function ReviewIdentityPanel({ identity, draft, errors = {}, disa
   const firstInput = useRef(null), editButton = useRef(null), wasEditing = useRef(false);
   const editing = Boolean(draft), fields = reviewIdentityFields(identity);
   const proposal = !identity.sportsAttributes && Object.hasOwn(identity, 'playerName') ? reviewSportsAttributesProposal(identificationProposal, sourceHash) : null;
+  const hasSuggestedSpecial = proposal && ['serial', 'autograph', 'relic'].some(key => proposal.attributes[key].presence === 'PRESENT');
   useEffect(() => {
     if (editing) firstInput.current?.focus({ preventScroll: true });
     else if (wasEditing.current) editButton.current?.focus({ preventScroll: true });
@@ -32,6 +33,6 @@ export default function ReviewIdentityPanel({ identity, draft, errors = {}, disa
       </fieldset>
       {errors.identity && <p className={styles.error} role="alert">{errors.identity}</p>}
       <div className={styles.actions}><p>Your outlines and findings stay saved.</p><button type="button" disabled={saving} onClick={onCancel}>Cancel</button><button type="submit" className={styles.save} disabled={saving || readOnly}>{saving ? 'Saving…' : reviewIdentityChanged(identity, draft) ? 'Save details' : 'Done'}</button></div>
-    </form> : <><dl className={styles.summary}>{fields.map(({ key, label }) => <div key={key}><dt>{label}</dt><dd className={!identity[key] ? styles.missing : undefined}>{key === 'layoutType' ? kindNames[identity[key]] ?? 'Not set' : identity[key] || 'Not set'}</dd></div>)}</dl>{Object.hasOwn(identity, 'playerName') && <SportsAttributesSummary value={identity.sportsAttributes}/>}</>}
+    </form> : <><dl className={styles.summary}>{fields.map(({ key, label }) => <div key={key}><dt>{label}</dt><dd className={!identity[key] ? styles.missing : undefined}>{key === 'layoutType' ? kindNames[identity[key]] ?? 'Not set' : identity[key] || 'Not set'}</dd></div>)}</dl>{Object.hasOwn(identity, 'playerName') && <SportsAttributesSummary value={identity.sportsAttributes}/>} {!readOnly && hasSuggestedSpecial && <div className={styles.attributes} aria-label="Suggested special details"><h3>Suggested special details</h3><SportsAttributesSummary value={proposal.attributes}/><p className={styles.attributeNote}>Review and save these details before approving the card to include them on its label.</p><button type="button" disabled={disabled} onClick={onEdit}>Review suggested special details</button></div>}</>}
   </section>;
 }

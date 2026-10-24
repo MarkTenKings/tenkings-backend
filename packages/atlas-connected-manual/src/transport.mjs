@@ -12,7 +12,7 @@ const ORDER_DESK_LABEL_PATH = new RegExp(`^/api/staff/manual-connected/order-des
 const ORDER_DESK_PHOTO_PATH = new RegExp(`^/api/staff/manual-connected/order-desk/orders/${ORDER_DESK_ID}/cards/${ORDER_DESK_ID}/photos/(?:FRONT|BACK)(?:\\?size=(?:thumbnail|detail))?$`);
 const LABEL_SHEET_PATH = new RegExp(`^/api/staff/manual-connected/label-sheets(?:/${ORDER_DESK_ID}(?:/exports(?:/${ORDER_DESK_ID}(?:/download)?)?|/print-confirmations)?)?$`);
 const LABEL_ITEM_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/(?:artwork|reprints|layout-retries|exports(?:/${ORDER_DESK_ID}(?:/download)?)?)$`);
-const LABEL_ARTWORK_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/artwork\\?mode=(?:(?:preview|print)(?:-back)?(?:-foil)?|print(?:-back)?-color)$`);
+const LABEL_ARTWORK_PATH = new RegExp(`^/api/staff/manual-connected/labels/${ORDER_DESK_ID}/artwork\\?mode=(?:(?:preview|print)(?:-back)?(?:-foil)?|print(?:-back)?-color|(?:preview|print)-card-foil)$`);
 const LABEL_EMBEDDED_IMAGE_CSP = "default-src 'none'; img-src data:; sandbox";
 // Retained sold photos share the market status endpoint. Admit raster bytes
 // only for its exact preview UUID/image digest query, in either parameter order.

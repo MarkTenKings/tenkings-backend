@@ -183,6 +183,9 @@ test('black-only profiles are explicit, kind-bound and retained in an uncertain 
   assert.equal(wrong.client.pending().body.exportProfileId, LABEL_PRINT_FORMATS.foil.sheet);
 });
 test('foil preview and print URLs are exact authenticated modes', () => {
+  assert.equal(labelArtworkHref(item, '/admin', 'preview-card-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview-card-foil`);
+  assert.equal(labelArtworkHref(item, '/admin', 'print-card-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=print-card-foil`);
+  assert.equal(labelSheetProfile(), LABEL_PRINT_FORMATS.cardFoil.sheet);
   assert.equal(labelArtworkHref(item, '/admin', 'print-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=print-foil`);
   assert.equal(labelArtworkHref(item, '/admin', 'preview-foil'), `/admin/api/staff/manual-connected/labels/${itemId}/artwork?mode=preview-foil`);
   assert.equal(labelArtworkHref(item, '/admin', 'unrecognized'), null);
@@ -242,7 +245,7 @@ test('current 25-position profiles replace only front defaults and retain every 
     assert.equal(labelPrintFormatForProfile(id), LABEL_PRINT_FORMATS[format]); return id;
   }));
   assert.deepEqual(ids.sort(), LABEL_25_CURRENT_PROFILE_DEFINITIONS.map(profile => profile.id).sort());
-  assert.equal(LABEL_25_SUPPORTED_PROFILE_DEFINITIONS.length, 18);
+  assert.equal(LABEL_25_SUPPORTED_PROFILE_DEFINITIONS.length, 20);
   for (const historical of LABEL_25_PROFILE_DEFINITIONS) {
     assert.match(historical.id, /-v1$/); assert.equal(historical.compositor, undefined);
     assert.equal(getLabel25Profile(historical.id), historical);

@@ -78,6 +78,18 @@ test('adopting a machine suggestion creates only editable facts and requires fre
  assert.equal(identity.reviewIdentityEdit(saved.identity,structuredClone(saved.identity)),null);
 });
 
+test('present special suggestions are visible before editing and use the existing review action without saving facts',()=>{
+ const attributes=emptyAtlasSportsAttributes();attributes.serial={presence:'PRESENT',...atlasPrintedSerial('007/500'),evidence:[{side:'BACK',imageSha256:'a'.repeat(64),observation:'Synthetic derivative: 007/500.'}]};
+ const proposal={version:'atlas-sports-attributes-proposal-v1',authority:'MACHINE_PROPOSAL',sourceHash:'b'.repeat(64),attributes,confidence:{serial:'high',autograph:'unknown',relic:'unknown'}};
+ const props={identity:sports,identificationProposal:proposal,sourceHash:proposal.sourceHash},f=render(props);
+ assert.match(f.text(),/Review and save these details before approving the card to include them on its label/);
+ f.find(node=>node.type==='button'&&text(node)==='Review suggested special details').props.onClick();
+ assert.deepEqual(f.callbacks,['edit']);assert.equal(sports.sportsAttributes,undefined);
+ for(const overrides of [{readOnly:true},{sourceHash:'c'.repeat(64)},{identity:{...sports,sportsAttributes:attributes}},
+   {identificationProposal:{...proposal,attributes:emptyAtlasSportsAttributes()}}])
+   assert.equal(render({...props,...overrides}).find(node=>node.props?.['aria-label']==='Suggested special details'),undefined);
+});
+
 test('reviewed special features survive ordinary identity edits and require complete human reference fields',()=>{
  const feature={kind:'CASE_HIT',evidence:{type:'REVIEWED_REFERENCE',sourceTitle:'Synthetic checklist',sourceUrl:'https://example.com/checklist',matchNote:'Card DTBH-JDT matches the named printing and case-hit entry.'}};
  const current={...sports,sportsAttributes:{...emptyAtlasSportsAttributes(),specialFeatures:[feature]}};

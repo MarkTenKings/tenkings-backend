@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createLabelSheetsHandler } from '../src/label-sheet-http.mjs';
 import { isManualServicePath, manualResponsePolicy } from '../src/transport.mjs';
 
-const modes=['preview','print','preview-foil','print-foil','preview-back','print-back','preview-back-foil','print-back-foil','print-color','print-back-color'];
+const modes=['preview','print','preview-foil','print-foil','preview-back','print-back','preview-back-foil','print-back-foil','print-color','print-back-color','preview-card-foil','print-card-foil'];
 const origin = 'https://atlasgrading.com', id = 'bca3a38d-527f-4f0e-881d-27caa6880f2d';
 const base = '/api/staff/manual-connected', sheet = `${base}/label-sheets/${id}`, item = `${base}/labels/${id}`;
 const response = () => ({ headers: {}, setHeader(key, value) { this.headers[key] = value; }, status(code) { this.code = code; return this; },

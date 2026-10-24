@@ -7,7 +7,7 @@ import { createManualFinishing } from '../src/finishing.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
 import { LABEL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,
-  renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg, renderLabelExportSvg, LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES } from '@atlas/finishing/label-sheet';
+  renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg, renderLabelCardColorFoilSvg, renderLabelCardColorFoilPreviewSvg, renderLabelExportSvg, LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES } from '@atlas/finishing/label-sheet';
 import { LABEL_APPROVED_B_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-approved-b';
 import { APPROVED_B_LAYOUT, renderApprovedBBack, colorApprovedBArtwork } from '@atlas/finishing/label-approved-b-artwork';
 import { renderLabelV4, LABEL_V4_RENDERER_PROFILE_HASH } from '@atlas/finishing/label-v4';
@@ -180,7 +180,8 @@ test('foil artwork previews derive from verified saved print geometry and the sa
     const before=structuredClone(item),artwork={printSvg:out.printSvg,artworkHash:out.artworkHash};
     f.repository.item=async()=>item;
     for(const [mode,expected] of [['print',out.printSvg],['preview',out.previewSvg],['print-foil',renderLabelBlackInkSvg(artwork)],
-      ['preview-foil',renderLabelBlackInkPreviewSvg(artwork,{previewMaterial:cardProfile==='SPORTS'?'gold':'holo'})]]) {
+      ['preview-foil',renderLabelBlackInkPreviewSvg(artwork,{previewMaterial:cardProfile==='SPORTS'?'gold':'holo'})],
+      ['print-card-foil',renderLabelCardColorFoilSvg(artwork)], ['preview-card-foil',renderLabelCardColorFoilPreviewSvg(artwork,{previewMaterial:cardProfile==='SPORTS'?'gold':'holo'})]]) {
       const result=await f.service.artwork({},{itemId:item.id,mode});
       assert.equal(result.bytes.toString(),expected);assert.equal(result.sha256,digest(expected));assert.equal(result.contentType,'image/svg+xml');
     }

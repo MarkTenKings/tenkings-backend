@@ -52,6 +52,20 @@ test('large crops shrink inside 128 pixels while preserving aspect ratio and sta
   assert.deepEqual(r.receipts.map(v => [v.role, v.spanIndex, v.start, v.end]), [['variant', 0, 0, 4], ['variant', 1, 5, 8]]);
 });
 
+test('thin border selections retain a visible central motif inside the cited photo region', async () => {
+  const f = await fixture(1024, 512);
+  f.source.box = { x: .1, y: .1, width: .8, height: .04 };
+  const r = await deriveLabelStyleTextures(f), receipt = r.receipts[0], tile = r.lines[0].spanTextures[0];
+  const { cropBox: crop, citedCropBox: cited } = receipt.source;
+  assert.equal(crop.width, crop.height * 2);
+  assert.equal(crop.top, cited.top);
+  assert.ok(crop.left >= cited.left && crop.left + crop.width <= cited.left + cited.width);
+  assert.equal(tile.width, crop.width); assert.equal(tile.height, crop.height);
+  const expected = await sharp(f.photo.bytes).extract(crop).raw().toBuffer();
+  const actual = await sharp(Buffer.from(tile.pngBase64, 'base64')).raw().toBuffer();
+  assert.deepEqual(actual, expected, 'no stretching or pixels outside the cited border');
+});
+
 test('unavailable, uncertain and printed-lettering sources return explicit procedural receipts', async () => {
   const f = await fixture();
   for (const [source, reason] of [
@@ -94,7 +108,7 @@ test('neutral shimmer preserves source luminance detail while reducing chroma an
   const unchanged=await deriveLabelStyleTextures(f),original=await tilePixels(unchanged);
   f.recipe.lines[0].spans[0].baseColor='#BAC5C7';const snapshot=JSON.stringify(f.recipe);
   const toned=await deriveLabelStyleTextures(f),pixels=await tilePixels(toned),receipt=toned.receipts[0];
-  assert.equal(JSON.stringify(f.recipe),snapshot);assert.equal(toned.version,'atlas-label-source-texture-v2');
+  assert.equal(JSON.stringify(f.recipe),snapshot);assert.equal(toned.version,'atlas-label-source-texture-v3');
   assert.equal(receipt.processing.sourceTileSha256,unchanged.lines[0].spanTextures[0].sha256);
   assert.equal(receipt.processing.tone.kind,'NEUTRAL_SHIMMER');assert.equal(receipt.processing.tone.saturation,.12);
   assert.equal(pixels.length,original.length);
