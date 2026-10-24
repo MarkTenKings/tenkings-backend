@@ -18,9 +18,11 @@ test('actual clean serving closure contains current workers and camera but no hi
  for(const path of [...LABEL_V4_SOURCES,...LABEL_APPROVED_B_SOURCES])assert(paths.has(path),path);
  const fontRoot='packages/atlas-finishing/assets/approved-b/fonts/';
  for(const name of ['BebasNeue-Regular.ttf','OFL-BebasNeue.txt','README.md','Knewave-Regular.ttf','Lacquer-Regular.ttf',
-  'OFL-Knewave.txt','OFL-Lacquer.txt','label-style-provenance.json'])assert(paths.has(fontRoot+name),`Missing variant font runtime/provenance input: ${name}`);
+  'OFL-Knewave.txt','OFL-Lacquer.txt','label-style-provenance.json','ATLAS-Rush-Regular.ttf','LICENSE-ATLAS-Rush.txt','PROVENANCE-ATLAS-Rush.md'])assert(paths.has(fontRoot+name),`Missing variant font runtime/provenance input: ${name}`);
  assert.equal(files.find(file=>file.path===fontRoot+'BebasNeue-Regular.ttf').sha256,'830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04');
  assert.match(files.find(file=>file.path===fontRoot+'OFL-BebasNeue.txt').bytes.toString(),/SIL Open Font License, Version 1\.1/);
+ assert.equal(files.find(file=>file.path===fontRoot+'ATLAS-Rush-Regular.ttf').sha256,'5ac5303a4fd8c8956d379891fe7dc0a265d39d1071210fbe06478d0034149aec');
+ assert.match(files.find(file=>file.path===fontRoot+'LICENSE-ATLAS-Rush.txt').bytes.toString(),/Copyright 2026 ATLAS \/ Ten Kings/);
  for(const module of ['label-approved-b.mjs','label-approved-b-artwork.mjs'])assert(paths.has('packages/atlas-finishing/src/'+module),module);
  assert.equal(CPU_SOURCES.length,8);assert(paths.has('frontend/atlas-shared/RapidCardCamera.jsx'));
  assert.deepEqual([...paths].filter(path=>path.startsWith('packages/card-catalog-evidence/data/')).sort(),await manufacturerRuntimeFiles(root));
@@ -75,9 +77,11 @@ test('isolated approved B package verifies exact assets and rejects changed artw
   const script=join(temporary,'frontend/atlas-app/scripts/verify-manual-container.mjs'),run=()=>spawnSync(process.execPath,[script,manifestPath],{encoding:'utf8',timeout:15000});
   const complete=run();assert.equal(complete.status,0,complete.stderr);const result=JSON.parse(complete.stdout);
   assert.equal(result.approvedLabelAssets.version,'atlas-approved-b-static-assets-v1');assert.equal(result.approvedLabelAssets.files,5);
+  assert.equal(result.approvedLabelFonts.atlasRushSha256,'5ac5303a4fd8c8956d379891fe7dc0a265d39d1071210fbe06478d0034149aec');
   assert.equal(result.labelJig25.positions,25);assert.equal(result.labelJig25.backFiles,3);
   for(const name of ['back-black.png','fonts/BebasNeue-Regular.ttf','fonts/OFL-BebasNeue.txt','fonts/README.md',
-    'style-front-black.png','style-front-inverted.png','style-artwork-manifest.json','fonts/Knewave-Regular.ttf','fonts/Lacquer-Regular.ttf']){
+    'style-front-black.png','style-front-inverted.png','style-artwork-manifest.json','fonts/Knewave-Regular.ttf','fonts/Lacquer-Regular.ttf',
+    'fonts/ATLAS-Rush-Regular.ttf','fonts/LICENSE-ATLAS-Rush.txt','fonts/PROVENANCE-ATLAS-Rush.md']){
    const asset=join(temporary,'packages/atlas-finishing/assets/approved-b',name),original=await readFile(asset),bytes=Buffer.from(original);
    bytes[bytes.length-1]^=1;await writeFile(asset,bytes);
    const changed=run();assert.notEqual(changed.status,0,name);assert(changed.stderr.includes(name),changed.stderr);

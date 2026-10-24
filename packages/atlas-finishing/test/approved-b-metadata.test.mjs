@@ -73,23 +73,24 @@ function clearance(bounds) {
 test('each detail row uses its pinned font metrics, uniform scale and padded circular NFC clearance', () => {
   const faces = {
     'Roboto Condensed': fontkit.create(readFileSync(new URL('../assets/v4/fonts/RobotoCondensed-variable.ttf', import.meta.url))).getVariation({ wght: 700 }),
-    Knewave: fontkit.create(readFileSync(new URL('../assets/approved-b/fonts/Knewave-Regular.ttf', import.meta.url))),
+    'ATLAS Rush': fontkit.create(readFileSync(new URL('../assets/approved-b/fonts/ATLAS-Rush-Regular.ttf', import.meta.url))),
   };
   for (const [identity] of examples) {
     const result = renderApprovedBLabel(input(identity)), metadata = result.diagnostics.metadata;
     let lastBottom = 10.37; // Lowest retained two-line name bound.
     for (const [index, bounds] of metadata.bounds.entries()) {
       const variant = metadata.lineRoles[index] === 'variant';
-      assert.equal(bounds.font, variant ? 'Knewave' : 'Roboto Condensed');
-      const face = faces[bounds.font], cap = face.layout('H', { kern: false, liga: false, clig: false }).bbox;
+      assert.equal(bounds.font, variant ? 'ATLAS Rush' : 'Roboto Condensed');
+      const face = faces[bounds.font], features = { kern: variant, liga: false, clig: false };
+      const cap = face.layout('H', features).bbox;
       const scale = bounds.capHeightMm / (cap.maxY - cap.minY);
-      const bbox = face.layout(metadata.lines[index], { kern: false, liga: false, clig: false }).bbox;
+      const bbox = face.layout(metadata.lines[index], features).bbox;
       assert(Math.abs(bounds.width - (bbox.maxX - bbox.minX) * scale) < .00002);
       assert(Math.abs(bounds.height - (bbox.maxY - bbox.minY) * scale) < .00002);
       assert(Math.abs(bounds.fontSizePt - scale * face.unitsPerEm / 25.4 * 72) < .00001);
-      assert((variant?bounds.capHeightMm:bounds.height)>=1.3);
+      assert(bounds.height >= (variant ? 2 : 1.3));
       assert(bounds.capHeightMm <= (variant ? 2.5 : 1.6));
-      assert(bounds.x === 17.5 && bounds.width <= 29.000001);
+      assert(bounds.x === (variant ? 17.65 : 17.5) && bounds.width <= (variant ? 28.700001 : 29.000001));
       assert(bounds.y >= 11 && bounds.y > lastBottom);
       lastBottom = bounds.y + bounds.height;
       assert(lastBottom <= 16.600001 && bounds.height <= 2.675001, 'detail ink must fit its centered physical slot');
@@ -104,6 +105,26 @@ test('each detail row uses its pinned font metrics, uniform scale and padded cir
   assert(trout.bounds[1].capHeightMm > trout.bounds[0].capHeightMm, 'the long variant should still have greater cap height than its identity row');
   const jordan = renderApprovedBLabel(input(examples[1][0])).diagnostics.metadata;
   assert.deepEqual(jordan.bounds.map(bounds => bounds.font), ['Roboto Condensed', 'Roboto Condensed']);
+});
+
+test('Rush fits complete ink at 2–2.6mm and rejects a long combined caption instead of squeezing or dropping facts', () => {
+  for (const parallel of ['BLUE DIAMOND', 'X-FRACTOR', 'YELLOW RAYWAVE']) {
+    const result = renderApprovedBLabel(input({ playerName: 'Mike Trout', productSet: 'Topps Chrome', parallel }));
+    assert.equal(result.state, 'READY');
+    const bounds = result.diagnostics.metadata.bounds.find(row => row.role === 'variant');
+    assert.equal(bounds.font, 'ATLAS Rush');
+    assert(Math.abs(bounds.height - 2.3) < .000001);
+    assert(bounds.outerBounds.x >= 17.65 && bounds.outerBounds.x + bounds.outerBounds.width <= 46.35);
+    assert(bounds.height <= result.diagnostics.name.inkHeightMm - .3);
+  }
+  const source = input({ playerName: 'Mike Trout', productSet: 'Topps Chrome', parallel: 'BLUE DIAMOND',
+    sportsAttributes: { ...serial(7, 500), autograph: { presence: 'PRESENT', type: 'ON_CARD' },
+      relic: { presence: 'PRESENT', windows: [{ material: 'patch' }] } } });
+  const result = renderApprovedBLabel(source);
+  assert.equal(result.state, 'NEEDS_LAYOUT'); assert.equal(result.diagnostics.code, 'METADATA_OVERFLOW');
+  assert.deepEqual(result.source, source); assert.equal(result.printSvg, undefined);
+  assert.equal(approvedBMetadataLines(source.identity).variant, 'BLUE DIAMOND /500 · AUTO · PATCH');
+  assert(isApprovedBRendererProfile('0e1705f9cf618b3c8a031dc020f9bbcea4353f7269ac7e50c25c60e8aefa64ab'));
 });
 
 test('NFC padding reduces only the colliding Henderson line and never introduces a third player/card-name row', () => {

@@ -36,6 +36,18 @@ if(manifest.packages?.includes('packages/atlas-finishing')){
   const back=renderApprovedBBack(),backArtworkHash=hash(back);
   assert.equal(validateApprovedBArtwork({printSvg:back,artworkHash:backArtworkHash}),back);
   result.approvedLabelAssets={version:APPROVED_B_ASSETS.version,files:Object.keys(APPROVED_B_ASSETS.files).length,backArtworkHash};
+  const fontsDirectory=resolve(root,'packages/atlas-finishing/assets/approved-b/fonts');
+  const fonts=JSON.parse(await readFile(resolve(fontsDirectory,'label-style-provenance.json'),'utf8'));
+  for(const file of fonts.files){
+    assert(/^[A-Za-z0-9_-]+\.(?:ttf|txt|md)$/.test(file.file),'Invalid packaged font provenance path');
+    const bytes=await readFile(resolve(fontsDirectory,file.file));
+    assert.equal(bytes.length,file.bytes,file.file);assert.equal(hash(bytes),file.sha256,file.file);
+  }
+  for(const name of ['ATLAS-Rush-Regular.ttf','LICENSE-ATLAS-Rush.txt','PROVENANCE-ATLAS-Rush.md'])
+    assert.equal(fonts.files.find(file=>file.file===name)?.license,'LicenseRef-ATLAS-Rush-Proprietary',name);
+  const rush=fonts.files.find(file=>file.file==='ATLAS-Rush-Regular.ttf');
+  assert.equal(rush.sha256,'5ac5303a4fd8c8956d379891fe7dc0a265d39d1071210fbe06478d0034149aec');
+  result.approvedLabelFonts={files:fonts.files.length,atlasRushSha256:rush.sha256};
   const {LABEL_JIG_25}=await import('../../../packages/atlas-finishing/src/label-sheet-25.mjs');
   const {LABEL_25_EXPORT_PROFILES}=await import('../../../packages/atlas-finishing/src/label-sheet.mjs');
   const directory=resolve(root,'frontend/atlas-app/assets/label-templates');

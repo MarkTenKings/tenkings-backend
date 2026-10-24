@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import * as fontkit from 'fontkit';
 import sharp from 'sharp';
 import { LABEL_STYLE_FONT_CATALOG, shapeLabelStyleText, validateLabelStyleTexture } from '../src/label-style-paint.mjs';
 
@@ -29,6 +30,28 @@ test('catalog outlines the complete exact text with pinned commercially usable f
     assert.equal(s.approximation, true);
     assert.ok(font.traits.length);
   }
+});
+
+test('ATLAS Rush keeps the approved Regular outlines and full-caption kerning across paint and serial boundaries', async () => {
+  const font=LABEL_STYLE_FONT_CATALOG['atlas-rush'],face=fontkit.create(readFileSync(new URL('../assets/approved-b/fonts/ATLAS-Rush-Regular.ttf',import.meta.url)));
+  assert.equal(font.license,'LicenseRef-ATLAS-Rush-Proprietary');assert.equal(font.weight,400);
+  assert.equal(face.subfamilyName,'Regular');assert.equal(face['OS/2'].usWeightClass,700);
+  const text='AV · AUTO · PATCH · /500',fields={fontId:font.id,fontSha256:font.sha256};
+  const ordinary=shapeLabelStyleText({text,recipe:painted(text,'NONE',fields)});
+  const run=face.layout(text,{kern:true,liga:false,clig:false}),unpaired=face.layout(text,{kern:false,liga:false,clig:false});
+  assert.notEqual(run.advanceWidth,unpaired.advanceWidth,'the actual caption must exercise kerning');
+  assert.equal(ordinary.advance,run.advanceWidth);
+  assert.deepEqual(ordinary.b,{minX:run.bbox.minX,minY:run.bbox.minY,maxX:run.bbox.maxX,maxY:run.bbox.maxY});
+  const serialStart=text.indexOf('/'),split=shapeLabelStyleText({text,recipe:recipe(text,{...fields,normalizeWordInkHeight:true,
+    protectedSpans:[{start:serialStart,end:text.length}],spans:[...text].map((_,start)=>({start,end:start+1,
+      baseColor:start%2?'#1122ff':'#ff2211',accentColor:'#88ccff',pattern:'DIAMOND',opticalScale:1.2})),
+  }),protectedColor:'#44aaee'});
+  assert.deepEqual(split.b,ordinary.b);assert.equal(split.advance,ordinary.advance);
+  assert(split.segments.every(s=>s.scale===1));assert.equal(split.segments.map(s=>s.text).join(''),text);
+  assert.equal(split.segments.filter(s=>s.protected).map(s=>s.text).join(''),'/500');
+  const a=await sharp(Buffer.from(svg(ordinary))).ensureAlpha().raw().toBuffer(),b=await sharp(Buffer.from(svg(split))).ensureAlpha().raw().toBuffer();
+  for(let i=3;i<a.length;i+=4)assert.equal(a[i],b[i],'painting must preserve the complete kerned silhouette');
+  assert.notDeepEqual(a,b);
 });
 
 async function textureTile() {
@@ -85,9 +108,15 @@ test('packaged font provenance and license bytes match every pinned artifact', (
     assert.equal(createHash('sha256').update(b).digest('hex'), f.sha256);
     assert.equal(b.length, f.bytes);
   }
-  assert.equal(manifest.license, 'OFL-1.1');
+  assert.equal(manifest.license, 'MIXED; see per-file license');
+  assert(manifest.files.every(f=>f.license===(f.file.includes('ATLAS-Rush')?'LicenseRef-ATLAS-Rush-Proprietary':'OFL-1.1')));
   assert.match(readFileSync(new URL('OFL-Knewave.txt', root), 'utf8'), /SIL Open Font License/);
   assert.match(readFileSync(new URL('OFL-Lacquer.txt', root), 'utf8'), /SIL Open Font License/);
+  assert.match(readFileSync(new URL('LICENSE-ATLAS-Rush.txt', root), 'utf8'), /Copyright 2026 ATLAS \/ Ten Kings/);
+  const rush=manifest.files.find(f=>f.file==='ATLAS-Rush-Regular.ttf');
+  assert.equal(rush.sha256,LABEL_STYLE_FONT_CATALOG['atlas-rush'].sha256);
+  assert.equal(rush.face,'Regular');assert.equal(rush.catalogWeight,400);assert.equal(rush.fileWeightClass,700);
+  assert.equal(rush.syntheticBold,false);assert.equal(rush.syntheticItalic,false);
 });
 
 test('protected serial stays exact and can use a card-derived color without generated paint effects', () => {

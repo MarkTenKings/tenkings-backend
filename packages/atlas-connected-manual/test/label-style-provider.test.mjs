@@ -1,10 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { digest } from '@atlas/manual-service/contract';
-import { createLabelStylePhotoProvider, readLabelStyleResponse } from '../src/label-style-provider.mjs';
-import { LABEL_STYLE_LIMITS, LABEL_STYLE_MODEL } from '../src/label-style-contract.mjs';
-import { styleFixture, styleResponse, styleObservation } from './label-style-fixture.mjs';
+import { createLabelStylePhotoProvider, readLabelStyleResponse, LABEL_STYLE_PROMPT, LABEL_STYLE_LEGACY_PROMPT } from '../src/label-style-provider.mjs';
+import { LABEL_STYLE_LIMITS, LABEL_STYLE_MODEL, prepareLabelStyleRequest } from '../src/label-style-contract.mjs';
+import { styleFixture, styleResponse, styleObservation, styleFonts } from './label-style-fixture.mjs';
 const secret = 'synthetic-only-not-a-provider-key';
+
+test('Rush prompt binds default lettering separately from photo paint while legacy response evidence stays readable', async () => {
+  const fixture = await styleFixture(), provider = createLabelStylePhotoProvider({ apiKey: secret,
+    readApprovedImage: fixture.readApprovedImage, fetchImpl: () => assert.fail('preparation is unpaid') });
+  const fontCatalog = [...styleFonts, { id: 'atlas-rush', family: 'ATLAS Rush', sha256: '8'.repeat(64), traits: ['original brush lettering'] }];
+  const request = prepareLabelStyleRequest(fixture.input, { fontCatalog, defaultFontId: 'atlas-rush' });
+  for (const [current, expected] of [[fixture.request, LABEL_STYLE_LEGACY_PROMPT], [request, LABEL_STYLE_PROMPT]]) {
+    const prepared = await provider.prepare({ request: current }), body = JSON.parse(prepared.body);
+    assert.equal(body.input[0].content, expected); assert.equal(prepared.evidence.promptSha256, digest(expected));
+    const saved = { version: current.policy, httpStatus: 200, requestEvidence: prepared.evidence, bodyText: JSON.stringify(styleResponse(current)) };
+    assert.equal(readLabelStyleResponse(saved, current).spec.sourceHash, current.sourceHash);
+  }
+  assert.match(LABEL_STYLE_PROMPT, /There is no default color/); assert.match(LABEL_STYLE_PROMPT, /CARD_FIELD and CARD_BORDER never justify another font/);
+});
 
 test('unpaid preparation binds verified images; single-shot Responses call uses xhigh, strict schema and no tool authority', async () => {
   const fixture = await styleFixture(); let calls = 0;

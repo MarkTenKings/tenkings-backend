@@ -26,14 +26,15 @@ export const LABEL_APPROVED_B_RENDERER_PROFILE = Object.freeze({
   version: APPROVED_B_LAYOUT, format: 'atlas-approved-b-label-v1', widthMm: 68.342, heightMm: 20.082,
   assets: Object.fromEntries(Object.entries(APPROVED_B_ASSETS.files).map(([name, value]) => [name, value.sha256])),
   fonts: { headline: fontProvenance.files['fonts/Montserrat-variable.ttf'], detail: fontProvenance.files['fonts/RobotoCondensed-variable.ttf'],
-    headlineWeight: 900, detailWeight: 700, variant: LABEL_STYLE_FONT_CATALOG.knewave.sha256, variantFace: 'Knewave-Regular',
-    shaping: 'fontkit-2.0.4-kern-disabled-uniform-v1', baseFontsAccepted: '2026-10-22' },
+    headlineWeight: 900, detailWeight: 700, variant: LABEL_STYLE_FONT_CATALOG['atlas-rush'].sha256, variantFace: 'ATLASRush-Regular',
+    shaping: 'fontkit-2.0.4-rush-kern-enabled-uniform-v2', baseFontsAccepted: '2026-10-22' },
   nfcClearance: { x: 51.8, y: 9.75, radius: 5.1, padding: .75, fitting: 'per-line-outline-box-v1' },
   name: { x: 17.5, width: 29, targetHeight: 3.35, minimumHeight: 1.9, oneLineTop: 4.8, twoLineTop: 3.05, gap: .62 },
   detail: { x: 17.5, top: 11, bottom: 16.6, width: 29, targetCapHeight: 1.6, minimumCapHeight: 1.3, minimumSecondaryInkHeight: 1.3,
     lineGap: .25, semanticLines: 2, maximumLines: 2, maximumTokens: 128, fitting: 'optical-role-hierarchy-v4',
     variant: { targetCapHeight: 2.5, heavyInkHeight: 2.3, brushInkHeight: 2.6,
-      nameGap: .3, secondaryGap: .2, minimumSecondaryGap: .1, casing: 'uppercase', color: 'photo-style', font: 'Knewave' } },
+      defaultInkHeight: 2.3, minimumInkHeight: 2, maximumInkHeight: 2.6, horizontalPadding: .15,
+      nameGap: .3, secondaryGap: .2, minimumSecondaryGap: .1, casing: 'uppercase', color: 'photo-style', font: 'ATLAS Rush' } },
   certificate: { x: 1.9, centerY: 18.35, maxWidth: 13.9, capHeight: 1.3, weight: 500 },
   metadata: 'number-year-brand-set-and-confirmed-features-v2',
   metadataRules: { brand: 'exact-maker-alias-prefix-dedupe-bowman-v1', subset: 'sports-final-spaced-hyphen-v1',
@@ -57,7 +58,8 @@ export const LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH = 'a0491ff4f0a8616637
 export const LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES = Object.freeze([
   LABEL_APPROVED_B_LEGACY_RENDERER_PROFILE_HASH, 'b8bb56e7e816b1324b6ba3a1b5d9b683e761fc084ae986f253ae113e88ea6a0a',
     'df5054cb6e777409dcef8b5938c87df3ec76e980c8553c6edb77567c2f9defbe',
-    'be7680a176376a245fee5ef4d54efbb96dad37ae9799e7378a533bced0f3d5fd', LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
+    'be7680a176376a245fee5ef4d54efbb96dad37ae9799e7378a533bced0f3d5fd',
+    '0e1705f9cf618b3c8a031dc020f9bbcea4353f7269ac7e50c25c60e8aefa64ab', LABEL_APPROVED_B_RENDERER_PROFILE_HASH,
 ]);
 export const isApprovedBRendererProfile = hash => LABEL_APPROVED_B_SUPPORTED_PROFILE_HASHES.includes(hash);
 const round = value => Number(value.toFixed(6));
@@ -225,7 +227,7 @@ function styledRow(line, semantic, styleSpec, textures) {
   });
   const allowed = original ? crop(original.styleableSpans) : [];
   const usable = original && offset>=0 && allowed.length>0;
-  const fontId = usable ? original.fontId : line.role==='variant'?'knewave':'roboto-condensed';
+  const fontId = usable ? original.fontId : line.role==='variant'?'atlas-rush':'roboto-condensed';
   const fontEntry=LABEL_STYLE_FONT_CATALOG[fontId];
   const recipe={...(usable?original:{}),text:line.text,fontId,fontSha256:fontEntry?.sha256,
     spans:usable?crop(original.spans):[],protectedSpans:original?crop(original.protectedSpans):[],
@@ -256,14 +258,15 @@ function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks, 
     if(reviewedCap!==undefined&&(!Number.isFinite(reviewedCap)||reviewedCap<1.3||reviewedCap>2.5))throw Error('LABEL_STYLE_REVIEWED_CAP_INVALID');
     const target=reviewedCap??(variant?2.5:styled&&value.emphasis==='LARGE'?2.3:box.targetCapHeight);
     const traits=recipes[index].recipe.letteringTraits??[];
-    const opticalTarget=variant&&reviewedCap===undefined
+    const rush=variant&&value.fontId==='atlas-rush'&&value.representation!=='ALPHA_MASK';
+    const opticalTarget=rush?box.variant.defaultInkHeight:variant&&reviewedCap===undefined
       ? traits.includes('HEAVY')||traits.includes('WIDE')||recipes[index].recipe.fontId==='montserrat-black'
         ? box.variant.heavyInkHeight
         : traits.includes('BRUSH')||traits.includes('HAND_DRAWN')?box.variant.brushInkHeight:null
       : null;
     // Weight and proportions change apparent size even at identical cap height.
     // Bound actual ink, while retaining the accepted cap fit for neutral faces.
-    const inkLimit=Math.min(maximumInkHeight,opticalTarget??Infinity);
+    const inkLimit=Math.min(maximumInkHeight,opticalTarget??Infinity,rush?box.variant.maximumInkHeight:Infinity);
     if(value.representation==='ALPHA_MASK') {
       // Fit the real ink plus a fixed physical edge. Original assets may have
       // any measured cap height; neither 256 units nor a 2.5mm final fit is assured.
@@ -293,10 +296,13 @@ function metadataFit(lines, semantic, styleSpec, textures, inverted, wordmarks, 
         capHeight:scale*value.capHeight,fontSizePt:scale*value.unitsPerEm/25.4*72,font:value.fontFamily};
     }
     const pad=value.representation!=='ALPHA_MASK' ? contrast[index].outlineMm : 0;
+    // Rush's brush terminals and contrast edge fit inside the physical window.
+    // Keep a small safety margin and always scale both axes together.
+    const inset=rush?box.variant.horizontalPadding:0, rowX=box.x+inset, rowWidth=box.width-2*inset;
     const scale=Math.min(opticalTarget===null?target/value.capHeight:Infinity,
-      inkLimit/value.height,(box.width-2*pad)/value.width,(slotHeight-2*pad)/value.height);
+      (inkLimit-(rush?2*pad:0))/value.height,(rowWidth-2*pad)/value.width,(slotHeight-2*pad)/value.height);
     const outer=fitClearLine({...value,width:value.width+2*pad/scale,height:value.height+2*pad/scale},
-      {x:box.x,width:box.width,centerY:box.top+index*(slotHeight+box.lineGap)+slotHeight/2,height:value.height*scale+2*pad});
+      {x:rowX,width:rowWidth,centerY:box.top+index*(slotHeight+box.lineGap)+slotHeight/2,height:value.height*scale+2*pad});
     const innerScale=(outer.height-2*pad)/value.height;
     return {...outer,x:outer.x+pad,y:outer.y+pad,width:outer.width-2*pad,height:outer.height-2*pad,scale:innerScale,
       outerBounds:outer,pad,outlineColor:contrast[index].outlineColor,capHeight:innerScale*value.capHeight,fontSizePt:innerScale*(value.unitsPerEm??1000)/25.4*72,font:value.fontFamily};
@@ -319,8 +325,12 @@ function fitMetadata(identity, cardProfile, styleSpec, textures, inverted, wordm
   // Mixed-case metadata can have taller ink than its H cap. Judge its minimum
   // by the actual printed height so a long variant need not force tiny text or
   // unnecessary layout attention merely to satisfy a font-specific metric.
-  const readable=fit=>fit.placements.every((p,index)=>fit.lines[index].role==='variant'||!fit.lines.some(line=>line.role==='variant')
-    ? p.capHeight>=box.minimumCapHeight-1e-6 : p.height>=box.minimumSecondaryInkHeight-1e-6);
+  const readable=fit=>fit.placements.every((p,index)=>{
+    if(fit.lines[index].role==='variant'&&fit.shapes[index].fontId==='atlas-rush')
+      return p.outerBounds.height>=box.variant.minimumInkHeight-1e-6;
+    return fit.lines[index].role==='variant'||!fit.lines.some(line=>line.role==='variant')
+      ? p.capHeight>=box.minimumCapHeight-1e-6 : p.height>=box.minimumSecondaryInkHeight-1e-6;
+  });
   let semantic=metadataProjection(identity,{cardProfile});
   const rows=()=>['identity','variant'].filter(role=>semantic[role]).map(role=>({role,text:semantic[role]}));
   const fitRows=lines=>{

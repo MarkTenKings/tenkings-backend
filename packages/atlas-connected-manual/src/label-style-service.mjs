@@ -2,7 +2,7 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { approvedBStyleInputLines } from '@atlas/finishing/label-approved-b';
 import { LABEL_STYLE_FONT_CATALOG } from '../../atlas-finishing/src/label-style-paint.mjs';
 import { applyReviewedLabelStylePreferences } from '../../atlas-finishing/src/label-style-preferences.mjs';
-import { prepareLabelStyleRequest, validateLabelStyleSpec } from './label-style-contract.mjs';
+import { prepareLabelStyleRequest, validateLabelStyleSpec, LABEL_STYLE_DEFAULT_FONT_ID, assertLabelStylePhotoColors } from './label-style-contract.mjs';
 import { createLabelStylePhotoProvider } from './label-style-provider.mjs';
 import { createLabelStyleResolver } from './label-style-resolver.mjs';
 import { deriveLabelStyleTextures } from './label-style-textures.mjs';
@@ -33,12 +33,13 @@ export function createApprovedLabelStyler({apiKey,imageApiKey,cache,artifacts,st
     const input={approval:{cardId:row.card_id,actionId:row.action_id,approvalVersion:packet.approvalVersion,publicHash,reportHash:packet.reportHash},
       identity:report.identity,cardProfile:report.cardProfile,
       photos:['FRONT','BACK'].map(side=>({side,...packet.images[side]})),lines:approvedBStyleInputLines(report.identity,{cardProfile:report.cardProfile})};
-    const request=prepareLabelStyleRequest(input,{fontCatalog:Object.values(LABEL_STYLE_FONT_CATALOG),defaultFontId:'knewave'});
+    const request=prepareLabelStyleRequest(input,{fontCatalog:Object.values(LABEL_STYLE_FONT_CATALOG),defaultFontId:LABEL_STYLE_DEFAULT_FONT_ID});
     const provider=createLabelStylePhotoProvider({apiKey,fetchImpl,readApprovedImage:async({photo})=>photos[photo.side]});
     const resolved=await createLabelStyleResolver({provider,cache}).resolve(request,{signal});
     if(resolved.state==='PENDING')return resolved;
     const baseSpec=validateLabelStyleSpec(resolved.spec,request);
     const spec=validateLabelStyleSpec(applyReviewedLabelStylePreferences(baseSpec,request.source.photos),request,{baseSpec});
+    assertLabelStylePhotoColors(spec,request);
     const textures=await deriveLabelStyleTextures({recipe:spec,photos,signal});
     const wordmarks={};
     for(const line of spec.lines.filter(line=>line.letteringMode==='ORIGINAL_WORDMARK')) {

@@ -22,7 +22,8 @@ export const LABEL_V4_SOURCES=Object.freeze([
 export const LABEL_APPROVED_B_SOURCES=Object.freeze(['manifest.json','vectors.json','front-black.png','front-support-white.png',
   'front-support-black.png','back-black.png','fonts/BebasNeue-Regular.ttf','fonts/OFL-BebasNeue.txt','fonts/README.md',
   'style-artwork-manifest.json','style-front-black.png','style-front-inverted.png','label-style-preferences.json',
-  'fonts/Knewave-Regular.ttf','fonts/Lacquer-Regular.ttf','fonts/OFL-Knewave.txt','fonts/OFL-Lacquer.txt','fonts/label-style-provenance.json']
+  'fonts/Knewave-Regular.ttf','fonts/Lacquer-Regular.ttf','fonts/OFL-Knewave.txt','fonts/OFL-Lacquer.txt','fonts/label-style-provenance.json',
+  'fonts/ATLAS-Rush-Regular.ttf','fonts/LICENSE-ATLAS-Rush.txt','fonts/PROVENANCE-ATLAS-Rush.md']
   .map(name=>'packages/atlas-finishing/assets/approved-b/'+name));
 export const LABEL_25_SOURCES=Object.freeze([
   ...['atlas-label-jig-25-v1.json','atlas-label-jig-25-source.svg','atlas-label-jig-25-source.xs'].map(name=>'packages/atlas-finishing/assets/jigs/'+name),

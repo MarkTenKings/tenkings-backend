@@ -4,6 +4,10 @@ import { applyReviewedLabelStylePreferences } from '../../atlas-finishing/src/la
 export const LABEL_STYLE_POLICY = 'atlas-photo-informed-label-style-v1';
 export const LABEL_STYLE_MODEL = 'gpt-6-astra';
 export const LABEL_STYLE_REASONING = 'xhigh';
+export const LABEL_STYLE_DEFAULT_FONT_ID = 'atlas-rush';
+// The default face is part of the immutable request/cache key. Earlier Knewave
+// requests retain their original projection and cache validation behavior.
+export const usesAtlasLabelDefault = request => request.defaultFontId === LABEL_STYLE_DEFAULT_FONT_ID;
 export const LABEL_STYLE_PATTERNS = Object.freeze(['NONE', 'DIAMOND', 'SHIMMER', 'STRIPES']);
 export const LABEL_STYLE_LETTERING_TRAITS = Object.freeze(['BRUSH', 'SCRIPT', 'HAND_DRAWN', 'BLOCK', 'SERIF', 'SANS',
   'CONDENSED', 'WIDE', 'UPRIGHT', 'ITALIC', 'LIGHT', 'MEDIUM', 'BOLD', 'HEAVY', 'CLEAN', 'ROUGH', 'DRY_BRUSH', 'TIGHT', 'OPEN']);
@@ -210,11 +214,17 @@ function validateObservation(raw, request) {
     return { ...value, fontSource, spans: paint };
   }) };
 }
-function allowedSegments(part, line) {
+function allowedSegments(part, line, request) {
   const inside = line.styleableSpans.flatMap(allowed => {
     const start = Math.max(allowed.start, part.start), end = Math.min(allowed.end, part.end);
     return start < end ? [{ start, end }] : [];
   });
+  // A numbered base card can have only /500 on this row. Keep its photographed
+  // palette evidence so protected serial glyphs can inherit that color too.
+  // Mixed captions and every older request retain ordinary serial exclusion.
+  const serial = line.protectedSpans.length === 1 && line.protectedSpans[0];
+  if (usesAtlasLabelDefault(request) && line.role === 'variant' && serial
+    && !`${line.text.slice(0, serial.start)}${line.text.slice(serial.end)}`.trim()) return inside;
   return line.protectedSpans.reduce((segments, protectedSpan) => segments.flatMap(segment => {
     if (protectedSpan.end <= segment.start || protectedSpan.start >= segment.end) return [segment];
     return [{ start: segment.start, end: Math.min(protectedSpan.start, segment.end) },
@@ -244,25 +254,31 @@ export function compileLabelStyleSpec(rawRequest, rawObservation, { requestSha25
   const observation = validateObservation(rawObservation, request);
   const lines = request.source.lines.map((line, index) => {
     const value = observation.lines[index], fallbackReasons = [];
-    const original = value.letteringMode === 'ORIGINAL_WORDMARK';
-    const fontAvailable = !original && value.fontId !== null && value.fontSource.basis !== 'UNAVAILABLE' && value.fontSource.confidence !== 'LOW';
+    const requiresPrintedLettering = usesAtlasLabelDefault(request) && line.role === 'variant';
+    const hasPrintedLettering = value.fontSource.basis === 'PRINTED_LETTERING' && value.fontSource.confidence !== 'LOW';
+    const useDefaultFace = requiresPrintedLettering && !hasPrintedLettering;
+    const original = value.letteringMode === 'ORIGINAL_WORDMARK' && !useDefaultFace;
+    const fontAvailable = !original && !useDefaultFace && value.fontId !== null && value.fontSource.basis !== 'UNAVAILABLE' && value.fontSource.confidence !== 'LOW';
     const selectedFont = request.fontCatalog.find(font => font.id === (fontAvailable ? value.fontId : request.defaultFontId));
     if (!fontAvailable) fallbackReasons.push('FONT_MATCH_UNAVAILABLE');
+    if (useDefaultFace) fallbackReasons.push('NO_PRINTED_VARIANT_LETTERING');
     if (original) fallbackReasons.push('ORIGINAL_WORDMARK_REQUIRED');
     let paint = value.spans.flatMap(part => {
       if (part.source.basis === 'UNAVAILABLE' || part.source.confidence === 'LOW') { fallbackReasons.push('PAINT_EVIDENCE_UNCERTAIN'); return []; }
-      const segments = allowedSegments(part, line);
+      const segments = allowedSegments(part, line, request);
       if (segments.length !== 1 || segments[0].start !== part.start || segments[0].end !== part.end) fallbackReasons.push('PROTECTED_TEXT_PRIMARY');
       return segments.map(segment => ({ ...part, ...segment }));
     });
     if (paint.length > 32) { paint = []; fallbackReasons.push('PAINT_COMPLEXITY_UNSUPPORTED'); }
     const informed = original || fontAvailable || paint.length > 0;
     return { ...clone(line), fontId: selectedFont.id, fontSha256: selectedFont.sha256, fontSource: fontAvailable || original ? value.fontSource : null,
-      letteringMode: value.letteringMode, letteringDescription: value.letteringDescription, letteringTraits: [...value.letteringTraits],
-      emphasis: informed ? value.emphasis : 'NORMAL', normalizeWordInkHeight: informed && value.normalizeWordInkHeight,
+      letteringMode: useDefaultFace ? 'CATALOG' : value.letteringMode,
+      letteringDescription: useDefaultFace ? '' : value.letteringDescription, letteringTraits: useDefaultFace ? [] : [...value.letteringTraits],
+      emphasis: informed ? value.emphasis : 'NORMAL', normalizeWordInkHeight: !useDefaultFace && informed && value.normalizeWordInkHeight,
       spans: paint, status: original ? 'WORDMARK_REQUIRED' : informed ? 'PHOTO_INFORMED' : 'FALLBACK', fallbackReasons: [...new Set(fallbackReasons)] };
   });
   const normalizations = observation.lines.flatMap(line => {
+    if (lines.find(value => value.role === line.role).letteringMode !== 'ORIGINAL_WORDMARK') return [];
     const original = rawObservation.lines.find(value => value.role === line.role);
     return canonical(original.letteringTraits) === canonical(line.letteringTraits) ? [] : [{ role: line.role, field: 'letteringTraits',
       rule: 'drop-redundant-hand-drawn-v1', removed: ['HAND_DRAWN'], retained: [...line.letteringTraits] }];
@@ -270,6 +286,21 @@ export function compileLabelStyleSpec(rawRequest, rawObservation, { requestSha25
   return result(request, lines, { kind: 'MODEL_OBSERVATION', model: LABEL_STYLE_MODEL, reasoning: LABEL_STYLE_REASONING,
     requestSha256, responseSha256, observationHash: digest(canonical(observation)), approximation: true,
     ...(normalizations.length ? { rawObservationHash: digest(canonical(rawObservation)), normalizations } : {}) });
+}
+
+/** A font fallback is allowed; inventing a card palette is not. The production
+ * styler calls this after trusted feedback, before texture/wordmark work. Serial
+ * ink inherits an evidenced palette in the renderer and needs no direct span. */
+export function assertLabelStylePhotoColors(spec, request) {
+  if (!usesAtlasLabelDefault(request)) return;
+  for (const line of spec.lines.filter(line => line.role === 'variant')) {
+    const styled = at => line.styleableSpans.some(span => at >= span.start && at < span.end);
+    const protectedAt = at => line.protectedSpans.some(span => at >= span.start && at < span.end);
+    const covered = at => line.spans.some(span => at >= span.start && at < span.end);
+    requireThat(line.spans.length > 0 && [...line.text.matchAll(/\S/gu)].every(match =>
+      match[0] === '·' || !styled(match.index) || protectedAt(match.index) || covered(match.index)),
+    409, 'LABEL_STYLE_CARD_COLOR_REQUIRED');
+  }
 }
 
 export function fallbackLabelStyleSpec(rawRequest, reason = 'STYLE_UNAVAILABLE') {
@@ -310,6 +341,10 @@ export function validateLabelStyleSpec(spec, rawRequest, { baseSpec } = {}) {
     requireThat(line.role === original.role && line.text === original.text && canonical(line.styleableSpans) === canonical(original.styleableSpans)
       && canonical(line.protectedSpans) === canonical(original.protectedSpans) && font?.sha256 === line.fontSha256,
     409, 'LABEL_STYLE_SPEC_CHANGED');
+    if (usesAtlasLabelDefault(request) && line.role === 'variant'
+      && (line.fontId !== request.defaultFontId || line.letteringMode === 'ORIGINAL_WORDMARK'))
+      requireThat(line.fontSource?.basis === 'PRINTED_LETTERING' && ['HIGH', 'MEDIUM'].includes(line.fontSource.confidence),
+        409, 'LABEL_STYLE_SPEC_INVALID');
     requireThat(['NORMAL', 'LARGE'].includes(line.emphasis) && typeof line.normalizeWordInkHeight === 'boolean'
       && ['PHOTO_INFORMED', 'FALLBACK', 'WORDMARK_REQUIRED'].includes(line.status)
       && Array.isArray(line.fallbackReasons) && line.fallbackReasons.length <= 8
@@ -328,7 +363,7 @@ export function validateLabelStyleSpec(spec, rawRequest, { baseSpec } = {}) {
       validateObservation({ lines: [item] }, oneLineRequest);
     }
     requireThat(line.spans.every((part, index) => (!index || part.start >= line.spans[index - 1].end)
-      && canonical(allowedSegments(part, original)) === canonical([{ start: part.start, end: part.end }]))
+      && canonical(allowedSegments(part, original, request)) === canonical([{ start: part.start, end: part.end }]))
       && (line.fontSource === null || line.fontSource.basis !== 'UNAVAILABLE' && line.fontSource.confidence !== 'LOW')
       && (line.status !== 'WORDMARK_REQUIRED' || line.letteringMode === 'ORIGINAL_WORDMARK')
       && (line.letteringMode !== 'ORIGINAL_WORDMARK' || line.status === 'WORDMARK_REQUIRED')

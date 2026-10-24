@@ -11,15 +11,18 @@ const fontDefinitions = [
   ['montserrat-black', 'Montserrat', '0f7b311b2f3279e4eef9b2f968bcdbab6e28f4daeb1f049f4f278a902bcd82f7', 900, '../assets/v4/fonts/Montserrat-variable.ttf'],
   ['roboto-condensed', 'Roboto Condensed', 'dace262afcee68a5276f200d8026c57221735c0118ab5fda8c2c0d3dc409a8d0', 700, '../assets/v4/fonts/RobotoCondensed-variable.ttf'],
   ['lacquer', 'Lacquer', '140c21f71907a16952926ee354c81081092c90d599c89fe8b4557baeaebbbe83', 400, '../assets/approved-b/fonts/Lacquer-Regular.ttf'],
+  ['atlas-rush', 'ATLAS Rush', '5ac5303a4fd8c8956d379891fe7dc0a265d39d1071210fbe06478d0034149aec', 400,
+    '../assets/approved-b/fonts/ATLAS-Rush-Regular.ttf', 'LicenseRef-ATLAS-Rush-Proprietary'],
 ];
 const traits = {
   knewave: ['bold brush', 'slanted', 'rounded strokes', 'default expressive fallback'],
   'montserrat-black': ['heavy geometric sans', 'upright', 'wide', 'clean edges'],
   'roboto-condensed': ['condensed sans', 'upright', 'clean edges', 'neutral detail fallback'],
   lacquer: ['rough hand lettering', 'irregular edges', 'upright', 'approximation only'],
+  'atlas-rush': ['original ATLAS brush face', 'Regular face', 'inherent forward slant', 'preserve full-run kerning and outlines'],
 };
-export const LABEL_STYLE_FONT_CATALOG = Object.freeze(Object.fromEntries(fontDefinitions.map(([id, family, sha256, weight]) =>
-  [id, Object.freeze({ id, family, sha256, weight, traits: Object.freeze(traits[id]), license: 'OFL-1.1', approximation: true })])));
+export const LABEL_STYLE_FONT_CATALOG = Object.freeze(Object.fromEntries(fontDefinitions.map(([id, family, sha256, weight, , license = 'OFL-1.1']) =>
+  [id, Object.freeze({ id, family, sha256, weight, traits: Object.freeze(traits[id]), license, approximation: true })])));
 const fontFiles = Object.fromEntries(fontDefinitions.map(([id, , , , file]) => [id, file]));
 
 export const LABEL_STYLE_PAINT_VERSION = 'atlas-label-style-paint-v2';
@@ -54,9 +57,14 @@ function faceFor(id, expectedHash) {
   return faces.get(id);
 }
 
-function rawShape(text, face) {
+function rawShape(text, face, kern = false) {
   if ([...text].some(c => !face.hasGlyphForCodePoint(c.codePointAt(0)))) fail('UNSUPPORTED_GLYPH');
-  const run = face.layout(text, { kern: false, liga: false, clig: false });
+  const run = face.layout(text, { kern, liga: false, clig: false });
+  const characters = kern ? [...text] : null, positioned = kern ? [] : null;
+  // Rush is a static, one-glyph-per-codepoint face. Keep input offsets here:
+  // fontkit caches glyph.codePoints, including its uppercase/lowercase aliases.
+  if (kern && run.glyphs.length !== characters.length) fail('LABEL_STYLE_SHAPING_INVALID');
+  let cursor = 0;
   let x = 0, y = 0, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const paths = run.glyphs.map((g, i) => {
     const p = run.positions[i], gx = x + p.xOffset, gy = y + p.yOffset;
@@ -65,10 +73,25 @@ function rawShape(text, face) {
       maxX = Math.max(maxX, gx + g.bbox.maxX); maxY = Math.max(maxY, gy + g.bbox.maxY);
     }
     const path = g.path.commands.length ? `<path d="${g.path.toSVG()}" transform="translate(${round(gx)},${round(gy)})"/>` : '';
+    if (kern) {
+      const end = cursor + characters[i].length;
+      positioned.push({ start: cursor, end, path, bounds: path ? {
+        minX: gx + g.bbox.minX, minY: gy + g.bbox.minY, maxX: gx + g.bbox.maxX, maxY: gy + g.bbox.maxY,
+      } : null });
+      cursor = end;
+    }
     x += p.xAdvance; y += p.yAdvance;
     return path;
   }).join('');
-  return { paths, advance: x, b: { minX, minY, maxX, maxY }, height: maxY - minY };
+  return { paths, advance: x, b: { minX, minY, maxX, maxY }, height: maxY - minY, ...(kern ? { positioned } : {}) };
+}
+
+function positionedSlice(run, start, end) {
+  const glyphs = run.positioned.filter(g => g.start >= start && g.end <= end), bounds = glyphs.flatMap(g => g.bounds ? [g.bounds] : []);
+  return { paths: glyphs.map(g => g.path).join(''), b: {
+    minX: Math.min(...bounds.map(b => b.minX)), minY: Math.min(...bounds.map(b => b.minY)),
+    maxX: Math.max(...bounds.map(b => b.maxX)), maxY: Math.max(...bounds.map(b => b.maxY)),
+  } };
 }
 
 function paint(pattern, base, accent, id, cap, texture) {
@@ -131,6 +154,9 @@ export function shapeLabelStyleText({ text, recipe, defaultColor = '#ffffff', pr
     ...(serialColor !== primary ? { serialColor } : {}), normalize: !!recipe.normalizeWordInkHeight }));
   const prefix = idPrefix ?? `atlas-style-${fingerprint.slice(0, 16)}`;
   if (typeof prefix !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(prefix)) fail('LABEL_STYLE_ID_INVALID');
+  // Paint boundaries must not reshape approved Rush pairs or resize individual
+  // words. Shape the entire caption once, then paint those positioned outlines.
+  const rush = entry.id === 'atlas-rush', positionedRun = rush ? rawShape(text, face, true) : null;
   const cap = rawShape('H', face).height;
   const words = [...text.matchAll(/[\p{L}\p{M}]+/gu)].map(m => ({ start: m.index, end: m.index + m[0].length, letters: [...m[0]].length, ...rawShape(m[0], face) }));
   const referenceHeight = Math.max(cap, ...words.map(w => w.height));
@@ -139,11 +165,12 @@ export function shapeLabelStyleText({ text, recipe, defaultColor = '#ffffff', pr
   const definitions = new Map(), segments = [];
   for (let i = 0; i < breaks.length - 1; i++) {
     const start = breaks[i], end = breaks[i + 1], segmentText = text.slice(start, end);
-    const shape = rawShape(segmentText, face), protectedText = protectedSpans.some(s => start >= s.start && end <= s.end);
+    const shape = rush ? positionedSlice(positionedRun, start, end) : rawShape(segmentText, face);
+    const protectedText = protectedSpans.some(s => start >= s.start && end <= s.end);
     const spanIndex = protectedText ? -1 : spans.findIndex(s => start >= s.start && end <= s.end);
     const span = spans[spanIndex], word = words.find(w => start >= w.start && end <= w.end);
     const normalization = !protectedText && recipe.normalizeWordInkHeight && word?.letters <= 4 && word.height > 0 ? Math.max(1, referenceHeight / word.height) : 1;
-    const scale = Math.min(1.2, (span?.opticalScale ?? 1) * normalization);
+    const scale = rush ? 1 : Math.min(1.2, (span?.opticalScale ?? 1) * normalization), originX = rush ? 0 : dx;
     // Center any uniform optical enlargement on the font's cap-height band.
     const y = (1 - scale) * cap / 2;
     let fill = protectedText ? serialColor : primary, pattern = 'NONE';
@@ -155,14 +182,15 @@ export function shapeLabelStyleText({ text, recipe, defaultColor = '#ffffff', pr
     }
     let bounds = null;
     if (shape.paths) {
-      bounds = { minX: dx + shape.b.minX * scale, minY: y + shape.b.minY * scale, maxX: dx + shape.b.maxX * scale, maxY: y + shape.b.maxY * scale };
+      bounds = { minX: originX + shape.b.minX * scale, minY: y + shape.b.minY * scale, maxX: originX + shape.b.maxX * scale, maxY: y + shape.b.maxY * scale };
       minX = Math.min(minX, bounds.minX); minY = Math.min(minY, bounds.minY); maxX = Math.max(maxX, bounds.maxX); maxY = Math.max(maxY, bounds.maxY);
-      paths += `<g fill="${fill}" data-style-span="${spanIndex}" transform="translate(${round(dx)},${round(y)}) scale(${round(scale)})">${shape.paths}</g>`;
+      paths += `<g fill="${fill}" data-style-span="${spanIndex}" transform="translate(${round(originX)},${round(y)}) scale(${round(scale)})">${shape.paths}</g>`;
     }
     segments.push({ start, end, text: segmentText, protected: protectedText, spanIndex, pattern,
       textureSha256: spanIndex >= 0 ? textures[spanIndex]?.sha256 ?? null : null, scale, bounds });
-    dx += shape.advance * scale;
+    if (!rush) dx += shape.advance * scale;
   }
+  if (rush) dx = positionedRun.advance;
   if (!(maxX > minX && maxY > minY)) fail('EMPTY_GLYPH_OUTLINE');
   return { text, fontId: entry.id, fontFamily: entry.family, fontSha256: entry.sha256, fontWeight: entry.weight,
     approximation: true, b: { minX, minY, maxX, maxY }, width: maxX - minX, height: maxY - minY,
