@@ -48805,3 +48805,34 @@ Planned bounded read-only JPEG failure checkpoint `ops/inspect_jpeg_negative_che
 
 
 R2 JPEG read-only checkpoint EXIT0: `ops/jpeg-negative-checkpoint-01/stdout.txt` SHA256 8a142e04b1d98693352986772c14995e982ce5efeb064acf680f6ae4e37bf102. Exact1FINALIZED9/10events and all15ledger sets preserved; current state poisoned/barrierclosed BROKER_EXECUTION_UNCERTAIN. Parent empty/frozen, guardMainPID0/latch, zeroEnginecontainers. Exact stale broker socket retained, ECONNREFUSED; no unlink. Fixed captured stderr/leftover stdout retained; no raw native decode error observed.
+
+
+Planned read-only LinuxPG readiness `ops/inspect_postgres_availability_01.py` SHA256 74188f783639d9246d837eafb74f2f9f8e37046636d89873d0c7b8e38327a4e0: fixed named package metadata and regular binary identity/hash for PG16/17 only, available filesystem bytes; current JPEG guard/latch pins and emptyfrozen parent before/after. No package install, binary execution of PostgreSQL, database connection, native load, service change or credential discovery. Used to choose a later synthetic same-host PG→v4 fixture; no production action.
+
+
+Read-only PG readiness EXIT0, stdout SHA256 689e640799622d59d2a966e74ef7e85e1a3018b9b106a0c2f501ff28bd66f855. Named installed-package/binary result preserved at `ops/postgres-readiness-01`; current controls unchanged, no package/database/service effects.
+
+
+Planned read-only PG17 build-tool readiness `ops/inspect_postgres_build_readiness_01.py` SHA256 83d7b4446abcf3226bd8584b5862755495b4d31208700ff87af71bc1b964e4de. Reuses prior exact currentcontrol/quietparent checks; queries only10named development package versions and5tool path identities, executes no compiler/build/database, installs nothing. The protected adapter explicitly targetsPG17; evaluating officialPG17.11 source build versus isolated package extraction before provisioning. Official sources: https://ftp.postgresql.org/pub/source/v17.11/ and https://www.postgresql.org/docs/17/install-requirements.html.
+
+
+Read-only PG17 build readiness EXIT0, stdout SHA256 c53c07d97645fbca37beda38f4a1c45c2f1849b2fd4532c992b4e74d0044df28. Exact named tool/package observations saved in `ops/postgres-build-readiness-01`; no build/install/database/service effects, current controls unchanged.
+
+
+Planned read-only package simulation `ops/plan_postgres_build_tools_01.py` SHA256 13fa0908c74e5fd3a0b5d7e07c86c1bf1e1d508d1f2e86cff35b6bb15fabdcf8: apt-get simulation only, --no-install-recommends --no-upgrade install flex bison, explicit minimal public environment,15sboundedoutput. Source PG17.11 requires parser build tools absent from currentVM. No actual installation/build/database or service effects in this step; current frozencontrols preserved.
+
+### R2 protected adapter source review and planned fresh PG17 fixture — 2026-10-24T00:33:48.638962+00:00
+
+Protected source-ready01 a5d591b07da76cb330b129d3ddb18dc6f94a9338118ad785716a1e26d7a44526 reviewed: separate fixed protected writer/store, fifteen source-owned SQL bodies, actual catalog/effective-role/schema audit per owned connection, narrow fourth installed-binding accessor. Five new local checks and six affected generic checks reused; actual protected PG execution remains pending. No authority, initial-intake, C0 or production qualification claim. Root review ea868c7a7679c4e920094a8604c16124f19b5c8896caf8cdb25e5d5b45e1aeb3.
+
+Planned next isolated action: create NEW retention-protected-postgres-fixture-01 and private Unix socket atlas-r2-pg-protected-01:55495, exact owned Homebrew PostgreSQL17.11, TCP disabled; install copied inert SQL with blockers removed ONLY for this fresh synthetic cluster, seed four fresh originals and installed binding, run new protected audit/DDL-refusal/commit/cancel/uncertain-original harness, verify revision4 and stop/wait owned server. Wrapper a8679b4c37ffd0ab52dbfadb5035c1b3632ab29cd7bc19a0d2be08e5778f7428; node operator648bca623a67820f2a28e18131876c24fb595ec9759d22ae174b3a10ba062e39; pins9915ad8ae3b1af6a160e4c6baa1e96146392864e16e5f7f9f554ae9b5dc70f56. Sixteen source files, exact four binary identities+hashes and141driver files prechecked; snapshots preserved. Existing stopped gateway and generic-writer cluster metadata will be compared before/after. No shared database/runtime/provider changes.
+
+Independent isolated-Linux tooling preparation: official PG17.11 source downloaded only,21787224B SHA dd27f2b3c59e73ed14aa3324901242bf69a032a6347805f274e6260322d42979 matched official checksum. No extraction/build/install. Read-only apt simulation postgres-build-tools-plan-01 exited0: only new m4 1.4.19-4build1,flex2.6.4-8.2build1,bison2:3.8.2+dfsg-1ubuntu0.24.04.1; zero upgrades/removals. No packages installed or DB opened. Current guard/latch/empty frozen decoder parent unchanged.
+
+Observed protected fixture01: schema+roles+gateway installed in NEW owned local cluster; preparation then refused an operator-only synthetic suffix exceeding24characters, before binding/state seed files or writes. No adapter/catalog/outcome test ran. Receipt738c1fc4dd903e684009d48610cbbc782176aba61ffb09b69147f537c7899c5f; server stopped exit0/socket absent, old gateway/generic fixtures unchanged. Preserve failure. Source-only fixture02 shortens that single suffix; planned bounded resume of exact stopped unseeded fixture01, no initdb/reinstall/reset, first actual counts must be0. New log/receipt directory02. Runtime source candidate unchanged.
+
+Protected fixture02 resume prechecks/syntax PASS. Frozen wrapper25b127588537b0c9af38cff8a0433a4a8f0bcc502e598bf86aca9bd676678604, operator2dcdd28c8557280c865d6f0f8d4d9afae9ceb46d1447c138af207f457d104ee3, pinsd02f4330b5a89c64d4cae938fd246f2fee451118620f2c43a01b68223bc28243. Exact stopped control inode/hash and no prior seed files confirmed; dispatch follows as separate action.
+
+### R2 protected writer actual isolated PostgreSQL verification — 2026-10-24T00:36:18.496548+00:00
+
+Observed fixture02 PASS:20groups/15actual catalog/ACL/schema/binding refusals; protected real commit/cancel/private unknown-after/before-COMMIT original lookup; revision4,4commits4events,2COMMITTED2CANCELLED; state1f88640a4fde05bcb9f3347419612366b7707d99b0034ede30339c008dbb58f5. Receipt21b76af62290fd8651d0fc63c80b247b93efbcac024443c2f262b703c5d0bc79. OwnedPGexit0/socketabsent; oldgateway+genericwriter fixture metadata unchanged. Exactready01runtimeunchanged; fixture01 naming failure preserved and only unused exactfixture resumed. Documents updated with actual scope and initial-intake/C0/physical-join limitations. No shared or production effects; ownership features remain off.

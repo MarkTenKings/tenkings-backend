@@ -4,7 +4,8 @@ import {decoderContractData,decoderExact,decoderFreeze} from './proof-decoder-pr
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {createPostgresStore} from './store-postgres.mjs';
 import {createProofRetentionJournal} from './proof-retention-journal.mjs';
-import {createProofRetentionPostgresConnectionOwner} from './proof-retention-postgres-connection.mjs';
+import {createProofRetentionProtectedPostgresStore} from './proof-retention-protected-postgres.mjs';
+import {createProofRetentionPostgresConnectionOwner,createProofRetentionProtectedConnectionOwner} from './proof-retention-postgres-connection.mjs';
 
 const writers=new WeakMap(),check=(v,c='RETENTION_WRITER_INVALID')=>requireValue(v,c);
 const MARKERS=Object.freeze({classification:'UNQUALIFIED',customerPublicationAuthority:false,retentionAuthority:false});
@@ -34,6 +35,15 @@ export function createProofRetentionPostgresWriter(options={}){
   const binding=retentionWriterBinding(input.binding),maxOperations=input.maxOperations;check(binding.environment==='SYNTHETIC_LOCAL','RETENTION_PROTECTED_GATEWAY_REQUIRED');check(positive(maxOperations)&&maxOperations<=4096);
   const owner=createProofRetentionPostgresConnectionOwner({enabled:true,configuration:input.configuration});
   const store=createPostgresStore({enabled:true,pool:owner,environment:binding.environment,expectedRole:owner.binding.role,expectedDatabase:owner.binding.database,expectedFunctionOwner:owner.binding.functionOwner});
+  return createOwnedWriter(binding,maxOperations,owner,store);
+}
+export function createProofRetentionProtectedPostgresWriter(options={}){
+  const input=engineDataOptions(options,[],['enabled','configuration','binding','maxOperations']);if(input.enabled!==true)return null;
+  const binding=retentionWriterBinding(input.binding),maxOperations=input.maxOperations;check(binding.environment==='SYNTHETIC_LOCAL','RETENTION_PROTECTED_AUTHORITY_NOT_IMPLEMENTED');check(positive(maxOperations)&&maxOperations<=4096);
+  const owner=createProofRetentionProtectedConnectionOwner({enabled:true,configuration:input.configuration,binding,maxOperations}),store=createProofRetentionProtectedPostgresStore({enabled:true,owner});
+  return createOwnedWriter(binding,maxOperations,owner,store);
+}
+function createOwnedWriter(binding,maxOperations,owner,store){
   const journal=createProofRetentionJournal({enabled:true,store,binding,maxOperations}),state={handles:new WeakMap(),outcomes:new WeakMap(),closed:false},registered=new Map();let busy=false;
   const writerBinding=decoderFreeze({schema:'atlas-proof-retention-writer-binding-v1',...MARKERS,intakeBinding:binding,connection:owner.binding,maxOperations});
   function entry(handle){check(!state.closed,'RETENTION_WRITER_CLOSED');check(state.handles.has(handle),'RETENTION_PREPARED_REQUIRED');return state.handles.get(handle);}

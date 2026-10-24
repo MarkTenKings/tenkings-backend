@@ -34,7 +34,7 @@ export async function qualifyProofRetentionGateway({admin,writer,retention}){
   await deny(retention,special,args(await state(),pending.state,fixtures[0]),/query returned no rows/);
   await admin.query('INSERT INTO atlas_marketplace.proof_retention_binding_v1 VALUES(true,$1::jsonb,8)',[canonicalJSON(fixtures[0].binding)]);
 
-  for(const [pool,expected] of [[writer,['commit_state(bigint, text, jsonb, text, bigint)','lock_state()','read_state()']],[retention,['commit_retention_state_v1(bigint, text, jsonb, text, bigint, uuid, text)','lock_retention_state_v1()','read_retention_state_v1()']]]){
+  for(const [pool,expected] of [[writer,['commit_state(bigint, text, jsonb, text, bigint)','lock_state()','read_state()']],[retention,['commit_retention_state_v1(bigint, text, jsonb, text, bigint, uuid, text)','lock_retention_state_v1()','read_retention_binding_v1()','read_retention_state_v1()']]]){
     const {rows}=await pool.query("SELECT p.proname||'('||pg_catalog.oidvectortypes(p.proargtypes)||')' AS name, p.prosecdef AS definer, p.proconfig AS config,pg_get_userbyid(p.proowner) AS owner FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_function_privilege(current_user,p.oid,'EXECUTE') ORDER BY name");
     assert.deepEqual(rows.map(r=>r.name),expected);for(const r of rows){assert.equal(r.definer,true);assert.equal(r.owner,'atlas_marketplace_owner');assert.deepEqual(r.config,['search_path=pg_catalog']);}
     await deny(pool,'SELECT * FROM atlas_marketplace.state',[],/permission denied/);

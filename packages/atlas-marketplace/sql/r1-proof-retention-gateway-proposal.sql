@@ -313,6 +313,14 @@ CREATE FUNCTION atlas_marketplace.read_retention_state_v1() RETURNS SETOF atlas_
 LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$ SELECT * FROM atlas_marketplace.state WHERE id $$;
 CREATE FUNCTION atlas_marketplace.lock_retention_state_v1() RETURNS SETOF atlas_marketplace.state
 LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$ SELECT * FROM atlas_marketplace.state WHERE id FOR UPDATE $$;
+-- Explicit fourth confined read surface: the installed singleton tuple only.
+-- No direct table grant, caller-selected lookup, mutation or authority receipt.
+CREATE FUNCTION atlas_marketplace.read_retention_binding_v1() RETURNS jsonb
+LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$
+  SELECT CASE WHEN octet_length(binding::text)<=4096 THEN
+    jsonb_build_object('schema','atlas-proof-retention-installed-binding-v1','binding',binding,'maxOperations',max_operations)
+    ELSE NULL END FROM atlas_marketplace.proof_retention_binding_v1 WHERE id
+$$;
 CREATE FUNCTION atlas_marketplace.commit_retention_state_v1(expected_revision bigint, expected_hash text, next_document jsonb, next_hash text, at_ms bigint, operation_id uuid, operation_hash text)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE old atlas_marketplace.state%ROWTYPE;
@@ -329,11 +337,11 @@ GRANT CONNECT ON DATABASE atlas_marketplace_review_candidate TO atlas_proof_rete
 GRANT USAGE ON SCHEMA atlas_marketplace TO atlas_proof_retention_writer;
 DO $$ DECLARE f record; BEGIN
   FOR f IN SELECT p.oid::regprocedure AS signature FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
-    WHERE n.nspname='atlas_marketplace' AND p.proname IN ('proof_exact_object_v1','proof_canonical_v1','proof_hash_v1','proof_text_v1','check_retention_history_v1','commit_state','check_retention_transition_v1','read_retention_state_v1','lock_retention_state_v1','commit_retention_state_v1') LOOP
+    WHERE n.nspname='atlas_marketplace' AND p.proname IN ('proof_exact_object_v1','proof_canonical_v1','proof_hash_v1','proof_text_v1','check_retention_history_v1','commit_state','check_retention_transition_v1','read_retention_state_v1','lock_retention_state_v1','read_retention_binding_v1','commit_retention_state_v1') LOOP
     EXECUTE format('ALTER FUNCTION %s OWNER TO atlas_marketplace_owner',f.signature);
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC,atlas_marketplace_writer,atlas_proof_retention_writer',f.signature);
   END LOOP;
 END $$;
 GRANT EXECUTE ON FUNCTION atlas_marketplace.commit_state(bigint,text,jsonb,text,bigint) TO atlas_marketplace_writer;
-GRANT EXECUTE ON FUNCTION atlas_marketplace.read_retention_state_v1(),atlas_marketplace.lock_retention_state_v1(),atlas_marketplace.commit_retention_state_v1(bigint,text,jsonb,text,bigint,uuid,text) TO atlas_proof_retention_writer;
+GRANT EXECUTE ON FUNCTION atlas_marketplace.read_retention_state_v1(),atlas_marketplace.lock_retention_state_v1(),atlas_marketplace.read_retention_binding_v1(),atlas_marketplace.commit_retention_state_v1(bigint,text,jsonb,text,bigint,uuid,text) TO atlas_proof_retention_writer;
 COMMIT;

@@ -156,6 +156,8 @@ not power loss or any PostgreSQL settlement inside the publisher.
 
 The combined real PostgreSQL→v4 settlement join remains NOT_RUN at this source
 checkpoint. Linux/DB deployment identity, full qualified physical composition,
-protected gateway adapter, canonical request/fence producers and all participating
-revocation writers remain required. Existing D1 metadata passed on its frozen
+canonical request/fence producers
+and all participating revocation writers remain required. A new separate default-off
+SYNTHETIC_LOCAL protected adapter candidate is described in
+`PROOF_RETENTION_PROTECTED_ADAPTER.md`; its fresh PostgreSQL17.11 harness passed20 groups/15 refusals. That result does not establish this physical join. Existing D1 metadata passed on its frozen
 8b37c773 closure; D2 does not alter that immutable target evidence.
