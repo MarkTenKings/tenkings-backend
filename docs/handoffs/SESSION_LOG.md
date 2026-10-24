@@ -48767,3 +48767,41 @@ Planned fresh SYNTHETIC_LOCAL D2 writer fixture: wrapper revision03 SHA256 af473
 
 
 R2 D2 actual fixture result: `retention-writer-postgres-fixture-01/receipt.json` SHA256 687cf95da4b1f6a9f33936d6b28062d840f6feb511d5447adb58c46358631ff8, PASS; all five owned-real-PostgreSQL writer groups passed (commit/private outcome, exact-ID cancellation, operator-induced post-COMMIT reply loss, suppressed-COMMIT rollback, function definition mismatch refusal). Revision4/4commits/4events, two committed/two cancelled; final state f8501b0b83304ff82b2d03f6d69be38f67a0a1cc5f1ba663bd3e6c0545c929d5. Owned server exited0, socket absent; existing stopped gateway checkpoint unchanged. This is actual synthetic-local DB evidence, not physical network-loss, publisher-v4, canonical gateway or production qualification. No consumed actions replayed.
+
+
+### R2 planned input-negative source staging — 2026-10-24T00:08:13.795409+00:00
+
+Root reviewed entire `ops/stage_remaining_input_negatives_01.py` SHA256 9ef4f3e0ebb11559a89f6285343ef2d6752d8305aeea39d1e40a790dea3661ba, exact actual14-ledger checkpoint d89583d12be009c060b850079528377e5a2cea7bbf3c68a4a174d1c76744f4f4, all seven embedded public assets and original intent. Add-only new0755 `/usr/local/lib/atlas-r2-input-negatives-01` with seven0644 public source/fixture/plan files; preserve14ledgers,29runtime,40old fixed artifacts/current guard source/config/latch; bounded read-only Engine list. No native load, guard start, epoch reset or decoder execution in staging. Prepared wrapper remains pending exact known-warning handling review; JPEG wrapper not dispatched.
+
+
+### R2 input staging observed; v4 metadata planned — 2026-10-24T00:08:50.840868+00:00
+
+Input-negative staging EXIT0; stdout SHA256 245e1d584c8e530adc91b2d66353283c06fac8416a62c205abafe520f8403b5d. Seven fresh public files installed,14ledger sets/29runtime/old artifacts/current controls unchanged, no native load/guard start.
+
+Planned v4 native/storage metadata operator `ops/qualify_publication_retention_metadata_01.py` SHA256 ddac539a946aeec4f8e8080a05338c6a8314d2e07b5dd089bc115e5136e434fa; root reviewed complete readable body and correction from existing receipt path to fresh publication-retention-01, explicit0755 for new source dirs only. Exact33-source 8e35ccb4 closure and actual14-ledger checkpoint matched; bounded bz2 envelope decoded without body execution. Fresh public-key synthetic fixtures only: same-inode v3→v4/history/successor, initial migration, old-hold refusal, owned SIGKILL after COMMIT before seal. Original producer/storage behavior already reviewed. No PostgreSQL/Engine/guard/cgroup/shared/production effects; old publisher metadata and decoder state verified before/after.
+
+
+### R2 v4 metadata actual PASS; prepared-source negative plan — 2026-10-24T00:09:43.740480+00:00
+
+`ops/publication-retention-metadata-01` EXIT0, stdout SHA256 fbbd10e27a716a28d22d2a848aa2670bed3f1d6ff1a627e628fe4ed3a0da62b4, remote receipt a2b10c48449a7e979c75f9013f93e9bae8be026fc7e3286152ec77f77157d2e4. Four genuine Linux storage/native groups passed: same-inode v3→v4/history/original/successors, first-session migration, old hold refusal, owned SIGKILL after migration COMMIT before sealing. Three owned commands exited0; all14decoder ledger sets/runtime/control pins and four old publisher fixture trees unchanged; guard stopped/parent empty frozen. No real PG→v4 retention settlement, network/power loss or C0 authority proved.
+
+Planned prepared-only negative runner `ops/run_prepared_source_negatives_02.py` SHA256 49893cabbfec65ca4c343fdf6a95e7708004b9076dcd2d517515bb88f8d5e935 with already-staged immutable source. Root reviewed full wrapper/script/header and narrow exact-known-warning allowance tied to owned PID, without suppression. Three fresh uid65530 clients test wrong original hash/count−1/count+1 with real native clock, private no-start dispositions and zero retained accounting, no submit/socket/guard/Engine mutation; 5s source/8s outer deadlines, pidfd-owned cleanup, all14ledger/runtime/fixedstate checks.
+
+
+R2 prepared-source negatives actual EXIT0: `ops/prepared-source-negatives-01/stdout.txt` SHA256 fcf5921b2f8b2169c794f3eff3e45d2c78c93779e9365707a5f9f7ec95301912, remote compact receipt 8398ec882be21cb952a1787ebac561f43eb4c875212ec8ca2985d2e74844687a. Actual owneduid/gid65530 child 18667 exited0; three fresh clients rejected wrong original SHA256, byteCount−1 and byteCount+1 with private KNOWN_NO_START_SENT/requestnull, before/after zero requests/slots/retainedbytes. Source elapsed 17459707ns. No socket submission/newledger/guardstart/Engine effect;14ledger sets/runtime/fixedstate unchanged. Exact expected SQLite warning retained. This covers those three previously unrun source-binding variants only, not full input-bound qualification.
+
+
+### R2 planned remaining JPEG entropy case — 2026-10-24T00:11:25.692165+00:00
+
+Root reviewed complete `ops/run_jpeg_entropy_negative_epoch02.py` SHA256 700ebbaf55dfde6ea897b01da95dadfba7b11518b66bd8de09f798e51d5b1239 and frozen actual header/staged assets. One new JPEG_ENTROPY_NEGATIVE_1 epoch on approved isolated VM, only the626-byte synthetic truncated entropy JPEG retaining all headers and EOI. New fsynced intent before old latch archive/current guard config replacement/parent thaw/service start; exact frozen runtime08/worker/image/native/15sdeadline/250msliveness unchanged. Genuine broker+nonroot65530 client; requires INVALID_IMAGE + COMPLETE_CLEAN + same-request FINALIZED9/WAIT0/REMOVE204/nativeempty. Unknown or unfamiliar native decode failure remains failed/held without automatic replay or cleanup backfill. Owned children stopped and parent quarantined afterward; all14oldledger sets/40artifacts/29runtime remain unchanged. No shared runtime/credential/provider/production action.
+
+
+### R2 JPEG entropy case FAILED with actual settled container cleanup — 2026-10-24T00:12:59.287303+00:00
+
+`ops/jpeg-entropy-negative-01` EXIT1, stdout SHA256 e2b861ba32f8b1200e4bc71da23a1f0522f0f785966587ee2cf99dd5c2bd3e0c, remote pretty receipt 52a4854ea01e3bf48c472b34c2c2767dfa8495bafe4c3a0d62d704397bced8d6. New request 2602e70e-32e5-4ca0-9606-aa34f27cc079, job d0672acc-a6e8-4201-aeb5-22c4c8719c6a, registry fb19cf25-084e-4631-87a4-944dc207b0a2, binding 65026d8b80ba58738ac987b77c017395376de0a537d63b43818f8f28f943bdb1. Client returned DECODER_BROKER_UNCERTAIN; actual row FINALIZED9 after WAIT2/nonOOM, original known REMOVE204/absence/nativeempty. This is not INVALID_IMAGE/COMPLETE_CLEAN success; worker source exits2 on DECODER_FAILURE, but raw native cause has not been observed, so no guessed classifier change. Guard recorded DISCONNECT (pulseage21609008ns); executor lastFailure null/poisoned. Container list empty, parent empty/frozen, guard stopped with latch; ownedbroker18776/client18787 stopped -9. All14priorledgers and29runtime preserved. No externalcleanup or replay needed. Pending bounded readonly15-ledger checkpoint and diagnostic-only actual native-error observation.
+
+
+Planned bounded read-only JPEG failure checkpoint `ops/inspect_jpeg_negative_checkpoint_01.py` SHA256 5203d021e6c0f1c094308985035ba67e45e6d519ded196f4a3771e929482d5a3. Root reviewed full body and joined headers to actual job/10event expectedchain, current poisoned BROKER_EXECUTION_UNCERTAIN state,14priorledgers,29runtime,40fixedartifacts. Read only fixed nonsecret config/latch/operator stderr and original rows; observe stale socket exactidentity/refusal if present without unlink; no native execution, signal, cleanup or reset. Native decode cause remains unobserved.
+
+
+R2 JPEG read-only checkpoint EXIT0: `ops/jpeg-negative-checkpoint-01/stdout.txt` SHA256 8a142e04b1d98693352986772c14995e982ce5efeb064acf680f6ae4e37bf102. Exact1FINALIZED9/10events and all15ledger sets preserved; current state poisoned/barrierclosed BROKER_EXECUTION_UNCERTAIN. Parent empty/frozen, guardMainPID0/latch, zeroEnginecontainers. Exact stale broker socket retained, ECONNREFUSED; no unlink. Fixed captured stderr/leftover stdout retained; no raw native decode error observed.

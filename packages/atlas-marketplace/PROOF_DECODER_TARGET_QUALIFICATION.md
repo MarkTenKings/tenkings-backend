@@ -41,14 +41,140 @@ completed INVALID_IMAGE with finalized cleanup for16M+1 pixels and compressed-
 pixel/CRC/chunk-length PNG corruption. The next truncated PNG stopped at
 DECODER_NATIVE_INPUT_OBSERVATION before any worker-input byte. That sixth broker
 job remains RUNNING revision4 with CREATE/START known and cleanup unknown; one
-exited container remains for exact-owner inspection. The later guard failure was
+exited container was subsequently removed by the separate exact-owner operation
+`ops/functional-held-resource-05`, preserving its original RUNNING revision4 row
+and every prior ledger. The later guard failure was
 LIVENESS with78.495028ms pulse age, not a stale-pulse report. All ten prior ledger
 sets remained unchanged. The cleanup diagnostic array in this failure predates
 the current job and describes its predecessor; it is not current cleanup evidence. Successful observations retain their
 original source/profile scope; they do not qualify the changed runtime wholesale.
-The remaining broker corpus/fault variants and hostile probes below remain open.
-These partial observations do not constitute qualification or publication
-permission. The separately pinned probe image is cached but has not executed.
+
+Runtime08 in `ops/functional-corpus-06` completed all ten remaining generated
+broker fixtures with INVALID_IMAGE, COMPLETE_CLEAN and matching FINALIZED
+revision9 rows: truncated/no-IEND/appended-image/appended-byte/APNG PNGs;
+truncated/appended-image/appended-byte/invalid-segment-length JPEGs; and PNG bytes
+declared as JPEG. Each CASE joins its exact request, original hash/count/type,
+absolute deadline and job to the same-request CHECKED acknowledgement. Each row
+records known CREATE201, START204, WAIT0 without OOM, REMOVE204, post-remove
+absence and a later native empty observation before its original deadline.
+The root broker and uid/gid65530 client both exited0. The client observed Docker
+socket and ledger access denial; no original bytes or active slots remained.
+Final operator checks found zero containers, the same parent empty/frozen, guard
+MainPID0 and the quarantine latch present. All eleven prior ledger sets and
+runtime08 pins were unchanged. The service's terminal failed/exit-code state is
+retained as observed shutdown evidence, not rewritten as an active healthy guard.
+The exact stdout SHA256 is
+`ab6352a8ded232226c5e38f1f4ad8fbfd71e453863c3bd1182d38a0232fb0bfc`,
+profile `f5be76646a4638bbcf5c8eed855e569bfd08227be6bcf1548c48f59dc5eae5cd`,
+and common guard/broker addon
+`e7eed62c5b791660dec2a595dec74a626a3fa8e04c66bcdb6fb535f8ab03ea03`.
+Only closed native failure codes and job-scoped diagnostics changed; no native
+retry was implemented, and the earlier generic observation failure has no
+established root cause. The ten-fixture subset and earlier completed cases retain
+their own source/profile scope. Hostile probes and the remaining protocol/fault
+variants below remain open. These observations do not constitute qualification or
+publication permission. The separately pinned probe image was cached and unexecuted
+at that checkpoint; its later finite observations are recorded below.
+
+The first ordinary probe operator, `ops/ordinary-control-probes-01`, failed
+before RUN or any Engine effect: its independent observer exited1 before READY,
+and the operator reported `observer-1_EOF`. The genuine registry reservation
+remains RESERVED revision0 with no effects or container identity; it is held and
+has not been reset, cancelled or finalized. The retained owned-process evidence
+records the observer exit and the batch process killed/joined at exit-9. All
+twelve prior ledger sets and runtime pins remained unchanged; final checks found
+zero containers, the same parent empty/frozen, guard stopped and quarantine latch
+present. This is an observer/bootstrap failure, not a hostile-control result.
+The original stdout SHA256 is
+`ef3d9f238d447951281ec3afa0c8f6ff2e4ab1c992073deb40394bbdbfebf72d`.
+
+The bounded read-only inspection `ops/ordinary-control-probe-inspection-01`
+(stdout SHA256
+`1a189389b5acbb321d5c295791adf739a577830617103da5d3110d0899d55026`)
+retains the exact traceback, reservation, event, metadata and all thirteen ledger
+sets. The observer's `[a-z_]+` key grammar rejected the actual CPU counter
+`core_sched.force_idle_usec`. A separate read of three fixed kernel counter files,
+`ops/ordinary-control-probe-counter-format-01`, established that format; its
+stdout SHA256 is
+`c9e5678b2374cf2d8d7e0936f8adc71d925124b5bdb497397f2e9e8fba6d2a80`.
+The corrected observer accepts only the nine observed CPU keys, `max` for pids,
+and `populated`/`frozen` for cgroup events, retaining byte, entry, unsigned-number
+and duplicate bounds. Ten focused pure parser cases passed; runtime/native and
+completed image tests were not replayed. The fresh four-file ordinary2 stage
+completed in `ops/ordinary-control-probes-stage-02`, preserving all thirteen
+ledger sets and sixteen old probe artifacts. Its separately frozen epoch2
+operator was unrun at that source checkpoint. The original failed epoch remains
+retained unchanged. OOM, wall-deadline, malicious-output, host-access and cross-job
+variants remain separately pending.
+
+The actual ordinary2 operator subsequently exited0 in
+`ops/ordinary-control-probes-02`; stdout SHA256
+`5869c7c40b4a9899401839609045e92ea9bf7b253b735adc229a3c08a99a5dbc`.
+All seven PROBE_ONLY modes (NETWORK, PRIVILEGE, READONLY, TMPFS, PIDS, FD and
+CPU_QUOTA) produced matching BEGIN/FINAL/EOF and known WAIT0, then exact owned
+REMOVE204, absence and native empty evidence joined to FINALIZED revision9.
+Each used the same original 15-second deadline, 250 ms guard freshness and
+mandatory kernel controls observation before input. Independent bounded sampling
+completed for every mode. The operator and all seven observers exited0; no
+failures or postcondition failures occurred. All thirteen prior ledger sets and
+runtime08 files were unchanged; the parent ended empty/frozen with guard stopped,
+latch present and zero Engine containers.
+
+The distinct probe image reported nine socket-creation denials (EPERM), eleven
+privilege/namespace/system-call denials (EPERM), and EACCES for write-open attempts
+against its two fixed code files. No packet transmission or real secret access
+was attempted. Both tmpfs and shm reached exactly 8,388,608 written bytes and
+ENOSPC; executable mappings failed EACCES, and the private canaries were removed.
+The PIDS report recorded 31 created/joined threads then EAGAIN; the independent
+bound scope samples reached 32 tasks and observed `pids.events.max` increase by1.
+The FD report recorded soft/hard64, 61 extra descriptors then EMFILE and all61
+closed. Four CPU threads completed the fixed two-second workload; independent
+scope counters increased by3,014,694 usage microseconds, 19 throttled periods and
+567,531 throttled microseconds. These are finite reports joined to separate
+kernel observations, not exclusive attribution to one policy mechanism. The
+native barrier reports seccomp mode2/filter1 but does not claim to read back the
+installed filter bytes, and it explicitly reports no user-namespace isolation.
+
+These seven modes are not seven whole qualification-case passes. Network
+interface/port inventory, additional code mutation operations, setns/namespace
+clone/process-fork variants, actual OOM and deadline failures, malicious output,
+host-path/cross-job access and the other variants in the matrix still require
+separate evidence. Production worker validation and publication authority remain
+absent from these PROBE_ONLY reports. Completed modes are retained without rerun.
+
+The actual fresh-capacity prepared-source checks also exited0 in
+`ops/prepared-source-negatives-01`; stdout SHA256
+`fcf5921b2f8b2169c794f3eff3e45d2c78c93779e9365707a5f9f7ec95301912`.
+The owned uid/gid65530 child tested a wrong SHA256 and declared byte counts73/75
+against the same74-byte original, using a new empty genuine client for each.
+Every refusal had the private KNOWN_NO_START_SENT disposition with request:null;
+requests, prepared/active slots and retained bytes stayed zero, with no quarantine.
+Cross-client and JSON-cloned dispositions were rejected. The three checks took
+17,459,707 BOOTTIME nanoseconds. No submit/socket method, broker/guard start,
+Engine effect or new ledger occurred; all fourteen ledger sets, runtime and
+current fixed state were unchanged. These close the finite prepared hash/count
+mismatch variants only. They do not establish worker decoding, transport-level
+mismatch handling, publication authority or any missing hostile-control variant.
+The JPEG entropy-truncation variant retaining EOI was unrun at that preparation checkpoint.
+
+The subsequent JPEG entropy-truncation run in `ops/jpeg-entropy-negative-01`
+failed its required INVALID_IMAGE/COMPLETE_CLEAN client oracle. Its stdout SHA256
+is `e2b861ba32f8b1200e4bc71da23a1f0522f0f785966587ee2cf99dd5c2bd3e0c`.
+The client reported DECODER_BROKER_UNCERTAIN. The matching genuine decoder job
+`d0672acc-a6e8-4201-aeb5-22c4c8719c6a` nevertheless reached FINALIZED revision9:
+CREATE/START were known, WAIT reported exit2 without OOM, exact REMOVE204 and
+absence were observed, and native empty evidence completed resource cleanup.
+The registry held no active slot but its epoch was poisoned
+BROKER_EXECUTION_UNCERTAIN. This resource settlement does not establish the
+required client outcome or repair any future publisher-side uncertainty.
+The guard diagnostic recorded DISCONNECT with21,609,008ns pulse age, not a stale
+pulse; executor.lastFailure was null. No raw native decoder cause was retained,
+so neither a particular JPEG warning nor a classification repair is established.
+The operator retained both owned children at SIGKILL/wait-9, all fourteen prior
+ledger sets and runtime pins unchanged, and zero containers with the parent
+empty/frozen, guard stopped and latch present. No container cleanup is pending.
+The failed fixture/result remains preserved for a separately reviewed diagnostic;
+no blanket native-error conversion, automatic replay or policy widening is allowed.
 
 The candidate binds the imported linux/amd64 image
 `127.0.0.1:5001/atlas-r2-proof@sha256:2b497d3724e65ca2ae449072dada74b3197247649eaa2a8349b7d02d79609ac6`,
@@ -170,18 +296,18 @@ outside this lane and disabled pending Fingerprint PLUS genuine ownership author
 | --- | --- | --- |
 | `VALID_PNG` | FUNCTIONAL_WORKER_RUN: Valid small, alpha and boundary-size PNG corpus; exact source hash/dimensions, expected decoder versions, EOF/WAIT and genuine settled cleanup. Also observe effective kernel profile/resources before input. | INCOMPLETE: small/alpha/16M completed under original pins;10MiB accepted with FINALIZED cleanup in corpus05; full final-runtime evidence binding pending |
 | `VALID_JPEG` | FUNCTIONAL_WORKER_RUN: Baseline/progressive/orientation-bearing bounded JPEG corpus; full raster parity, exact original and cleanup. Native dynamic library maps are independently hashed against actual inventory. | INCOMPLETE: three genuine broker submissions completed in corpus02; full variant/evidence binding to final runtime pending |
-| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE:16M accepted earlier; corpus05 accepted10MiB with FINALIZED cleanup, refused+1byte before submission and rejected16M+1pixel with FINALIZED cleanup; count/hash/MIME variants remain |
-| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: compressed-pixel/CRC/chunk-length PNG rejection finalized in corpus05; next truncated case hit native input observation failure; other variants remain |
+| `INPUT_AND_PIXEL_BOUNDS` | FUNCTIONAL_WORKER_RUN: 10 MiB exact and +1 byte, 16,000,000 exact and +1 pixel, mismatched declared count/hash, MIME and bounded dimensions. Availability failure must not become INVALID_IMAGE. | INCOMPLETE:16M accepted earlier; corpus05 accepted10MiB with FINALIZED cleanup, refused+1byte before submission and rejected16M+1pixel with FINALIZED cleanup; corpus06 also rejected PNG bytes declared as JPEG with FINALIZED cleanup; fresh prepared count/hash mismatches refused with private no-start dispositions in prepared-source-negatives01; unsupported-MIME and remaining final binding variants remain |
+| `CORRUPT_TRUNCATED_APPENDED` | FUNCTIONAL_WORKER_RUN: Corrupt compressed pixels, chunk/segment lengths, CRC, missing EOI/IEND, appended image and bytes, APNG/multi-page. Exact failure taxonomy and cleanup. | INCOMPLETE: corpus05 corruption cases and corpus06 truncated/missing-IEND/appended/APNG PNG and truncated/appended/segment-length JPEG cases all finalized under their recorded pins; EOI-preserved entropy truncation failed its client oracle despite finalized resource cleanup; native cause unobserved; full final-runtime/subvariant evidence binding remains |
 | `FORGED_DUPLICATE_OR_TRAILING_OUTPUT` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Distinct malicious-output probe emits wrong request/hash, early one-byte stdout prefix, duplicate/trailing/oversize/partial PDW1 and stderr flood. Actual broker refusal/hold; never claim this is normal worker output. | NOT_RUN |
-| `EXTERNAL_NETWORK_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: AF_INET/INET6, raw, AF_PACKET, AF_ALG, VSOCK and AF_UNIX socket attempts; seccomp/AA denial and net namespace lo-only/no ports. No external packets need be transmitted. | NOT_RUN |
+| `EXTERNAL_NETWORK_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: AF_INET/INET6, raw, AF_PACKET, AF_ALG, VSOCK and AF_UNIX socket attempts; seccomp/AA denial and net namespace lo-only/no ports. No external packets need be transmitted. | INCOMPLETE: ordinary2 reported nine fixed socket-creation attempts denied EPERM with native pre-input controls; independent interface/port inventory and final evidence binding remain |
 | `HOST_SECRET_PROOF_DOCKER_ACCESS_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Dedicated nonsecret absent/unmounted canaries and exact Docker/guard/broker path open attempts; kernel mount/namespace evidence. No real secrets enumerated/read; distinguish ENOENT absence from policy EACCES/EPERM. | NOT_RUN |
-| `ROOT_AND_CODE_READONLY` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Attempt code/root write, rename, link, chmod, executable mapping of writable tmpfs; compare actual production mount flags and inventory. Probe image differences recorded. | NOT_RUN |
-| `PRIVILEGE_AND_NAMESPACE_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native setuid/capset, namespace clone/unshare/setns, mount, ptrace, bpf, keyring and io_uring syscalls deny; actual uid/gid, CapEff zero, NNP and seccomp mode plus AppArmor enforcing. | NOT_RUN |
+| `ROOT_AND_CODE_READONLY` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Attempt code/root write, rename, link, chmod, executable mapping of writable tmpfs; compare actual production mount flags and inventory. Probe image differences recorded. | INCOMPLETE: ordinary2 fixed code write-opens and tmp/shm executable maps denied EACCES; rename/link/chmod and remaining root/code variants unrun |
+| `PRIVILEGE_AND_NAMESPACE_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native setuid/capset, namespace clone/unshare/setns, mount, ptrace, bpf, keyring and io_uring syscalls deny; actual uid/gid, CapEff zero, NNP and seccomp mode plus AppArmor enforcing. | INCOMPLETE: ordinary2 reported eleven fixed syscall denials plus native pre-input controls; setns/namespace-clone and remaining variants unrun |
 | `CROSS_JOB_ACCESS_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Two sequential jobs: previous tmpfs marker absent, stale identities/tokens/output rejected, no PID/IPC/proc-root reach outside private namespaces. MaxConcurrent1 means no simultaneous production workers are created for this probe. | NOT_RUN |
 | `NATIVE_MEMORY_OOM` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded native touched allocation beyond 512 MiB; independently observe exact child cgroup memory.max/swap.max, memory.events oom/oom_kill, terminal status, held poison and no parent leak. Do not fabricate native OOM using a JS error. | NOT_RUN |
-| `CPU_AND_WALL_DEADLINE` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native busy loop and blocked native call, partial-upload delay, transport header stall and wall deadline; child cpu.max 150000/100000 + cpu.stat throttling, original BOOTTIME deadline, independent guard kill. Do not extend deadline for setup/cleanup. | NOT_RUN |
-| `PID_THREAD_FD_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native pthread growth and pids.events with pids.max32; process fork denied separately. FD opening to RLIMIT_NOFILE64 and EMFILE. Positive ordinary worker thread needs must still pass. | NOT_RUN |
-| `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | NOT_RUN |
+| `CPU_AND_WALL_DEADLINE` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native busy loop and blocked native call, partial-upload delay, transport header stall and wall deadline; child cpu.max 150000/100000 + cpu.stat throttling, original BOOTTIME deadline, independent guard kill. Do not extend deadline for setup/cleanup. | INCOMPLETE: ordinary2 CPU workload joined to independent usage/throttling counters; wall/blocked-call/upload/header-stall variants unrun |
+| `PID_THREAD_FD_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native pthread growth and pids.events with pids.max32; process fork denied separately. FD opening to RLIMIT_NOFILE64 and EMFILE. Positive ordinary worker thread needs must still pass. | INCOMPLETE: ordinary2 joined 31 threads/EAGAIN to sampled32tasks and pids.max event; FD soft/hard64 and61opens/EMFILE observed; separate process-fork and final variant binding remain |
+| `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | INCOMPLETE: ordinary2 observed8MiB ENOSPC and denied executable maps for each private tmpfs/shm canary with native pre-input mount controls; remaining subvariant/evidence binding pending |
 | `CANCEL_IGNORED_TERM_AND_DESCENDANTS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Running loop ignores TERM, application cancels; kernel guard freezes/kills and observes all threads/descendants empty. Fork denial under production profile is tested separately. An independently root-created owned descendant containment test is separate control evidence, not permission added to worker seccomp. | NOT_RUN |
 | `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | NOT_RUN |
 | `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | NOT_RUN |
