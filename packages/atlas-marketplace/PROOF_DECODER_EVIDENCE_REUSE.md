@@ -25,7 +25,7 @@ The saved join includes original failed outer runs as failed.
 | J3 — corpus01/02 | The worker decode closure/dependencies are unchanged under J1. Original CASE and same-request CHECKED records remain linked; corpus02's complete saved rows also join. Runtime03/04→08 changes add poll opportunities followed by the same live/identity/deadline checks, immutable-row JSON caching, and bounded diagnostics. The six saved native cache checks cover the unchanged cache implementation. The native predicate change is J2. Current ordinary-valid-pair01 separately observes the real broker/input/decode/cleanup sequence on runtime08/e7/repaired image. | Reuse alpha/16M PNG and baseline/progressive/orientation JPEG as decoding-variant evidence, composed with current lifecycle evidence. Do not transplant their old timing measurements or claim same-run final-image execution. Corpus01 exposes its original CHECKED acknowledgements rather than full rows in this selected local snapshot; its ledger file identities remain protected by baseline27. |
 | J4 — corpus06 and ordinary probes | Corpus06, ordinary2, native OOM and CPU-deadline have exactly the runtime08 supervisor/watchdog file maps and nativee7. All eight compared profiles have identical fields after excluding image/artifact identities: same uid/gid, IPC, seccomp digest/path, AppArmor name, resources, bounds, platform and Node version. | Corpus06's ten invalid-image cases carry through J1. Ordinary2's finite kernel-control probes bind to the unchanged controls. They remain distinct PROBE_ONLY images and reports, never decoder validation. The OOM outer terminal-checkpoint failure stays failed; its saved actual OOM and separately recorded exact cleanup remain the evidence. |
 | J5 — probe extensions | Extension03 differs from runtime08 in only the probe protocol and probe transport; the watchdog/nativee7 and all control-enforcement modules match. Those deltas add three finite observation modes and bind the distinct extension image. Policy/resource fields are identical under J4. | Saved root/code mutation denials, process/namespace creation denials, four loopback/empty-network snapshots and4MiB shmem/file charge carry as finite control observations. No continuous observation, valid-descriptor setns denial or production-worker output is inferred. |
-| J6 — recent lifecycle faults | IPC admission, supervisor death, watchdog stall and both app-death stage intents pin the exact current plan `c8684a89` and source-binding file `3fcb3319`. Their original observations and statuses remain intact. | Their covered fault variants have no residual source-binding gap. Missing running-worker app death, direct guard death and path/peer variants remain actual execution gaps. |
+| J6 — recent lifecycle faults | IPC admission, supervisor death, watchdog stall and both app-death stage intents pin the exact current plan `c8684a89` and source-binding file `3fcb3319`. Their original observations and statuses remain intact. | Their covered fault variants have no residual source-binding gap. At this join checkpoint, running-worker app death, direct guard death and path/peer variants were execution gaps. Subsequent separately recorded lifecycle runs close the first two; the historical join itself is unchanged. |
 
 “COVERED” in the qualification matrix means the listed finite variants have
 actual saved evidence with an explicit reuse basis. It is not a rewritten PASS
@@ -41,11 +41,12 @@ saved11-library mapping observation remains valid under J1, but it is not a
 pixel comparison. Privilege coverage still lacks valid-descriptor setns. TMPFS/SHM
 still lacks its mmap-fault and cross-job residue variants. CPU/deadline still
 lacks blocked-call, upload/header-stall and independently attributed deadline
-containment variants. App-death still lacks the running-worker case; watchdog
-coverage still lacks direct guard death. Concurrent accepted-worker operation
-remains distinct from the observed RESERVED no-queue refusal plus sequential
-finalized reuse. Path/socket replacement, stale frames and peer/PID variants
-remain open.
+containment variants. The subsequent guard-death01 and active-app-overlap01
+receipts directly cover guard death, authenticated app death during an active
+ordinary worker and capacity-one refusal during that worker. They use the exact
+current plan/source bindings and are recorded separately in the matrix; they do
+not alter this earlier join or its timestamps. Path/socket replacement, stale
+frames and peer/PID variants remain open.
 
 Output-integrity, required host-secret/proof/Docker-path canaries, cross-job
 access, ignored-TERM/descendants, uncertain CREATE/START/REMOVE/late effects and

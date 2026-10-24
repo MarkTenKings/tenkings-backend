@@ -348,12 +348,12 @@ The [saved-evidence reuse audit](PROOF_DECODER_EVIDENCE_REUSE.md) defines joins 
 | `PID_THREAD_FD_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native pthread growth and pids.events with pids.max32; process fork denied separately. FD opening to RLIMIT_NOFILE64 and EMFILE. Positive ordinary worker thread needs must still pass. | COVERED finite variants by J4/J5 plus current ordinary worker success:31threads/EAGAIN joined to32tasks/pids event, nofile64 with61opens/EMFILE, and separate fork/clone denial. No source-binding-only gap remains; probe and normal worker observations stay distinct. |
 | `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | PARTIAL — covered/bound J4/J5:8MiB ENOSPC in each tmpfs/shm, denied executable maps, and exact4MiB shmem/file charge increase. Remaining: mmap-fault and cross-job residue variants; finite sampling is not continuous memory-limit attribution. |
 | `CANCEL_IGNORED_TERM_AND_DESCENDANTS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Running loop ignores TERM, application cancels; kernel guard freezes/kills and observes all threads/descendants empty. Fork denial under production profile is tested separately. An independently root-created owned descendant containment test is separate control evidence, not permission added to worker seccomp. | NOT_RUN |
-| `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | PARTIAL — covered/bound J6: authenticated pre-START close/death leaves0jobs; RESERVED half-close and correctly sized partial-frame peer death retain row/poison/capacity with54.6ms containment. Failed app-death01 remains failed. Remaining: running-worker app-death variant; no residual source-binding gap for completed variants. |
-| `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | PARTIAL — covered/bound J6: running-worker supervisor SIGKILL with43.6ms empty/frozen parent; supervisor+guard SIGSTOP/systemd watchdog with992.9ms containment before operator fallback. Remaining: direct guard SIGKILL; no residual source-binding gap for completed variants. |
+| `APP_DISCONNECT_AND_DEATH` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Close/half-close or kill authenticated app peer before/after reservation, during upload and run; actual peer pidfd lifetime, immutable hold and native whole-parent quarantine. | COVERED finite lifecycle variants by J6 plus active-app-overlap01: pre-START close/death leaves0jobs; RESERVED half-close/partial-frame death retains hold/poison; authenticated app pidfd death during a real RUNNING ordinary worker produced worker death/empty frozen parent in71.1ms before the original deadline/operator containment. Original RUNNING4 held, no cleanup backfill. Failed app-death01 remains failed. |
+| `SUPERVISOR_DEATH_WATCHDOG` | CONTROL_FAULT: SIGKILL/SIGSTOP broker, then independent guard death/stall including systemd watchdog; observed parent freeze/kill and latch. Root's prior guard tests may be referenced only for exact unchanged artifacts and covered scenarios. | COVERED finite lifecycle variants by J6 plus guard-death01: supervisor SIGKILL43.6ms; supervisor/guard SIGSTOP with systemd watchdog992.9ms; direct guard pidfd SIGKILL with supervisor held stopped233.7ms. Each observed active-worker death/empty frozen parent before original deadline/operator containment; original holds retained. |
 | `RESTART_RECONCILIATION` | CONTROL_FAULT: Restart with known finalized row, pending CREATE/START, stale writer lock, sidecar and late effect. Exact ownership inventory retained, no receipt JSON rebranding/new registry bypass. Current conservative stale-lock refusal is a hold result, not proof of automated reconciliation. | INCOMPLETE: exact native addon compiled and loaded; private mount-namespace fixture passed live-owner exclusion, same-inode takeover after owned death, and replaced-lock refusal. Actual host enrollment/coordinator/Engine recovery variants remain NOT_RUN |
 | `UNKNOWN_CLEANUP_QUARANTINE` | CONTROL_FAULT: Lost create/start/remove response, absent report without known remove, freeze with delayed daemon effect; pending operation ID/hash survives, epoch permanently poisoned, no free slot from 404/temporary empty. Fault injector stays outside fixed production command. | NOT_RUN |
 | `EPOCH_PROFILE_TAMPER_REFUSED` | CONTROL_FAULT: Changed image/seccomp/template/compiler artifact, parent identity, boot/epoch, deadline, job or output identity; refuse before effects when possible, otherwise poison and hold. Hash only named nonsecret artifacts. | NOT_RUN |
-| `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | PARTIAL — covered/bound J6 and current valid-pair: exactly one RESERVED request, concurrent second request refused before input/no queue, later poisoned-epoch refusal; separate two-worker sequential FINALIZED release and replay refusal. Remaining: simultaneous accepted/running-worker composition; no residual source-binding gap for covered states. |
+| `CONCURRENCY_AND_NO_QUEUE` | FUNCTIONAL_WORKER_RUN + CONTROL_FAULT: Simultaneous client requests at capacity1; exactly one reservation/worker, second busy before accepted input, no queue, replay refused, finalized release only after known cleanup/guard settle. | COVERED finite variants by J6, current valid-pair and active-app-overlap01: second genuine client KNOWN_NO_START_SENT while first ordinary worker pidfd remains live/RUNNING4; exactly1request/reservation/active connection and1rejection, no queue or second reservation. Prior RESERVED and poisoned refusal, sequential FINALIZED release and replay refusal retain their own observations. |
 | `IPC_PEER_AND_DIRECTORY_INTEGRITY` | CONTROL_FAULT: Wrong UID/GID, peer exit/PID reuse, replaced/symlink/insecure directories and sockets, stale guard frames, target Engine fixed inode replacement; actual native pidfd and protected-path refusal. No fake observer/controller brands. | PARTIAL — covered/bound J6: wrong UID0/GID0 rejected, genuine65530 flow and owned peer death. Remaining: directory/socket replacement/symlink/mode, PID reuse, stale guard frames and Engine endpoint identity variants. |
 
 The new three-mode extension batch (`ops/control-probe-extensions-01/stdout.txt`,
@@ -560,9 +560,9 @@ quarantine latch, empty broker directory and no enrolled recovery tree. No extra
 resource cleanup is required. Consumed run and effect intents must not be replayed.
 
 At that initial resume checkpoint, all22 matrix cases were still labeled incomplete or NOT_RUN. The subsequent saved-evidence join below separates binding-only gaps from remaining execution work.
-The six entirely unrun rows are output-integrity probes, host-path access,
+At that initial checkpoint, the six entirely unrun rows were output-integrity probes, host-path access,
 cross-job access, ignored-TERM/descendant containment, unknown-effect quarantine
-and epoch/profile tamper. Partial rows still require their recorded final source
+and epoch/profile tamper. Partial rows then required their recorded final source
 and variant joins, including blocked-call/upload/header deadline variants,
 running-worker app death, direct guard death, path/peer integrity, and full
 positive/boundary corpus binding. No unaffected broad suite was replayed.
@@ -598,3 +598,55 @@ The audit separately records older poll/cache/diagnostic changes and the limits
 of composite reuse. Qualification authority, enrolled restart requirements and
 physical-intake composition remain unchanged and open. No target operation,
 functional rerun or blocked probe accompanied this join.
+
+
+## Ordinary lifecycle completion — October24,2026
+
+Three remaining finite lifecycle variants now have direct evidence on unchanged
+runtime08/nativee7/repairedimage101965ad/profileec13460a and original15s deadlines.
+The earlier source join remains an unchanged historical audit. The matrix now
+has10 COVERED finite scopes and12 scopes with remaining execution requirements;
+COVERED does not mint runtime qualification or publication authority.
+
+`ops/guard-death-01` reused the existing watchdog runner with direct retained
+PIDFD SIGKILL for guard59848, while supervisor59860 stayed stopped. Its actual
+RUNNING4 ordinary worker died and the parent was empty/frozen233654980ns later,
+before the original deadline and operator containment. systemd reported
+Resultsignal/ExecMainStatus9. Supervisor was then pidfd-killed and waited-9.
+Remote receipt is
+`e8a51b11f52ac50e62af2b49d6deb8db9b00dcac624d36f979aa480e0ec39700`.
+All27 prior ledger sets/holds were unchanged; new28th retains RUNNING4/5events,
+falsepoison and writer lock without WAIT or cleanup. Separate exact external
+nonforce/nonvolume DELETE204→404 preserved that history; cleanup receipt
+`d5eabb951f13cdf208c757687ace29e8fc689a91bdf43601a2ec74682c17fb33`.
+
+`ops/active-app-overlap-01` reused the saved active-RUNNING watcher and genuine
+broker/client with the existing69868-byte4000×4000 PNG. First worker60229 was
+independently observed running under the exact Engine/cgroup identity with a live
+pidfd. While it remained RUNNING4, the second genuine65530 client was refused
+KNOWN_NO_START_SENT: one accepted request, one row/occupied slot/active connection,
+one rejected connection, no second reservation or queue. This uses the natural
+active window; no artificial worker pause or extended deadline was introduced.
+
+Killing the authenticated first app60173 through its retained pidfd then produced
+worker pidfd death and an empty/frozen parent71097281ns later, before the original
+deadline/operator containment. Engine exited137/nonOOM; broker60162 and contender
+60184 exited0, app waited-9. Remote receipt is
+`61b7c7f93b2bd7243fc253f671d0f695d5c76218c5eba63995e7222921f0a354`;
+stdout is `e558afb6808d074d794d8422bf194fa2e04f6b0fcdaf9200b7e41e43e6df8eee`.
+All28 prior ledger sets/holds stayed unchanged. New29th retains the original
+RUNNING4/5events/writer lock with BROKER_DISCONNECT poison/barrier true, no
+validation, finalized result, WAIT backfill or capacity release.
+
+Separate exact exited-resource cleanup observed nonforce/nonvolume DELETE204→404,
+receipt `2e545e574f2d9299110bfa40f7815d61aeab28b82e702b2c36b27de9c8972ec3`.
+All29 ledgers/holds and original evidence/control pins remained unchanged. Final
+state: emptyEngine/broker directory, guard stopped MainPID0/failed-exit-code1,
+parent empty/frozen, latch retained, no enrolled recovery. No old effect/request
+was retried; no screened probe, image build/import or production action occurred.
+
+The local four-stage integrity join is `active-app-overlap-01/lifecycle-evidence.json`,
+SHA256 `1031c0f4592ad2ac1bc661b9406081e4441df624589da3d9f3f94f948649bc83`; its additive29-ledger baseline is
+`active-app-overlap-01/baseline-29.json`, SHA256
+`43b3384d6911ed28db0fd9d470d6fc2f35fb570ef16dfb975104c16630d40a8a`. It verifies each saved operation/source/stdout/stderr hash and
+exact unchanged current plan/source-binding pins without rerunning a case.
