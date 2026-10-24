@@ -37,12 +37,12 @@ GRANT EXECUTE ON FUNCTION atlas_proof_authority.claim_stage_v1(jsonb),atlas_proo
   atlas_proof_authority.lookup_claim_v1(uuid,text),atlas_proof_authority.begin_logout_v1(jsonb) TO atlas_proof_request;
 GRANT EXECUTE ON FUNCTION atlas_proof_authority.settle_stage_v1(jsonb),atlas_proof_authority.lookup_stage_v1(uuid,text),
   atlas_proof_authority.lookup_claim_v1(uuid,text),atlas_proof_authority.read_drain_v1(uuid),atlas_proof_authority.settle_drain_v1(jsonb) TO atlas_proof_settler;
-GRANT EXECUTE ON FUNCTION atlas_proof_authority.begin_mutation_v1(jsonb),atlas_proof_authority.apply_mutation_v1(uuid,text),
+GRANT EXECUTE ON FUNCTION atlas_proof_authority.authorize_mutation_v1(jsonb),atlas_proof_authority.begin_mutation_v1(jsonb),atlas_proof_authority.apply_mutation_v1(uuid,text),
   atlas_proof_authority.read_drain_v1(uuid) TO atlas_proof_revoker;
 
 -- Minimum rights for actual canonical READ + FOR SHARE. UPDATE of one column
 -- is needed by row locking; the NOLOGIN owner exposes no canonical UPDATE body.
--- Only the exact frozen logout apply body receives canonical write rights.
+-- Only the fixed frozen logout/operator apply bodies receive canonical writes.
 GRANT USAGE ON SCHEMA atlas_staff,atlas_customer TO atlas_proof_authority_owner;
 GRANT SELECT ON atlas_staff."StaffControl",atlas_staff."StaffIdentity",atlas_staff."StaffSession",atlas_staff."StaffBrowser",
   atlas_customer."CustomerControl",atlas_customer."CustomerAccount",atlas_customer."CustomerSession",atlas_customer."CustomerBrowser",atlas_customer."CustomerServiceControl" TO atlas_proof_authority_owner;
@@ -51,6 +51,13 @@ GRANT UPDATE("accessVersion") ON atlas_staff."StaffIdentity",atlas_customer."Cus
 GRANT UPDATE("expiresAt") ON atlas_staff."StaffSession",atlas_staff."StaffBrowser",atlas_customer."CustomerSession",atlas_customer."CustomerBrowser" TO atlas_proof_authority_owner;
 GRANT UPDATE("updatedAt") ON atlas_customer."CustomerServiceControl" TO atlas_proof_authority_owner;
 GRANT UPDATE("revokedAt") ON atlas_staff."StaffSession",atlas_customer."CustomerSession" TO atlas_proof_authority_owner;
+GRANT SELECT ON atlas_staff."StaffOperationsGrant",atlas_staff."StaffAudit" TO atlas_proof_authority_owner;
+GRANT UPDATE("expiresAt") ON atlas_staff."StaffOperationsGrant" TO atlas_proof_authority_owner;
+GRANT UPDATE(enabled,mode,origin,"deploymentId","releaseSha","configHash",revision,"gradingPolicyHash","updatedAt") ON atlas_staff."StaffControl" TO atlas_proof_authority_owner;
+GRANT UPDATE(role,"accessVersion","revokedAt","certificationUntil","trustedLearningUntil") ON atlas_staff."StaffIdentity" TO atlas_proof_authority_owner;
+GRANT UPDATE(enabled,mode,origin,"deploymentId","releaseSha","configHash",revision,"updatedAt") ON atlas_customer."CustomerControl" TO atlas_proof_authority_owner;
+GRANT UPDATE("accessVersion","revokedAt") ON atlas_customer."CustomerAccount" TO atlas_proof_authority_owner;
+GRANT UPDATE(enabled,"identificationEnabled","updatedAt") ON atlas_customer."CustomerServiceControl" TO atlas_proof_authority_owner;
 GRANT INSERT ON atlas_staff."StaffAudit" TO atlas_proof_authority_owner;
 -- No serving table grant, owner membership, PUBLIC function exception, or
 -- generic mutation callback. Any extra effective right fails the adapter audit.

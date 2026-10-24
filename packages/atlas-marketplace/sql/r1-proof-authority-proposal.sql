@@ -66,7 +66,7 @@ CREATE TABLE atlas_proof_authority.mutation (
   barrier_revision bigint NOT NULL CHECK(barrier_revision BETWEEN 1 AND 9007199254740991),
   state text NOT NULL CHECK(state IN ('DRAINING','SETTLED','APPLIED','UNKNOWN_HELD')),
   created_at timestamptz NOT NULL, applied_at timestamptz,
-  request_hash text NOT NULL, publisher_session_id uuid NOT NULL, barrier_hash text
+  request_hash text NOT NULL, publisher_session_id uuid NOT NULL, barrier_hash text, operator_audit_id uuid, subject_key text CHECK(length(subject_key) BETWEEN 1 AND 128)
 );
 
 -- Empty until the canonical installer binds the accepted policy, exact source
@@ -127,8 +127,14 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog AS $$
 $$;
 CREATE FUNCTION atlas_proof_authority.record_guard_v1() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+DECLARE permitted uuid;
 BEGIN
  IF TG_OP='DELETE' OR TG_OP='TRUNCATE' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_RETAINED_HISTORY'; END IF;
+ IF TG_TABLE_NAME='reviewer_grant' AND TG_OP='UPDATE' THEN
+  DELETE FROM atlas_proof_authority.write_permit p WHERE p.transaction_id=pg_current_xact_id() AND p.backend_id=pg_backend_pid()
+   AND p.relation_id=TG_RELID AND p.before_row=to_jsonb(OLD) AND p.after_row=to_jsonb(NEW) RETURNING mutation_id INTO permitted;
+  IF permitted IS NOT NULL AND to_jsonb(OLD)-'revoked_at'=to_jsonb(NEW)-'revoked_at' AND OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL THEN RETURN NEW; END IF;
+ END IF;
  IF TG_TABLE_NAME IN ('installation','reviewer_grant') AND TG_OP='UPDATE' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_INSTALLATION_IMMUTABLE'; END IF;
  IF TG_OP='UPDATE' AND TG_TABLE_NAME='fence' THEN
    IF (to_jsonb(OLD)-ARRAY['state','drain_id','revoked_at']) IS DISTINCT FROM (to_jsonb(NEW)-ARRAY['state','drain_id','revoked_at'])
@@ -397,7 +403,7 @@ BEGIN
  IF NOT ctl.enabled OR ctl.integration<>'INSTALLED' THEN RETURN atlas_proof_authority.observation_v1(false); END IF;
  SELECT * INTO STRICT ins FROM atlas_proof_authority.installation WHERE installation_id=ctl.active_installation_id FOR SHARE;
  IF (SELECT count(*) FROM atlas_proof_authority.mutation)>=ctl.max_mutations THEN RAISE EXCEPTION 'PROOF_AUTHORITY_CAPACITY_HOLD'; END IF;
- t:=clock_timestamp();kind:=CASE WHEN d->>'source'='STAFF' THEN 'STAFF_SESSION' ELSE 'CUSTOMER_SESSION' END;
+ t:=date_trunc('milliseconds',clock_timestamp());kind:=CASE WHEN d->>'source'='STAFF' THEN 'STAFF_SESSION' ELSE 'CUSTOMER_SESSION' END;
  IF d->>'source'='STAFF' THEN
   SELECT to_jsonb(s) INTO STRICT before_row FROM atlas_staff."StaffSession" s WHERE "tokenHash"=d->>'sessionHash' FOR UPDATE;
   after_row:=jsonb_set(before_row,'{revokedAt}',to_jsonb(t AT TIME ZONE 'UTC'));
@@ -434,46 +440,194 @@ BEGIN
  END IF;
  RETURN atlas_proof_authority.read_drain_v1(m.mutation_id)||jsonb_build_object('requestHash',atlas_proof_authority.hash_v1(d));
 END $$;
-CREATE FUNCTION atlas_proof_authority.apply_mutation_v1(id uuid,h text) RETURNS jsonb
+CREATE FUNCTION atlas_proof_authority.apply_mutation_v1(requested_id uuid,h text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
-DECLARE m atlas_proof_authority.mutation; actual jsonb; relation oid;
+DECLARE m atlas_proof_authority.mutation; actual jsonb; relation oid; a atlas_staff."StaffAudit"; details jsonb; audit_details jsonb; subject text;
 BEGIN
  PERFORM pg_advisory_xact_lock(hashtextextended('atlas-staff-access-v1',0));
  PERFORM pg_advisory_xact_lock(hashtextextended('atlas-customer-access-v1',0));
  PERFORM pg_advisory_xact_lock(hashtextextended('atlas-proof-authority-v1',0));
  PERFORM 1 FROM atlas_proof_authority.control c WHERE c.id='active' FOR UPDATE;
- SELECT * INTO m FROM atlas_proof_authority.mutation WHERE mutation_id=id FOR UPDATE;
+ SELECT * INTO m FROM atlas_proof_authority.mutation WHERE mutation_id=requested_id FOR UPDATE;
  IF m.mutation_id IS NULL THEN RETURN atlas_proof_authority.observation_v1(true); END IF;
+ subject:=coalesce(m.subject_key,m.subject_hash);
  IF m.mutation_hash IS DISTINCT FROM h THEN RAISE EXCEPTION 'PROOF_AUTHORITY_ID_CONFLICT'; END IF;
- IF m.state='APPLIED' THEN RETURN atlas_proof_authority.read_drain_v1(id); END IF;
+ IF m.state='APPLIED' THEN RETURN atlas_proof_authority.read_drain_v1(requested_id); END IF;
  IF m.state<>'SETTLED' OR m.barrier_hash IS NULL OR EXISTS(SELECT 1 FROM atlas_proof_authority.stage WHERE fence_ids&&m.fence_ids AND state IN ('OUTSTANDING','UNKNOWN_HELD')) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_DRAIN_REQUIRED'; END IF;
  IF m.kind='STAFF_LOGOUT' THEN
-  SELECT to_jsonb(s) INTO actual FROM atlas_staff."StaffSession" s WHERE "tokenHash"=m.subject_hash FOR UPDATE;
+  SELECT to_jsonb(s) INTO actual FROM atlas_staff."StaffSession" s WHERE "tokenHash"=subject FOR UPDATE;
   relation:='atlas_staff."StaffSession"'::regclass;
  ELSIF m.kind='CUSTOMER_LOGOUT' THEN
-  SELECT to_jsonb(s) INTO actual FROM atlas_customer."CustomerSession" s WHERE "tokenHash"=m.subject_hash FOR UPDATE;
+  SELECT to_jsonb(s) INTO actual FROM atlas_customer."CustomerSession" s WHERE "tokenHash"=subject FOR UPDATE;
   relation:='atlas_customer."CustomerSession"'::regclass;
- ELSE RAISE EXCEPTION 'PROOF_AUTHORITY_OPERATOR_BOUNDARY_REQUIRED'; END IF;
- IF actual IS DISTINCT FROM m.before_projection THEN RAISE EXCEPTION 'PROOF_AUTHORITY_MUTATION_PRECONDITION'; END IF;
- INSERT INTO atlas_proof_authority.write_permit VALUES(pg_current_xact_id(),pg_backend_pid(),relation,m.before_projection,m.after_projection,id);
- IF m.kind='STAFF_LOGOUT' THEN
-  UPDATE atlas_staff."StaffSession" SET "revokedAt"=(m.after_projection->>'revokedAt')::timestamp WHERE "tokenHash"=m.subject_hash;
-  INSERT INTO atlas_staff."StaffAudit"(id,event,"subjectId","actorId",details,"createdAt") VALUES(gen_random_uuid(),'STAFF_SESSION_REVOKED',m.before_projection->>'challengeId',(m.before_projection->>'identityId')::uuid,'{}',clock_timestamp() AT TIME ZONE 'UTC');
  ELSE
-  UPDATE atlas_customer."CustomerSession" SET "revokedAt"=(m.after_projection->>'revokedAt')::timestamptz WHERE "tokenHash"=m.subject_hash;
+  SELECT * INTO STRICT a FROM atlas_staff."StaffAudit" WHERE id=m.operator_audit_id;
+  details:=a.details::jsonb;PERFORM atlas_proof_authority.operator_access_v1(details);
+  CASE m.kind
+  WHEN 'STAFF_IDENTITY_ACCESS' THEN SELECT to_jsonb(r) INTO actual FROM atlas_staff."StaffIdentity" r WHERE r.id=subject::uuid FOR UPDATE;relation:='atlas_staff."StaffIdentity"'::regclass;
+  WHEN 'CUSTOMER_ACCOUNT_ACCESS' THEN SELECT to_jsonb(r) INTO actual FROM atlas_customer."CustomerAccount" r WHERE r.id=subject::uuid FOR UPDATE;relation:='atlas_customer."CustomerAccount"'::regclass;
+  WHEN 'STAFF_CONTROL_CHANGE' THEN SELECT to_jsonb(r) INTO actual FROM atlas_staff."StaffControl" r WHERE r.id='active' FOR UPDATE;relation:='atlas_staff."StaffControl"'::regclass;
+  WHEN 'CUSTOMER_CONTROL_CHANGE' THEN SELECT to_jsonb(r) INTO actual FROM atlas_customer."CustomerControl" r WHERE r.id='active' FOR UPDATE;relation:='atlas_customer."CustomerControl"'::regclass;
+  WHEN 'CUSTOMER_SERVICE_CONTROL_CHANGE' THEN SELECT to_jsonb(r) INTO actual FROM atlas_customer."CustomerServiceControl" r WHERE r.id='active' FOR UPDATE;relation:='atlas_customer."CustomerServiceControl"'::regclass;
+  WHEN 'PROOF_CONTROL_CHANGE','PUBLISHER_SESSION_REVOKE' THEN SELECT to_jsonb(r) INTO actual FROM atlas_proof_authority.control r WHERE r.id='active' FOR UPDATE;relation:='atlas_proof_authority.control'::regclass;
+  WHEN 'PROOF_REVIEWER_REVOKE' THEN SELECT to_jsonb(r) INTO actual FROM atlas_proof_authority.reviewer_grant r WHERE identity_id=subject::uuid AND installation_id=(m.before_projection->>'installation_id')::uuid FOR UPDATE;relation:='atlas_proof_authority.reviewer_grant'::regclass;
+  ELSE RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END CASE;
  END IF;
- IF EXISTS(SELECT 1 FROM atlas_proof_authority.write_permit WHERE transaction_id=pg_current_xact_id() AND backend_id=pg_backend_pid() AND mutation_id=id) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_TRIGGER_REQUIRED'; END IF;
- UPDATE atlas_proof_authority.fence SET state='REVOKED',revoked_at=clock_timestamp() WHERE fence_id=ANY(m.fence_ids) AND state='DRAINING' AND drain_id=id;
- UPDATE atlas_proof_authority.mutation SET state='APPLIED',applied_at=clock_timestamp() WHERE mutation_id=id;
- RETURN atlas_proof_authority.read_drain_v1(id);
+ IF actual IS DISTINCT FROM m.before_projection THEN RAISE EXCEPTION 'PROOF_AUTHORITY_MUTATION_PRECONDITION'; END IF;
+ INSERT INTO atlas_proof_authority.write_permit VALUES(pg_current_xact_id(),pg_backend_pid(),relation,m.before_projection,m.after_projection,requested_id);
+ IF m.kind='STAFF_LOGOUT' THEN
+  UPDATE atlas_staff."StaffSession" SET "revokedAt"=(m.after_projection->>'revokedAt')::timestamp WHERE "tokenHash"=subject;
+  INSERT INTO atlas_staff."StaffAudit"(id,event,"subjectId","actorId",details,"createdAt") VALUES(gen_random_uuid(),'STAFF_SESSION_REVOKED',m.before_projection->>'challengeId',(m.before_projection->>'identityId')::uuid,'{}',clock_timestamp() AT TIME ZONE 'UTC');
+ ELSIF m.kind='CUSTOMER_LOGOUT' THEN
+  UPDATE atlas_customer."CustomerSession" SET "revokedAt"=(m.after_projection->>'revokedAt')::timestamptz WHERE "tokenHash"=subject;
+ ELSE
+  -- Explicitly recheck and insert the existing human audit before applying the
+  -- frozen row. This does not rely on operations_change_guard's session_user
+  -- provisioning exception. STAFF_ROSTER_UPDATED runs its original INSERT guard.
+  audit_details:=details||(details->'operator')||jsonb_build_object('before',m.before_projection,'after',m.after_projection||jsonb_build_object('revoked',m.after_projection->'revokedAt'<>'null'::jsonb),
+   'receipt',jsonb_build_object('identityId',subject,'accessVersion',m.after_projection->'accessVersion'),'proofMutationId',m.mutation_id,'proofMutationHash',m.mutation_hash);
+  INSERT INTO atlas_staff."StaffAudit"(id,event,"subjectId","actorId",details,"createdAt") VALUES(gen_random_uuid(),
+   CASE WHEN m.kind='STAFF_IDENTITY_ACCESS' THEN 'STAFF_ROSTER_UPDATED' ELSE 'PROOF_AUTHORITY_CONTROL_APPLIED' END,subject,a."actorId",audit_details::text,clock_timestamp() AT TIME ZONE 'UTC');
+  CASE m.kind
+  WHEN 'STAFF_IDENTITY_ACCESS' THEN UPDATE atlas_staff."StaffIdentity" SET role=m.after_projection->>'role',"accessVersion"=(m.after_projection->>'accessVersion')::integer,"revokedAt"=(m.after_projection->>'revokedAt')::timestamp,"certificationUntil"=(m.after_projection->>'certificationUntil')::timestamp,"trustedLearningUntil"=(m.after_projection->>'trustedLearningUntil')::timestamp WHERE id=subject::uuid;
+  WHEN 'CUSTOMER_ACCOUNT_ACCESS' THEN UPDATE atlas_customer."CustomerAccount" SET "accessVersion"=(m.after_projection->>'accessVersion')::integer,"revokedAt"=(m.after_projection->>'revokedAt')::timestamptz WHERE id=subject::uuid;
+  WHEN 'STAFF_CONTROL_CHANGE' THEN UPDATE atlas_staff."StaffControl" SET enabled=(m.after_projection->>'enabled')::boolean,mode=m.after_projection->>'mode',origin=m.after_projection->>'origin',"deploymentId"=m.after_projection->>'deploymentId',"releaseSha"=m.after_projection->>'releaseSha',"configHash"=m.after_projection->>'configHash',"gradingPolicyHash"=m.after_projection->>'gradingPolicyHash',revision=(m.after_projection->>'revision')::integer,"updatedAt"=(m.after_projection->>'updatedAt')::timestamp WHERE id='active';
+  WHEN 'CUSTOMER_CONTROL_CHANGE' THEN UPDATE atlas_customer."CustomerControl" SET enabled=(m.after_projection->>'enabled')::boolean,mode=m.after_projection->>'mode',origin=m.after_projection->>'origin',"deploymentId"=m.after_projection->>'deploymentId',"releaseSha"=m.after_projection->>'releaseSha',"configHash"=m.after_projection->>'configHash',revision=(m.after_projection->>'revision')::integer,"updatedAt"=(m.after_projection->>'updatedAt')::timestamptz WHERE id='active';
+  WHEN 'CUSTOMER_SERVICE_CONTROL_CHANGE' THEN UPDATE atlas_customer."CustomerServiceControl" SET enabled=(m.after_projection->>'enabled')::boolean,"identificationEnabled"=(m.after_projection->>'identificationEnabled')::boolean,"updatedAt"=(m.after_projection->>'updatedAt')::timestamptz WHERE id='active';
+  WHEN 'PROOF_CONTROL_CHANGE','PUBLISHER_SESSION_REVOKE' THEN UPDATE atlas_proof_authority.control SET enabled=(m.after_projection->>'enabled')::boolean,active_installation_id=(m.after_projection->>'active_installation_id')::uuid,revision=(m.after_projection->>'revision')::bigint WHERE id='active';
+  WHEN 'PROOF_REVIEWER_REVOKE' THEN UPDATE atlas_proof_authority.reviewer_grant SET revoked_at=(m.after_projection->>'revoked_at')::timestamptz WHERE identity_id=subject::uuid AND installation_id=(m.before_projection->>'installation_id')::uuid;
+  END CASE;
+ END IF;
+ IF EXISTS(SELECT 1 FROM atlas_proof_authority.write_permit WHERE transaction_id=pg_current_xact_id() AND backend_id=pg_backend_pid() AND mutation_id=requested_id) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_TRIGGER_REQUIRED'; END IF;
+ UPDATE atlas_proof_authority.fence SET state='REVOKED',revoked_at=clock_timestamp() WHERE fence_id=ANY(m.fence_ids) AND state='DRAINING' AND drain_id=requested_id;
+ UPDATE atlas_proof_authority.mutation SET state='APPLIED',applied_at=clock_timestamp() WHERE mutation_id=requested_id;
+ RETURN atlas_proof_authority.read_drain_v1(requested_id);
 END $$;
--- Human access/control changes keep their existing operations-grant/audit
--- boundary. A digest supplied to this role cannot impersonate that boundary.
+-- Operator records originate in a current canonical session and one installed
+-- StaffOperationsGrant. The reference is only an exact audit join, never a grant.
+CREATE FUNCTION atlas_proof_authority.operator_access_v1(d jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE c atlas_staff."StaffControl"; i atlas_staff."StaffIdentity"; s atlas_staff."StaffSession";
+ g atlas_staff."StaffOperationsGrant"; n integer; t timestamp; result jsonb;
+BEGIN
+ PERFORM atlas_proof_authority.lock_canonical_rows_v1(d);
+ IF d->>'source'<>'STAFF' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_OPERATOR_REQUIRED'; END IF;
+ SELECT * INTO STRICT c FROM atlas_staff."StaffControl" WHERE id='active' FOR SHARE;
+ SELECT * INTO STRICT s FROM atlas_staff."StaffSession" WHERE "tokenHash"=d->>'sessionHash' FOR SHARE;
+ SELECT * INTO STRICT i FROM atlas_staff."StaffIdentity" WHERE id=s."identityId" FOR SHARE;
+ t:=clock_timestamp() AT TIME ZONE 'UTC';
+ PERFORM 1 FROM atlas_staff."StaffOperationsGrant" WHERE "identityId"=i.id ORDER BY id FOR SHARE;
+ SELECT count(*) INTO n FROM atlas_staff."StaffOperationsGrant" x WHERE x."identityId"=i.id AND x."accessVersion"=i."accessVersion"
+  AND x."controlRevision"=c.revision AND x."revokedAt" IS NULL AND x."createdAt"<=t AND x."expiresAt">t
+  AND (x.mode,x.origin,x."deploymentId",x."releaseSha",x."configHash")=(c.mode,c.origin,c."deploymentId",c."releaseSha",c."configHash");
+ IF n<>1 OR s."createdAt"<t-interval '5 minutes' OR (d->>'originalRequestDeadlineAt')::bigint<=floor(extract(epoch FROM clock_timestamp())*1000)
+ THEN RAISE EXCEPTION 'PROOF_AUTHORITY_FRESH_OPERATOR_REQUIRED'; END IF;
+ SELECT * INTO STRICT g FROM atlas_staff."StaffOperationsGrant" x WHERE x."identityId"=i.id AND x."accessVersion"=i."accessVersion"
+  AND x."controlRevision"=c.revision AND x."revokedAt" IS NULL AND x."createdAt"<=t AND x."expiresAt">t
+  AND (x.mode,x.origin,x."deploymentId",x."releaseSha",x."configHash")=(c.mode,c.origin,c."deploymentId",c."releaseSha",c."configHash");
+ result:=jsonb_build_object('actorId',i.id,'operationsGrantId',g.id,'accessVersion',i."accessVersion",'controlRevision',c.revision,
+  'authorizationEvidenceHash',g."authorizationEvidenceHash");
+ IF d ? 'operator' AND d->'operator' IS DISTINCT FROM result THEN RAISE EXCEPTION 'PROOF_AUTHORITY_OPERATOR_CHANGED'; END IF;
+ RETURN result;
+END $$;
+CREATE FUNCTION atlas_proof_authority.authorize_mutation_v1(d jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE authority jsonb; details jsonb; prior atlas_staff."StaffAudit"; t bigint;
+BEGIN
+ PERFORM atlas_proof_authority.exact_object_v1(d,ARRAY['schema','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','originalRequestDeadlineAt','mutation','reason']);
+ PERFORM atlas_proof_authority.exact_object_v1(d->'mutation',ARRAY['schema','mutationId','kind','subjectId','expectedBeforeHash','change']);
+ t:=floor(extract(epoch FROM clock_timestamp())*1000);
+ IF d->>'schema'<>'atlas-proof-operator-authorization-v1' OR d->>'source'<>'STAFF' OR d->'mutation'->>'schema'<>'atlas-proof-mutation-begin-v1'
+  OR jsonb_typeof(d->'reason') IS DISTINCT FROM 'string' OR length(btrim(d->>'reason')) NOT BETWEEN 1 AND 500
+  OR (d->>'originalRequestDeadlineAt')::bigint NOT BETWEEN t+1 AND t+60000
+ THEN RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END IF;
+ authority:=atlas_proof_authority.operator_access_v1(d);
+ details:=d||jsonb_build_object('operator',authority,'version','atlas-human-operations-v1','inputHash',atlas_proof_authority.hash_v1(d->'mutation'));
+ SELECT * INTO prior FROM atlas_staff."StaffAudit" WHERE id=(d->>'requestId')::uuid;
+ IF FOUND THEN
+  IF prior.event<>'PROOF_AUTHORITY_MUTATION_REQUESTED' OR prior.details::jsonb IS DISTINCT FROM details THEN RAISE EXCEPTION 'PROOF_AUTHORITY_ID_CONFLICT'; END IF;
+ ELSE
+  INSERT INTO atlas_staff."StaffAudit"(id,event,"subjectId","actorId",details,"createdAt")
+   VALUES((d->>'requestId')::uuid,'PROOF_AUTHORITY_MUTATION_REQUESTED',d->'mutation'->>'mutationId',(authority->>'actorId')::uuid,details::text,clock_timestamp() AT TIME ZONE 'UTC');
+ END IF;
+ RETURN jsonb_build_object('schema','atlas-proof-operator-report-v1','classification','UNQUALIFIED','authority',false,
+  'requestHash',atlas_proof_authority.hash_v1(d),'mutationId',d->'mutation'->>'mutationId','operatorAuthorityRef',atlas_proof_authority.hash_v1(details));
+END $$;
 CREATE FUNCTION atlas_proof_authority.begin_mutation_v1(d jsonb) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+<<proof_mutation>>
+DECLARE ctl atlas_proof_authority.control; ins atlas_proof_authority.installation; m atlas_proof_authority.mutation;
+ audit atlas_staff."StaffAudit"; details jsonb; before_row jsonb; after_row jsonb; x jsonb:=d->'change';
+ kind text:=d->>'kind'; source_kind text; subject text:=d->>'subjectId'; ids uuid[]; t timestamptz; h text; request_hash text;
 BEGIN
  PERFORM atlas_proof_authority.exact_object_v1(d,ARRAY['schema','mutationId','kind','subjectId','expectedBeforeHash','change','operatorAuthorityRef']);
- RAISE EXCEPTION 'PROOF_AUTHORITY_OPERATOR_BOUNDARY_REQUIRED';
+ request_hash:=atlas_proof_authority.hash_v1(d);
+ SELECT * INTO m FROM atlas_proof_authority.mutation WHERE mutation_id=(d->>'mutationId')::uuid;
+ IF FOUND THEN
+  IF m.request_hash<>request_hash THEN RAISE EXCEPTION 'PROOF_AUTHORITY_ID_CONFLICT'; END IF;
+  RETURN atlas_proof_authority.read_drain_v1(m.mutation_id);
+ END IF;
+ SELECT * INTO audit FROM atlas_staff."StaffAudit" a WHERE a.event='PROOF_AUTHORITY_MUTATION_REQUESTED' AND a."subjectId"=d->>'mutationId'
+  AND atlas_proof_authority.hash_v1(a.details::jsonb)=d->>'operatorAuthorityRef';
+ IF audit.id IS NULL THEN RAISE EXCEPTION 'PROOF_AUTHORITY_OPERATOR_REQUIRED'; END IF;
+ details:=audit.details::jsonb;
+ IF details->'mutation' IS DISTINCT FROM d-'operatorAuthorityRef' OR (details->'operator'->>'actorId')::uuid IS DISTINCT FROM audit."actorId" THEN RAISE EXCEPTION 'PROOF_AUTHORITY_OPERATOR_REQUIRED'; END IF;
+ PERFORM atlas_proof_authority.operator_access_v1(details);
+ SELECT * INTO STRICT ctl FROM atlas_proof_authority.control WHERE id='active' FOR UPDATE;
+ IF NOT ctl.enabled OR ctl.integration<>'INSTALLED' THEN RETURN atlas_proof_authority.observation_v1(false); END IF;
+ SELECT * INTO STRICT ins FROM atlas_proof_authority.installation WHERE installation_id=ctl.active_installation_id FOR SHARE;
+ IF (SELECT count(*) FROM atlas_proof_authority.mutation)>=ctl.max_mutations THEN RAISE EXCEPTION 'PROOF_AUTHORITY_CAPACITY_HOLD'; END IF;
+ t:=date_trunc('milliseconds',clock_timestamp());
+ CASE kind
+ WHEN 'STAFF_IDENTITY_ACCESS' THEN
+  PERFORM atlas_proof_authority.exact_object_v1(x,ARRAY['role','revoked','certificationUntil','trustedLearningUntil']);
+  IF x->>'role' NOT IN ('REVIEWER','OBSERVER') OR jsonb_typeof(x->'revoked') IS DISTINCT FROM 'boolean' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END IF;
+  SELECT to_jsonb(r) INTO before_row FROM atlas_staff."StaffIdentity" r WHERE id=subject::uuid FOR UPDATE;
+  after_row:=before_row||jsonb_build_object('role',x->'role','accessVersion',(before_row->>'accessVersion')::integer+1,'revokedAt',CASE WHEN (x->>'revoked')::boolean THEN coalesce(nullif(before_row->'revokedAt','null'),to_jsonb(t AT TIME ZONE 'UTC')) ELSE 'null'::jsonb END,
+   'certificationUntil',CASE WHEN x->'certificationUntil'='null' THEN 'null'::jsonb ELSE to_jsonb(to_timestamp((x->>'certificationUntil')::numeric/1000) AT TIME ZONE 'UTC') END,
+   'trustedLearningUntil',CASE WHEN x->'trustedLearningUntil'='null' THEN 'null'::jsonb ELSE to_jsonb(to_timestamp((x->>'trustedLearningUntil')::numeric/1000) AT TIME ZONE 'UTC') END);source_kind:='STAFF_IDENTITY';
+ WHEN 'CUSTOMER_ACCOUNT_ACCESS' THEN
+  PERFORM atlas_proof_authority.exact_object_v1(x,ARRAY['revoked','phoneHash']);
+  SELECT to_jsonb(r) INTO before_row FROM atlas_customer."CustomerAccount" r WHERE id=subject::uuid FOR UPDATE;
+  IF jsonb_typeof(x->'revoked') IS DISTINCT FROM 'boolean' OR x->'phoneHash' IS DISTINCT FROM before_row->'phoneHash' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_SOURCE_IMMUTABLE'; END IF;
+  after_row:=before_row||jsonb_build_object('accessVersion',(before_row->>'accessVersion')::integer+1,'revokedAt',CASE WHEN (x->>'revoked')::boolean THEN coalesce(nullif(before_row->'revokedAt','null'),to_jsonb(t)) ELSE 'null'::jsonb END);source_kind:='CUSTOMER_ACCOUNT';
+ WHEN 'STAFF_CONTROL_CHANGE','CUSTOMER_CONTROL_CHANGE' THEN
+  PERFORM atlas_proof_authority.exact_object_v1(x,ARRAY['enabled','mode','origin','deploymentId','releaseSha','configHash']||CASE WHEN kind='STAFF_CONTROL_CHANGE' THEN ARRAY['gradingPolicyHash'] ELSE '{}'::text[] END);
+  IF subject<>'active' OR jsonb_typeof(x->'enabled') IS DISTINCT FROM 'boolean' OR x->>'mode' NOT IN ('PRODUCTION','LOCAL_FIXTURE') OR x->>'origin' !~ '^https?://' OR length(x->>'deploymentId') NOT BETWEEN 1 AND 500 OR x->>'releaseSha' !~ '^[a-f0-9]{40}$' OR x->>'configHash' !~ '^[a-f0-9]{64}$' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END IF;
+  IF kind='STAFF_CONTROL_CHANGE' THEN SELECT to_jsonb(r) INTO before_row FROM atlas_staff."StaffControl" r WHERE id=subject FOR UPDATE;source_kind:='STAFF_CONTROL';
+  ELSE SELECT to_jsonb(r) INTO before_row FROM atlas_customer."CustomerControl" r WHERE id=subject FOR UPDATE;source_kind:='CUSTOMER_CONTROL'; END IF;
+  after_row:=before_row||x||jsonb_build_object('revision',(before_row->>'revision')::integer+1,'updatedAt',CASE WHEN kind='STAFF_CONTROL_CHANGE' THEN to_jsonb(t AT TIME ZONE 'UTC') ELSE to_jsonb(t) END);
+ WHEN 'CUSTOMER_SERVICE_CONTROL_CHANGE' THEN
+  PERFORM atlas_proof_authority.exact_object_v1(x,ARRAY['enabled','bindingHash','identificationEnabled']);
+  SELECT to_jsonb(r) INTO before_row FROM atlas_customer."CustomerServiceControl" r WHERE id=subject AND subject='active' FOR UPDATE;
+  IF jsonb_typeof(x->'enabled') IS DISTINCT FROM 'boolean' OR jsonb_typeof(x->'identificationEnabled') IS DISTINCT FROM 'boolean' OR x->>'bindingHash' IS DISTINCT FROM atlas_proof_authority.hash_v1(before_row->'binding') THEN RAISE EXCEPTION 'PROOF_AUTHORITY_SOURCE_IMMUTABLE'; END IF;
+  after_row:=before_row||(x-'bindingHash')||jsonb_build_object('updatedAt',t);source_kind:='CUSTOMER_SERVICE_CONTROL';
+ WHEN 'PROOF_CONTROL_CHANGE' THEN
+  PERFORM atlas_proof_authority.exact_object_v1(x,ARRAY['enabled','replacementInstallationId']);
+  IF subject<>'active' OR jsonb_typeof(x->'enabled') IS DISTINCT FROM 'boolean' OR NOT EXISTS(SELECT 1 FROM atlas_proof_authority.installation WHERE installation_id=(x->>'replacementInstallationId')::uuid AND expires_at>t) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_INSTALLATION_REQUIRED'; END IF;
+  before_row:=to_jsonb(ctl);after_row:=before_row||jsonb_build_object('enabled',x->'enabled','active_installation_id',x->'replacementInstallationId','revision',ctl.revision+1);source_kind:='PROOF_CONTROL';
+ WHEN 'PROOF_REVIEWER_REVOKE' THEN
+  PERFORM atlas_proof_authority.exact_object_v1(x,ARRAY['revoke']);IF x->'revoke'<>'true' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END IF;
+  SELECT to_jsonb(r) INTO before_row FROM atlas_proof_authority.reviewer_grant r WHERE identity_id=subject::uuid AND installation_id=ins.installation_id FOR UPDATE;
+  IF before_row->'revoked_at'<>'null' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_SOURCE_IMMUTABLE'; END IF;
+  after_row:=before_row||jsonb_build_object('revoked_at',t);source_kind:='PROOF_REVIEWER_GRANT';
+ WHEN 'PUBLISHER_SESSION_REVOKE' THEN
+  PERFORM atlas_proof_authority.exact_object_v1(x,ARRAY['revoke']);IF x->'revoke'<>'true' OR subject<>ins.publisher_session_id::text THEN RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END IF;
+  before_row:=to_jsonb(ctl);after_row:=before_row||jsonb_build_object('enabled',false,'revision',ctl.revision+1);source_kind:='PUBLISHER_SESSION';
+ ELSE RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END CASE;
+ IF before_row IS NULL OR atlas_proof_authority.hash_v1(before_row) IS DISTINCT FROM d->>'expectedBeforeHash' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_MUTATION_PRECONDITION'; END IF;
+ h:=atlas_proof_authority.hash_v1(jsonb_build_object('kind',source_kind,'key',subject));
+ PERFORM 1 FROM atlas_proof_authority.fence f WHERE f.source_kind=proof_mutation.source_kind AND f.source_key_hash=h ORDER BY fence_id FOR UPDATE;
+ SELECT coalesce(array_agg(fence_id ORDER BY fence_id),'{}') INTO ids FROM atlas_proof_authority.fence f WHERE f.source_kind=proof_mutation.source_kind AND f.source_key_hash=h AND state='ACTIVE';
+ IF cardinality(ids)>12 OR EXISTS(SELECT 1 FROM atlas_proof_authority.fence f WHERE f.source_kind=proof_mutation.source_kind AND f.source_key_hash=h AND state IN ('DRAINING','UNKNOWN_HELD')) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_DRAIN_REQUIRED'; END IF;
+ -- Administrative proof-control changes freeze its current revision. Other
+ -- begins allocate the barrier revision in that row without altering authority.
+ IF kind NOT IN ('PROOF_CONTROL_CHANGE','PUBLISHER_SESSION_REVOKE') THEN UPDATE atlas_proof_authority.control SET revision=revision+1 WHERE id='active' RETURNING * INTO ctl; END IF;
+ h:=atlas_proof_authority.hash_v1(jsonb_build_object('requestHash',request_hash,'before',before_row,'after',after_row,'barrierRevision',ctl.revision+CASE WHEN kind IN ('PROOF_CONTROL_CHANGE','PUBLISHER_SESSION_REVOKE') THEN 1 ELSE 0 END));
+ INSERT INTO atlas_proof_authority.mutation(mutation_id,mutation_hash,kind,subject_hash,before_projection,after_projection,fence_ids,barrier_revision,state,created_at,request_hash,publisher_session_id,operator_audit_id,subject_key)
+ VALUES((d->>'mutationId')::uuid,h,kind,atlas_proof_authority.hash_v1(to_jsonb(subject)),before_row,after_row,ids,ctl.revision+CASE WHEN kind IN ('PROOF_CONTROL_CHANGE','PUBLISHER_SESSION_REVOKE') THEN 1 ELSE 0 END,'DRAINING',t,request_hash,ins.publisher_session_id,audit.id,subject);
+ UPDATE atlas_proof_authority.fence SET state='DRAINING',drain_id=(d->>'mutationId')::uuid WHERE fence_id=ANY(ids);
+ RETURN atlas_proof_authority.read_drain_v1((d->>'mutationId')::uuid);
 END $$;
 CREATE FUNCTION atlas_proof_authority.reject_unjoined_authority_write() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$

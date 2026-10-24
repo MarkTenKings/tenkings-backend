@@ -1,5 +1,6 @@
 import {assertMarketplaceRequestAuthority,refreshMarketplaceRequestAuthority,currentMarketplaceRequestAuthority} from './request-authority.mjs';
 import { clone, hash, requireValue, cents } from './contract.mjs';
+import {assertR1ProofAuthorityProducer} from './proof-authority-r1.mjs';
 import {assertMarketplaceProofIntake,PROOF_EVIDENCE_KINDS} from './proof-intake.mjs';
 import {assertShippingLifecycle} from './shipping-lifecycle.mjs';
 import { createUnavailableEligibilityAdapter } from './eligibility.mjs';
@@ -54,7 +55,7 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     }
   }
   function authorize(actor, roles) { gate();assertMarketplaceRequestAuthority(actor); authorityId(actor?.id,'actor',context); requireValue(roles.includes(actor?.role), 'FORBIDDEN'); }
-  function proofReady(){gate();return assertMarketplaceProofIntake(proofIntake,{store:rawStore,context});}
+  function proofReady(){gate();if(proofAuthority)assertR1ProofAuthorityProducer(proofAuthority);return assertMarketplaceProofIntake(proofIntake,{store:rawStore,context});}
   function shippingReady(){gate();return assertShippingLifecycle(shippingLifecycle,{store:rawStore,environment});}
   function physicalRequirements(state,orderId,expectedBinding) {
     const saved=state.marketplacePhysicalRequirements?.[orderId];
@@ -191,7 +192,7 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     status() { let active=false; try { gate(); active=true; } catch {} return { enabled: active, environment: environment ?? null, realAuthorityEnabled: false, authorityStatus: 'PER_ACTION_VERIFICATION_REQUIRED', ownershipClaimsEnabled: false, ownershipHistoryEnabled: false }; },
     async prepareProof(actor,input){authorize(actor,['BUYER','STAFF']);proofReady();if(proofAuthority)return proofAuthority.prepare(currentMarketplaceRequestAuthority(),input);return proofIntake.prepare(actor,input,proofAuthorization(actor));},
     async uploadProof(actor,input){authorize(actor,['BUYER','STAFF']);proofReady();if(proofAuthority)return proofAuthority.upload(currentMarketplaceRequestAuthority(),input);return proofIntake.upload(actor,input,proofAuthorization(actor));},
-    async recoverProof(actor,input){authorize(actor,['BUYER','STAFF']);requireValue(!proofAuthority,'PROOF_AUTHORITY_EXACT_RECOVERY_REQUIRED');return proofReady().recover(actor,input,proofAuthorization(actor));},
+    async recoverProof(actor,input){authorize(actor,['BUYER','STAFF']);proofReady();if(proofAuthority)return proofAuthority.recover(currentMarketplaceRequestAuthority(),input);return proofIntake.recover(actor,input,proofAuthorization(actor));},
     async readProof(actor,input){authorize(actor,['BUYER','STAFF']);return proofReady().read(actor,input,proofAuthorization(actor));},
     async listProofs(actor,input){authorize(actor,['BUYER','STAFF']);return proofReady().list(actor,input,proofAuthorization(actor));},
     async reviewProof(actor,input){authorize(actor,['STAFF']);return proofReady().review(actor,input,proofAuthorization(actor));},

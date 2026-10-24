@@ -5,7 +5,7 @@ import {hash,canonicalJSON,requireValue} from './contract.mjs';
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {decoderFreeze} from './proof-decoder-profile.mjs';
 import {readR1ProofRequest} from './auth-r1.mjs';
-import {snapshotR1ProofUpload,authorizeR1ProofCreate} from './proof-intake.mjs';
+import {snapshotR1ProofUpload,authorizeR1ProofCreate,recoverR1ProofUpload} from './proof-intake.mjs';
 import {assertProofIntakeAccountedPostgres,proofIntakeAccountedAttemptSubmission} from './proof-intake-protected-postgres.mjs';
 import {assertProofAuthorityPostgres,assertProofAuthorityCommittedReport} from './proof-authority-postgres.mjs';
 import {assertProofDecoderTargetBrokerClient,assertProofDecoderPreparedSubmissionBeforeDeadline,assertProofDecoderClientOutcome,assertProofDecoderClientOutcomeBeforeDeadline} from './proof-decoder-target-broker.mjs';
@@ -16,6 +16,28 @@ const producers=new WeakSet(),ioOwners=new WeakSet(),check=(v,c='PROOF_AUTHORITY
 const proofProjection=row=>({uploadId:row.uploadId,proofId:null,orderId:row.orderId,purpose:row.purpose,status:row.status,declaredType:row.plan.declaredType,byteCount:row.plan.byteCount,sha256:row.plan.sha256,expiresAt:row.expiresAt,createdAt:row.createdAt,reviewStatus:'NOT_REVIEWED'});
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function assertR1ProofAuthorityProducer(value){check(producers.has(value),'PROOF_AUTHORITY_PRODUCER_REQUIRED');return value;}
+// Exact durable reconciliation can run after an application restart without
+// opening the publisher, changing a hold, or reconstructing a live capability.
+// The original IDs are selectors only; every result comes from an audited DB.
+export async function reconcileR1ProofAuthorityOriginal(options){
+ const v=engineDataOptions(options,['settlerGateway','retentionWriter','stageId','claimHash']),gateway=assertProofAuthorityPostgres(v.settlerGateway,'SETTLER',true),writer=assertProofRetentionPostgresWriter(v.retentionWriter);
+ const stage=await gateway.lookupClaim({stageId:v.stageId,claimHash:v.claimHash});assertProofAuthorityCommittedReport(stage,{gateway,action:'lookup_claim_v1'});
+ if(stage.schema!=='atlas-proof-stage-report-v1')return decoderFreeze({schema:'atlas-proof-original-reconciliation-v1',classification:'UNQUALIFIED',authority:false,state:'ABSENT_HOLD',stage,retention:null,publisherHoldReleased:false});
+ check(stage.stageBinding.stageId===v.stageId&&stage.requestHash===v.claimHash,'PROOF_AUTHORITY_ORIGINAL_REQUIRED');
+ let retained=null;if(stage.stage==='RETAIN'){
+  check(same(writer.binding.intakeBinding,stage.intakeBinding),'PROOF_AUTHORITY_INTAKE_BINDING');let outcome;
+  try{outcome=await writer.lookupOriginal({operation:stage.retentionOperation});}catch(error){outcome=error;}
+  retained=assertProofRetentionPostgresOutcome(outcome,{writer});check(same(retained.operation,stage.retentionOperation),'PROOF_AUTHORITY_ORIGINAL_REQUIRED');
+ }
+ return decoderFreeze({schema:'atlas-proof-original-reconciliation-v1',classification:'UNQUALIFIED',authority:false,state:stage.state,stage,retention:retained,publisherHoldReleased:false});
+}
+export async function reconcileR1ProofAuthorityMutation(options){
+ const v=engineDataOptions(options,['revokerGateway','mutationId'],['mutationHash','requestHash']),gateway=assertProofAuthorityPostgres(v.revokerGateway,'REVOKER',true);
+ check((v.mutationHash===undefined)!==(v.requestHash===undefined),'PROOF_AUTHORITY_ORIGINAL_REQUIRED');
+ const result=await gateway.readDrain({mutationId:v.mutationId});assertProofAuthorityCommittedReport(result,{gateway,action:'read_drain_v1'});
+ if(result.schema==='atlas-proof-drain-report-v1')check(result.mutationId===v.mutationId&&(v.mutationHash===undefined?result.requestHash===v.requestHash:result.mutationHash===v.mutationHash),'PROOF_AUTHORITY_ORIGINAL_REQUIRED');
+ return result;
+}
 export async function createR1ProofAuthorityProducer(options={}){
  const o=engineDataOptions(options,[],['enabled','requestGateway','settlerGateway','revokerGateway','publisher','decoderClient','retentionWriter','accountedIntake','expectedDatabase','intake','sessionBinding','publisherSessionId']);
  if(o.enabled!==true)return null;
@@ -45,6 +67,21 @@ export async function createR1ProofAuthorityProducer(options={}){
  }
  function owned(handle,authority,phase){const e=handles.get(handle);check(e&&e.authority===authority&&e.phase===phase&&!e.signal.aborted,'PROOF_AUTHORITY_HANDLE_REQUIRED');return e;}
  async function exclusive(work){check(!busy,'PROOF_AUTHORITY_BUSY');busy=true;try{return await work();}finally{busy=false;}}
+ async function completeDrain(drain,entry,authority=null){
+  const barriers=entry.barriers??(entry.barriers=[]);
+    for(const scope of drain.fences){let record=barriers.find(x=>x.scope.fenceId===scope.fenceId);if(!record){record={barrierId:randomUUID(),operationId:randomUUID(),settleOperationId:randomUUID(),scope};barriers.push(record);}const {barrierId,operationId}=record;publisher.beginScopeBarrier({operationId,expectedRevision:publisher.status().revision,sessionId,canonicalMutationId:drain.mutationId,barrierId,barrierRevision:drain.barrierRevision,scope});}
+    // An in-flight owner must finish or produce a real C1 tombstone. Absence,
+    // disconnect, timeout and caller data never release this drain.
+    for(const e of active){if(e.retention&&drain.outstandingStages.some(s=>s.stageBinding.stageId===e.retention.stage.stageBinding.stageId)){
+     const outcome=await writer.cancelPrepared(e.retention.prepared,{barrierId:barriers[0]?.barrierId,barrierRevision:drain.barrierRevision}),observed=assertProofRetentionPostgresOutcome(outcome,{writer});check(['COMMITTED','CANCELLED_BEFORE_COMMIT'].includes(observed.disposition),'PROOF_AUTHORITY_RETENTION_HELD');
+     publisher.settleRetentionDispatch({operationId:randomUUID(),expectedRevision:publisher.status().revision,dispatchOperationId:e.retention.dispatchId,writer,outcome});await settle(e.retention.stage,observed.disposition==='COMMITTED'?'COMPLETE':'NO_EFFECT',hash(observed),{barrierId:barriers[0]?.barrierId,barrierRevision:drain.barrierRevision});active.delete(e);
+    }}
+    const checked=report(await settler.readDrain({mutationId:drain.mutationId}),settler,'read_drain_v1');check(checked.outstandingStages.length===0,'PROOF_AUTHORITY_DRAIN_REQUIRED');
+    const settled=barriers.map(({barrierId,settleOperationId})=>{const x=publisher.settleScopeBarrier({operationId:settleOperationId,expectedRevision:publisher.status().revision,barrierId});check(x.record?.phase==='LOCAL_QUIESCENT','PROOF_AUTHORITY_DRAIN_REQUIRED');return x.record;});
+    const drained=report(await settler.settleDrain({schema:'atlas-proof-drain-settle-v1',mutationId:drain.mutationId,mutationHash:drain.mutationHash,barrierHash:hash(settled)}),settler,'settle_drain_v1');check(drained.state==='SETTLED','PROOF_AUTHORITY_DRAIN_REQUIRED');
+    if(authority)await live(authority);
+    entry.applyStarted=true;const applied=report(await revoker.applyMutation({mutationId:drain.mutationId,mutationHash:drain.mutationHash}),revoker,'apply_mutation_v1');check(applied.state==='APPLIED','PROOF_AUTHORITY_DRAIN_REQUIRED');return applied;
+ }
  const producer=Object.freeze({classification:'UNQUALIFIED',authority:false,
   async prepare(authority,input){return exclusive(async()=>{
    await live(authority);const requestInput=engineDataOptions(input,['requestId','orderId','purpose','declaredType','byteCount','sha256']),actor=await authorizeR1ProofCreate(o.intake,authority,requestInput),key=hash({actor,requestId:requestInput.requestId});
@@ -107,26 +144,42 @@ export async function createR1ProofAuthorityProducer(options={}){
     e.stage=await settle(stage,'COMPLETE',hash(observed));e.phase='RETAINED';active.delete(e);e.signal.removeEventListener('abort',e.abort);return observed.report.record.result;
    }catch(error){e.phase='RETENTION_HELD';throw error;}
   });},
+  async recover(authority,input){
+   check(!closed,'PROOF_AUTHORITY_HELD');const {uploadId}=engineDataOptions(input,['uploadId']);await readR1ProofRequest(authority);
+   const original=await recoverR1ProofUpload(o.intake,authority,uploadId);
+   if(original.row.status!=='RETAINED'){check(original.row.status==='PREPARED','PROOF_AUTHORITY_RETENTION_HELD');return original.projection;}
+   let outcome;try{outcome=await writer.lookupOriginal({operation:original.operation});}catch(error){outcome=error;}
+   const found=assertProofRetentionPostgresOutcome(outcome,{writer});check(found.disposition==='COMMITTED'&&same(found.operation,original.operation),'PROOF_AUTHORITY_RETENTION_HELD');
+   const current=await recoverR1ProofUpload(o.intake,authority,uploadId);check(same(current.row,original.row)&&same(current.operation,original.operation),'PROOF_AUTHORITY_ORIGINAL_REQUIRED');return current.projection;
+  },
+  reconcileOriginal(input){const v=engineDataOptions(input,['stageId','claimHash']);return reconcileR1ProofAuthorityOriginal({settlerGateway:settler,retentionWriter:writer,...v});},
+  reconcileMutation(input){const v=engineDataOptions(input,['mutationId'],['mutationHash','requestHash']);return reconcileR1ProofAuthorityMutation({revokerGateway:revoker,...v});},
+  async mutate(authority,input){
+   const source=await live(authority);check(source.source==='STAFF','PROOF_AUTHORITY_OPERATOR_REQUIRED');
+   const v=engineDataOptions(input,['kind','subjectId','expectedBeforeHash','change','reason']);
+   const mutation={schema:'atlas-proof-mutation-begin-v1',mutationId:randomUUID(),kind:v.kind,subjectId:v.subjectId,expectedBeforeHash:v.expectedBeforeHash,change:v.change};
+   const authorization={schema:'atlas-proof-operator-authorization-v1',requestId:source.requestId,requestBindingHash:source.requestBindingHash,source:source.source,sessionHash:source.sessionHash,browserHash:source.browserHash,configBinding:source.configBinding,originalRequestDeadlineAt:source.originalRequestDeadlineAt,mutation,reason:v.reason};
+   let original=null;try{
+    const admitted=report(await revoker.authorizeMutation(authorization),revoker,'authorize_mutation_v1');check(admitted.schema==='atlas-proof-operator-report-v1'&&admitted.mutationId===mutation.mutationId,'PROOF_AUTHORITY_OPERATOR_REQUIRED');await live(authority);
+    original={...mutation,operatorAuthorityRef:admitted.operatorAuthorityRef};const entry={value:original,barriers:null};
+    const drain=report(await revoker.beginMutation(original),revoker,'begin_mutation_v1');check(drain.schema==='atlas-proof-drain-report-v1'&&drain.publisherSessionId===sessionId,'PROOF_AUTHORITY_DRAIN_REQUIRED');
+    return await completeDrain(drain,entry,authority);
+   }catch(error){error.reconciliation=Object.freeze({mutationId:mutation.mutationId,operatorRequestId:source.requestId,...(original?{requestHash:hash(original)}:{})});throw error;}
+
+  },
   bindLogout(auth){
    const source=auth instanceof staffClass.DurableStaffAuth?'STAFF':auth instanceof customerClass.CustomerAuth?'CUSTOMER':null;check(source,'PROOF_AUTHORITY_CANONICAL_AUTH_REQUIRED');const config=auth.config,configBinding=decoderFreeze(Object.fromEntries(['mode','origin','deploymentId','releaseSha','configHash'].map(k=>[k,config[k]])));
    return async tokens=>{
     check(!closed,'PROOF_AUTHORITY_HELD');check(auth.config===config&&same(configBinding,Object.fromEntries(Object.keys(configBinding).map(k=>[k,config[k]]))),'PROOF_AUTHORITY_CONFIG_CHANGED');const key=hash({source,...tokens});
-    check(logouts.size<4096,'PROOF_AUTHORITY_CAPACITY_HOLD');check(!logouts.has(key),'PROOF_AUTHORITY_LOGOUT_ALREADY_STARTED');const value={schema:'atlas-proof-logout-begin-v1',requestId:randomUUID(),requestBindingHash:hash({source,configBinding,...tokens}),source,...tokens,configBinding,mutationId:randomUUID()};logouts.set(key,value);
-    const drain=report(await request.beginLogout(value),request,'begin_logout_v1');check(drain.schema==='atlas-proof-drain-report-v1'&&drain.publisherSessionId===sessionId,'PROOF_AUTHORITY_DRAIN_REQUIRED');
-    const barriers=[];
-    for(const scope of drain.fences){const barrierId=randomUUID();publisher.beginScopeBarrier({operationId:randomUUID(),expectedRevision:publisher.status().revision,sessionId,canonicalMutationId:drain.mutationId,barrierId,barrierRevision:drain.barrierRevision,scope});barriers.push(barrierId);}
-    // An in-flight owner must finish or produce a real C1 tombstone. Absence,
-    // disconnect, timeout and caller data never release this drain.
-    for(const e of active){if(e.retention&&drain.outstandingStages.some(s=>s.stageBinding.stageId===e.retention.stage.stageBinding.stageId)){
-     const outcome=await writer.cancelPrepared(e.retention.prepared,{barrierId:barriers[0],barrierRevision:drain.barrierRevision}),observed=assertProofRetentionPostgresOutcome(outcome,{writer});check(['COMMITTED','CANCELLED_BEFORE_COMMIT'].includes(observed.disposition),'PROOF_AUTHORITY_RETENTION_HELD');
-     publisher.settleRetentionDispatch({operationId:randomUUID(),expectedRevision:publisher.status().revision,dispatchOperationId:e.retention.dispatchId,writer,outcome});await settle(e.retention.stage,observed.disposition==='COMMITTED'?'COMPLETE':'NO_EFFECT',hash(observed),{barrierId:barriers[0],barrierRevision:drain.barrierRevision});active.delete(e);
-    }}
-    const checked=report(await settler.readDrain({mutationId:drain.mutationId}),settler,'read_drain_v1');check(checked.outstandingStages.length===0,'PROOF_AUTHORITY_DRAIN_REQUIRED');
-    const settled=barriers.map(barrierId=>{const x=publisher.settleScopeBarrier({operationId:randomUUID(),expectedRevision:publisher.status().revision,barrierId});check(x.record?.phase==='LOCAL_QUIESCENT','PROOF_AUTHORITY_DRAIN_REQUIRED');return x.record;});
-    const drained=report(await settler.settleDrain({schema:'atlas-proof-drain-settle-v1',mutationId:drain.mutationId,mutationHash:drain.mutationHash,barrierHash:hash(settled)}),settler,'settle_drain_v1');check(drained.state==='SETTLED','PROOF_AUTHORITY_DRAIN_REQUIRED');
-    const applied=report(await revoker.applyMutation({mutationId:drain.mutationId,mutationHash:drain.mutationHash}),revoker,'apply_mutation_v1');check(applied.state==='APPLIED','PROOF_AUTHORITY_DRAIN_REQUIRED');return source==='CUSTOMER'?{signedOut:true}:undefined;
+    let entry=logouts.get(key);if(!entry){check(logouts.size<4096,'PROOF_AUTHORITY_CAPACITY_HOLD');const value={schema:'atlas-proof-logout-begin-v1',requestId:randomUUID(),requestBindingHash:hash({source,configBinding,...tokens}),source,...tokens,configBinding,mutationId:randomUUID()};entry={value,barriers:null,pending:false,started:false,applyStarted:false};logouts.set(key,entry);}
+    check(!entry.pending,'PROOF_AUTHORITY_LOGOUT_ALREADY_STARTED');entry.pending=true;
+    try{let drain;if(entry.started)drain=report(await settler.readDrain({mutationId:entry.value.mutationId}),settler,'read_drain_v1');else{entry.started=true;drain=report(await request.beginLogout(entry.value),request,'begin_logout_v1');}
+     check(drain.schema==='atlas-proof-drain-report-v1'&&drain.publisherSessionId===sessionId&&drain.requestHash===hash(entry.value),'PROOF_AUTHORITY_DRAIN_REQUIRED');
+     if(drain.state!=='APPLIED'){check(!entry.applyStarted,'PROOF_AUTHORITY_APPLY_UNKNOWN_HOLD');await completeDrain(drain,entry);}
+     return source==='CUSTOMER'?{signedOut:true}:undefined;
+    }finally{entry.pending=false;}
    };
   },
-  async close(){closed=true;for(const e of active){e.original?.fill(0);e.original=null;e.phase='HELD';}await client.close();await accounted.close();await writer.close();request.close();settler.close();revoker.close();publisher.close();return {closed:true,unresolved:active.size};}
+  async close(){closed=true;for(const e of active){e.original?.fill(0);e.original=null;e.phase='HELD';}const failures=[];for(const owner of [client,accounted,writer,request,settler,revoker,publisher])try{await owner.close();}catch(error){failures.push(error);}if(failures.length)throw new AggregateError(failures,'PROOF_AUTHORITY_CLOSE_HELD');return {closed:true,unresolved:active.size};}
  });for(const io of [publisher,client,writer,accounted])ioOwners.add(io);producers.add(producer);return producer;
 }

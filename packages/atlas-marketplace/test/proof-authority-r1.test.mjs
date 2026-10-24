@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {hash} from '../src/contract.mjs';
 import {parseProofAuthorityReply,parseProofAuthorityRequest} from '../src/proof-authority-protocol.mjs';
 import {assertProofAuthorityCommittedReport} from '../src/proof-authority-postgres.mjs';
-import {createR1ProofAuthorityProducer,assertR1ProofAuthorityProducer} from '../src/proof-authority-r1.mjs';
+import {createR1ProofAuthorityProducer,assertR1ProofAuthorityProducer,reconcileR1ProofAuthorityOriginal,reconcileR1ProofAuthorityMutation} from '../src/proof-authority-r1.mjs';
 import {assertProofPublicationLifecycleOwner} from '../src/proof-publication-store.mjs';
 import {readR1ProofRequest,bindR1ProofLogout,r1ProofLogout} from '../src/auth-r1.mjs';
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`,h='a'.repeat(64);
@@ -36,4 +36,17 @@ test('producer is cold by default and copied callback IO cannot enable it or rep
  assert.equal(await createR1ProofAuthorityProducer(),null);
  await assert.rejects(createR1ProofAuthorityProducer({enabled:true,requestGateway:{claimStage:()=>stageReport()}}),{code:'PROOF_AUTHORITY_ADAPTER_REQUIRED'});
  const auth={};assert.equal(r1ProofLogout(auth),null);await assert.rejects(bindR1ProofLogout(auth,{bindLogout:()=>async()=>{}}),{code:'PROOF_AUTHORITY_PRODUCER_REQUIRED'});assert.equal(r1ProofLogout(auth),null);
+});
+
+test('restart reconciliation refuses copied SQL and retention owners without dispatching callbacks',async()=>{
+ let calls=0;const fake={lookupClaim(){calls++;},readDrain(){calls++;},lookupOriginal(){calls++;}};
+ await assert.rejects(reconcileR1ProofAuthorityOriginal({settlerGateway:fake,retentionWriter:fake,stageId:id(1),claimHash:h}),{code:'PROOF_AUTHORITY_ADAPTER_REQUIRED'});
+ await assert.rejects(reconcileR1ProofAuthorityMutation({revokerGateway:fake,mutationId:id(1),mutationHash:h}),{code:'PROOF_AUTHORITY_ADAPTER_REQUIRED'});assert.equal(calls,0);
+});
+test('operator authorization is closed current-session data and does not upgrade its SQL audit reference',()=>{
+ const mutation={schema:'atlas-proof-mutation-begin-v1',mutationId:id(1),kind:'STAFF_IDENTITY_ACCESS',subjectId:id(2),expectedBeforeHash:h,change:{role:'OBSERVER',revoked:true,certificationUntil:null,trustedLearningUntil:null}};
+ const value={schema:'atlas-proof-operator-authorization-v1',requestId:id(3),requestBindingHash:h,source:'STAFF',sessionHash:h,browserHash:h,configBinding:{mode:'PRODUCTION',origin:'https://example.test',deploymentId:'test',releaseSha:'a'.repeat(40),configHash:h},originalRequestDeadlineAt:10,mutation,reason:'test'};
+ assert.deepEqual(parseProofAuthorityRequest('authorize_mutation_v1',value),value);
+ for(const changed of [{...value,source:'CUSTOMER'},{...value,operator:{grant:true}},{...value,mutation:{...mutation,operatorAuthorityRef:h}},{...value,reason:''}])assert.throws(()=>parseProofAuthorityRequest('authorize_mutation_v1',changed));
+ const report=parseProofAuthorityReply({schema:'atlas-proof-operator-report-v1',classification:'UNQUALIFIED',authority:false,requestHash:h,mutationId:id(1),operatorAuthorityRef:h});assert.throws(()=>assertR1ProofAuthorityProducer(report));
 });

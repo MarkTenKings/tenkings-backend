@@ -15,9 +15,10 @@ export const PROOF_AUTHORITY_CLOSURE=Object.freeze([
  'observation_v1(boolean)','exact_object_v1(jsonb, text[])','lock_canonical_rows_v1(jsonb)',
  'claim_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','settle_stage_v1(jsonb)',
  'read_drain_v1(uuid)','begin_logout_v1(jsonb)','settle_drain_v1(jsonb)','apply_mutation_v1(uuid, text)',
- 'begin_mutation_v1(jsonb)','reject_unjoined_authority_write()'
+ 'operator_access_v1(jsonb)','authorize_mutation_v1(jsonb)','begin_mutation_v1(jsonb)','reject_unjoined_authority_write()'
 ]);
 const ACTIONS=Object.freeze({
+  authorize_mutation_v1:{signature:'authorize_mutation_v1(jsonb)',sql:'SELECT atlas_proof_authority.authorize_mutation_v1($1::jsonb) AS result',json:true,write:true,id:'requestId'},
   claim_stage_v1:{signature:'claim_stage_v1(jsonb)',sql:'SELECT atlas_proof_authority.claim_stage_v1($1::jsonb) AS result',json:true,write:true,id:'stageId'},
   lookup_stage_v1:{signature:'lookup_stage_v1(uuid, text)',sql:'SELECT atlas_proof_authority.lookup_stage_v1($1::uuid,$2::text) AS result',keys:['stageId','operationHash']},
   lookup_claim_v1:{signature:'lookup_claim_v1(uuid, text)',sql:'SELECT atlas_proof_authority.lookup_claim_v1($1::uuid,$2::text) AS result',keys:['stageId','claimHash']},
@@ -122,9 +123,9 @@ export function createProofAuthorityPostgres(options={}){
   const methods={
     claimStage:v=>invoke('claim_stage_v1',v),lookupStage:v=>invoke('lookup_stage_v1',v),lookupClaim:v=>invoke('lookup_claim_v1',v),
     settleDrain:v=>invoke('settle_drain_v1',v),beginLogout:v=>invoke('begin_logout_v1',v),settleStage:v=>invoke('settle_stage_v1',v),readDrain:v=>invoke('read_drain_v1',v),
-    beginMutation:v=>invoke('begin_mutation_v1',v),applyMutation:v=>invoke('apply_mutation_v1',v),
+    authorizeMutation:v=>invoke('authorize_mutation_v1',v),beginMutation:v=>invoke('begin_mutation_v1',v),applyMutation:v=>invoke('apply_mutation_v1',v),
   };
   // Expose only this role's finite methods, never a call(sql/action,callback).
-  const publicMethods=Object.fromEntries(Object.entries(methods).filter(([name])=>allowed.some(signature=>({settleDrain:'settle_drain_v1',claimStage:'claim_stage_v1',lookupStage:'lookup_stage_v1',lookupClaim:'lookup_claim_v1',beginLogout:'begin_logout_v1',settleStage:'settle_stage_v1',readDrain:'read_drain_v1',beginMutation:'begin_mutation_v1',applyMutation:'apply_mutation_v1'}[name])===signature.split('(')[0])));
+  const publicMethods=Object.fromEntries(Object.entries(methods).filter(([name])=>allowed.some(signature=>({authorizeMutation:'authorize_mutation_v1',settleDrain:'settle_drain_v1',claimStage:'claim_stage_v1',lookupStage:'lookup_stage_v1',lookupClaim:'lookup_claim_v1',beginLogout:'begin_logout_v1',settleStage:'settle_stage_v1',readDrain:'read_drain_v1',beginMutation:'begin_mutation_v1',applyMutation:'apply_mutation_v1'}[name])===signature.split('(')[0])));
   const gateway=Object.freeze({...publicMethods,classification:'UNQUALIFIED',authority:false,close(){closed=true;}});adapters.set(gateway,{role:o.roleKind,reports,completeClosure:closure!==null});return gateway;
 }

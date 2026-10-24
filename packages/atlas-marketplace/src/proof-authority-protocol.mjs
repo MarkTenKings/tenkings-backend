@@ -10,7 +10,7 @@ export const PROOF_AUTHORITY_BYTES=16384;
 export const PROOF_AUTHORITY_ROLES=decoderFreeze({
   REQUEST:['claim_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','begin_logout_v1(jsonb)'],
   SETTLER:['settle_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','read_drain_v1(uuid)','settle_drain_v1(jsonb)'],
-  REVOKER:['begin_mutation_v1(jsonb)','apply_mutation_v1(uuid, text)','read_drain_v1(uuid)'],
+  REVOKER:['authorize_mutation_v1(jsonb)','begin_mutation_v1(jsonb)','apply_mutation_v1(uuid, text)','read_drain_v1(uuid)'],
 });
 const check=(v,c='PROOF_AUTHORITY_PROTOCOL_INVALID')=>requireValue(v,c);
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
@@ -71,6 +71,11 @@ export function parseProofAuthorityRequest(action,input){
   }else if(action==='read_drain_v1'){exact(v,['mutationId']);check(uuid(v.mutationId));
   }else if(action==='begin_logout_v1'){
     exact(v,['schema','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','mutationId']);check(v.schema==='atlas-proof-logout-begin-v1'&&uuid(v.requestId)&&uuid(v.mutationId)&&sha(v.requestBindingHash)&&['STAFF','CUSTOMER'].includes(v.source)&&sha(v.sessionHash)&&sha(v.browserHash));config(v.configBinding);
+  }else if(action==='authorize_mutation_v1'){
+    exact(v,['schema','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','originalRequestDeadlineAt','mutation','reason']);
+    check(v.schema==='atlas-proof-operator-authorization-v1'&&uuid(v.requestId)&&sha(v.requestBindingHash)&&v.source==='STAFF'&&sha(v.sessionHash)&&sha(v.browserHash)&&positive(v.originalRequestDeadlineAt)&&text(v.reason));config(v.configBinding);
+    parseProofAuthorityRequest('begin_mutation_v1',{...v.mutation,operatorAuthorityRef:'0'.repeat(64)});
+    exact(v.mutation,['schema','mutationId','kind','subjectId','expectedBeforeHash','change']);
   }else if(action==='begin_mutation_v1'){
     exact(v,['schema','mutationId','kind','subjectId','expectedBeforeHash','change','operatorAuthorityRef']);check(v.schema==='atlas-proof-mutation-begin-v1'&&uuid(v.mutationId)&&typeof v.kind==='string'&&Object.hasOwn(changes,v.kind)&&identifier(v.subjectId)&&sha(v.expectedBeforeHash)&&sha(v.operatorAuthorityRef));change(v.kind,v.change);
   }else if(action==='settle_stage_v1'){
@@ -89,6 +94,8 @@ export function parseProofAuthorityReply(input){
     exact(v,['schema','classification','authority','status','reason','requestHash']);
     check(['UNAVAILABLE','ABSENT_HOLD'].includes(v.status)&&['CANONICAL_JOIN_REQUIRED','NO_ORIGINAL_RECORD'].includes(v.reason)&&(v.requestHash===null||sha(v.requestHash)));
     check(v.status==='UNAVAILABLE'?v.reason==='CANONICAL_JOIN_REQUIRED':v.reason==='NO_ORIGINAL_RECORD');
+  }else if(v.schema==='atlas-proof-operator-report-v1'){
+    exact(v,['schema','classification','authority','requestHash','mutationId','operatorAuthorityRef']);check(sha(v.requestHash)&&uuid(v.mutationId)&&sha(v.operatorAuthorityRef));
   }else if(v.schema==='atlas-proof-stage-report-v1'){
     exact(v,['schema','classification','authority','requestHash','stage','state','stageBinding','operationId','retentionOperation','intakeBinding','publisherSessionId','deadlineAt','observedAt']);
     check(sha(v.requestHash)&&Object.hasOwn(stages,v.stage)&&['OUTSTANDING','SETTLED_COMPLETE','SETTLED_NO_EFFECT','UNKNOWN_HELD'].includes(v.state)&&uuid(v.operationId)&&uuid(v.publisherSessionId)&&positive(v.deadlineAt)&&positive(v.observedAt));

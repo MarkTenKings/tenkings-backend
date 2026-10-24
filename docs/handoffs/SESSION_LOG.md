@@ -49348,6 +49348,27 @@ Focused Node22 auth-r1/host-r1 checks17/17 pass, including actual canonical iden
 - Saved additive baseline29 SHA `43b3384d6911ed28db0fd9d470d6fc2f35fb570ef16dfb975104c16630d40a8a` and focused four-stage integrity join `1031c0f4592ad2ac1bc661b9406081e4441df624589da3d9f3f94f948649bc83`. All4 actual operation/source/stdout/stderr hashes and unchanged current plan/source-binding pins verified locally. Three requested lifecycle variants now directly covered; matrix10 finite scopes COVERED,12 remain partial/unrun. Prior failures/times/probe classifications remain unchanged. No broad rerun, blockedprobe, newimage/framework or production effect.
 
 
+### 2026-10-24T06:41:40.110819+00:00 — C0 genuine operations-grant source join; fresh local qualification planned
+
+- Added a closed operator authorization function which reads the actual canonical staff session and one matching StaffOperationsGrant, stores its exact human audit, then begins only the unchanged mutation bound to that audit. It supplies no actor/grant from caller JSON. Frozen apply rechecks current human authority and inserts the original STAFF_ROSTER_UPDATED event through the unchanged operations_audit_guard. All eight reviewed admin kinds use fixed fields; phone/binding replacement is refused.
+- Planned distinct owned local PG17.11 c0-operator-sql-01, private Unix socket only, actual source-extracted operations audit/access/revision guards with canonical-shaped structural records and all eight administrative branches. Include fresh-grant and forged-ref refusals. No production or existing cluster changes; stop owned child, retain failures/receipt. Also corrected staff timestamp precision to the actual timestamp(3) schema before producing exact row permits.
+
+
+### 2026-10-24T06:42:17.574829+00:00 — Operator SQL01 fixture grant refusal retained; SQL02 planned
+
+- SQL01 correctly refused its first gateway dispatch because the newly source-extracted canonical fixture functions retained PostgreSQL default PUBLIC EXECUTE, unlike the canonical restricted install. No mutation began. Owned PG exit0/socket absent. Added the missing fixture REVOKE and planned distinct fresh SQL02; no serving audit relaxation, prior cluster restart or production action.
+
+
+### 2026-10-24T06:42:32.664246+00:00 — Operator SQL02 original-ID conflict retained; SQL03 planned
+
+- SQL02 stored real grant authorization, then correctly rejected the harness changing the rejected forged-reference payload under the same mutation ID. The adapter preserves original IDs even after definite refusal. No mutation began; PG exit0/socket absent. SQL03 uses a distinct ID for the negative forged-reference case; no implementation replay/identity guard is relaxed. Fresh owned cluster only.
+
+
+### 2026-10-24T06:42:55.705199+00:00 — Operator SQL03 subject-shape correction; SQL04 planned
+
+- SQL03 reached authorized begin but refused the admin UUID under the existing subject_hash constraint. Added separate immutable subject_key and retained actual hash in subject_hash; logout keeps its existing hash-key meaning. No mutation committed; owned PG exit0/socket absent. Planned distinct SQL04 for fixed admin apply; previous evidence retained.
+
+
 ### 2026-10-24T06:42:57.335738+00:00 — R2 stale-client binding refusal planned; uncertain-effect recovery gate retained
 
 - Saved enrolled recovery recipe requires permanent fixed catalog/new native187 closure, all remaining legacy cases first, and an owned intent-cut observer. Current runtime08 runners do not inject lost CREATE/START/REMOVE responses. No enrollment, held-effect replay or new fault machinery attempted; genuine UNKNOWN/restart gates remain open.
@@ -49355,11 +49376,23 @@ Focused Node22 auth-r1/host-r1 checks17/17 pass, including actual canonical iden
 - Durable newepoch intent before guard start; preserve all29 ledger sets/holds. Final stoppedguard/emptyfrozenparent/latch and new empty30th ledger retained. No new image, installed-artifact mutation, authority, blockedprobe or production effect.
 
 
+### 2026-10-24T06:43:21.457551+00:00 — Operator SQL04 apply-argument ambiguity fixed; SQL05 planned
+
+- SQL04 committed the frozen admin drain and settlement, then apply refused an id parameter/table-column ambiguity on StaffAudit read. Renamed the SQL parameter without changing the signature; original settled drain retained in stopped cluster. PG exit0/socket absent. Planned distinct SQL05; no old mutation replay or production effect.
+
+
 ### 2026-10-24T06:44:14.779226+00:00 — R2 three stale-client refusals observed;30-ledger checkpoint retained
 
 - stale-client-binding01 PASS. Three genuine clients with prior epoch/prior binding/exact saved old profile each refused HELLO as DECODER_BROKER_PROTOCOL/KNOWN_NO_START_SENT;0reservations/jobs/input/Engine mutations and healthy broker after each. Broker60468 and clients60479/60490/60501 exited0. Remote receipt a8de449bd6cdcce4a88cb280a8b963761356464770b7f4bd0c08ccb78bcf560c; stdout48b0cd71ddb1ac883aba374fdf763baebc68d40bfb6c6698acf9cce049f8f9c6.
 - All29 prior ledger sets/publisher holds byte/inode unchanged; new30th0rows/0events/writerlock retained, finalGUARD_SHUTDOWN poison/barrier. EmptyEngine/brokerdirectory, stoppedguard/MainPID0/failed-exit-code1, parentemptyfrozen, latch retained, enrollment absent. No cleanup required. Baseline30 `20b7331c5af2fa7852435398988426b2b75ddc737d35029a17d165e51830a5c3`; handoff `f6187bd530f9b5dd8a3882dd46bb2a8510aa288f64e1cfd1315510c98f56bcab`. Local operation/source/output hashes verified, no rerun.
 - Matrix EPOCH_PROFILE row now PARTIAL for these client-only refusals; installed-artifact/parent/boot/deadline/job/output/server-side variants remain. UNKNOWN lost-response/delayed-effect and enrolled recovery require machinery/prerequisites absent from current runners; no permanent enrollment, old uncertain replay or additional fault mechanism attempted.10 finite scopes covered,12 partial/unrun; runtime authority and physical-intake gates unchanged. No production or screened-probe effects.
+
+
+### 2026-10-24T06:47:14.302822+00:00 — Operator SQL05 passed; exact original recovery qualification planned
+
+- SQL05 PASS:19 exact C0 source functions,8 admin branches/17 refusals, including the original operations_audit_guard on STAFF_ROSTER_UPDATED and unchanged identity/control guards. Frozen direct apply without settlement and fabricated audit/ref fail; permits fully consumed. Structural local records only; PG exit0/socket absent.
+- Added exact read-only C0/C1 reconciliation functions and actual protected writer lookupOriginal. They accept original IDs/hashes solely as selectors, reread source-owned databases, and never construct dispatch handles, release a publisher hold, or retry an effect. Same-process logout reuses original drain/barrier identities and only reads after an unknown apply.
+- Planned fresh owned c0-original-reconcile-01 PG with separate marketplace/canonical databases, protected storage plus current source, structural SQL stages and one original C1 commit. A separate fresh Node process will reread original UNKNOWN canonical and COMMITTED C1 state with no publisher opening or new write. Wrong/absent selectors remain held. No production, old-cluster restart or fixture promotion.
 
 
 ### 2026-10-24T06:47:42.229445+00:00 — R2 approved pending-REMOVE intent cut planned
@@ -49381,3 +49414,17 @@ Focused Node22 auth-r1/host-r1 checks17/17 pass, including actual canonical iden
 - Root refused same-resource DELETE: original REMOVE remains uncertain, so repeating the physical operation would violate the no-replay constraint. Proposal marked NOT_EXECUTED SHA `96eb586401b44c94cfa28665d757b410104a3491d861121f09ed0bdfa766eb53`; no cleanup dispatch/result/absence claim exists. Exact containerbc376151abdb92e477684748e85287dc60008aaa36f079cd067b51ad1da65946 remains retained exited0/nonOOM/PID0. Engine is not empty.
 - All31 ledgers/publisherholds and original CLEANUP7/8events/nullreceipt/operation/hash/writerlock/closedbarrier retained, observed poisonfalse remains unchanged. Stoppedguard/emptyfrozenparent/latch/brokerdirempty remain last actual checkpoint. Baseline31held b481727f277a4a9bf7d5e036c0929604d6f883dc91edda3dfb82fbac19a29ef8; finalhandoff `4a0c7d49d28f749fa894ce94c65371988e7f11fc4346bed6568f985306d6c3fa`. No further targetcases requiring resourceclearing; custody/reconciliation belongs to root/C0owner.
 - Focused local operation/source/output integrity and single-delete proposal AST checks passed; proposal is unexecuted. Matrix UNKNOWN row is PARTIAL for pendingintent hold only. Sent/lostwire, CREATE/START, lateeffect,404/no-release,persistedpoison,enrolledrecovery and authority gates remain explicit. No blockedprobe, broadtest, production or business-data effect.
+
+
+### 2026-10-24T06:58:16.143360+00:00 — Fresh-process C0/C1 original reconciliation passed; final operator expiry check planned
+
+- c0-original-reconcile-01 PASS: fresh Node process,2 groups/3 refusals,19 source-pinned SQL functions. Actual original C0 state UNKNOWN_HELD and protected C1 COMMITTED record were reread by exact stage/claim identity; wrong/absent/copy/dispatch misuse refused or remained held. PublisherHoldReleased:false; no publisher open, decoder or second retention commit. Owned PG exit0/socket absent.
+- Standard C0 recover now verifies current canonical authorization, actual protected retention identity and retained bytes, then returns the already committed DTO. VALIDATED/uncertain uploads stay held; no generic finish/republish/redecode. Added private producer assertion at service use.3 new focused refusal/protocol/real-role source tests and1 affected host refusal pass on pinned Node22.16.0.
+- Planned distinct c0-operator-sql-06 with the new separate real canonical role installation file and nonfixture database. Only previously unrun revoked-grant-before-authorization/begin/apply cases, exact drain reconciliation and source/role audit; no repeated eight-branch baseline. New owned Unix-only PG; retain settled original after refusal. No production or target pending-REMOVE action.
+
+
+### 2026-10-24T07:01:12.253867+00:00 — C0 operator and durable original reconciliation tranche finished
+
+- Operator SQL06 PASS with real-database role installer:19 functions,3 new groups/4 refusals. Revoked grants refuse before authorization/begin/apply; original SETTLED row and account remain unchanged, exact request-hash lookup works and changed mutation hash refuses. Receipt SHA256 17e32bfa8579eaf4bfcff4d22fb4e0c18b88f6ea02afb6bc29952c2f68d6f932. PG exit0/socket absent. Operator SQL05 all-eight-branch receipt cb8e1a4bd59168f5c50244c23fd6d9b3e249ec3d868f33b1aee0129c34794181; fresh-process original C0/C1 receipt d343870452e4769bf68b7fd6c8bfa018034b6c44d49cc8a8c11b6d7bb9a089f9.
+- Added PROOF_AUTHORITY_R1_INSTALLATION.md with exact source/factory/role/binding prerequisites, focused evidence and retained limits. No replacement policy approval is invented. Standard retained recovery uses original protected record/bytes and current canonical request; uncertain stages remain held. Internal mutation composition preserves original StaffOperationsGrant/audit and expired authority remains held. No public operator endpoint or automatic reauthorization.
+- Actual unresolved activation boundary remains the genuine combined canonical/native/publisher/C1 qualification and dead-owner recovery custody. Existing publisher refuses reopening retained writer.lock/external holds; source reconciliation does not release them. Root's real pending original REMOVE and known exited resource are untouched, with no second DELETE or synthetic recovery authority. Root owns composition onto current R1/label source; this older successor checkout must not deploy wholesale. No shared production install, deployment, credential or primary-worktree change.

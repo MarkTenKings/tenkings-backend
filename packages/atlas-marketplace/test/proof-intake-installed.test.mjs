@@ -38,3 +38,11 @@ test('installed SQL function bodies match fixed source pins and keep guarded ins
  assert.equal(count,16);assert.equal(Object.keys(pins).length,16);assert.ok(sql.indexOf('R1_PROOF_INTAKE_INSTALLATION_REQUIRES_OPERATOR')<sql.indexOf('CREATE TABLE'));
  assert.match(sql,/PROVIDER_SANDBOX','PRODUCTION/);assert.doesNotMatch(sql,/GRANT .* ON TABLE|CREATE OR REPLACE/);
 });
+
+test('real canonical role installation retains the exact operator ACL and refuses fixture database',()=>{
+ const sql=fs.readFileSync(new URL('../sql/r1-proof-authority-role-installation.sql',import.meta.url),'utf8');
+ assert.ok(sql.indexOf('R1_PROOF_AUTHORITY_ROLE_INSTALLATION_REQUIRES_OPERATOR')<sql.indexOf('CREATE ROLE'));
+ assert.match(sql,/current_database\(\)='atlas_proof_authority_review_candidate'/);
+ assert.match(sql,/authorize_mutation_v1\(jsonb\),atlas_proof_authority.begin_mutation_v1/);
+ assert.doesNotMatch(sql,/GRANT SELECT.*TO atlas_proof_(request|settler|revoker)|GRANT.*TO PUBLIC/);
+});

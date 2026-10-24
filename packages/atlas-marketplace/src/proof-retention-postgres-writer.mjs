@@ -87,6 +87,14 @@ function createOwnedWriter(binding,maxOperations,owner,store){
     commitPrepared(handle){return perform(handle,'COMMIT');},
     lookupPrepared(handle){return perform(handle,'LOOKUP');},
     cancelPrepared(handle,options){const barrier=engineDataOptions(options,['barrierId','barrierRevision']);return perform(handle,'CANCEL',barrier);},
+    async lookupOriginal(options){
+      check(!state.closed&&!busy,'RETENTION_WRITER_UNAVAILABLE');const {operation}=engineDataOptions(options,['operation']),o=retentionPreparedOperation(operation,binding);
+      // Exact original read after process loss. This method creates no prepared
+      // submission and cannot COMMIT, cancel, dispatch, or allocate a new ID.
+      busy=true;try{const report=await journal.lookupRetention({operation:o});check(report.operationId===o.operationId&&report.operationHash===hash(o),'RETENTION_WRITER_RESULT');
+        const result=decoderFreeze({...report});return remember(result,{operation:o},'LOOKUP',report.disposition,result);
+      }catch{const error=Object.assign(new Error('RETENTION_STORAGE_OUTCOME_UNKNOWN'),{code:'RETENTION_STORAGE_OUTCOME_UNKNOWN'});remember(error,{operation:o},'LOOKUP','UNKNOWN',null);throw error;}finally{busy=false;}
+    },
     lookupDisposition(value){return assertProofRetentionPostgresOutcome(value,{writer});},
     async close(){state.closed=true;journal.close();store.close();await owner.close();}
   });writers.set(writer,state);return writer;
