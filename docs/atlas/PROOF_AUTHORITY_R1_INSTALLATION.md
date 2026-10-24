@@ -10,6 +10,8 @@ The C0 coordinator in `packages/atlas-marketplace/src/proof-authority-r1.mjs` no
 
 Existing canonical logout behavior remains unchanged when C0 is off. Enabled composition installs both private logout hooks atomically after successful host construction. A repeated same-process logout reads the original drain, retains its barrier IDs, and never repeats an uncertain apply. No drain failure falls back to legacy direct logout.
 
+The proposed next storage target is a new `atlas_marketplace` database on the existing managed cluster, separate from canonical `atlas_grading`. The [operator preparation](runbooks/R2_MARKETPLACE_DATABASE_INSTALLATION.md) contains pinned sources and an unexecuted read-only preflight. Compatibility is conditional: current protected audits reject incoming managed ADMIN memberships as well as inherited memberships, so provider role creation/removal and exact ownership-transfer permissions must be resolved before provisioning. No source guard or runtime audit is relaxed.
+
 Installation order and prerequisites:
 
 1. Select the actual marketplace database and endpoint explicitly. It must contain the exact reviewed `atlas_marketplace` CAS/journal base with NOLOGIN owner `atlas_marketplace_owner` and the separately restricted generic writer. Use an explicit database other than the fixture database. The installer must inspect existing state and grants before changing anything; these files are not registered migrations.
