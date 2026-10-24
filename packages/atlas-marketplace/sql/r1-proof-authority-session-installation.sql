@@ -150,7 +150,10 @@ BEGIN
  SELECT * INTO STRICT reviewer FROM atlas_staff."StaffIdentity" WHERE id=(d->>'reviewerIdentityId')::uuid FOR SHARE;
  PERFORM 1 FROM atlas_customer."CustomerServiceControl" WHERE id='active' AND enabled FOR SHARE;
  IF NOT FOUND THEN RAISE EXCEPTION 'CURRENT_CUSTOMER_SERVICE_REQUIRED'; END IF;
- t:=clock_timestamp(); observed_ms:=(d->>'processObservedAtMs')::bigint; expires_ms:=(policy->>'expiresAt')::bigint;
+ t:=clock_timestamp(); observed_ms:=(d->>'processObservedAtMs')::bigint;
+ -- The installation must end at the earlier of policy expiry and the actual
+ -- locked reviewer's UTC certification. Policy lifetime never extends a grant.
+ expires_ms:=least((policy->>'expiresAt')::bigint,floor(extract(epoch FROM reviewer."certificationUntil" AT TIME ZONE 'UTC')*1000)::bigint);
  IF observed_ms<floor(extract(epoch FROM t)*1000)::bigint-30000 OR observed_ms>floor(extract(epoch FROM t)*1000)::bigint+2000
   OR (policy->>'effectiveAt')::bigint>floor(extract(epoch FROM t)*1000)::bigint OR expires_ms<=floor(extract(epoch FROM t)*1000)::bigint
   OR staff_control.enabled IS DISTINCT FROM true OR customer_control.enabled IS DISTINCT FROM true
@@ -170,7 +173,7 @@ BEGIN
  report:=atlas_proof_authority.observe_access_v1(jsonb_build_object('schema','atlas-proof-installation-observe-v1','installationId',b->'installationId'));
  IF report->>'schema' IS DISTINCT FROM 'atlas-proof-installation-report-v1' OR report->'publisherSessionId' IS DISTINCT FROM p->'publisherSessionId'
   OR report->'publisherLedgerId' IS DISTINCT FROM p->'ledgerId' OR report->'sessionBinding' IS DISTINCT FROM b OR report->'intakeBinding' IS DISTINCT FROM i
-  OR report->'staffBinding' IS DISTINCT FROM staff OR report->'customerBinding' IS DISTINCT FROM customer OR report->'expiresAt' IS DISTINCT FROM policy->'expiresAt'
+  OR report->'staffBinding' IS DISTINCT FROM staff OR report->'customerBinding' IS DISTINCT FROM customer OR report->'expiresAt' IS DISTINCT FROM to_jsonb(expires_ms)
   OR report->'controlRevision' IS DISTINCT FROM '2'::jsonb OR jsonb_array_length(report->'reviewerGrants')<>1
   OR report->'reviewerGrants'->0 IS DISTINCT FROM jsonb_build_object('identityId',reviewer.id,'accessVersion',reviewer."accessVersion",'policyHash',b->>'policyHash','revokedAt',NULL)
   OR EXISTS(SELECT 1 FROM atlas_proof_authority.write_permit)
