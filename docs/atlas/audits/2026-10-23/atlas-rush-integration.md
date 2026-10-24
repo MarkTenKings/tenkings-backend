@@ -1,6 +1,6 @@
 # ATLAS Rush label integration — October 23, 2026
 
-Status: implemented locally; production remains unchanged. Mark explicitly requested a physical print before production.
+Status: prepared for a label-only production release. Mark waived the physical-print check and explicitly authorized this lead to deploy independently while preserving current production authentication. Label corrections are based on observed serving source6f3c6d14; the pending R1 authentication transition is excluded. Production activation is still pending.
 
 ## Typeface and selection
 
@@ -34,4 +34,4 @@ Rush outer ink: REFRACTOR17.821×2.300mm, X-FRACTOR16.195×2.300mm, YELLOW RAYWA
 
 This change builds on local correction commit1278181c, whose parent6fe0e462 predates serving geometry fixes. Integrate onto the actual release baseline; never deploy this old branch wholesale. R1 reports last verified production6f3c6d14 and corrected auth0aa2cdf6 still unpromoted; credential release is separate. The prior digital/print color correction also requires preview-card-foil and print-card-foil in both external gateway artwork-query allowlists.
 
-No production deploy/build/restart/migration, paid provider request, label replacement/refresh, export persistence or physical printing occurred. Physical printer/stock reproduction is pending Mark's requested check. The prior corrections and this font are not live.
+The prior cf4a5b64 native/staff/public candidates were built against pending replacement authentication material and remain staged only. This label-only release instead preserves the current6f3 authentication modules and configuration, with label patches28823288 andb8348778. The same completed focused label checks are reused. Fresh native/web artifacts and release bindings are required for this source. No schema or credential change, paid provider request, label replacement/refresh, saved-export rewrite or physical printing is part of the release. Mark will check the production result after deployment.
