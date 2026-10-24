@@ -96,7 +96,7 @@ reservation count corrected and then passed alone. The failed test setup is
 preserved in the packet. Ten distinct tests are covered, including capacity. This is parser/projection
 and refusal evidence, not PostgreSQL execution or authority evidence.
 
-`qualify-proof-intake-protected-postgres.mjs` is prepared and syntax checked only.
+`qualify-proof-intake-protected-postgres.mjs` passed its finite actual PG17.11 run.
 Root must supply a fresh isolated, already-installed and seeded PG17.11 fixture,
 a private protected config file, explicit Unix endpoint and both distinct role
 credentials. It does not install SQL, create roles, seed rows or discover
@@ -107,14 +107,22 @@ with `intakeConfiguration`, `retentionConfiguration`, `installation`,
 revision 0, maxOperations exactly 8, per-order quota at least 5, and original
 policy/window lifetimes sufficient for the finite run. No lifetime is renewed.
 
-Nine planned groups cover actual role/closure composition, NULL-CAS/unrelated
+Nine completed groups covered actual role/closure composition, NULL-CAS/unrelated
 patch refusal, original CREATE/VALIDATE and mismatched validation, exact replay,
 conflicting CREATE, actual C1 retention/private-origin lookup, and operator-only
 COMMIT response loss before/after actual database commit. A near-capacity group refuses a new CREATE while allowing a reserved VALIDATE.
 Expected final state is revision 7, seven events, four uploads and one retained object. External decoder,
 actor-access, qualification and publication fields are explicitly synthetic;
-this test makes no publisher-IO or canonical-authority claim. SQL compilation
-and all nine actual PostgreSQL groups are **NOT_RUN** for this new candidate.
+this test makes no publisher-IO or canonical-authority claim. SQL installation and all nine actual PostgreSQL groups passed, including ten
+refusals. Receipt `0f95c67aaf6e40ef35e4a49bd8379196f066a834b1df7b53c289d42958e434a8`
+records final revision 7, seven commits/events, six intake operations, two reserved
+VALIDATE slots and one retained object; state hash
+`9373d0bef36daea7ae8030383ed38414843201fcfb66c53d627f5ebac577877f`.
+The original setup stopped at a restricted settings read before intake writes.
+Only that test query was corrected; the exact stopped fixture resumed after
+revision-zero/empty-journal checks, without reinstalling SQL, reseeding, widening
+grants or renewing policy. Original evidence and three prior fixtures remained
+unchanged. Owned PostgreSQL exited 0 and its private socket was absent afterward.
 
 Remaining live gates are concrete work: canonical request/private producer and
 C0 stage/revocation transaction integration, actual qualified decoder outcome
