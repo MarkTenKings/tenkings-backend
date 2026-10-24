@@ -9,6 +9,18 @@ const reply = (res, status, value) => {
     res.end(JSON.stringify(value));
 };
 
+export async function readProductionR1Bindings({ staffEnvironment, customerEnvironment, publicEnvironment } = {}) {
+    const [staff, customer, publicPolicy] = await Promise.all([
+        import('../../../frontend/atlas-app/lib/server/access/config.mjs'),
+        import('../../../frontend/atlas-customer/lib/server/config.mjs'),
+        import('../../../frontend/atlas-public/lib/server/policy.mjs'),
+    ]);
+    const configurations = { staff: staff.productionAccessConfig(staffEnvironment),
+        customer: customer.productionConfig(customerEnvironment), public: publicPolicy.productionConfig(publicEnvironment) };
+    return Object.freeze(Object.fromEntries(Object.entries(configurations).map(([surface, config]) =>
+        [surface, Object.freeze(Object.fromEntries(['mode', 'origin', 'deploymentId', 'releaseSha', 'configHash'].map(key => [key, config[key]])))])));
+}
+
 /** Actual production classes/configuration, with explicit protected inputs.
  * No fixture, ambient credential discovery, enrollment, provider call or job.
  * Generated clients must come from this release's normal application build.

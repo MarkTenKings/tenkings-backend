@@ -3,8 +3,8 @@ import { createProductionR1Canonical } from './production-canonical.mjs';
 import { requireValue } from './contract.mjs';
 
 /** Persistent production startup, not a fixture runner or approval generator.
- * The source-owned runtime owner must supply actual private provider/finance/
- * physical/C0 ports and current readiness capabilities. JSON evidence alone
+ * The source-owned runtime owner must supply actual private physical/C0 ports
+ * and current readiness capabilities. NON_PAYMENT has no financial owners. JSON evidence alone
  * cannot construct them. No defaults manufacture these missing authorities.
  * The caller owns signals, protected input loading, and final process exit.
  */

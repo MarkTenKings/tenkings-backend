@@ -37,6 +37,9 @@ function loadClient(root){
   const entry=join(root,'pg/lib/client.js'),require=createRequire(entry),Client=require(entry);
   check(typeof Client==='function','RETENTION_DRIVER_EXPORT');return Client;
 }
+// Shared production transports reuse this exact dependency audit. This only
+// returns the pinned Client implementation; it creates no connection/authority.
+export function loadPinnedProofPostgresClient(root){return loadClient(root);}
 export function retentionPostgresConnectionConfiguration(input){
   const c=decoderContractData(input);decoderExact(c,['schema','driverDirectory','endpoint','database','role','functionOwner','password','functionDefinitionHashes']);
   check(c.schema==='atlas-proof-retention-postgres-connection-v1'&&typeof c.driverDirectory==='string'&&isAbsolute(c.driverDirectory)&&resolve(c.driverDirectory)===c.driverDirectory);
