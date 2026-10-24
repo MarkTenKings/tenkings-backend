@@ -65,6 +65,11 @@ try {
     const config = parseProofDecoderEngineJSON(read(CONFIG, 65536, 0o600), { maxBytes: 65536 });
     decoderExact(config, ['schema', 'addonPath', 'addonSha256', 'expectedBootId', 'plan', 'epoch']);
     check(config.schema === 'atlas-proof-decoder-enrolled-broker-service-v1');
+    // Match the accepted native notifier's fixed systemd contract before any
+    // enrollment exists. These are its two non-secret protocol variables.
+    check(process.env.NOTIFY_SOCKET === '/run/systemd/notify' && process.env.WATCHDOG_USEC === '500000');
+    const notification = lstatSync('/run/systemd/notify');
+    check(notification.isSocket() && notification.uid === 0);
     const options = { enabled: true, addonPath: config.addonPath, addonSha256: config.addonSha256, expectedBootId: config.expectedBootId };
     // Refuse static path/material faults before creating the one-use enrollment.
     const seccomp = read(config.plan.profile.seccomp.path, 65536, 0o600);
