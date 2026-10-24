@@ -21,7 +21,7 @@ export function verifyProductionSource({ sourceRevision, sourceManifestSha256 })
         && Array.isArray(manifest.files) && manifest.files.length > 0 && manifest.files.length <= 10000);
     const paths = new Set();
     for (const file of manifest.files) {
-        check(typeof file.path === 'string' && /^[A-Za-z0-9_./@+-]+$/.test(file.path) && !file.path.split('/').includes('..')
+        check(typeof file.path === 'string' && /^[A-Za-z0-9_./@+\[\]-]+$/.test(file.path) && !file.path.split('/').includes('..')
             && !paths.has(file.path) && /^[a-f0-9]{64}$/.test(file.sha256)); paths.add(file.path);
         const full = resolve(root, file.path); check(relative(root, full) === file.path && fs.realpathSync(full) === full);
         const current = fs.lstatSync(full);
