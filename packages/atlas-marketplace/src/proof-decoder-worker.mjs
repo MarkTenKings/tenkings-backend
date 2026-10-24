@@ -15,6 +15,7 @@ export function classifyProofDecoderWorkerFailure(error){
   if(error?.code!==undefined)return 'DECODER_FAILURE';
   const message=typeof error?.message==='string'?error.message:'';
   if(/alloc|memory|resource|thread|timeout|timed out|killed|out of space|too many open/i.test(message))return 'DECODER_FAILURE';
+  if(message==='VipsJpeg: Corrupt JPEG data: premature end of data segment')return 'INVALID_IMAGE';
   if(/^(?:pngload_buffer: (?:IDAT stream error|libspng read error)|Input image exceeds pixel limit)$/.test(message))return 'INVALID_IMAGE';
   return 'DECODER_FAILURE';
 }

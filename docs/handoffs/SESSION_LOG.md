@@ -48862,3 +48862,78 @@ Reviewed import03 f311feee7b47c1486ef977c439af7fce1a193dfd8a89cdb2581b234f817359
 ### R2 source-owned protected writer/publisher join candidate — 2026-10-24T00:50:55.306402+00:00
 
 Root reviewed frozenready02 fa7875f3cee744382ee4c92d71fe2175ae3832e124c87ccb168df32e6f394d47: narrow closed protected connection-binding branch0cbe34336acac3835efa5d373aa7737340f29bfff1764bebfb25e4a05c8e9384; prior generic historical bytes remain accepted separately. Two new projection tests passed across retainedruns (one aliased test-fixture failure preserved/corrected; only affected case rerun). New29KB actualLinuxPG→v4 harnessfe76abe0c3fa8874a840068c8cb8a6175595b8cf55ce4692cea89a0497752534 supports five actual publisher/PG outcomes including crash-after-commit held state, guaranteed finalizers, exact original private outcomes. Static36-source closure recorded; actual join NOT_RUN. No old metadata/PGcases replayed. Synthetic initial seed/policy/actor/qualification fields remain explicit unsupported C0/intake boundary. Outer staging/ownedPGoperator still preparation work; no database/server actions by subagent.
+
+
+### 2026-10-24T00:59:03.307377+00:00 — R2 isolated tooling observation and diagnostic import dispatch plan
+
+Private PG17.11 configure/make/install each exited 0. Build wrapper03 returned failure during prefix sealing: its single-link assertion met standard share/timezone hardlinks. Receipt f88869d9abe6f5e0f767195824fc1a1ad1f9078cfec85bfb449b4e088ac7677f retained; no database started, no packages installed, all prior decoder controls/ledgers unchanged. Read-only owned install inspection confirms zero UID65529 processes. Root is freezing the complete installed tree before a bounded same-byte normalization and seal; no rebuild/replay planned.
+
+Next discrete action is reviewed diagnostic image import03 (source f311feee7b47c1486ef977c439af7fce1a193dfd8a89cdb2581b234f8173592c), fresh stage jpeg-native-image-import-01, isolated VM only. Import distinct diagnostic OCI image through the bounded one-use loopback registry, retaining prior image/runtime/control/ledger pins. No guard/decoder job/DB/production action. Diagnostic import remains unqualified; no Config.Env or credential receipts are read. Prior independent review and source review reused.
+
+
+### 2026-10-24T01:01:39.786354+00:00 — R2 diagnostic preflight result; private driver staging plan
+
+Diagnostic import03 exited before new import directory/intent or any Engine POST. Its read-only old-image GET encountered EBADF when updating an HTTP socket after Connection: close handed the stream to the response. Preserve ops/jpeg-native-image-import-01; diagnostic source revision04 and a focused local transport check are being prepared. No import or decoder job is claimed.
+
+Next action: stage the existing exact141-file pg8.16.3 driver into new root-owned /usr/local/lib/atlas-r2-pg-driver-8.16.3-join-01 only, source6aa1d7479a686ab27927eab2bd7792d5e4ea53b3604441bf6c7f8918d138b071. Root read the complete bounded body; independent review ff3f0b6aad26ea1129ef5b4e861a830bf58e57118e87e0f8fddad598b6653482 checked full141-file payload against frozen inventory. No scripts/download/DB/runtime/production changes; root-owned new files only.
+
+
+### 2026-10-24T01:02:06.968016+00:00 — R2 private driver staged; isolated OS fixture identity plan
+
+Actual driver staging PASS:141 exact files; remote receipt f0e07c0322de0f5afae8c51ae6bde2cf59ae38b0b68fda27fbcea2c25227f388. No driver execution/install scripts/network.
+
+Next action: reviewed source58eec198a2c8be0ab859c99cb42a2202c1dfff5e30303e8e968d2eb06c401672 creates only the new isolated VM account/group atlas_r2_publisher_fixture UID/GID65530. The source/public lookup evidence establish initdb requires a resolvable effective UID and this UID/name/group are absent. Account has locked password, nologin shell, /nonexistent home, no created home or supplementary members. No shared account/credential change, no credential read, no database/service startup. Every decoder control/ledger pin retained; partial failure will be recorded, not reset/replayed.
+
+
+### 2026-10-24T01:02:39.626170+00:00 — R2 isolated fixture identity observed; private prefix seal plan
+
+OS fixture identity creation PASS; canonical receipt ff23852a6cdffb4d8879e62d3b12564b90b53a3c14508f8711145ada0d27e37d. UID/GID65530 is locked/nologin/no-home/no supplementary members; decoder controls preserved; no DB/service start.
+
+Next action: root-reviewed and independently reviewed seal source4f837a0731adb81b57e598743c0933751b93dc63fbe1a205114d1e36fb7f1d19; independent review cf7752e8723ce0a00f30547e80e9dfae3a4f82b09dfbc0cf408f64ee023e53b3. Pin the actual complete installed tree78c95b5394b34fcd8d168abb7633c26b1b9553ff85d62e67840677b5ba839641 (1721entries/31,905,372B); only111 fully contained timezone hardlink groups/368paths become identical-byte single-link files. Seal this private prefix root-owned, compare all contents, emit complete manifest and run postgres --version as numeric65529. No build replay, download, system package install or database startup. Prior failure/build receipts and decoder15ledgers/81pins retained unchanged. New receipt directory postgres-private-seal-01; partial failure is retained.
+
+
+### 2026-10-24T01:03:28.810189+00:00 — R2 private PG17.11 ready; corrected diagnostic import plan
+
+Actual seal PASS; canonical remote seal receipt 1719aa58d0f6d696d538fc465cb33441711f0ca568d028565ce79dcfcd702977. Complete root-owned private prefix manifest b3038b2c31f78b053a1c2c9d7e954c2d9991b15c72d2961fe13d345321ea1c33 (1721entries/31,905,372B), all original bytes unchanged and timezone files now independent single links. postgres --version returned17.11 as65529. Prior decoder/build receipts/system packages unchanged; no database started. Host loader/libc/NSS/kernel remain dependencies, not a hermetic closure claim.
+
+Next: import04 b5bffa9d222e35e2c7cfca20f563abc4124625226219894d3c5369fc7407490f, fresh local stage jpeg-native-image-import-02. Root reviewed exact Connection:close lifecycle delta; focused local regression3/3PASS (content-length GET, chunked POST, oversize bound). Source preflight again requires remote import directory and diagnostic image absent, then records one-use intent before one import POST. Prior03 had failed during GET before either effect; no consumed POST replay. Same prior import scope: distinct diagnostic image, bounded loopback registry, no decoder jobs/guard/DB/production action or credential receipt access.
+
+
+### 2026-10-24T01:05:12.738426+00:00 — R2 diagnostic image imported; new-only diagnostic source stage planned
+
+Import04 actual PASS, canonical receipt b6e96b352fd3b79c8af2b1c69dd8787761d246ac7f0c158a9a75073d1908c109. Exactly one image POST200, expected repo digest b5270ae7ed8e1cbccf3cdb81bf9bd0e0db2d3ddda899a1781693275ae05cd0d9 and rootfs1006b7ca41fce11109b6fe103432e7262edad88c5356ba9b29c7a0b99dc94d46 observed. Four bounded registry connections; registry stopped and temporary TLS key removed; old15ledgers/controls and old image projections unchanged. No decoder job run; diagnostic only/unqualified.
+
+Next: new-only stage a9618b4e593a85d3ed8f7d306e10e71e24398009d66b80bd0db97445f17f79b9 to /usr/local/lib/atlas-r2-jpeg-diagnostic-01. Root read complete specific body, reused preserved helper review and independently reviewed unchanged collector/harness; decoded source headers match exact3frozen files/plan. Pins actual import receipt and controls before writes; no native load, guard start, container or DB effect.
+
+
+### 2026-10-24T01:07:52.906880+00:00 — R2 protected PG→publisher five-case dispatch plan
+
+Diagnostic source stage actualPASS34bf4f6ca09754e93e1eff173ae61bd986aa60c678230d28e3aaf7bc85aa352e; no decoder job/guard effect and old15ledgers/controls unchanged.
+
+User requested reduced review overhead: each of the existing two Astra xHigh agents owns its work/focused tests; no routine cross-review. Root focuses on data/security/runtime/shared effects; passing unchanged evidence reused. Prior completed review results remain valid.
+
+Next runtime/DB action: exact bounded outer d5ed6472cb2318b9feee6b519381f1d77d8a6474f9e5b08c994af3a81369036f, expanded f516c964f79270f7305f8d1e06e1908de7e262f3fdd5edc8bc671c74a5d47365, committed candidate6d59615ac67772287d1bbb5f6e6dfc92a862d001. Fresh isolated Linux PG17.11 data/socket55496, TCPdisabled, root-owned source, UID/GID65530. Fresh synthetic schema/roles/binding and five initial rows only; root removes inert SQL proposal blockers in the new fixture copies, never repository/production. Real v4 original publication precedes single seed transaction; sequential COMMIT, cancellation, lost-after-COMMIT lookup, lost-before-COMMIT cancellation, and SIGKILL after DB COMMIT/before publisher settlement. Crash hold/lock must remain. One seed, no retry/reset, bounded owned children/output, owned PG stop and socket absence required. Old source/fixture metadata/15 decoder ledgers retained. Does not qualify canonical authority/initial intake/decoder/C0/power loss or full OS closure. Root reviewed full effect body and narrow corrections; source/prerequisite pins matched; no further unchanged tests replayed.
+
+
+### 2026-10-24T01:09:36.281070+00:00 — R2 join preflight naming correction
+
+Join01 refused in preserved() before any receipt directory, initdb or runtime effect: six existing registry-cache fixture ledgers have their recorded fixture names rather than a metadata suffix. All15 exact expected path/file pins remain. Root corrected only the redundant directory-name condition to require absolute paths within the fixed qualification root and no parent traversal; retained protected directory/complete file inventory/content/identity checks are unchanged. Checked all15 frozen paths locally; no behavioral tests rerun.
+
+Next dispatch is new wrapper 635018ed7e485b3ea8ac94c43ba61fbc471730ac9136709929b2802eb3aa8bdd (run_protected_publication_join_02.py), same fresh synthetic five-case plan and exact inputs; originalfailedpreflight receipt retained. Remote new roots still must be absent. No consumed database action exists to replay.
+
+
+### 2026-10-24T01:12:28.876978+00:00 — R2 joined fixture stopped safely; JPEG diagnostic runtime plan
+
+Join02 created isolated PG/schema and five empty publisher fixture directories; failed before third child creation because case-lost_after violates the log filename regex. First two owned children killed/waited; all five objects/evidence/ledger dirs remain empty in read-only failure inspection. No seed or publication data action occurred. Owned PG exit0/socketabsent; all previous metadata/decoder pins unchanged. Agent preparing exact stopped-fixture resume without initdb/schema/prepare replay.
+
+Next runtime action: JPEG diagnostic epoch01 source630a5cc3231c94c4e2a4e7ee097d41c836cc1ad681c88f82bff094a81c348f5c. Root read complete effect body and actual import/stage binding delta; prior reviewed collector/harness reused. Fresh JPEG_NATIVE_DIAGNOSTIC_1 only, exact imported diagnostic image, original626B public fixture, one original15s deadline. Durable intent precedes retiring exact refusing stale socket (prior owned broker/client waits), archiving latch, replacing guard config, thaw/start. Prior15ledgers/holds remain immutable. Passive bounded stderr observation grants no worker/publication authority. Original owned executor must finalize cleanup; outer stops guard and observes empty frozen parent/zero Engine containers, retains new ledger/latch and every failure. No production worker/classifier or shared environment change.
+
+
+### 2026-10-24T01:14:54.610390+00:00 — R2 actual JPEG diagnostic result
+
+Diagnostic epoch PASS, canonical receipt369f8baa2fe58b5b9d3e535944672aa581b52538bb6e36d302898e9f5c3b1393. One complete native message: VipsJpeg: Corrupt JPEG data: premature end of data segment (58UTF-8bytes, code absent). Unchanged classifier returned DECODER_FAILURE; newjob3c1d9598-31e7-42a1-b647-74c5eed495e9 reached FINALIZED9 with known WAIT2/nonOOM/REMOVE204/absence/nativeempty before originaldeadline. Ownedharness32030 exited0; guard stopped, parent empty/frozen, Engineempty, oldbrokersocketretired with recorded priorwait. Newledger poisonedGUARD_SHUTDOWN on intentional close; all15priorledgers/artifacts unchanged. Currentlatch cfedf37e8d11747e12ae84221b78fa80eabb68d934a7b367fcd56500bc8cd477. No historicalcause reclassification or productionworkerchange. Qualification doc updated; narrow classifier fix underway.
+
+
+### 2026-10-24T01:15:33.516007+00:00 — R2 exact observed JPEG failure classifier
+
+Worker now classifies only the exact observed58-byte VipsJpeg premature-data-segment message as INVALID_IMAGE, after existing coded/resource failure gates. No diagnostic output, PDW1/argv/exit or broad native-error rule changes. WorkerSHA7ea55b6db2d1e819681eea0deb0b04629099e2761b18ed0b44a583b921614fde. Three focused Node22 tests PASS: exact message, near-miss/newline/NUL refusal, coded/unavailable error refusal; packet jpeg-native-classifier-01/source-ready-01.json. Root reviewed the one-line classifier delta and focused tests; reused agent execution, no duplicate suite. Actual updated-image broker qualification remains pending.
