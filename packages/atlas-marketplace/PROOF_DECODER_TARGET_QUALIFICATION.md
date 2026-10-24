@@ -341,7 +341,7 @@ ownership authority.
 | `PRIVILEGE_AND_NAMESPACE_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native setuid/capset, namespace clone/unshare/setns, mount, ptrace, bpf, keyring and io_uring syscalls deny; actual uid/gid, CapEff zero, NNP and seccomp mode plus AppArmor enforcing. | INCOMPLETE: ordinary2 reported eleven fixed syscall denials plus native pre-input controls; extension01 added process fork/clone and seven namespace-clone denials. Own namespace descriptor open was denied; valid-descriptor setns remains uncovered |
 | `CROSS_JOB_ACCESS_DENIED` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Two sequential jobs: previous tmpfs marker absent, stale identities/tokens/output rejected, no PID/IPC/proc-root reach outside private namespaces. MaxConcurrent1 means no simultaneous production workers are created for this probe. | NOT_RUN |
 | `NATIVE_MEMORY_OOM` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded native touched allocation beyond 512 MiB; independently observe exact child cgroup memory.max/swap.max, memory.events oom/oom_kill, terminal status, held poison and no parent leak. Do not fabricate native OOM using a JS error. | INCOMPLETE: memory-oom01 independently observed512MiB/zero-swap, child oom_kill delta1, Engine exited137/OOMKilled, held RUNNING4/poison and unchanged parent-local events. Outer terminal-checkpoint capture failed after successful case; saved actual records corroborated without replay. Final evidence binding remains |
-| `CPU_AND_WALL_DEADLINE` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native busy loop and blocked native call, partial-upload delay, transport header stall and wall deadline; child cpu.max 150000/100000 + cpu.stat throttling, original BOOTTIME deadline, independent guard kill. Do not extend deadline for setup/cleanup. | INCOMPLETE: ordinary2 CPU workload joined to independent usage/throttling counters; wall/blocked-call/upload/header-stall variants unrun |
+| `CPU_AND_WALL_DEADLINE` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native busy loop and blocked native call, partial-upload delay, transport header stall and wall deadline; child cpu.max 150000/100000 + cpu.stat throttling, original BOOTTIME deadline, independent guard kill. Do not extend deadline for setup/cleanup. | INCOMPLETE: ordinary2 CPU workload and CPU_DEADLINE01 native busy loop joined to independent throttling; CPU_DEADLINE01 reached original15s deadline, empty frozen parent observed72.6ms later, exited137/non-OOM and immutable RUNNING4 hold. Independent guard causality and blocked-call/upload/header-stall variants remain unrun |
 | `PID_THREAD_FD_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Native pthread growth and pids.events with pids.max32; process fork denied separately. FD opening to RLIMIT_NOFILE64 and EMFILE. Positive ordinary worker thread needs must still pass. | INCOMPLETE: ordinary2 joined 31 threads/EAGAIN to sampled32tasks and pids.max event; FD soft/hard64 and61opens/EMFILE observed; extension01 separately denied process fork/clone; final variant binding remains |
 | `TMPFS_SHM_LIMITS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Bounded touch/write past each 8 MiB tmpfs/shm limit and map/exec attempts; actual mount size/flags and ENOSPC or bounded fault, memory charge, no shared residue. | INCOMPLETE: ordinary2 observed8MiB ENOSPC and denied executable maps for each private tmpfs/shm canary with native pre-input mount controls; extension01 joined a4MiB temporary file to exact4MiB shmem/file charge increases; mmap-fault/residue and final evidence binding remain |
 | `CANCEL_IGNORED_TERM_AND_DESCENDANTS` | INDEPENDENT_HOSTILE_CONTROL_PROBE: Running loop ignores TERM, application cancels; kernel guard freezes/kills and observes all threads/descendants empty. Fork denial under production profile is tested separately. An independently root-created owned descendant containment test is separate control evidence, not permission added to worker seccomp. | NOT_RUN |
@@ -385,3 +385,32 @@ The controls were designed against primary interface documentation:
 [runc 1.5.2 initialization](https://raw.githubusercontent.com/opencontainers/runc/v1.5.2/libcontainer/standard_init_linux.go), and
 [AppArmor policy syntax](https://raw.githubusercontent.com/apparmor/apparmor/master/parser/apparmor.d.pod).
 The actual target receipts, not these references, must establish applied behavior.
+
+
+`ops/cpu-deadline-01` subsequently completed the previously unrun native
+CPU_DEADLINE mode using unchanged runtime08 and the original961dacfa probe image.
+Its receipt/stdout SHA256 is
+`8097ba3d88ca17f3c1b309e802d102f7608beead9f0c0fcc4e472672d2935a77`.
+The original reservation, transport and guard deadline remained15seconds;
+the probe's four native busy threads had their existing20second internal bound.
+Independent exact scope samples observed19,915,685usage microseconds,45throttled
+periods and309,902throttled microseconds of increase under150000/100000 quota.
+The empty frozen parent was observed72,593,414ns after the original deadline;
+this is an observation time, not a measured exact kill instant. Engine showed
+exited137/non-OOM/PID0, with no child or parent OOM-event increase. The transport
+refused completion; the original RUNNING revision4 row, no WAIT/cleanup,
+poison and capacity1 remain held. Batch35281 and observer35292 exited0; all20
+previous ledger sets/publisher holds and runtime pins were unchanged. The
+operator captured the new21st ledger checkpoint and ended with stopped guard
+and retained latch. It does not attribute the raced shutdown solely to the
+independent guard, or cover blocked native calls, delayed upload or header stall.
+
+The separately scoped `ops/cpu-deadline-external-cleanup-01` then observed one
+exact non-force/no-volume DELETE204, followed by exact404 and an empty Engine.
+Remote receipt SHA256 is
+`71e3fc991e5e7631f731db537d6f0b47d9f7cf4f46c58c0a90ec63583320f074`.
+All21 decoder ledger sets, publisher holds, original deadlines and locks stayed
+byte/inode unchanged. No original WAIT was backfilled, capacity released,
+epoch reset, host recovery enrollment, restart or thaw occurred. This consumed
+resource operation must not be replayed. Full target qualification and physical
+publication remain separate gates.
