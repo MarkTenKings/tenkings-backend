@@ -40,6 +40,18 @@ test('font-only feedback retains model material, source, optical scale and uncha
   }
 });
 
+test('Rush keeps its own lettering and sizing when legacy default feedback still supplies exact-photo colors', () => {
+  for (const p of REVIEWED_LABEL_STYLE_PREFERENCES.filter(p => p.overrides.fontId === 'knewave')) {
+    const f = fixture(p);
+    Object.assign(f.spec.lines[0], { fontId: 'atlas-rush', letteringMode: 'CATALOG', normalizeWordInkHeight: false });
+    delete f.spec.specHash; f.spec.specHash = hash(canonical(f.spec));
+    const result = applyReviewedLabelStylePreferences(f.spec, f.photos), line = result.lines[0];
+    assert.equal(line.fontId, 'atlas-rush'); assert.equal(line.reviewedCapMm, undefined); assert.equal(line.normalizeWordInkHeight, false);
+    if (p.overrides.flatFill) assert.equal(line.spans[0].baseColor, p.overrides.flatFill.baseColor);
+    else assert.equal(result, f.spec);
+  }
+});
+
 test('paint-only feedback keeps original lettering while replacing exact word paints and normalizing short words', () => {
   const p = REVIEWED_LABEL_STYLE_PREFERENCES.find(p => p.overrides.spanPaints), f = fixture(p);
   const result = applyReviewedLabelStylePreferences(f.spec, f.photos), line = result.lines[0];

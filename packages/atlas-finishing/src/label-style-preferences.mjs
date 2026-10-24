@@ -79,7 +79,10 @@ export function applyReviewedLabelStylePreferences(spec, photos) {
       && p.photoShas.FRONT === shas.FRONT && p.photoShas.BACK === shas.BACK);
     if (!preference) return line;
     const result = structuredClone(line), fieldsApplied = [], o = preference.overrides;
-    if (o.fontId !== undefined) {
+    // ATLAS Rush supersedes earlier default-face tuning, while the exact-photo
+    // color feedback still applies. Legacy recipes keep their earlier result.
+    const preserveRush = line.letteringMode === 'CATALOG' && line.fontId === 'atlas-rush' && o.fontId === 'knewave';
+    if (o.fontId !== undefined && !preserveRush) {
       result.fontId = o.fontId; result.fontSha256 = o.fontSha256; result.letteringMode = 'CATALOG';
       // The reviewed choice is not a fresh photographic font identification.
       result.fontSource = null;
@@ -106,8 +109,9 @@ export function applyReviewedLabelStylePreferences(spec, photos) {
       check(result.spans.length <= 32);
       fieldsApplied.push('spans');
     }
-    if (o.normalizeWordInkHeight !== undefined) { result.normalizeWordInkHeight = o.normalizeWordInkHeight; fieldsApplied.push('normalizeWordInkHeight'); }
-    if (o.capMm !== undefined) { result.reviewedCapMm = o.capMm; fieldsApplied.push('reviewedCapMm'); }
+    if (o.normalizeWordInkHeight !== undefined && !preserveRush) { result.normalizeWordInkHeight = o.normalizeWordInkHeight; fieldsApplied.push('normalizeWordInkHeight'); }
+    if (o.capMm !== undefined && !preserveRush) { result.reviewedCapMm = o.capMm; fieldsApplied.push('reviewedCapMm'); }
+    if (!fieldsApplied.length) return line;
     applied.push({ preferenceSha256: preference.preferenceSha256, photoShas: { ...preference.photoShas },
       captionSha256: hash(line.text), role: line.role, fieldsApplied });
     return result;

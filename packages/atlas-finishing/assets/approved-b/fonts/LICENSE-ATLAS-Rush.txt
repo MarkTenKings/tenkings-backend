@@ -1,0 +1,34 @@
+ATLAS RUSH - PROPRIETARY FONT SOFTWARE
+Version 1.000
+
+Copyright 2026 ATLAS / Ten Kings. All rights reserved.
+Owner designation: ATLAS / Ten Kings, as instructed by Mark Thomas.
+
+This font software and its editable design source were created for ATLAS /
+Ten Kings. They are delivered to the owner for use, copying, modification,
+embedding, printing, commercial production and distribution within the owner's
+products and services. The owner may provide the package to employees,
+contractors and service providers for authorized ATLAS / Ten Kings work.
+
+Recipients other than the owner may use or modify this package only for that
+authorized work. They may not independently sell, sublicense, publish or
+redistribute the font software or source for unrelated use without written
+permission from ATLAS / Ten Kings. This restriction concerns the font software
+and source; it does not restrict distribution of finished ATLAS labels, images,
+PDFs, cards or products rendered using the font.
+
+This is a proprietary delivery, not an open-source font license. The owner may
+replace these distribution terms for future releases.
+
+The software is supplied as is, without a warranty of fitness for a particular
+printer, process or material. Test the intended production output before use.
+
+PROVENANCE
+Original AI-assisted ATLAS Rush lettering, followed by vector construction,
+spacing and font engineering. No existing font outlines were traced, copied,
+modified or included. See PROVENANCE.md and source/glyph-provenance.json.
+
+TOOLS
+The font binaries contain original outline data and font metadata. Build tools
+such as FontTools, ufo2ft, ufoLib2 and Potrace have their own licenses; their
+executables and third-party font software are not included in this delivery.

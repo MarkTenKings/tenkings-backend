@@ -2,12 +2,71 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { compileLabelStyleSpec, fallbackLabelStyleSpec, labelStyleDisplayParallel, prepareLabelStyleRequest,
-  validateLabelStyleRequest, validateLabelStyleSpec } from '../src/label-style-contract.mjs';
+  validateLabelStyleRequest, validateLabelStyleSpec, assertLabelStylePhotoColors } from '../src/label-style-contract.mjs';
 import { styleFixture, styleFonts, styleObservation, styleSource } from './label-style-fixture.mjs';
 import { prepareLabelWordmarkRequest } from '../src/label-wordmark-contract.mjs';
 import { applyReviewedLabelStylePreferences } from '../../atlas-finishing/src/label-style-preferences.mjs';
 import { LABEL_STYLE_FONT_CATALOG } from '../../atlas-finishing/src/label-style-paint.mjs';
 const binding = { requestSha256: 'e'.repeat(64), responseSha256: 'f'.repeat(64) };
+const rushFonts = [...styleFonts, { id: 'atlas-rush', family: 'ATLAS Rush', sha256: '8'.repeat(64), traits: ['original brush lettering'], weight: 700 }];
+
+test('new Rush default ignores border/field font guesses while retaining photographed paint and legacy recipes', async () => {
+  const { input, request: legacy } = await styleFixture({ lines: [{ role: 'variant', text: 'BLUE DIAMOND · AUTO · PATCH /500' }] });
+  const request = prepareLabelStyleRequest(input, { fontCatalog: rushFonts, defaultFontId: 'atlas-rush' });
+  assert.notEqual(request.requestKey, legacy.requestKey);
+  for (const basis of ['CARD_FIELD', 'CARD_BORDER', 'UNAVAILABLE']) {
+    const observation = styleObservation(request), value = observation.lines[0];
+    value.fontSource = basis === 'UNAVAILABLE'
+      ? { side: null, sha256: null, box: null, basis, confidence: 'LOW', observation: 'Variant name is not printed.' }
+      : styleSource(request, { basis });
+    const spec = compileLabelStyleSpec(request, observation, binding), line = spec.lines[0];
+    assert.equal(line.fontId, 'atlas-rush'); assert.equal(line.fontSource, null); assert.equal(line.letteringMode, 'CATALOG');
+    assert.equal(line.spans[0].baseColor, '#235BA9'); assert.equal(line.spans[0].pattern, 'DIAMOND');
+    assert.deepEqual(validateLabelStyleSpec(spec, request), spec); assert.doesNotThrow(() => assertLabelStylePhotoColors(spec, request));
+    const forged = structuredClone(spec); forged.lines[0].fontId = 'sans'; forged.lines[0].fontSha256 = styleFonts[1].sha256;
+    forged.lines[0].fontSource = value.fontSource;
+    const { specHash, ...body } = forged; forged.specHash = digest(canonical(body));
+    assert.throws(() => validateLabelStyleSpec(forged, request), { code: 'LABEL_STYLE_SPEC_INVALID' });
+    if (basis !== 'UNAVAILABLE') assert.equal(compileLabelStyleSpec(legacy, observation, binding).lines[0].fontId, 'sans');
+  }
+  const missing = fallbackLabelStyleSpec(request);
+  assert.throws(() => assertLabelStylePhotoColors(missing, request), { code: 'LABEL_STYLE_CARD_COLOR_REQUIRED' });
+  const partial = styleObservation(request); partial.lines[0].spans[0].end = 12;
+  assert.throws(() => assertLabelStylePhotoColors(compileLabelStyleSpec(request, partial, binding), request), { code: 'LABEL_STYLE_CARD_COLOR_REQUIRED' });
+});
+
+test('Rush requests retain distinctive printed lettering but never generate a border-derived wordmark', async () => {
+  const { input } = await styleFixture({ lines: [{ role: 'variant', text: 'THRILLERS' }] });
+  const request = prepareLabelStyleRequest(input, { fontCatalog: rushFonts, defaultFontId: 'atlas-rush' });
+  const observation = styleObservation(request), value = observation.lines[0];
+  value.spans[0] = { ...value.spans[0], baseColor: '#C62232', accentColor: '#C62232', pattern: 'NONE' };
+  assert.equal(compileLabelStyleSpec(request, observation, binding).lines[0].fontId, 'sans');
+  Object.assign(value, { letteringMode: 'ORIGINAL_WORDMARK', letteringDescription: 'Heavy rough brush capitals.',
+    letteringTraits: ['BRUSH', 'HEAVY', 'ROUGH'], fontId: null });
+  const printed = compileLabelStyleSpec(request, observation, binding);
+  assert.equal(printed.lines[0].status, 'WORDMARK_REQUIRED'); assert.equal(printed.lines[0].spans[0].baseColor, '#C62232');
+  assert.deepEqual(validateLabelStyleSpec(printed, request), printed);
+  value.fontSource = styleSource(request, { basis: 'CARD_BORDER' });
+  const border = compileLabelStyleSpec(request, observation, binding);
+  assert.equal(border.lines[0].fontId, 'atlas-rush'); assert.equal(border.lines[0].letteringMode, 'CATALOG');
+  assert.equal(border.lines[0].spans[0].baseColor, '#C62232'); assert.equal(border.lines[0].status, 'PHOTO_INFORMED');
+  assert.deepEqual(validateLabelStyleSpec(border, request), border);
+});
+
+test('Rush serial-only caption retains photographed palette without changing protected numbering or legacy behavior', async () => {
+  const { input, request: legacy } = await styleFixture({ lines: [{ role: 'variant', text: '/500' }] });
+  const request = prepareLabelStyleRequest(input, { fontCatalog: rushFonts, defaultFontId: 'atlas-rush' });
+  const observation = styleObservation(request); observation.lines[0].fontSource = styleSource(request, { basis: 'CARD_FIELD' });
+  const spec = compileLabelStyleSpec(request, observation, binding), line = spec.lines[0];
+  assert.equal(line.text, '/500'); assert.equal(line.fontId, 'atlas-rush'); assert.equal(line.letteringMode, 'CATALOG');
+  assert.deepEqual(line.protectedSpans, [{ start: 0, end: 4 }]);
+  assert.equal(line.spans[0].baseColor, '#235BA9'); assert.equal(line.spans[0].pattern, 'DIAMOND');
+  assert.deepEqual(line.spans[0].source, observation.lines[0].spans[0].source);
+  assert.deepEqual(validateLabelStyleSpec(spec, request), spec); assert.doesNotThrow(() => assertLabelStylePhotoColors(spec, request));
+  assert.deepEqual(compileLabelStyleSpec(legacy, observation, binding).lines[0].spans, []);
+  observation.lines[0].spans[0].source.confidence = 'LOW';
+  assert.throws(() => assertLabelStylePhotoColors(compileLabelStyleSpec(request, observation, binding), request), { code: 'LABEL_STYLE_CARD_COLOR_REQUIRED' });
+});
 
 test('unknown cards receive exact-source styles with permitted product spans and protected serials', async () => {
   const { input, request } = await styleFixture(), before = canonical(input), observation = styleObservation(request);
