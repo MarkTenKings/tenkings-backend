@@ -323,8 +323,10 @@ The current stale-lock refusal demonstrates a held uncertainty; it does not
 justify `restartReconcilesOwned: true`. Any missing required reconciliation path
 keeps that case incomplete. Even an all-PASS document remains UNVERIFIED under
 `assessProofDecoderTargetEvidence`; it is not an execution or publication grant.
-Physical intake, grading/Ten Kings, ownership claims/history and pricing remain
-outside this lane and disabled pending Fingerprint PLUS genuine ownership authority.
+Qualified physical intake still requires the remaining composition and authority
+gates. This lane preserves existing grading and Ten Kings behavior. Ownership
+claims/history and pricing remain disabled pending Fingerprint PLUS genuine
+ownership authority.
 
 | Case ID | Evidence lane and required variants | Status |
 | --- | --- | --- |

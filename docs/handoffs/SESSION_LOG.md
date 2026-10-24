@@ -49062,3 +49062,8 @@ Next isolated action: socket-only continuation f04ef45e409715a3167759a9afbe3d2aa
 ### 2026-10-24T02:16:40.458695+00:00 — R2 external socket retirement observed
 
 Socket-only continuation PASS, remote receipt cc358e5c810b3189f21c339ba5038c1828b2495b41a3a6a90eabd16eebe1feca. Exact old refused broker socket retired; GET404 and emptyEngineinventory observed. No Engine mutation or DELETE replay. All18 decoderledger sets and both publisher snapshots remain byte/inode unchanged; original UNKNOWN remains held, no receipt backfill or capacity/lock release. Parent emptyfrozen, guard stopped, config/latch unchanged. Actual baseline now permits a separate new3mode probe epoch; original cleanup recording failure remains retained.
+
+
+### 2026-10-24T02:20:46.257552+00:00 — R2 qualification scope wording corrected
+
+Corrected the qualification document to distinguish unqualified physical intake from existing grading/Ten Kings, which remain preserved. Ownership claims/history and pricing stay disabled pending Fingerprint plus genuine authority. Documentation only; no behavior or repeated tests. Root also prepared an inert one-case MEMORY_OOM outer draft by reusing existing lifecycle helpers and the installed probe image; actual next-epoch baseline remains null, so it refuses target effects.
