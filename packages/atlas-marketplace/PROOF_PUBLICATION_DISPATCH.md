@@ -126,8 +126,9 @@ Separate `complete` and `unknown` modes accept one root-supplied public original
 emit the exact durable REGISTERED identity, and wait for bounded `SUBMIT\n`
 before calling the actual client. Root owns the real broker/fault setup. No fake
 peer, observer, outcome, receipt or synthetic positive capability is available.
-Unknown outcomes retain the fixture lock. The complete/unknown modes have not
-been executed; passing older worker/C1 cases is not evidence for this new join. D2 retention settlement and its five-case protected PostgreSQL-to-publisher join
+Unknown outcomes retain the fixture lock. Both modes have now executed against
+the actual broker; their observed results and the outer assertion failure are
+recorded below. Passing older worker/C1 cases is not evidence for this join. D2 retention settlement and its five-case protected PostgreSQL-to-publisher join
 are now implemented and tested separately; see `PROOF_PUBLICATION_RETENTION.md`.
 The genuine C0/qualified physical composition remains unfinished.
 
@@ -141,5 +142,51 @@ Evidence: target-proposal packet `ops/publication-dispatch-metadata-01/receipt.j
 outer stdout SHA256 `8956ed990f31777b3e9c9384013899476eddceb2f2602919d9c0fd1cc249ca99`,
 remote receipt SHA256 `205e18d517f2d45c8109345cab6f5eadc42536ccb141caaa8187d06cdca25aea`.
 This establishes the new metadata/storage and genuine prepared-discard boundary
-only. Actual decoder `COMPLETE_CLEAN`/`UNKNOWN` settlement, power loss, canonical
-authority and physical admission remain NOT_RUN or unimplemented as stated above.
+only. Later actual decoder settlement evidence is separate from this metadata run.
+Power loss, canonical authority and qualified physical admission remain open.
+
+
+## Actual dispatch and preserved broker-death uncertainty
+
+The isolated target executed one new COMPLETE case and one new UNKNOWN case
+using the frozen 27-file D1 closure and repaired worker image `101965adc…`.
+Receipt SHA256 `7843fbd4a0a5d45d71bbb04f9bc93ea06da60933e3d9c2b7c8e06cf1006b3992`
+is in target-proposal packet `ops/publication-dispatch-effects-01/stdout.txt`.
+
+- The genuine publisher client registered its original request before submission,
+  produced `COMPLETE_CLEAN`/`SUCCESS`, persisted settlement, and exited 0. Its
+  exact broker request reached `FINALIZED` revision 9 with known cleanup.
+- The second client registered before submission. Root observed and rechecked
+  the same request at `RUNNING` revision 4 with CREATE/START receipts, wrote the
+  fault intent, and killed only its owned broker through its retained pidfd.
+  The genuine client produced `UNKNOWN`, persisted it, and exited 0. The
+  publisher retained one external hold and its writer lock. `DECODE_UNKNOWN`
+  revision 12 was followed by `SESSION_DRAIN` revision 13; the session remained
+  DRAINING and had no close hash. The decoder row remained incomplete.
+- The remaining unsupported-MIME preparation case refused with a private
+  `KNOWN_NO_START_SENT` disposition and no decoder job or Engine effect.
+
+The outer operator exited 1 because its final audit assertion incorrectly
+expected `DECODE_UNKNOWN` to be the last event after shutdown. The failure is
+preserved; neither fixture was replayed. The separate automatic-guard
+observation before operator fallback was not reached and is **NOT_OBSERVED**.
+Final fallback observations show the guard stopped, its parent empty/frozen,
+and the exact exited container retained for separate external cleanup. Such
+cleanup cannot settle the original UNKNOWN, release its hold, remove its lock
+or fabricate missing decoder receipts. All 17 prior decoder ledger sets, seven
+consumed D1 metadata cases and installed source pins remained unchanged.
+
+The separate cleanup sent one exact non-force DELETE, observed 204 and then
+404, and preserved a later timestamp-recording error in receipt
+`dab40b49af8ce0432539ea40788b77cda3d787b07fab8f24b76d47b50772265d`.
+A socket-only continuation performed no Engine mutation and retired the exact
+refused socket of the already-waited broker. Its receipt
+`cc358e5c810b3189f21c339ba5038c1828b2495b41a3a6a90eabd16eebe1feca`
+records an empty Engine inventory and broker directory, unchanged stopped/frozen
+controls, and all 18 decoder ledger sets and both publisher snapshots preserved.
+The DELETE was not replayed; the original UNKNOWN, lock and hold remain intact.
+
+These results establish the finite private decoder-to-publisher settlement
+behavior under the recorded closure. They do not establish genuine C0 actor
+authority, qualified physical intake, automatic restart reconciliation or
+complete isolation qualification.
