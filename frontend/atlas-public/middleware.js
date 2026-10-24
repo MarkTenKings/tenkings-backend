@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { deploymentOrigin, routeTarget, SITE_ORIGIN } from '@atlas/site-router/routes';
 import { forwardingHeaders } from '@atlas/site-router/proof';
+import { marketplaceForwarding } from '@atlas/site-router/marketplace';
 
 export async function middleware(request) {
     // Local cross-app tests use the owned loopback router. Fixture flags can
@@ -11,15 +12,21 @@ export async function middleware(request) {
             'Vercel-CDN-Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow', 'Content-Type': 'text/plain; charset=utf-8' } });
     try {
         const target = `${request.nextUrl.pathname}${request.nextUrl.search}`, route = routeTarget(target);
-        if (route.zone === 'public') return NextResponse.next();
+        const marketplace = marketplaceForwarding(target, process.env);
+        if (route.zone === 'public' && !marketplace) return NextResponse.next();
         if (process.env.VERCEL_ENV !== 'production' || request.headers.get('host') !== new URL(SITE_ORIGIN).host
             || request.nextUrl.protocol !== 'https:') return unavailable();
+        // External rewrite streams the original body. No API-function JSON
+        // parser, body serialization, internal URL alias or new auth key.
+        // The owned TLS gateway must retain this target and set canonical Host,
+        // X-Forwarded-Host and X-Forwarded-Proto for existing R1 admission.
+        if (marketplace?.zone === 'public') return NextResponse.rewrite(new URL(target, marketplace.origin));
         const deployment = deploymentOrigin(route.zone === 'staff' ? process.env.ATLAS_STAFF_DEPLOYMENT_ORIGIN : process.env.ATLAS_CUSTOMER_DEPLOYMENT_ORIGIN);
         const key = route.zone === 'staff' ? process.env.ATLAS_STAFF_ROUTER_KEY : process.env.ATLAS_CUSTOMER_ROUTER_KEY;
         const bypass = route.zone === 'staff' ? process.env.ATLAS_STAFF_DEPLOYMENT_BYPASS : process.env.ATLAS_CUSTOMER_DEPLOYMENT_BYPASS;
         const headers = await forwardingHeaders(request.headers,
-            { zone: route.zone, deployment, method: request.method, target, issuedAt: Date.now() }, key, bypass);
-        return NextResponse.rewrite(new URL(target, deployment), { request: { headers } });
+            { zone: route.zone, deployment, method: request.method, target, issuedAt: Date.now() }, key, marketplace ? undefined : bypass);
+        return NextResponse.rewrite(new URL(target, marketplace?.origin ?? deployment), { request: { headers } });
     } catch { return unavailable(); }
 }
-export const config = { matcher: ['/admin/:path*', '/account/:path*'] };
+export const config = { matcher: ['/admin/:path*', '/account/:path*', '/marketplace/:path*'] };

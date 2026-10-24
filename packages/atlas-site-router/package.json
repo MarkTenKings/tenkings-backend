@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { "./routes": "./routes.mjs", "./report-entry": "./report-entry.mjs", "./proof": "./proof.mjs", "./server": "./server.mjs" },
+  "exports": { "./routes": "./routes.mjs", "./report-entry": "./report-entry.mjs", "./proof": "./proof.mjs", "./server": "./server.mjs", "./marketplace": "./marketplace.mjs" },
   "scripts": { "test": "node --test test/*.test.mjs" }
 }
