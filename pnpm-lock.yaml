@@ -824,6 +824,9 @@ importers:
 
   packages/atlas-finishing:
     dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
       fontkit:
         specifier: 2.0.4
         version: 2.0.4

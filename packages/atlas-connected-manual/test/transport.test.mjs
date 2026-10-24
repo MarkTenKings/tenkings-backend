@@ -307,7 +307,7 @@ test('inbound order desk PDF crosses signed host and browser with exact saved ha
 test('Legacy and B SVG and export requests cross the signed private host with independent auth and no hardware effects',async t=>{
  const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1"/></svg>');
  const artwork=`/api/staff/manual-connected/labels/${card}/artwork?mode=preview`,exportPath=`/api/staff/manual-connected/label-sheets/${card}/exports`;
- const principal={},calls=[],artworkModes=[],modes=['preview','print','preview-foil','print-foil','preview-back','print-back','preview-back-foil','print-back-foil','print-color','print-back-color'];
+ const principal={},calls=[],artworkModes=[],modes=['preview','print','preview-foil','print-foil','preview-back','print-back','preview-back-foil','print-back-foil','print-color','print-back-color','preview-card-foil','print-card-foil'];
  const boundary={async authenticate(cookie,csrf){
   if(cookie!=='label-cookie'||csrf!==undefined&&csrf!=='label-csrf')throw Object.assign(new Error(),{status:401,code:'SIGN_IN_REQUIRED'});return principal;
  }};

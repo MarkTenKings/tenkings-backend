@@ -1,7 +1,7 @@
 import { canonical, digest, object, requireThat, uuid, revision } from '@atlas/manual-service/contract';
 import { renderApprovedBLabel, LABEL_APPROVED_B_RENDERER_PROFILE_HASH, isApprovedBRendererProfile } from '@atlas/finishing/label-approved-b';
 import { APPROVED_B_LAYOUT, APPROVED_B_MARKER, validateApprovedBArtwork, renderApprovedBBack, colorApprovedBArtwork } from '@atlas/finishing/label-approved-b-artwork';
-import { renderLabelSheetPng, renderLabelV4Png, renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg, renderLabelExportSvg,
+import { renderLabelSheetPng, renderLabelV4Png, renderLabelBlackInkSvg, renderLabelBlackInkPreviewSvg, renderLabelCardColorFoilSvg, renderLabelCardColorFoilPreviewSvg, renderLabelExportSvg,
   LABEL_SHEET_EXPORT_PROFILES, LABEL_SINGLE_EXPORT_PROFILES,
   LABEL_EXPORT_PROFILE_V1, LABEL_INDIVIDUAL_EXPORT_PROFILE_V1,
   LABEL_BLACK_INK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1 } from '@atlas/finishing/label-sheet';
@@ -20,7 +20,7 @@ const profileFor = id => [...LABEL_SHEET_EXPORT_PROFILES, ...LABEL_SINGLE_EXPORT
 const needsApprovedB = profile => profile?.side === 'BACK' || profile?.outputMode === 'COLOR_PRINT';
 const backArtworkHash = digest(renderApprovedBBack());
 export const LABEL_ARTWORK_MODES = Object.freeze(['preview','print','preview-foil','print-foil','preview-back','print-back',
-  'preview-back-foil','print-back-foil','print-color','print-back-color']);
+  'preview-back-foil','print-back-foil','print-color','print-back-color','preview-card-foil','print-card-foil']);
 function requireApprovedB(item, { back = false } = {}) {
   requireThat(isApprovedBRendererProfile(item.renderer_profile_hash), 409, 'LABEL_APPROVED_B_REQUIRED');
   requireThat(typeof item.snapshot === 'string' && digest(item.snapshot) === item.snapshot_hash, 503, 'LABEL_STORED_CONTENT_INVALID');
@@ -154,11 +154,13 @@ export function createLabelService({ boundary, repository, finishing, storage, s
       let snapshot;
       if (approved || back || mode.endsWith('-color')) snapshot = requireApprovedB(item, { back });
       const material = Object.values(materials).find(value => value.id === item.material_profile_id);
-      if (mode === 'preview-foil' || back && mode.startsWith('preview') || mode.endsWith('-color') || approved && mode === 'preview')
+      if (mode === 'preview-foil' || mode === 'preview-card-foil' || back && mode.startsWith('preview') || mode.endsWith('-color') || approved && mode === 'preview')
         requireThat(material && ['gold','holo'].includes(material.preview), 503, 'LABEL_MATERIAL_UNCONFIGURED');
       const artwork = { printSvg: item.print_svg, artworkHash: item.artwork_hash, previewMaterial: material?.preview };
       let svg;
-      if (back || mode.endsWith('-color')) {
+      if (mode === 'print-card-foil') svg = renderLabelCardColorFoilSvg(artwork);
+      else if (mode === 'preview-card-foil') svg = renderLabelCardColorFoilPreviewSvg(artwork, { previewMaterial: material.preview });
+      else if (back || mode.endsWith('-color')) {
         svg = renderLabelExportSvg(artwork, { side: back ? 'BACK' : 'FRONT', blackInkTransparent: mode.endsWith('-foil'), color: mode.endsWith('-color') });
         if (mode.startsWith('preview')) svg = colorApprovedBArtwork(svg, material.preview);
       } else if (mode === 'preview-foil') svg = renderLabelBlackInkPreviewSvg(artwork, { previewMaterial: material.preview });

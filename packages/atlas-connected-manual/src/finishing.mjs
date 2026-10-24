@@ -1,5 +1,6 @@
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
+import { projectAtlasSportsAttributes } from '@atlas/grading-core/identity';
 import { createManualFinishingPlan } from '@atlas/finishing/manual';
 import { approvedPublicationSource } from './publication-repository.mjs';
 
@@ -23,11 +24,18 @@ export function createManualFinishing({ repository, artifacts, timeoutMs = 20000
     const raw = await artifacts.read(manifest.packet.ref, { cardId, kind: 'PUBLIC_REPORT', sourceHash: manifest.packet.sourceHash }, { signal });
     requireThat(digest(JSON.stringify(raw)) === row.public_hash, 503, 'MANUAL_FINISHING_SOURCE_INVALID');
     const packet = parsePublicManualReport(raw), report = packet.report;
+    // Publication preserves the approved facts while removing staff evidence.
+    // Compare that same projection, otherwise every reviewed serial/autograph/
+    // relic identity is incorrectly rejected before its label can be rendered.
+    const approvedIdentity = structuredClone(approval.identity);
+    if (approvedIdentity.sportsAttributes)
+      approvedIdentity.sportsAttributes = projectAtlasSportsAttributes(approvedIdentity.sportsAttributes);
     requireThat(packet.publicToken === row.public_token && packet.reportNumber === row.report_number && packet.approvalVersion === row.version
       && packet.reportHash === row.report_hash && packet.mode === row.mode
       && packet.approvedAt === new Date(row.approved_at).toISOString() && digest(JSON.stringify(packet)) === row.public_hash
       && approval.version === 'atlas-manual-report-snapshot-v2'
-      && ['identity', 'grade', 'finalGrade', 'finalGradePolicy', 'ruleVersion'].every(key => canonical(approval[key]) === canonical(report[key])),
+      && canonical(approvedIdentity) === canonical(report.identity)
+      && ['grade', 'finalGrade', 'finalGradePolicy', 'ruleVersion'].every(key => canonical(approval[key]) === canonical(report[key])),
     503, 'MANUAL_FINISHING_APPROVAL_MISMATCH');
     signal.throwIfAborted();
     // Access may be revoked while storage is in flight. Reauthenticate without

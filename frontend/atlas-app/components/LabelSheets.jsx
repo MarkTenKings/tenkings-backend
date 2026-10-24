@@ -23,7 +23,7 @@ const outputFor = (exports, profileId) => { const matching = exports?.filter(out
 const describe = item => { const identity = item?.snapshot?.identity ?? item?.identity; return [identity?.year, identity?.manufacturer, identity?.productSet, identity?.cardNumber && `#${identity.cardNumber}`, identity?.parallel].filter(Boolean).join(' · '); };
 const failureText = error => labelSheetMessage(error) ?? manualMessage(error);
 
-function Artwork({ item, mode = 'preview', printFormat = 'foil', className = '' }) {
+function Artwork({ item, mode = 'preview', printFormat = 'cardFoil', className = '' }) {
   const [failed, setFailed] = useState(false), [attempt, setAttempt] = useState(0);
   const format = LABEL_PRINT_FORMATS[printFormat];
   const source = labelSupportsPrintFormat(item, printFormat) ? labelArtworkHref(item, STAFF_BASE_PATH, format[`${mode}Mode`]) : null;
@@ -36,7 +36,7 @@ function ThumbnailArtwork({ item, printFormat }) {
   const source = labelSupportsPrintFormat(item, printFormat) ? labelArtworkHref(item, STAFF_BASE_PATH, LABEL_PRINT_FORMATS[printFormat].previewMode) : null;
   return source ? <img src={source} alt="" loading="lazy"/> : <span>No saved artwork</span>;
 }
-function ActionDialog({ kind, sheet, item, output, printFormat = 'foil', template = '50', page = 1, exportProfileId, selectedItems = sheet?.items ?? [], busy, onClose, onSubmit }) {
+function ActionDialog({ kind, sheet, item, output, printFormat = 'cardFoil', template = '50', page = 1, exportProfileId, selectedItems = sheet?.items ?? [], busy, onClose, onSubmit }) {
   const dialog = useRef(null), [slots, setSlots] = useState(selectedItems.map(value => value.slot)), [reason, setReason] = useState('');
   useEffect(() => { const element = dialog.current, previous = document.activeElement; element?.showModal(); return () => { element?.close(); previous?.focus?.(); }; }, []);
   return <dialog className={styles.dialog} ref={dialog} aria-labelledby="label-action-title" onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
@@ -51,7 +51,7 @@ function Mapping({ output }) {
   const map = output.mapping;
   return <details className={styles.mapping}><summary>eufyMake import dimensions</summary><dl><dt>Canvas width</dt><dd>{map.intendedImportWidthMm ?? map.canvasWidthMm} mm</dd><dt>Canvas height</dt><dd>{map.intendedImportHeightMm ?? map.canvasHeightMm} mm</dd><dt>Position X / Y</dt><dd>{map.intendedImportXmm == null || map.intendedImportYmm == null ? 'Not calibrated' : `${map.intendedImportXmm} / ${map.intendedImportYmm} mm`}</dd><dt>Rotation</dt><dd>{map.rotationDeg ?? 0}°</dd><dt>Resolution</dt><dd>{map.pixelWidth} × {map.pixelHeight} px</dd></dl><p>Preserve the full transparent canvas. Verify the printer origin and material before physical use.</p></details>;
 }
-function LabelDetail({ item, slot, physicalSlot, sheet, printFormat = 'foil', busy, readOnly, onIndividual, individualOutput, onReprint, children }) {
+function LabelDetail({ item, slot, physicalSlot, sheet, printFormat = 'cardFoil', busy, readOnly, onIndividual, individualOutput, onReprint, children }) {
   const [mode, setMode] = useState('preview');
   const format = LABEL_PRINT_FORMATS[printFormat], formatAvailable = labelSupportsPrintFormat(item, printFormat);
   useEffect(() => setMode('preview'), [item?.itemId]);
@@ -71,7 +71,7 @@ function LabelDetail({ item, slot, physicalSlot, sheet, printFormat = 'foil', bu
 export default function LabelSheets({ staff, embedded = false, initialCardId = null }) {
   const client = useRef(null), owner = useRef(null), selected = useRef(null), readSequence = useRef(0), reading = useRef(false), mutating = useRef(false), cursors = useRef([0]), requestedCard = useRef(initialCardId), layoutReconciliations = useRef(new Map()), preparingSelection = useRef(null);
   const [listing, setListing] = useState(null), [sheet, setSheet] = useState(null), [sheetId, setSheetId] = useState(null), [slot, setSlot] = useState(1);
-  const [printFormat, setPrintFormat] = useState('foil');
+  const [printFormat, setPrintFormat] = useState('cardFoil');
   const [template, setTemplate] = useState('50'), [page, setPage] = useState(1);
   const [tab, setTab] = useState('sheets'), [search, setSearch] = useState(''), [filter, setFilter] = useState('all'), [selectedItemId, setSelectedItemId] = useState(null);
   const [error, setError] = useState(''), [actionError, setActionError] = useState(''), [detailError, setDetailError] = useState(''), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [pending, setPending] = useState(null);

@@ -6,6 +6,9 @@ export const LABEL_ITEMS_PATH = '/api/staff/manual-connected/labels';
 export const LABEL_INDIVIDUAL_PROFILE = 'atlas-v4-individual-2400ppi-v1';
 export const LABEL_EXPORT_PROFILE = 'atlas-v4-sheet-800ppi-diagnostic-v3';
 export const LABEL_PRINT_FORMATS = Object.freeze({
+  cardFoil: Object.freeze({ label: 'Card colors + transparent foil', side: 'Front', previewMode: 'preview-card-foil', printMode: 'print-card-foil',
+    sheet: 'atlas-v4-sheet-800ppi-card-colors-transparent-v1', individual: 'atlas-v4-individual-2400ppi-card-colors-transparent-v1',
+    description: 'Variant and special text retain their card colors and textures. Other lettering and fine details keep the existing foil finish.', printCaption: 'Card colors + black ink · transparent foil' }),
   foil: Object.freeze({ label: 'Black ink + transparent foil', side: 'Front', previewMode: 'preview-foil', printMode: 'print-foil',
     sheet: 'atlas-v4-sheet-800ppi-black-ink-transparent-v2', individual: 'atlas-v4-individual-2400ppi-black-ink-transparent-v1',
     description: 'Only black ink prints. Lettering and fine details are transparent, revealing your gold or holographic foil.', printCaption: 'Black ink only · transparent foil' }),
@@ -30,12 +33,12 @@ const legacySheetFormats = Object.freeze({
   'atlas-v4-sheet-800ppi-black-ink-transparent-v1': 'foil',
   'atlas-approved-b-sheet-800ppi-color-front-v1': 'color',
 });
-const sheetMode = format => format.startsWith('foil') ? 'black-ink-transparent' : format.startsWith('color') ? 'color' : 'original';
-export function labelSupportsPrintFormat(item, format = 'foil') {
+const sheetMode = format => format === 'cardFoil' ? 'card-colors-transparent' : format.startsWith('foil') ? 'black-ink-transparent' : format.startsWith('color') ? 'color' : 'original';
+export function labelSupportsPrintFormat(item, format = 'cardFoil') {
   const profile = LABEL_PRINT_FORMATS[format];
   return Boolean(profile && (!profile.requiresApprovedB || item?.snapshot?.layoutVersion === 'atlas-approved-b-v1'));
 }
-export function labelSheetProfile(format = 'foil', template = '50', page = 1) {
+export function labelSheetProfile(format = 'cardFoil', template = '50', page = 1) {
   const value = LABEL_PRINT_FORMATS[format];
   if (!value) return null;
   if (template === '50') return value.sheet;

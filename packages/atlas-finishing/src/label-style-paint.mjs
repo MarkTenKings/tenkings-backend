@@ -104,11 +104,11 @@ export function createLabelStylePaint({ pattern, baseColor, accentColor, id, cap
  * defs is trusted generated markup; paths contain no source text or SVG input.
  * spanColors is an optional finish-only palette override, indexed by recipe span.
  */
-export function shapeLabelStyleText({ text, recipe, defaultColor = '#ffffff', spanColors, spanTextures, idPrefix } = {}) {
+export function shapeLabelStyleText({ text, recipe, defaultColor = '#ffffff', protectedColor = defaultColor, spanColors, spanTextures, idPrefix } = {}) {
   if (typeof text !== 'string' || !text.trim() || text.length > 512 || /[\u0000-\u001f\u007f]/u.test(text)) fail('LABEL_STYLE_TEXT_INVALID');
   if (!recipe || recipe.text !== text) fail('LABEL_STYLE_TEXT_BINDING_MISMATCH');
   const face = faceFor(recipe.fontId, recipe.fontSha256), entry = LABEL_STYLE_FONT_CATALOG[recipe.fontId];
-  const primary = color(defaultColor), spans = ranges(recipe.spans ?? [], text, 'LABEL_STYLE_SPANS_INVALID');
+  const primary = color(defaultColor), serialColor = color(protectedColor), spans = ranges(recipe.spans ?? [], text, 'LABEL_STYLE_SPANS_INVALID');
   const protectedSpans = ranges(recipe.protectedSpans ?? [], text, 'LABEL_STYLE_PROTECTED_SPANS_INVALID');
   const styleableSpans = recipe.styleableSpans == null ? [{ start: 0, end: text.length }] : ranges(recipe.styleableSpans, text, 'LABEL_STYLE_STYLEABLE_SPANS_INVALID');
   if (recipe.normalizeWordInkHeight !== undefined && typeof recipe.normalizeWordInkHeight !== 'boolean') fail('LABEL_STYLE_SCALE_INVALID');
@@ -127,7 +127,8 @@ export function shapeLabelStyleText({ text, recipe, defaultColor = '#ffffff', sp
     color(s.baseColor); color(s.accentColor);
     return { base: color(spanColors?.[i]?.baseColor ?? s.baseColor), accent: color(spanColors?.[i]?.accentColor ?? s.accentColor) };
   });
-  const fingerprint = hash(JSON.stringify({ text, font: entry.sha256, weight: entry.weight, spans, protectedSpans, paints, textures: textures.map(t => t?.sha256 ?? null), primary, normalize: !!recipe.normalizeWordInkHeight }));
+  const fingerprint = hash(JSON.stringify({ text, font: entry.sha256, weight: entry.weight, spans, protectedSpans, paints, textures: textures.map(t => t?.sha256 ?? null), primary,
+    ...(serialColor !== primary ? { serialColor } : {}), normalize: !!recipe.normalizeWordInkHeight }));
   const prefix = idPrefix ?? `atlas-style-${fingerprint.slice(0, 16)}`;
   if (typeof prefix !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(prefix)) fail('LABEL_STYLE_ID_INVALID');
   const cap = rawShape('H', face).height;
@@ -145,7 +146,7 @@ export function shapeLabelStyleText({ text, recipe, defaultColor = '#ffffff', sp
     const scale = Math.min(1.2, (span?.opticalScale ?? 1) * normalization);
     // Center any uniform optical enlargement on the font's cap-height band.
     const y = (1 - scale) * cap / 2;
-    let fill = primary, pattern = 'NONE';
+    let fill = protectedText ? serialColor : primary, pattern = 'NONE';
     if (span) {
       pattern = span.pattern;
       const id = `${prefix}-s${spanIndex}`, p = paint(pattern, paints[spanIndex].base, paints[spanIndex].accent, id, cap, textures[spanIndex]);

@@ -152,3 +152,21 @@ export function labelStyleBlackInk(item) {
   return svg.slice(0,tail.index).replace('</defs>',`<mask id="style-support-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="68.342" height="20.082"><rect width="68.342" height="20.082" fill="white"/>${solid}</mask></defs>`)
     .replace('<g data-style-field="black"','<g mask="url(#style-support-cutout)"><g data-style-field="black"')+'</g><g data-style-support="true" fill="black"></g><g data-style-accents="true"></g></svg>';
 }
+
+/** Keep the saved variant paint while ordinary lettering reveals the foil.
+ * Metadata and variant are separate renderer-owned groups even on older saved
+ * photo-style labels, so this does not regenerate or reinterpret their art. */
+export function labelStyleCardColorFoil(item) {
+  const svg = validateLabelStyleArtwork(item), inverted = svg.includes('data-style-field="foil"');
+  const tail = svg.match(/<g data-style-support="true" fill="[^"]+">([^]*)<\/g><g data-style-accents="true"><g data-part="metadata">([^]*)<\/g><g data-part="variant">([^]*)<\/g><\/g><\/svg>$/);
+  if (!tail) throw Error('LABEL_CARD_COLOR_ARTWORK_INVALID');
+  const black = value => value.replace(/fill="(?!none")[^"]+"/g, 'fill="black"').replace(/stroke="(?!none")[^"]+"/g, 'stroke="black"');
+  const support = black(tail[1]), metadata = black(tail[2]);
+  const accents = `<g data-style-accents="true"><g data-part="metadata">${inverted ? metadata : ''}</g><g data-part="variant">${tail[3]}</g></g>`;
+  if (inverted) return svg.slice(0, tail.index).replace('<g fill="#090a0b">', '<g fill="black">')
+    + `<g data-style-support="true" fill="#000000">${support}</g>${accents}</svg>`;
+  const cutout = `<mask id="style-card-foil-support-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="68.342" height="20.082"><rect width="68.342" height="20.082" fill="white"/>${support}${metadata}</mask>`;
+  return svg.slice(0, tail.index).replace('</defs>', `${cutout}</defs>`)
+    .replace('<g data-style-field="black"', '<g mask="url(#style-card-foil-support-cutout)"><g data-style-field="black"')
+    + `</g><g data-style-support="true" fill="#000000"></g>${accents}</svg>`;
+}

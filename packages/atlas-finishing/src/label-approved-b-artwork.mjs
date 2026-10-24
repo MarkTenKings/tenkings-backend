@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { isLabelStyleArtwork, validateLabelStyleArtwork, labelStyleBlackInk } from './label-style-artwork.mjs';
+import { isLabelStyleArtwork, validateLabelStyleArtwork, labelStyleBlackInk, labelStyleCardColorFoil } from './label-style-artwork.mjs';
 
 const root = new URL('../assets/approved-b/', import.meta.url);
 export const APPROVED_B_ASSETS = JSON.parse(readFileSync(new URL('manifest.json', root)));
@@ -63,6 +63,10 @@ export function colorApprovedBArtwork(svg, previewMaterial = 'gold', purpose = '
   if (!color || !['PREVIEW_ONLY', 'COLOR_PRINT'].includes(purpose)) throw new Error('LABEL_PREVIEW_MATERIAL_INVALID');
   return svg.replace('data-atlas-artwork="PRINT"', `data-atlas-artwork="${purpose}"`)
     .replace('</title>', `</title><rect width="68.342" height="20.082" fill="${color}"/>`);
+}
+
+export function renderApprovedBCardColorFoil(item) {
+  return isLabelStyleArtwork(item.printSvg) ? labelStyleCardColorFoil(item) : renderApprovedBBlackInk(item);
 }
 
 export function renderApprovedBBack({ previewMaterial = null, purpose = 'PREVIEW_ONLY' } = {}) {

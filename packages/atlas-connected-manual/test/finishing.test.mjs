@@ -9,6 +9,8 @@ import { renderManualLabel, validateManualLabel } from '@atlas/finishing/label';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { publishedMarketQuery } from '../src/presentation-market.mjs';
 import { ATLAS_FINAL_GRADE_POLICY, ATLAS_HALF_POINT_FINAL_GRADE_POLICY, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { emptyAtlasSportsAttributes, atlasPrintedSerial, projectAtlasSportsAttributes } from '@atlas/grading-core/identity';
+import { approvedBMetadataLines } from '@atlas/finishing/label-approved-b';
 
 async function fixture(options) {
   const f = await publicationFixture(options); await f.publication.publish({}, f.cardId, f.actionId);
@@ -24,6 +26,31 @@ test('authenticated immutable approval becomes exact repeatable label and paired
   assert.equal(plan.label.finalGrade, f.approval.finalGrade, 'the immutable human approval is the printed award authority');
   assert.equal(reportAwardedGrade(f.approval), plan.label.finalGrade, 'completion snapshot and immutable printed label agree');
   assert.equal(JSON.stringify(plan).includes('private/'), false); assert.equal(JSON.stringify(plan).includes('actorId'), false);
+});
+test('reviewed serial, autograph and patch survive public projection into the variant line without exposing evidence', async () => {
+  const attributes = emptyAtlasSportsAttributes();
+  const evidence = [{ side: 'BACK', imageSha256: 'a'.repeat(64), observation: 'Private reviewed card details.' }];
+  attributes.serial = { presence: 'PRESENT', ...atlasPrintedSerial('007/500'), evidence };
+  attributes.autograph = { presence: 'PRESENT', type: 'ON_CARD', evidence };
+  attributes.relic = { presence: 'PRESENT', evidence, windows: [{ position: 'lower front', material: 'patch',
+    manufacturerStatement: null, use: 'UNKNOWN', evidence }] };
+  const f = await fixture({ identity: { playerName: 'Synthetic player', year: '2026', manufacturer: 'Fixture',
+    productSet: 'Local only', parallel: 'Blue', sportsAttributes: attributes } });
+  const before = structuredClone({ row: f.row, approval: f.approval, full: f.full });
+  const source = await f.loader.loadPacket({}, f.cardId, f.actionId);
+  const plan = await f.loader.load({}, f.cardId, f.actionId);
+  assert.deepEqual(source.packet.report.identity.sportsAttributes, projectAtlasSportsAttributes(attributes));
+  assert.deepEqual(plan.label.identity, source.packet.report.identity);
+  assert.equal(approvedBMetadataLines(plan.label.identity).variant, 'BLUE /500 · AUTO · PATCH');
+  assert.doesNotMatch(JSON.stringify(plan.label.identity), /Private reviewed|imageSha256|observation|evidence/);
+  assert.deepEqual({ row: f.row, approval: f.approval, full: f.full }, before);
+  const manifest = JSON.parse(f.row.manifest), raw = structuredClone(source.packet);
+  raw.report.identity.sportsAttributes.serial = { presence: 'PRESENT', ...atlasPrintedSerial('007/499') };
+  const sourceHash = digest(JSON.stringify(raw));
+  const ref = await f.artifacts.write(raw, { cardId: f.cardId, kind: 'PUBLIC_REPORT', sourceHash });
+  manifest.packet = { ref, sourceHash }; manifest.publicHash = sourceHash; f.row.public_hash = sourceHash;
+  f.row.manifest = canonical(manifest); f.row.manifest_hash = digest(f.row.manifest);
+  await assert.rejects(f.loader.loadPacket({}, f.cardId, f.actionId), { code: 'MANUAL_FINISHING_APPROVAL_MISMATCH' });
 });
 test('both recorded policies survive full approval, public serialization, finishing and market bindings without rerounding', async () => {
   for (const finalGradePolicy of [ATLAS_HALF_POINT_FINAL_GRADE_POLICY, ATLAS_FINAL_GRADE_POLICY]) {

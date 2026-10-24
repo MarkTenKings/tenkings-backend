@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import { canonical, digest, immutable, requireThat } from '@atlas/manual-service/contract';
 
-export const LABEL_STYLE_TEXTURE_POLICY = 'atlas-label-source-texture-v2';
+export const LABEL_STYLE_TEXTURE_POLICY = 'atlas-label-source-texture-v3';
 export const LABEL_STYLE_TEXTURE_LIMITS = Object.freeze({ edge: 128, bytes: 65536, sourceBytes: 12 * 1024 * 1024, sourcePixels: 50 * 1024 * 1024 });
 const HASH = /^[a-f0-9]{64}$/;
 const roles = ['identity', 'variant'];
@@ -110,10 +110,24 @@ export async function deriveLabelStyleTextures({ recipe, photos, signal } = {}) 
         const left = Math.floor(normalized.x * photo.width), top = Math.floor(normalized.y * photo.height);
         const right = Math.min(photo.width, Math.ceil((normalized.x + normalized.width) * photo.width));
         const bottom = Math.min(photo.height, Math.ceil((normalized.y + normalized.height) * photo.height));
-        const crop = { left, top, width: right - left, height: bottom - top };
+        const citedCrop = { left, top, width: right - left, height: bottom - top };
+        const crop = { ...citedCrop };
         check(crop.width > 0 && crop.height > 0, 'LABEL_STYLE_TEXTURE_BOX_INVALID');
+        // Long border selections otherwise become 128x10px slivers: tiling
+        // those at letter scale loses the facets and can vanish in previews.
+        // Keep a representative central patch entirely inside the cited box;
+        // never stretch the photo or sample uncited neighboring artwork.
+        const longest = Math.min(crop.width, crop.height) * 2;
+        if (crop.width > longest) {
+          crop.left += Math.floor((crop.width - longest) / 2);
+          crop.width = longest;
+        } else if (crop.height > longest) {
+          crop.top += Math.floor((crop.height - longest) / 2);
+          crop.height = longest;
+        }
         const cropBinding = { side: span.source.side, sha256: photo.sha256, normalized: { ...normalized },
-          sourceDimensions: { width: photo.width, height: photo.height }, cropBox: crop };
+          sourceDimensions: { width: photo.width, height: photo.height }, cropBox: crop,
+          ...(crop.width !== citedCrop.width || crop.height !== citedCrop.height ? { citedCropBox: citedCrop } : {}) };
         const tileKey = digest(canonical({ policy: LABEL_STYLE_TEXTURE_POLICY, cropBinding, pattern: span.pattern, baseColor: span.baseColor ?? null }));
         let saved = tiles.get(tileKey);
         if (!saved) {
@@ -131,7 +145,7 @@ export async function deriveLabelStyleTextures({ recipe, photos, signal } = {}) 
         texture = saved.payload;
         receipt = { ...common, status: 'READY', source: cropBinding, basis: span.source.basis,
           output: { sha256: texture.sha256, width: texture.width, height: texture.height, byteCount: saved.byteCount, contentType: 'image/png' },
-          processing: { colorSpace: 'srgb', resize: 'inside-128-no-enlargement', kernel: 'lanczos3', pattern: 'repeat-aspect-preserved-glyph-fill',
+          processing: { colorSpace: 'srgb', resize: 'inside-128-no-enlargement', selection: 'center-within-cited-region-max-aspect-2', kernel: 'lanczos3', pattern: 'repeat-aspect-preserved-glyph-fill',
             sourceTileSha256: saved.sourceTileSha256, tone: saved.tone } };
       }
       spanTextures.push(texture); lineReceipts.push(receipt); receipts.push(receipt);

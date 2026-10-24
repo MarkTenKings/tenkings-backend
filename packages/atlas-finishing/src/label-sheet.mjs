@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { LABEL_JIG_V1, labelSlotTransform } from './label-sheet-geometry.mjs';
 import { LABEL_JIG_25, LABEL_25_SUPPORTED_PROFILE_DEFINITIONS, getLabel25Profile, label25PhysicalSlot, label25SlotTransform } from './label-sheet-25.mjs';
-import { APPROVED_B_MARKER, validateApprovedBArtwork, renderApprovedBBlackInk, renderApprovedBBack, colorApprovedBArtwork, approvedBHash } from './label-approved-b-artwork.mjs';
+import { APPROVED_B_MARKER, validateApprovedBArtwork, renderApprovedBBlackInk, renderApprovedBCardColorFoil, renderApprovedBBack, colorApprovedBArtwork, approvedBHash } from './label-approved-b-artwork.mjs';
 export { LABEL_JIG_V1, labelSlotTransform, labelPointOnSheet } from './label-sheet-geometry.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -52,24 +52,34 @@ const correctedSheetProfile = (base, id, version) => {
 export const LABEL_EXPORT_PROFILE_V3 = correctedSheetProfile(LABEL_EXPORT_PROFILE_V1, 'atlas-v4-sheet-800ppi-diagnostic-v3', 3);
 export const LABEL_BLACK_INK_EXPORT_PROFILE_V2 = correctedSheetProfile(LABEL_BLACK_INK_EXPORT_PROFILE_V1, 'atlas-v4-sheet-800ppi-black-ink-transparent-v2', 2);
 export const LABEL_COLOR_EXPORT_PROFILE_V2 = correctedSheetProfile(LABEL_COLOR_EXPORT_PROFILE_V1, 'atlas-approved-b-sheet-800ppi-color-front-v2', 2);
+const cardColorFoil = { outputMode: 'CARD_COLOR_FOIL', materialPolicy: 'variant-colors-transparent-foil-support-v1' };
+const cardColorSheet = { ...sheet, ...cardColorFoil, id: 'atlas-v4-sheet-800ppi-card-colors-transparent-v1', version: 1,
+  compositor: 'slot-fragment-references-v2' };
+const cardColorIndividual = { ...individual, ...cardColorFoil, id: 'atlas-v4-individual-2400ppi-card-colors-transparent-v1', version: 1 };
+export const LABEL_CARD_COLOR_FOIL_EXPORT_PROFILE_V1 = Object.freeze({ ...cardColorSheet, hash: hash(stable(cardColorSheet)) });
+export const LABEL_CARD_COLOR_FOIL_INDIVIDUAL_EXPORT_PROFILE_V1 = Object.freeze({ ...cardColorIndividual, hash: hash(stable(cardColorIndividual)) });
 export const LABEL_25_EXPORT_PROFILES = Object.freeze(LABEL_25_SUPPORTED_PROFILE_DEFINITIONS.map(definition => {
-  const value = { ...sheet, ...definition, version: definition.compositor ? 2 : 1, rasterizer: 'sharp-0.33.5-jig25-clipped-strip-png-v1', maxTileWidth: 2160,
+  const value = { ...sheet, ...definition, version: definition.mode === 'card-colors-transparent' ? 1 : definition.compositor ? 2 : 1, rasterizer: 'sharp-0.33.5-jig25-clipped-strip-png-v1', maxTileWidth: 2160,
     ...(definition.mode === 'black-ink-transparent' ? blackInk : {}),
+    ...(definition.mode === 'card-colors-transparent' ? cardColorFoil : {}),
     ...(definition.mode === 'color' ? { outputMode: 'COLOR_PRINT', materialPolicy: 'approved-label-material-v1' } : {}) };
   return Object.freeze({ ...value, hash: hash(stable(value)) });
 }));
 export const LABEL_SHEET_EXPORT_PROFILES = Object.freeze([LABEL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_EXPORT_PROFILE_V1,
+  LABEL_CARD_COLOR_FOIL_EXPORT_PROFILE_V1,
   LABEL_EXPORT_PROFILE_V3, LABEL_BLACK_INK_EXPORT_PROFILE_V2, LABEL_COLOR_EXPORT_PROFILE_V2,
   LABEL_COLOR_EXPORT_PROFILE_V1, LABEL_BACK_EXPORT_PROFILE_V1, LABEL_BLACK_INK_BACK_EXPORT_PROFILE_V1, LABEL_COLOR_BACK_EXPORT_PROFILE_V1, ...LABEL_25_EXPORT_PROFILES]);
 export const LABEL_SINGLE_EXPORT_PROFILES = Object.freeze([LABEL_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_INDIVIDUAL_EXPORT_PROFILE_V1,
+  LABEL_CARD_COLOR_FOIL_INDIVIDUAL_EXPORT_PROFILE_V1,
   LABEL_COLOR_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BACK_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_BLACK_INK_BACK_INDIVIDUAL_EXPORT_PROFILE_V1, LABEL_COLOR_BACK_INDIVIDUAL_EXPORT_PROFILE_V1]);
 export const isApprovedBArtwork = item => typeof item?.printSvg === 'string' && item.printSvg.includes(`data-renderer="${APPROVED_B_MARKER}"`);
 export const validateLabelArtwork = item => isApprovedBArtwork(item) ? validateApprovedBArtwork(item) : validateLabelV4Artwork(item);
 
 /** Back and color exports are separate immutable export profiles; the original
  * front bytes remain the source binding, including on a partially filled jig. */
-export function renderLabelExportSvg(item, { blackInkTransparent = false, side = 'FRONT', color = false } = {}) {
-  if (!['FRONT', 'BACK'].includes(side) || color && blackInkTransparent) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
+export function renderLabelExportSvg(item, { blackInkTransparent = false, side = 'FRONT', color = false, cardColorsTransparent = false } = {}) {
+  if (!['FRONT', 'BACK'].includes(side) || Number(color) + Number(blackInkTransparent) + Number(cardColorsTransparent) > 1
+    || cardColorsTransparent && side !== 'FRONT') throw new Error('LABEL_EXPORT_PROFILE_INVALID');
   if (color && !['gold', 'holo'].includes(item?.previewMaterial)) throw new Error('LABEL_PREVIEW_MATERIAL_INVALID');
   let source = item;
   if (side === 'BACK' || color) {
@@ -79,7 +89,7 @@ export function renderLabelExportSvg(item, { blackInkTransparent = false, side =
   if (side === 'BACK') {
     const printSvg = renderApprovedBBack(); source = { printSvg, artworkHash: approvedBHash(printSvg) };
   }
-  const svg = blackInkTransparent ? renderLabelBlackInkSvg(source) : validateLabelArtwork(source);
+  const svg = cardColorsTransparent ? renderLabelCardColorFoilSvg(source) : blackInkTransparent ? renderLabelBlackInkSvg(source) : validateLabelArtwork(source);
   return color ? colorApprovedBArtwork(svg, item.previewMaterial, 'COLOR_PRINT') : svg;
 }
 
@@ -118,7 +128,16 @@ export function renderLabelBlackInkPreviewSvg(item, { previewMaterial = 'gold' }
     .replace('</defs>', `${foil}</defs><g clip-path="url(#body)"><rect width="68.342" height="20.082" fill="url(#black-ink-preview-foil)"/></g>`);
 }
 
-export function renderLabelSheetSvg(items, { blackInkTransparent = false, side = 'FRONT', color = false, exportProfileId = null } = {}) {
+export function renderLabelCardColorFoilSvg(item) {
+  return isApprovedBArtwork(item) ? renderApprovedBCardColorFoil(item) : renderLabelBlackInkSvg(item);
+}
+
+export function renderLabelCardColorFoilPreviewSvg(item, { previewMaterial = 'gold' } = {}) {
+  return isApprovedBArtwork(item) ? colorApprovedBArtwork(renderLabelCardColorFoilSvg(item), previewMaterial)
+    : renderLabelBlackInkPreviewSvg(item, { previewMaterial });
+}
+
+export function renderLabelSheetSvg(items, { blackInkTransparent = false, side = 'FRONT', color = false, cardColorsTransparent = false, exportProfileId = null } = {}) {
   const layout = getLabel25Profile(exportProfileId);
   if (exportProfileId && !LABEL_SHEET_EXPORT_PROFILES.some(value => value.id === exportProfileId)) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
   const localFragments = !exportProfileId || LABEL_SHEET_EXPORT_PROFILES.find(value => value.id === exportProfileId)?.compositor === 'slot-fragment-references-v2';
@@ -127,7 +146,7 @@ export function renderLabelSheetSvg(items, { blackInkTransparent = false, side =
   const content = [...items].sort((a, b) => a.slot - b.slot).map(item => {
     if (!Number.isInteger(item.slot) || item.slot < 1 || item.slot > 50 || seen.has(item.slot)) throw new Error('LABEL_SLOT_INVALID');
     seen.add(item.slot);
-    const original = renderLabelExportSvg(item, { blackInkTransparent, side, color });
+    const original = renderLabelExportSvg(item, { blackInkTransparent, side, color, cardColorsTransparent });
     const inner = original.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '').replace(/<title>[^]*?<\/title>/g, '');
     // Each label owns its mask/clip IDs. Prefix both definitions and references;
     // never let one card's dynamic grade mask alter another card's artwork.
@@ -202,7 +221,7 @@ export async function renderLabelSheetPng(items, { calibrationProfile = null, ex
   const exportProfile = LABEL_SHEET_EXPORT_PROFILES.find(value => value.id === exportProfileId);
   if (!exportProfile) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
   const mapping = mappingFor(exportProfile, calibrationProfile);
-  const svg = renderLabelSheetSvg(items, { blackInkTransparent: exportProfile.printMode === 'BLACK_INK_TRANSPARENT', side: exportProfile.side ?? 'FRONT', color: exportProfile.outputMode === 'COLOR_PRINT', exportProfileId }), result = await raster(svg, exportProfile);
+  const svg = renderLabelSheetSvg(items, { blackInkTransparent: exportProfile.printMode === 'BLACK_INK_TRANSPARENT', side: exportProfile.side ?? 'FRONT', color: exportProfile.outputMode === 'COLOR_PRINT', cardColorsTransparent: exportProfile.outputMode === 'CARD_COLOR_FOIL', exportProfileId }), result = await raster(svg, exportProfile);
   return { bytes: result.bytes, sha256: result.sha256, manifest: { version: 'atlas-label-png-manifest-v1', ...mapping,
     sha256: result.sha256, byteCount: result.bytes.length, orderedArtwork: [...items].sort((a, b) => a.slot - b.slot).map(({ slot, artworkHash }) => ({ slot, artworkHash })),
     ...(getLabel25Profile(exportProfileId) ? { slotMapping: [...items].sort((a, b) => a.slot - b.slot).map(({ slot }) => ({ sourceSlot: slot, position: label25PhysicalSlot(slot, exportProfileId) })) } : {}),
@@ -212,7 +231,7 @@ export async function renderLabelSheetPng(items, { calibrationProfile = null, ex
 export async function renderLabelV4Png(item, { exportProfileId = LABEL_INDIVIDUAL_EXPORT_PROFILE_V1.id } = {}) {
   const exportProfile = LABEL_SINGLE_EXPORT_PROFILES.find(value => value.id === exportProfileId);
   if (!exportProfile) throw new Error('LABEL_EXPORT_PROFILE_INVALID');
-  const svg = renderLabelExportSvg(item, { blackInkTransparent: exportProfile.printMode === 'BLACK_INK_TRANSPARENT', side: exportProfile.side ?? 'FRONT', color: exportProfile.outputMode === 'COLOR_PRINT' });
+  const svg = renderLabelExportSvg(item, { blackInkTransparent: exportProfile.printMode === 'BLACK_INK_TRANSPARENT', side: exportProfile.side ?? 'FRONT', color: exportProfile.outputMode === 'COLOR_PRINT', cardColorsTransparent: exportProfile.outputMode === 'CARD_COLOR_FOIL' });
   const result = await raster(svg, exportProfile), mapping = mappingFor(exportProfile, null);
   return { bytes: result.bytes, sha256: result.sha256, manifest: { version: 'atlas-label-png-manifest-v1', ...mapping,
     jigHash: null, sha256: result.sha256, byteCount: result.bytes.length, artworkHash: item.artworkHash, rasterReceipt: result.rasterReceipt } };

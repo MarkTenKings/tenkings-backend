@@ -41,7 +41,7 @@ test('archive projects the exact versioned pair, optional actual slab photo and 
   }
   assert.equal(result.SLAB.sha256, hash('f')); assert.equal(result.SLAB.presentationRevision, 2);
   assert.equal(result.SLAB.provenance, 'ACTUAL_SLAB_PHOTOGRAPH');
-  assert.equal(result.LABEL.url, `/admin/api/staff/manual-connected/labels/${input.labelItem.id}/artwork?mode=preview`);
+  assert.equal(result.LABEL.url, `/admin/api/staff/manual-connected/labels/${input.labelItem.id}/artwork?mode=preview-card-foil`);
   assert.equal(result.LABEL.artworkHash, hash('d')); assert.equal(result.LABEL.sha256, undefined);
   assert.equal(result.LABEL.provenance, 'REPORT_BOUND_LABEL_ARTWORK');
   assert.equal(result.LABEL.layoutVersion, undefined); assert.equal(result.LABEL_BACK, undefined);

@@ -148,6 +148,35 @@ test('photo accent colors stay inside actual variant glyphs with a dark grade10 
   assert.throws(() => renderApprovedBLabel(source, { styleSpec: changed }), /LABEL_STYLE_SPEC_CHANGED/);
 });
 
+test('heavy and long variant captions keep a readable name, variant, secondary hierarchy', () => {
+  for(const [name,caption,font,expectedHeight] of [
+    ['Cam Skattebo','X-FRACTOR','montserrat-black',2.3],
+    ['Tracy McGrady','YELLOW RAYWAVE','montserrat-black',null],
+    ['Nick Kurtz','REFRACTOR','roboto-condensed',2.570398],
+    ['Alexander Christopher','X-FRACTOR','montserrat-black',null],
+  ]) {
+    const source={...sports,identity:{playerName:name,year:'2025-26',manufacturer:'Topps',productSet:'Topps Chrome',cardNumber:'245',parallel:caption}};
+    const request=prepareLabelStyleRequest({
+      approval:{cardId:'8d63e0e2-41f8-4cd0-bad4-54e06e247ec4',actionId:'6d964eee-65a4-442a-b6c5-f92e1bbb460c',approvalVersion:1,publicHash:'a'.repeat(64),reportHash:'b'.repeat(64)},
+      identity:source.identity,cardProfile:'SPORTS',
+      photos:['FRONT','BACK'].map((side,index)=>({side,sha256:String(index+1).repeat(64),contentType:'image/png',width:32,height:48,byteCount:200})),
+      lines:approvedBStyleInputLines(source.identity,{cardProfile:'SPORTS'}),
+    },{fontCatalog:Object.values(LABEL_STYLE_FONT_CATALOG),defaultFontId:'knewave'});
+    const evidence={side:'FRONT',sha256:'1'.repeat(64),box:{x:.1,y:.2,width:.4,height:.2},basis:'PRINTED_LETTERING',confidence:'HIGH',observation:'Synthetic lettering fixture.'};
+    const styleSpec=compileLabelStyleSpec(request,{lines:request.source.lines.map(line=>({role:line.role,
+      letteringMode:'CATALOG',letteringDescription:'',letteringTraits:[],fontId:line.role==='variant'?font:'roboto-condensed',fontSource:evidence,
+      emphasis:'NORMAL',normalizeWordInkHeight:false,spans:[],
+    }))},{requestSha256:'c'.repeat(64),responseSha256:'d'.repeat(64)});
+    const result=renderApprovedBLabel(source,{styleSpec});assert.equal(result.state,'READY',name);
+    const variant=result.diagnostics.metadata.bounds.find(b=>b.role==='variant'),secondary=result.diagnostics.metadata.bounds.find(b=>b.role==='identity');
+    assert(variant.height<=result.diagnostics.name.inkHeightMm-.3+1e-6,name);
+    assert(secondary.height<=variant.height-.1+1e-6&&secondary.height>=1.3-1e-6,name);
+    assert(variant.capHeightMm>=1.3&&variant.width<=29,name);
+    if(expectedHeight!==null)assert(Math.abs(variant.height-expectedHeight)<1e-6,name);
+    assert.equal(result.diagnostics.metadata.semanticLines.variant,caption);
+  }
+});
+
 test('GRADE/REPORT retain their glyph geometry and approved contrast, and the back remains exact pinned artwork', async () => {
   const renders = [renderApprovedBLabel(sports), renderApprovedBLabel({ ...pokemon, finalGrade: 9 }, { previewMaterial: 'holo' }),
     renderApprovedBLabel({ ...sports, finalGrade: 10 }), renderApprovedBLabel(pokemon, { previewMaterial: 'holo' })];
