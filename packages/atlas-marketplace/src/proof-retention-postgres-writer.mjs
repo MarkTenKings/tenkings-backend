@@ -4,8 +4,9 @@ import {decoderContractData,decoderExact,decoderFreeze} from './proof-decoder-pr
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {createPostgresStore} from './store-postgres.mjs';
 import {createProofRetentionJournal} from './proof-retention-journal.mjs';
+import {intakeProtectedInstallation} from './proof-intake-protected-protocol.mjs';
 import {createProofRetentionProtectedPostgresStore} from './proof-retention-protected-postgres.mjs';
-import {createProofRetentionPostgresConnectionOwner,createProofRetentionProtectedConnectionOwner} from './proof-retention-postgres-connection.mjs';
+import {createProofRetentionPostgresConnectionOwner,createProofRetentionProtectedConnectionOwner,createProofRetentionIntakeConnectionOwner} from './proof-retention-postgres-connection.mjs';
 
 const writers=new WeakMap(),check=(v,c='RETENTION_WRITER_INVALID')=>requireValue(v,c);
 const MARKERS=Object.freeze({classification:'UNQUALIFIED',customerPublicationAuthority:false,retentionAuthority:false});
@@ -42,6 +43,14 @@ export function createProofRetentionProtectedPostgresWriter(options={}){
   const binding=retentionWriterBinding(input.binding),maxOperations=input.maxOperations;check(binding.environment==='SYNTHETIC_LOCAL','RETENTION_PROTECTED_AUTHORITY_NOT_IMPLEMENTED');check(positive(maxOperations)&&maxOperations<=4096);
   const owner=createProofRetentionProtectedConnectionOwner({enabled:true,configuration:input.configuration,binding,maxOperations}),store=createProofRetentionProtectedPostgresStore({enabled:true,owner});
   return createOwnedWriter(binding,maxOperations,owner,store);
+}
+// Same private retention producer, explicitly composed with the separately
+// installed/audited intake closure. No initial-intake write rights are granted.
+export function createProofRetentionIntakePostgresWriter(options={}){
+ const input=engineDataOptions(options,[],['enabled','configuration','installation','maxOperations']);if(input.enabled!==true)return null;
+ const installation=intakeProtectedInstallation(input.installation),maxOperations=input.maxOperations;check(positive(maxOperations)&&maxOperations<=4096);
+ const owner=createProofRetentionIntakeConnectionOwner({enabled:true,configuration:input.configuration,installation,maxOperations}),store=createProofRetentionProtectedPostgresStore({enabled:true,owner});
+ return createOwnedWriter(installation.binding,maxOperations,owner,store);
 }
 function createOwnedWriter(binding,maxOperations,owner,store){
   const journal=createProofRetentionJournal({enabled:true,store,binding,maxOperations}),state={handles:new WeakMap(),outcomes:new WeakMap(),closed:false},registered=new Map();let busy=false;

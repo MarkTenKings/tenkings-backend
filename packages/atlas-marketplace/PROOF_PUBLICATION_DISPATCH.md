@@ -127,8 +127,9 @@ emit the exact durable REGISTERED identity, and wait for bounded `SUBMIT\n`
 before calling the actual client. Root owns the real broker/fault setup. No fake
 peer, observer, outcome, receipt or synthetic positive capability is available.
 Unknown outcomes retain the fixture lock. The complete/unknown modes have not
-been executed; passing older worker/C1 cases is not evidence for this new join. D2 retention settlement and the genuine C0/qualified physical
-composition remain unimplemented in this tranche.
+been executed; passing older worker/C1 cases is not evidence for this new join. D2 retention settlement and its five-case protected PostgreSQL-to-publisher join
+are now implemented and tested separately; see `PROOF_PUBLICATION_RETENTION.md`.
+The genuine C0/qualified physical composition remains unfinished.
 
 Root executed the frozen `8b37c773` metadata closure on the isolated Linux target
 with native addon `e7eed62c5b791660dec2a595dec74a626a3fa8e04c66bcdb6fb535f8ab03ea03`.
