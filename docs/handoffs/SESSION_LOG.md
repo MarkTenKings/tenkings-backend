@@ -48966,3 +48966,25 @@ Repair import01 failed at header evaluation (missing json import), before any ta
 ### 2026-10-24T01:22:52.795416+00:00 — R2 repaired candidate import observed
 
 Candidate import02 PASS, canonical receipt3ada9e3d63177d802b65612eaf2e3786cbb4af9c0c8415b4a739691815b7b19b, exact atlas-r2-proof-repair manifest101965adc040d3498d5ac05483b3e9d8fef6b4d0733f565b6e258da3d9907f3e and layerbe8c6b9… observed. Registry stopped/keyremoved; all3priorimageprojections and16ledger/control pins unchanged. No native/guard/job effects. Actual affected broker case remains pending; docs and closure spec now distinguish completed storagejoin from remaining decoder/C0/sharedproduction gates.
+
+
+### 2026-10-24T01:30:45.623504+00:00 — R2 exact checkout restored; affected JPEG stage plan
+
+Exact locked worktree disappeared during work; cause unknown. R1 reports no cleanup/removal and has carried an exclusion into its transfer. Preserved existing Git admin/index and intake drafts externally before restoring the absent exact path from retained index, without reset/prune/new worktree. HEAD d5557ab4 and clean tracked tree verified; checkout/stat refresh changed index hash as recorded. Recovery receipt packet/exact-checkout-recovery-20261024-01; intake recovery0e0d97ed1e809d2f140ce9c6541ee4635835c46764e7630b157ae125eb65492b restored by its owner. No prior evidence discarded.
+
+Next: stage the unchanged finite JPEG broker harness/fixture plus repaired-image plan at fresh /usr/local/lib/atlas-r2-jpeg-classifier-check-01; source1d9e2fa26572e071730903c6240b4800c7250c8e0029d7d51110d0c0b8545f6d. Root reviewed staging effect body/current-control prechecks and verified encoded header/assets, actual import receipt3ada9e3… and16ledger baseline5b5d0d64…. Staging only, no guard/native/Engine/DB effects. Actual affected broker epoch follows only after stage receipt. No duplicate corpus, cross-review or shared action.
+
+
+### 2026-10-24T01:31:44.357292+00:00 — R2 affected JPEG assets staged
+
+Stage PASS; stdout e1429fb4ab16d919bf08a84a7b25df0f31102e6dc4244a29df447956ce82a6ee. Remote canonical receipt e1429fb4ab16d919bf08a84a7b25df0f31102e6dc4244a29df447956ce82a6ee, 1161 bytes. Four expected assets staged and pinned;16priorledgers/control unchanged; no Engine/guard/native action. Actual epoch operator is joining these observed pins without rerunning completed tests.
+
+
+### 2026-10-24T01:32:13.551181+00:00 — R2 affected JPEG broker epoch planned
+
+Dispatch fixed-JPEG epoch source e43390e7febe8f3fe02a05dcbcf3ce5e5db9cd1e4792027292675ee3ba537379, bound actualstage e1429fb4…/1161B and imported repair image101965adc…. Reuses previous one-job broker harness, original15sdeadline and owned cleanup. Root reviewed targeted state/stage/image delta and control body. New JPEG_CLASSIFIER_CHECK_1 only; archive current diagnostic latch/config with durable intent, thaw/start isolated guard, fresh actual65530client submission, require INVALID_IMAGE/COMPLETE_CLEAN and same-requestFINALIZED9. Preserve16priorledgers/holds, all original failures, completed cases not replayed. Stop guard and observe emptyfrozenparent/zeroEnginecontainers; no DB/sharedproduction/credential effects.
+
+
+### 2026-10-24T01:33:27.556563+00:00 — R2 repaired JPEG actual broker PASS
+
+Actual affected case passed: stdout cc1f01875396a53c07c1816ae66c56e9384a7475549df4bf958c016eeac99a04; remote receipt07615c96dafb10f8b83189978a3a55d802e668ec417686e36da338c8bf1e3501. Genuine65530client INVALID_IMAGE/COMPLETE_CLEAN; request8f14de80-c8b9-41a3-aa83-b4cc221dc79f joined joba5cf9762-9a1d-4f04-b598-1234ec488b36 FINALIZED9, CREATE201/START204/WAIT0nonOOM/REMOVE204/absence/nativeempty before original15sdeadline. Ownedbroker32885/client32896 exited0; all16priorledgers/runtime08unchanged; emptyfrozenparent/zeroEnginecontainers/guardstopped. JPEGdefect closed; finalcomposition, hostile/recovery, D1actual, protectedintake andgenuineC0/production gates remain. No duplicate tests or master status relay.
