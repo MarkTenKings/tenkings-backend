@@ -23,7 +23,7 @@ const extraPaths = git(['ls-tree', '-r', '--name-only', sourceRevision]).toStrin
     || /^packages\/atlas-marketplace\/ui\//.test(path)
     || /^packages\/atlas-dealer-operations\/src\//.test(path)
     || ['frontend/atlas-customer/package.json', 'frontend/atlas-customer/prisma/schema.prisma',
-        'frontend/atlas-customer/scripts/generate-database.mjs', 'frontend/atlas-public/lib/server/policy.mjs',
+        'frontend/atlas-customer/scripts/generate-database.mjs', 'frontend/atlas-public/package.json', 'frontend/atlas-public/lib/server/policy.mjs',
         'packages/atlas-dealer-operations/package.json',
         'packages/atlas-site-router/marketplace.mjs', 'packages/atlas-marketplace/scripts/production-host.mjs'].includes(path));
 for (const path of extraPaths) {
