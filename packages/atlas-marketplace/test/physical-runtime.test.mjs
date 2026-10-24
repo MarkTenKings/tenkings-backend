@@ -56,3 +56,16 @@ test('retained reviewed photos cannot replace an independent nonlocal return/ref
   assert.equal(decisions,2);assert.equal(f.providerCalls,0);
   assert.equal((await host.store.read()).fulfillment[orderId].cases[0].returnReview,undefined);
 });
+
+test('non-payment physical factory retains proof readers but rejects shipping and legacy write/decoder entrypoints',async t=>{
+  const {f,config,args}=await physicalFixture(t);config.operatingMode='NON_PAYMENT';delete config.shipping;delete config.shippingLifecycleApprovalRef;
+  const only={...args,config};for(const key of ['shippingApiKey','resolveShipment','validateShipmentEvidence','shippingFetch'])delete only[key];only.approvals={physical:()=>f.ready,proof:()=>f.ready};
+  assert.throws(()=>createMarketplacePhysicalFactory({...only,shippingApiKey:'must-not-load'}),{code:'NON_PAYMENT_OWNER_REFUSED'});
+  const factory=createMarketplacePhysicalFactory(only),store={read:()=>assert.fail('legacy entrypoint reached state'),transaction:()=>assert.fail('legacy entrypoint wrote state')};
+  const physical=instantiateMarketplacePhysical(factory,{store,context:f.options.marketplace.context,environment:'PROVIDER_SANDBOX',clock:()=>f.now});t.after(()=>physical.close());
+  assert.equal(physical.shippingLifecycle,undefined);assert.equal(physical.proofIntake.assertReady(),true);
+  for(const name of ['prepare','upload','recover'])await assert.rejects(physical.proofIntake[name]({},{}),{code:'PROOF_CANONICAL_AUTHORITY_REQUIRED'});
+  const {createEncryptedProofStorage}=await import('../src/proof-storage.mjs');
+  const storage=createEncryptedProofStorage({...config.storage,encryptionKey:args.proofEncryptionKey,environment:config.environment,retentionRef:config.proof.retentionRef,readOnly:true});t.after(()=>storage.close());
+  assert.throws(()=>storage.put({}),{code:'PROOF_STORAGE_READ_ONLY'});assert.equal(f.providerCalls,0);
+});

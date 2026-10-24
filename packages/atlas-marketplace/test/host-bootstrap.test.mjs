@@ -64,3 +64,32 @@ test('shutdown bounds a partial raw webhook upload, drains its handler and leave
   const until=Date.now()+500;while(host.status().activeHandlers===0&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,5));assert.equal(host.status().activeHandlers,1);
   const before=f.connects;await host.stop();assert.equal(host.status().phase,'STOPPED');assert.equal(host.status().activeHandlers,0);assert.equal(f.connects,before);assert.equal(f.stateRow.document.financeWebhookIngress,undefined);assert.equal(f.stateRow.document.journals.length,0);assert.equal(f.providerCalls,0);assert.equal(f.alertCalls,0);socket.destroy();
 });
+
+test('explicit non-payment host starts genuine canonical reads without finance or provider owners and refuses every trading method',async t=>{
+  const {hash}=await import('../src/contract.mjs'),{createR1MarketplaceHost}=await import('../src/host-r1.mjs');
+  const {renderApp}=await import('../ui/view.mjs'),{renderPublicCatalog}=await import('../ui/catalog-view.mjs');
+  const f=await bootstrapFixture(),o=f.bootstrapOptions,m=o.host.marketplace;
+  o.host.config.operatingMode='NON_PAYMENT';delete o.host.config.settlement;delete o.host.assertSettlementReady;delete o.finance;
+  for(const key of ['provider','quoteProvider','destinations','taxLifecycle','createCommercePorts','commerceConfig','shippingLifecycle','feeCalculator','instantPolicy','assertInstantPayoutReady','quoteInstantPayoutFee','readInstantFeeSettlement','sellerAccount','onboarding','webhook','listingPolicy','financePolicy','fulfillmentPolicy'])delete m[key];
+  m.runtimeApproval={approved:true,binding:{operatingMode:'NON_PAYMENT',environment:'PROVIDER_SANDBOX',platformAccountId:m.platformAccountId,listingPolicyHash:null,financePolicyHash:null,fulfillmentPolicyHash:null,qualificationRefs:m.context.qualificationRefs}};
+  Object.assign(o.manifest,{operatingMode:'NON_PAYMENT',hostConfigHash:hash(o.host.config),financeConfigHash:null,commerceConfigHash:null,marketplaceBindingHash:hash(m.runtimeApproval.binding)});
+  assert.equal(inspectMarketplaceHostInputs(o).configurationComplete,true);
+  const injected={...o,finance:{enabled:false}};assert.ok(inspectMarketplaceHostInputs(injected).issues.some(x=>x.code==='NON_PAYMENT_OWNER_REFUSED'));
+  const trading={...o,manifest:{...o.manifest}};delete trading.manifest.operatingMode;assert.equal(inspectMarketplaceHostInputs(trading).configurationComplete,false);
+  const owned=await createR1MarketplaceHost(o.host);t.after(()=>owned.close());
+  const reads=new Set(['status','prepareProof','uploadProof','recoverProof','readProof','listProofs','reviewProof','catalog','publicCatalog','evidence','workspace','staffQueue','metrics','localSnapshot']);
+  const before=f.queries.length;
+  for(const name of Object.keys(owned.service).filter(name=>!reads.has(name)))assert.throws(()=>owned.service[name](),{code:'MARKETPLACE_CHECKOUT_DISABLED'},name);
+  assert.equal(f.queries.length,before);assert.equal(owned.provider,undefined);assert.equal(owned.settlementCapability,undefined);
+  const host=createMarketplaceHostBootstrap(o);t.after(()=>host.stop());const started=await host.start();
+  assert.equal(started.operatingMode,'NON_PAYMENT');assert.equal(started.checkoutEnabled,false);assert.equal(started.routes.financeConfigured,false);assert.ok(f.connects>0);
+  const response=await fetchNode(started.listeners.customer.port,'/account/marketplace/api/workspace',{headers:{cookie:f.cookie,'x-fixture-original-proof':'unchanged'}});
+  assert.equal(response.status,200);assert.equal(response.body.capabilities.checkoutEnabled,false);assert.equal(response.body.balance,null);assert.equal(response.body.sellerEligibility,null);assert.deepEqual(response.body.orders,[]);
+  const payment=await fetchNode(started.listeners.customer.port,'/account/marketplace/api/payments',{method:'POST',headers:{cookie:f.cookie,'x-fixture-original-proof':'unchanged',origin:'https://atlasgrading.com','content-type':'application/json','x-atlas-csrf':response.body.csrfToken},body:JSON.stringify({reservationId:'atlas_disabled'})});assert.equal(payment.status,503);assert.equal(payment.body.error,'MARKETPLACE_CHECKOUT_DISABLED');
+  assert.equal(f.queries.some(sql=>sql.startsWith('SELECT atlas_marketplace.commit_state')),false);
+  for(const role of ['BUYER','SELLER','STAFF']){const html=renderApp({...response.body,scope:{...response.body.scope,role},balance:{availableCents:99999},sellerEligibility:{status:'ELIGIBLE',bank:{status:'PAYOUT_READY'}}});assert.match(html,/Checkout is disabled/);assert.doesNotMatch(html,/data-action="(?:pay|reserve|withdraw|onboard|fulfillment)"|ATLAS Balance|PAYOUT_READY/);}
+  const publicPage=await fetchNode(started.listeners.public.port,'/marketplace/catalog');assert.equal(publicPage.status,200);assert.equal(publicPage.body.capabilities.checkoutEnabled,false);assert.deepEqual(publicPage.body.items,[]);
+  assert.match(renderPublicCatalog({page:publicPage.body,status:'ready',origin:'https://atlasgrading.com'},{customerPath:'/account/marketplace/'}),/Checkout is disabled/);
+  assert.equal((await host.health()).finance,null);assert.equal(f.providerCalls,0);assert.equal(f.timerStarts,0);assert.equal(f.alertCalls,0);
+  m.provider={};assert.equal(owned.status().enabled,false);assert.equal((await fetchNode(started.listeners.customer.port,'/account/marketplace/api/workspace',{headers:{cookie:f.cookie,'x-fixture-original-proof':'unchanged'}})).status,503);
+});

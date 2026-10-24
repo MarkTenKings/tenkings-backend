@@ -26,7 +26,7 @@ function projection(upload,state){const proof=state.marketplaceProofObjects?.[up
 /** Explicit, private, same-store intake. Policy references and role labels do
  * not authorize themselves: host readiness and current actor/reviewer grants
  * must be independently checked synchronously at every commit and read. */
-export function createMarketplaceProofIntake({enabled=false,store,context:suppliedContext,policy:suppliedPolicy,storage,validator,assertReady,authorize,clock=Date.now}={}) {
+export function createMarketplaceProofIntake({enabled=false,store,context:suppliedContext,policy:suppliedPolicy,storage,validator,assertReady,authorize,clock=Date.now,canonicalAuthorityOnly=false}={}) {
   const context=authorityContext(suppliedContext);
   if(!enabled)return Object.freeze({enabled:false});
   requireValue(store&&typeof store.read==='function'&&typeof store.transaction==='function','PROOF_STORE_REQUIRED');
@@ -101,6 +101,7 @@ export function createMarketplaceProofIntake({enabled=false,store,context:suppli
   const intake=Object.freeze({enabled:true,binding,limits:Object.freeze({maxObjectBytes:policy.maxObjectBytes,formats:PROOF_IMAGE_LIMITS.formats}),
     assertReady(){runtimeReady();assertProofStorage(storage,{environment:context.environment,retentionRef:policy.retentionRef});return true;},
     async prepare(actor,input,options={}) {
+      requireValue(!canonicalAuthorityOnly,'PROOF_CANONICAL_AUTHORITY_REQUIRED');
       check(actor,'PREPARE',{orderId:input.orderId,purpose:input.purpose},options);domainId(input.requestId,'request',context);
       requireValue(input&&Object.keys(input).every(k=>['requestId','orderId','purpose','declaredType','byteCount','sha256'].includes(k))&&PROOF_IMAGE_LIMITS.formats.includes(input.declaredType)&&Number.isSafeInteger(input.byteCount)&&input.byteCount>0&&input.byteCount<=policy.maxObjectBytes&&typeof input.sha256==='string'&&/^[a-f0-9]{64}$/.test(input.sha256),'PROOF_PLAN_INVALID');
       const requestHash=hash(input),uploadId=prefix+'upload_'+hash({actorId:actor.id,role:actor.role,requestId:input.requestId}).slice(0,32);
@@ -117,6 +118,7 @@ export function createMarketplaceProofIntake({enabled=false,store,context:suppli
       });
     },
     async upload(actor,{uploadId,bytes},options={}) {
+      requireValue(!canonicalAuthorityOnly,'PROOF_CANONICAL_AUTHORITY_REQUIRED');
       check(actor,'UPLOAD',{},options);requireValue(Buffer.isBuffer(bytes)&&bytes.length>0&&bytes.length<=policy.maxObjectBytes,'PROOF_SOURCE_MISMATCH');
       requireValue(pending.size<2&&!pending.has(uploadId),'PROOF_UPLOAD_BUSY');pending.add(uploadId);const original=Buffer.from(bytes);
       try {
@@ -150,6 +152,7 @@ export function createMarketplaceProofIntake({enabled=false,store,context:suppli
       }finally{original.fill(0);pending.delete(uploadId);}
     },
     async recover(actor,{uploadId},options={}) {
+      requireValue(!canonicalAuthorityOnly,'PROOF_CANONICAL_AUTHORITY_REQUIRED');
       check(actor,'RECOVER',{},options);const row=await store.read(state=>clone(uploadRow(state,actor,uploadId)));check(actor,'RECOVER',{orderId:row.orderId,purpose:row.purpose},options);
       if(row.status==='RETAINED'){const object=retained(row);object.bytes.fill(0);}
       if(row.status==='VALIDATED'){const object=storage.get({objectKey:row.objectKey});if(object){requireValue(object.manifestHash===hash(row.manifest),'PROOF_BINDING_MISMATCH');object.bytes.fill(0);return finish(actor,uploadId,options);}}

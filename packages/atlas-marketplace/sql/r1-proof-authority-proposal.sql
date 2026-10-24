@@ -223,6 +223,60 @@ BEGIN
   END IF;
 END $$;
 
+-- Bounded read-only observations. Access callers hold this transaction until
+-- their retained-proof read/review finishes; an unlocked cached row is not a grant.
+CREATE FUNCTION atlas_proof_authority.observe_access_v1(d jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE ctl atlas_proof_authority.control; ins atlas_proof_authority.installation;
+ grant_row atlas_proof_authority.reviewer_grant; actor_id uuid; access_version integer;
+ session_until timestamptz; browser_until timestamptz; t timestamptz; deadline_ms bigint;
+ bootstrap boolean:=d->>'schema'='atlas-proof-installation-observe-v1'; grants jsonb;
+BEGIN
+ IF bootstrap THEN
+  PERFORM atlas_proof_authority.exact_object_v1(d,ARRAY['schema','installationId']);
+ ELSE
+  PERFORM atlas_proof_authority.exact_object_v1(d,ARRAY['schema','installationId','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','originalRequestDeadlineAt']);
+  IF d->>'schema' IS DISTINCT FROM 'atlas-proof-access-observe-v1' OR d->>'requestBindingHash' !~ '^[a-f0-9]{64}$'
+   OR (d->>'requestId')::uuid IS NULL THEN RAISE EXCEPTION 'PROOF_AUTHORITY_PROTOCOL_INVALID'; END IF;
+  PERFORM atlas_proof_authority.lock_canonical_rows_v1(d);
+ END IF;
+ SELECT * INTO STRICT ctl FROM atlas_proof_authority.control WHERE id='active' FOR SHARE;
+ IF NOT ctl.enabled OR ctl.integration<>'INSTALLED' THEN RETURN atlas_proof_authority.observation_v1(false); END IF;
+ SELECT * INTO ins FROM atlas_proof_authority.installation WHERE installation_id=(d->>'installationId')::uuid FOR SHARE;
+ t:=clock_timestamp();
+ IF ins.installation_id IS NULL OR ins.installation_id IS DISTINCT FROM ctl.active_installation_id OR ins.installed_at>t OR ins.expires_at<=t
+  OR ins.session_binding->>'installationId' IS DISTINCT FROM ins.installation_id::text
+  OR ins.session_binding->>'intakeBindingHash' IS DISTINCT FROM atlas_proof_authority.hash_v1(ins.intake_binding)
+  OR ins.session_binding->'policyHash' IS DISTINCT FROM ins.intake_binding->'policyHash'
+ THEN RAISE EXCEPTION 'PROOF_AUTHORITY_INSTALLATION_REQUIRED'; END IF;
+ IF bootstrap THEN
+  IF (SELECT count(*) FROM atlas_proof_authority.reviewer_grant WHERE installation_id=ins.installation_id)>16 THEN RAISE EXCEPTION 'PROOF_AUTHORITY_CAPACITY_HOLD'; END IF;
+  SELECT coalesce(jsonb_agg(jsonb_build_object('identityId',r.identity_id,'accessVersion',r.access_version,'policyHash',r.policy_hash,'revokedAt',CASE WHEN r.revoked_at IS NULL THEN NULL ELSE floor(extract(epoch FROM r.revoked_at)*1000)::bigint END) ORDER BY r.identity_id),'[]'::jsonb)
+    INTO grants FROM atlas_proof_authority.reviewer_grant r WHERE r.installation_id=ins.installation_id;
+  RETURN jsonb_build_object('schema','atlas-proof-installation-report-v1','classification','UNQUALIFIED','authority',false,'requestHash',atlas_proof_authority.hash_v1(d),
+   'installationId',ins.installation_id,'publisherSessionId',ins.publisher_session_id,'publisherLedgerId',ins.publisher_ledger_id,'sessionBinding',ins.session_binding,'intakeBinding',ins.intake_binding,
+   'staffBinding',ins.staff_binding,'customerBinding',ins.customer_binding,'controlRevision',ctl.revision,'reviewerGrants',grants,'expiresAt',floor(extract(epoch FROM ins.expires_at)*1000)::bigint,'observedAt',floor(extract(epoch FROM t)*1000)::bigint);
+ END IF;
+ IF d->'configBinding' IS DISTINCT FROM (CASE WHEN d->>'source'='STAFF' THEN ins.staff_binding ELSE ins.customer_binding END) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_INSTALLATION_REQUIRED'; END IF;
+ IF d->>'source'='STAFF' THEN
+  SELECT s."identityId",s."expiresAt" AT TIME ZONE 'UTC' INTO actor_id,session_until FROM atlas_staff."StaffSession" s WHERE "tokenHash"=d->>'sessionHash';
+  SELECT "expiresAt" AT TIME ZONE 'UTC' INTO browser_until FROM atlas_staff."StaffBrowser" WHERE "tokenHash"=d->>'browserHash';
+  SELECT "accessVersion" INTO access_version FROM atlas_staff."StaffIdentity" WHERE id=actor_id;
+  SELECT * INTO grant_row FROM atlas_proof_authority.reviewer_grant WHERE identity_id=actor_id AND installation_id=ins.installation_id FOR SHARE;
+  IF grant_row.identity_id IS NULL OR grant_row.revoked_at IS NOT NULL OR grant_row.access_version<>access_version OR grant_row.policy_hash<>ins.session_binding->>'policyHash' THEN RAISE EXCEPTION 'PROOF_AUTHORITY_REVIEWER_GRANT_REQUIRED'; END IF;
+ ELSE
+  SELECT s."accountId",s."expiresAt" INTO actor_id,session_until FROM atlas_customer."CustomerSession" s WHERE "tokenHash"=d->>'sessionHash';
+  SELECT "expiresAt" INTO browser_until FROM atlas_customer."CustomerBrowser" WHERE "tokenHash"=d->>'browserHash';
+  SELECT "accessVersion" INTO access_version FROM atlas_customer."CustomerAccount" WHERE id=actor_id;
+  IF NOT EXISTS(SELECT 1 FROM atlas_customer."CustomerServiceControl" WHERE id='active' AND enabled) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_CANONICAL_ACCESS_REFUSED'; END IF;
+ END IF;
+ t:=clock_timestamp();deadline_ms:=least((d->>'originalRequestDeadlineAt')::bigint,floor(extract(epoch FROM least(session_until,browser_until,ins.expires_at))*1000)::bigint);
+ IF actor_id IS NULL OR access_version IS NULL OR deadline_ms<=floor(extract(epoch FROM t)*1000) OR deadline_ms>floor(extract(epoch FROM t+interval '60 seconds')*1000) THEN RAISE EXCEPTION 'PROOF_AUTHORITY_REQUEST_EXPIRED'; END IF;
+ RETURN jsonb_build_object('schema','atlas-proof-access-report-v1','classification','UNQUALIFIED','authority',false,'requestHash',atlas_proof_authority.hash_v1(d),
+  'installationId',ins.installation_id,'publisherSessionId',ins.publisher_session_id,'policyHash',ins.session_binding->>'policyHash','source',d->>'source','actorId',actor_id,'accessVersion',access_version,
+  'requestId',d->>'requestId','requestBindingHash',d->>'requestBindingHash','controlRevision',ctl.revision,'deadlineAt',deadline_ms,'observedAt',floor(extract(epoch FROM t)*1000)::bigint);
+END $$;
+
 CREATE FUNCTION atlas_proof_authority.claim_stage_v1(d jsonb) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 <<proof_claim>>

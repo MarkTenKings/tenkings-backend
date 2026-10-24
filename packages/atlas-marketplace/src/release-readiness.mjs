@@ -37,15 +37,18 @@ export function inspectMarketplaceReleaseManifest(manifest) {
     for(const key of keys)if(!Object.hasOwn(value,key))add(`${path}.${key}`,'FIELD_REQUIRED');
     return true;
   }
-  const physical=manifest?.schema===MARKETPLACE_PHYSICAL_RELEASE_SCHEMA;
-  if(closed(manifest,[...(physical?['physicalConfigHash']:[]),'schema','environment','origin','platformAccountId','sourceRevision','releaseRef','bootstrapApprovalRef','networkApprovalRef','hostConfigHash','financeConfigHash','commerceConfigHash','marketplaceBindingHash','listeners','limits','externalEvidence'],'manifest')) {
+  const physical=manifest?.schema===MARKETPLACE_PHYSICAL_RELEASE_SCHEMA,nonPayment=manifest?.operatingMode==='NON_PAYMENT';
+  if(closed(manifest,[...(Object.hasOwn(manifest??{},'operatingMode')?['operatingMode']:[]),...(physical?['physicalConfigHash']:[]),'schema','environment','origin','platformAccountId','sourceRevision','releaseRef','bootstrapApprovalRef','networkApprovalRef','hostConfigHash','financeConfigHash','commerceConfigHash','marketplaceBindingHash','listeners','limits','externalEvidence'],'manifest')) {
+    if(Object.hasOwn(manifest,'operatingMode')&&!['TRADING','NON_PAYMENT'].includes(manifest.operatingMode))add('manifest.operatingMode','OPERATING_MODE_REQUIRED');
+    if(nonPayment&&manifest.environment==='PRODUCTION'&&!physical)add('manifest.schema','PHYSICAL_RELEASE_MANIFEST_REQUIRED');
     if(![MARKETPLACE_RELEASE_SCHEMA,MARKETPLACE_PHYSICAL_RELEASE_SCHEMA].includes(manifest.schema))add('manifest.schema','SCHEMA_MISMATCH');
     if(!['PROVIDER_SANDBOX','PRODUCTION'].includes(manifest.environment))add('manifest.environment','ENVIRONMENT_REQUIRED');
     if(manifest.origin!=='https://atlasgrading.com')add('manifest.origin','CANONICAL_ORIGIN_REQUIRED');
     if(typeof manifest.platformAccountId!=='string'||!/^acct_[A-Za-z0-9]+$/.test(manifest.platformAccountId))add('manifest.platformAccountId','PLATFORM_ACCOUNT_REQUIRED');
     if(typeof manifest.sourceRevision!=='string'||!/^([a-f0-9]{40}|[a-f0-9]{64})$/.test(manifest.sourceRevision))add('manifest.sourceRevision','EXACT_REVISION_REQUIRED');
     for(const key of ['releaseRef','bootstrapApprovalRef','networkApprovalRef'])if(!reference(manifest[key]))add(`manifest.${key}`,'NONSECRET_REFERENCE_REQUIRED');
-    for(const key of [...(physical?['physicalConfigHash']:[]),'hostConfigHash','financeConfigHash','commerceConfigHash','marketplaceBindingHash'])if(!digest(manifest[key]))add(`manifest.${key}`,'CONFIGURATION_DIGEST_REQUIRED');
+    for(const key of [...(physical?['physicalConfigHash']:[]),'hostConfigHash',...(!nonPayment?['financeConfigHash','commerceConfigHash']:[]),'marketplaceBindingHash'])if(!digest(manifest[key]))add(`manifest.${key}`,'CONFIGURATION_DIGEST_REQUIRED');
+    if(nonPayment&&(manifest.financeConfigHash!==null||manifest.commerceConfigHash!==null))add('manifest','NON_PAYMENT_OWNER_REFUSED');
     if(closed(manifest.listeners,surfaces,'manifest.listeners')) {
       const ports=new Set();
       for(const surface of surfaces) {
@@ -66,7 +69,7 @@ export function inspectMarketplaceReleaseManifest(manifest) {
     }
     if(closed(manifest.externalEvidence,Object.keys(MARKETPLACE_EXTERNAL_GATES),'manifest.externalEvidence'))for(const key of Object.keys(MARKETPLACE_EXTERNAL_GATES))if(manifest.externalEvidence[key]!==null&&!reference(manifest.externalEvidence[key]))add(`manifest.externalEvidence.${key}`,'NONSECRET_REFERENCE_OR_NULL_REQUIRED');
   }
-  const externalGates=Object.entries(MARKETPLACE_EXTERNAL_GATES).map(([id,requirement])=>({id,requirement,evidenceProvided:reference(manifest?.externalEvidence?.[id]),status:'EXTERNAL_VERIFICATION_REQUIRED'}));
+  const externalGates=Object.entries(MARKETPLACE_EXTERNAL_GATES).map(([id,requirement])=>({id,requirement,evidenceProvided:reference(manifest?.externalEvidence?.[id]),status:nonPayment&&['provider','webhook','alerts','authority','fulfillment'].includes(id)?'NOT_ENABLED':'EXTERNAL_VERIFICATION_REQUIRED'}));
   return {schema:'atlas-marketplace-release-inspection-v1',configurationComplete:issues.length===0,status:issues.length?'CONFIGURATION_INCOMPLETE':'CONFIGURATION_COMPLETE_UNVERIFIED',manifestHash:issues.length?null:safeHash(manifest),issues,externalGates,productionReady:false,saleAuthorityAvailable:false};
 }
 
@@ -76,7 +79,8 @@ export function inspectMarketplaceReleaseManifest(manifest) {
 export function inspectMarketplaceHostInputs(options) {
   const report=inspectMarketplaceReleaseManifest(options?.manifest),issues=[...report.issues];
   const need=(condition,path,code='SERVER_PORT_REQUIRED')=>{if(!condition)issues.push({path,code});};
-  const {host,finance,existingHandlers,assertReleaseReady}=options??{},manifest=options?.manifest;
+  const {host,finance,existingHandlers,assertReleaseReady}=options??{},manifest=options?.manifest,nonPayment=manifest?.operatingMode==='NON_PAYMENT';
+  need((host?.config?.operatingMode==='NON_PAYMENT')===nonPayment,'host.config.operatingMode','OPERATING_MODE_MISMATCH');
   need(options?.enabled===true,'enabled','EXPLICIT_ENABLEMENT_REQUIRED');
   need(typeof assertReleaseReady==='function','assertReleaseReady');
   for(const surface of surfaces)need(typeof existingHandlers?.[surface]==='function',`existingHandlers.${surface}`);
@@ -86,13 +90,19 @@ export function inspectMarketplaceHostInputs(options) {
   need(host?.config?.environment===manifest?.environment&&host?.config?.origin===manifest?.origin,'host.config','ENVIRONMENT_BINDING_MISMATCH');
   need(safeHash(host?.config?.routes)===hash(R1_MARKETPLACE_ROUTES),'host.config.routes','CANONICAL_ROUTES_REQUIRED');
   need(typeof host?.assertRuntimeReady==='function','host.assertRuntimeReady');
-  need(host?.config?.settlement?.enabled===true&&typeof host?.assertSettlementReady==='function','host.config.settlement','SETTLEMENT_CAPABILITY_REQUIRED');
+  if(!nonPayment)need(host?.config?.settlement?.enabled===true&&typeof host?.assertSettlementReady==='function','host.config.settlement','SETTLEMENT_CAPABILITY_REQUIRED');
   for(const name of ['staffState','customerState','manualClient','publicConfig'])need(!!host?.r1?.[name],`host.r1.${name}`);
   for(const name of ['admitRequest','admitPublicRequest'])need(typeof host?.r1?.[name]==='function',`host.r1.${name}`);
   need(typeof host?.database?.pool?.connect==='function','host.database.pool.connect');
   for(const name of ['expectedRole','expectedDatabase','expectedFunctionOwner'])need(reference(host?.database?.[name]),`host.database.${name}`,'DATABASE_BINDING_REQUIRED');
   const market=host?.marketplace;
   need(market?.platformAccountId===manifest?.platformAccountId,'host.marketplace.platformAccountId','PLATFORM_BINDING_MISMATCH');
+  if(nonPayment){
+    need(finance==null&&host?.config?.settlement?.enabled!==true&&host?.assertSettlementReady==null,'finance','NON_PAYMENT_OWNER_REFUSED');
+    for(const name of ['provider','quoteProvider','destinations','taxLifecycle','createCommercePorts','commerceConfig','shippingLifecycle','feeCalculator','instantPolicy','assertInstantPayoutReady','quoteInstantPayoutFee','readInstantFeeSettlement','sellerAccount','onboarding','webhook','listingPolicy','financePolicy','fulfillmentPolicy'])need(market?.[name]==null,`host.marketplace.${name}`,'NON_PAYMENT_OWNER_REFUSED');
+    need(typeof market?.assertRuntimeReady==='function'&&!!market.context&&!!market.runtimeApproval,'host.marketplace','EXPLICIT_POLICY_OR_BINDING_REQUIRED');
+    if(manifest?.environment==='PRODUCTION')need(host?.config?.proofAuthority?.enabled===true&&!!host.proofAuthority&&market?.physicalConfig?.operatingMode==='NON_PAYMENT','host.proofAuthority','GENUINE_PROOF_OWNERS_REQUIRED');
+  }else{
   for(const name of ['assertRuntimeReady','readEvidence','validateEvidence','sellerAccount'])need(typeof market?.[name]==='function',`host.marketplace.${name}`);
   for(const name of ['context','listingPolicy','financePolicy','fulfillmentPolicy','runtimeApproval','onboarding'])need(!!market?.[name],`host.marketplace.${name}`,'EXPLICIT_POLICY_OR_BINDING_REQUIRED');
   const commercial=market?.listingPolicy?.commercialTerms;
@@ -102,6 +112,7 @@ export function inspectMarketplaceHostInputs(options) {
   need(!market?.quoteProvider&&!market?.destinations&&!market?.taxLifecycle,'host.marketplace','AMBIGUOUS_COMMERCE_PORTS');
   need(safeHash(market?.commerceConfig)===manifest?.commerceConfigHash&&market?.createCommercePorts?.binding?.configHash===manifest?.commerceConfigHash,'host.marketplace.commerceConfig','CONFIGURATION_DIGEST_MISMATCH');
   need(market?.createCommercePorts?.binding?.environment===manifest?.environment&&market?.createCommercePorts?.binding?.platformAccountId===manifest?.platformAccountId,'host.marketplace.createCommercePorts','ENVIRONMENT_BINDING_MISMATCH');
+  }
   if(manifest?.schema===MARKETPLACE_PHYSICAL_RELEASE_SCHEMA) {
     need(typeof market?.createPhysicalPorts==='function'&&market.createPhysicalPorts.binding?.schema==='atlas-marketplace-physical-factory-v1','host.marketplace.createPhysicalPorts','DURABLE_PHYSICAL_FACTORY_REQUIRED');
     need(!market?.proofIntake&&!market?.shippingLifecycle,'host.marketplace','AMBIGUOUS_PHYSICAL_PORTS');
@@ -109,6 +120,7 @@ export function inspectMarketplaceHostInputs(options) {
     need(market?.createPhysicalPorts?.binding?.environment===manifest.environment,'host.marketplace.createPhysicalPorts','ENVIRONMENT_BINDING_MISMATCH');
   } else need(!market?.createPhysicalPorts&&!market?.physicalConfig&&!market?.proofIntake&&!market?.shippingLifecycle,'host.marketplace','PHYSICAL_RELEASE_MANIFEST_REQUIRED');
   need(safeHash(market?.runtimeApproval?.binding)===manifest?.marketplaceBindingHash,'host.marketplace.runtimeApproval','CONFIGURATION_DIGEST_MISMATCH');
+  if(!nonPayment){
   for(const name of ['acceptsAccount','getIdentity','getAccount','create','retrieve','discover','getPaymentCollection','createOnboardingLink','getAccountSnapshot','listBalanceTransactions','listRelatedObjects','retrieveDispute'])need(typeof market?.provider?.[name]==='function',`host.marketplace.provider.${name}`);
   need(finance?.enabled===true,'finance.enabled','EXPLICIT_ENABLEMENT_REQUIRED');
   need(typeof finance?.assertRuntimeReady==='function','finance.assertRuntimeReady');
@@ -118,5 +130,6 @@ export function inspectMarketplaceHostInputs(options) {
   need(finance?.config?.taxReporting?.enabled===true&&Number.isSafeInteger(finance.config.taxReporting.maxItems)&&finance.config.taxReporting.maxItems>=1&&finance.config.taxReporting.maxItems<=50&&reference(finance.config.taxReporting.approvalRef),'finance.config.taxReporting','SEPARATELY_APPROVED_TAX_REPORTING_REQUIRED');
   for(const scope of ['PLATFORM','CONNECTED'])need(market?.webhook?.endpoints?.some(row=>row.scope===scope&&typeof row.secret==='string'&&row.secret.startsWith('whsec_'))===true,`host.marketplace.webhook.${scope}`,'SCOPED_SIGNING_ENDPOINT_REQUIRED');
   for(const name of ['assertReady','send','lookup'])need(typeof finance?.alertSender?.[name]==='function',`finance.alertSender.${name}`,'QUALIFIED_ALERT_SENDER_REQUIRED');
+  }
   return {...report,configurationComplete:issues.length===0,status:issues.length?'CONFIGURATION_INCOMPLETE':'CONFIGURATION_COMPLETE_UNVERIFIED',issues};
 }

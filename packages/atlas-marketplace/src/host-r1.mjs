@@ -47,13 +47,17 @@ export async function createR1MarketplaceHost(options={}) {
   if(options.enabled!==true) return Object.freeze({status:()=>({enabled:false,reason:'R1_HOST_DISABLED'}),close(){}});
   const {config,r1,database,marketplace,assertRuntimeReady,clock=Date.now}=options;
   check(config&&r1&&database&&marketplace&&['PROVIDER_SANDBOX','PRODUCTION'].includes(config.environment));
+  check(config.operatingMode===undefined||['TRADING','NON_PAYMENT'].includes(config.operatingMode));
+  const nonPayment=config.operatingMode==='NON_PAYMENT';
   check(config.origin==='https://atlasgrading.com'&&ref(config.approvalRef)&&config.approved===true);
   check(config.authPolicy?.approved===true&&ref(config.authPolicy.approvalRef)&&config.authPolicy.environment===config.environment
     &&Array.isArray(config.authPolicy.staffRoles)&&config.authPolicy.staffRoles.length===1&&config.authPolicy.staffRoles[0]==='REVIEWER'
     &&Array.isArray(config.authPolicy.customerRoles)&&config.authPolicy.customerRoles.length>0&&config.authPolicy.customerRoles.every(role=>['BUYER','SELLER'].includes(role))
     &&new Set(config.authPolicy.customerRoles).size===config.authPolicy.customerRoles.length
     &&(config.environment!=='PRODUCTION'||config.authPolicy.r1Mode==='PRODUCTION'));
-  check(marketplace.runtimeApproval?.approved===true&&marketplace.financePolicy?.environment===(config.environment==='PRODUCTION'?'stripe-production':'stripe-sandbox'));
+  check(marketplace.runtimeApproval?.approved===true&&(nonPayment||marketplace.financePolicy?.environment===(config.environment==='PRODUCTION'?'stripe-production':'stripe-sandbox')));
+  const paymentPorts=['provider','quoteProvider','destinations','taxLifecycle','createCommercePorts','commerceConfig','shippingLifecycle','feeCalculator','instantPolicy','assertInstantPayoutReady','quoteInstantPayoutFee','readInstantFeeSettlement','sellerAccount','onboarding','webhook','listingPolicy','financePolicy','fulfillmentPolicy'];
+  if(nonPayment){check(paymentPorts.every(key=>marketplace[key]==null)&&config.settlement?.enabled!==true&&options.assertSettlementReady==null);if(config.environment==='PRODUCTION')check(config.proofAuthority?.enabled===true&&marketplace.createPhysicalPorts&&marketplace.physicalConfig?.operatingMode==='NON_PAYMENT');}
   const configHash=hash(config),env=config.environment;
   const canonical=await loadR1CanonicalAuth();
   const staffState=r1.staffState,customerState=r1.customerState,manualClient=r1.manualClient,publicConfig=r1.publicConfig;
@@ -80,7 +84,7 @@ export async function createR1MarketplaceHost(options={}) {
   }
   const context=authorityContext(marketplace.context);
   check(context.environment===env&&context.evidenceOrigin===config.origin&&typeof marketplace.assertRuntimeReady==='function');
-  const marketBinding={environment:env,platformAccountId:marketplace.platformAccountId,listingPolicyHash:hash(marketplace.listingPolicy),financePolicyHash:hash(marketplace.financePolicy),fulfillmentPolicyHash:hash(marketplace.fulfillmentPolicy),qualificationRefs:context.qualificationRefs};
+  const marketBinding={...(nonPayment?{operatingMode:'NON_PAYMENT'}:{}),environment:env,platformAccountId:marketplace.platformAccountId,listingPolicyHash:nonPayment?null:hash(marketplace.listingPolicy),financePolicyHash:nonPayment?null:hash(marketplace.financePolicy),fulfillmentPolicyHash:nonPayment?null:hash(marketplace.fulfillmentPolicy),qualificationRefs:context.qualificationRefs};
   const authBinding=state=>({mode:state.auth.config.mode,origin:state.auth.config.origin,deploymentId:state.auth.config.deploymentId,releaseSha:state.auth.config.releaseSha,configHash:state.auth.config.configHash});
   const publicBinding=()=>({mode:publicConfig.mode,origin:publicConfig.origin,deploymentId:publicConfig.deploymentId,releaseSha:publicConfig.releaseSha,configHash:publicConfig.configHash});
   const deploymentHosts={buyer:customerState.config.deploymentHost,seller:customerState.config.deploymentHost,staff:staffState.auth.config.deploymentId,public:publicConfig.deploymentId};
@@ -117,8 +121,9 @@ export async function createR1MarketplaceHost(options={}) {
       &&[canonical.DurableStaffAuth.prototype.authenticate,canonical.DurableStaffAuth.prototype.withStaff,canonical.DurableStaffAuth.prototype.digest,canonical.DurableStaffAuth.prototype.identityMatches,canonical.CustomerAuth.prototype.authority,canonical.CustomerAuth.prototype.digest,canonical.CustomerDatabase.prototype.call].every((value,index)=>value===canonicalMethods[index])
       &&[staffAuth.identityMatches,staffConfig.phoneHash,staffConfig.identityIdForPhoneHash].every((value,index)=>value===staffIdentityMethods[index]));
     check(Object.entries(marketPorts).every(([key,value])=>marketplace[key]===value)&&(!physicalHash||hash(marketplace.physicalConfig)===physicalHash)&&(!commerceHash||hash(marketplace.commerceConfig)===commerceHash)&&hash(marketplace.runtimeApproval)===approvalPin&&webhookPin()===pinnedWebhook&&marketplace.webhook?.resolveDisputePolicy===disputePolicy);
-    check(hash({...marketBinding,listingPolicyHash:hash(marketplace.listingPolicy),financePolicyHash:hash(marketplace.financePolicy),fulfillmentPolicyHash:hash(marketplace.fulfillmentPolicy)})===marketPin
+    check(hash({...marketBinding,listingPolicyHash:nonPayment?null:hash(marketplace.listingPolicy),financePolicyHash:nonPayment?null:hash(marketplace.financePolicy),fulfillmentPolicyHash:nonPayment?null:hash(marketplace.fulfillmentPolicy)})===marketPin
       &&marketplace.runtimeApproval?.approved===true&&hash(marketplace.runtimeApproval.binding)===marketPin);
+    if(nonPayment)check(paymentPorts.every(key=>marketplace[key]==null));
     syncReady(assertRuntimeReady,binding);
     syncReady(marketplace.assertRuntimeReady,marketBinding);
   }
@@ -139,7 +144,7 @@ export async function createR1MarketplaceHost(options={}) {
     const {createR1ProofAuthorityProducer}=await import('./proof-authority-r1.mjs');
     proofAuthority=await createR1ProofAuthorityProducer({...options.proofAuthority,enabled:true,expectedDatabase:database.expectedDatabase,intake:physical.proofIntake});
   }else check(config.proofAuthority===undefined||config.proofAuthority===null||config.proofAuthority.enabled===false);
-  const service=createMarketplacePilot({...marketplace,proofAuthority,...(physical?{proofIntake:physical.proofIntake,shippingLifecycle:physical.shippingLifecycle}:{}),...(commerce?{quoteProvider:commerce.quoteProvider,destinations:commerce.destinations,taxLifecycle:commerce.taxLifecycle}:{}),enabled:true,environment:env,store,clock,recoverySettlementCapability:settlementCapability,
+  const service=createMarketplacePilot({...marketplace,operatingMode:nonPayment?'NON_PAYMENT':'TRADING',proofAuthority,...(physical?{proofIntake:physical.proofIntake,shippingLifecycle:physical.shippingLifecycle}:{}),...(commerce?{quoteProvider:commerce.quoteProvider,destinations:commerce.destinations,taxLifecycle:commerce.taxLifecycle}:{}),enabled:true,environment:env,store,clock,recoverySettlementCapability:settlementCapability,
     // R1 has not supplied qualified title/custody/Fingerprint sale authority.
     // No configuration ref or collection label may promote this candidate.
     eligibility:createR1AuthorityCompatibilityAdapter(),
@@ -151,9 +156,10 @@ export async function createR1MarketplaceHost(options={}) {
     admitRequest:r1.admitRequest,clock,requestTtlMs:config.requestTtlMs??30000,maxDatabaseClockSkewMs:config.maxDatabaseClockSkewMs??0});
   if(proofAuthority)await bindR1ProofLogouts([staffState.auth,customerState.auth],proofAuthority);
   return Object.freeze({store,provider,service,settlementCapability,binding,proofAuthority,
-    status(){let enabled=false;try{current();enabled=true;}catch{}return {enabled,environment:env,claimsEnabled:false,historyEnabled:false,saleAuthorityAvailable:false};},
+    status(){let enabled=false;try{current();enabled=true;}catch{}return {enabled,environment:env,operatingMode:nonPayment?'NON_PAYMENT':'TRADING',checkoutEnabled:!nonPayment,claimsEnabled:false,historyEnabled:false,saleAuthorityAvailable:false};},
     async createHandlers({finance:hostedFinance}={}) {
       current();check(handlers===null);
+      if(nonPayment)check(!hostedFinance);
       if(hostedFinance) {
         const {assertHostedFinanceBinding}=await import('./host-finance.mjs');
         assertHostedFinanceBinding(hostedFinance,{store,provider,service,settlementCapability,environment:env,platformAccountId:marketplace.platformAccountId});

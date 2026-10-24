@@ -1,13 +1,15 @@
 // Concrete canonical coordinator. It accepts existing private IO owners, never
 // actor assertions, authorize callbacks, reports, qualification JSON or SQL text.
 import {randomUUID,createHash} from 'node:crypto';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {currentMarketplaceRequestAuthority,assertMarketplaceRequestAuthority} from './request-authority.mjs';
 import {hash,canonicalJSON,requireValue} from './contract.mjs';
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {decoderFreeze} from './proof-decoder-profile.mjs';
-import {readR1ProofRequest} from './auth-r1.mjs';
+import {readR1ProofRequest,withR1ProofAccess} from './auth-r1.mjs';
 import {snapshotR1ProofUpload,authorizeR1ProofCreate,recoverR1ProofUpload} from './proof-intake.mjs';
 import {assertProofIntakeAccountedPostgres,proofIntakeAccountedAttemptSubmission} from './proof-intake-protected-postgres.mjs';
-import {assertProofAuthorityPostgres,assertProofAuthorityCommittedReport} from './proof-authority-postgres.mjs';
+import {assertProofAuthorityPostgres,assertProofAuthorityCommittedReport,assertProofAuthorityHeldAccess} from './proof-authority-postgres.mjs';
 import {assertProofDecoderTargetBrokerClient,assertProofDecoderPreparedSubmissionBeforeDeadline,assertProofDecoderClientOutcome,assertProofDecoderClientOutcomeBeforeDeadline} from './proof-decoder-target-broker.mjs';
 import {assertProofPublicationLifecycleOwner} from './proof-publication-store.mjs';
 import {publicationSessionBinding} from './proof-publication-lifecycle.mjs';
@@ -15,6 +17,12 @@ import {assertProofRetentionPostgresWriter,assertProofRetentionPostgresOutcome} 
 const producers=new WeakSet(),ioOwners=new WeakSet(),check=(v,c='PROOF_AUTHORITY_JOIN_REQUIRED')=>requireValue(v,c),same=(a,b)=>canonicalJSON(a)===canonicalJSON(b);
 const proofProjection=row=>({uploadId:row.uploadId,proofId:null,orderId:row.orderId,purpose:row.purpose,status:row.status,declaredType:row.plan.declaredType,byteCount:row.plan.byteCount,sha256:row.plan.sha256,expiresAt:row.expiresAt,createdAt:row.createdAt,reviewStatus:'NOT_REVIEWED'});
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
+const proofAccess=new AsyncLocalStorage();
+export function assertCurrentR1ProofAccess(actor,{policyHash}={}){
+ const scope=proofAccess.getStore();check(scope&&scope.authority===currentMarketplaceRequestAuthority(),'PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');
+ assertMarketplaceRequestAuthority(actor);assertProofAuthorityHeldAccess(scope.report,{gateway:scope.gateway});
+ check(scope.report.actorId===actor.id&&(scope.report.source==='STAFF'?'STAFF':'BUYER')===actor.role&&scope.report.policyHash===policyHash&&!scope.signal.aborted,'PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');return true;
+}
 export function assertR1ProofAuthorityProducer(value){check(producers.has(value),'PROOF_AUTHORITY_PRODUCER_REQUIRED');return value;}
 // Exact durable reconciliation can run after an application restart without
 // opening the publisher, changing a hold, or reconstructing a live capability.
@@ -83,17 +91,27 @@ export async function createR1ProofAuthorityProducer(options={}){
     entry.applyStarted=true;const applied=report(await revoker.applyMutation({mutationId:drain.mutationId,mutationHash:drain.mutationHash}),revoker,'apply_mutation_v1');check(applied.state==='APPLIED','PROOF_AUTHORITY_DRAIN_REQUIRED');return applied;
  }
  const producer=Object.freeze({classification:'UNQUALIFIED',authority:false,
-  async prepare(authority,input){return exclusive(async()=>{
+  async withProofAccess(authority,work){
+   ready();check(typeof work==='function','PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');
+   const source=await readR1ProofRequest(authority,{readOnly:true});
+   const input={schema:'atlas-proof-access-observe-v1',installationId:binding.installationId,...Object.fromEntries(['requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','originalRequestDeadlineAt'].map(key=>[key,source[key]]))};
+   return request.withAccess(input,observed=>{
+    assertProofAuthorityHeldAccess(observed,{gateway:request});check(observed.actorId===source.actorId&&observed.source===source.source&&observed.policyHash===binding.policyHash&&observed.publisherSessionId===sessionId,'PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');
+    const scope={authority,report:observed,gateway:request,signal:source.signal},actor={id:source.actorId,role:source.actorRole};
+    return withR1ProofAccess(authority,request,observed,()=>proofAccess.run(scope,()=>{const current=()=>{ready();return assertCurrentR1ProofAccess(actor,{policyHash:binding.policyHash});};current();return work(Object.freeze({authorizeCommit:current,refreshAuthorization:async()=>current()}));}));
+   });
+  },
+  async prepare(authority,input){return exclusive(()=>producer.withProofAccess(authority,async()=>{
    await live(authority);const requestInput=engineDataOptions(input,['requestId','orderId','purpose','declaredType','byteCount','sha256']),actor=await authorizeR1ProofCreate(o.intake,authority,requestInput),key=hash({actor,requestId:requestInput.requestId});
    const prior=creates.get(key);if(prior){check(same(prior.operation.request,requestInput),'PROOF_AUTHORITY_CREATE_CONFLICT');check(prior.result?.disposition==='COMMITTED','PROOF_AUTHORITY_CREATE_HELD');return proofProjection(prior.result.record.upload);}
    check(creates.size<installation.maxOperations,'PROOF_AUTHORITY_CAPACITY_HOLD');
    const prepared=accounted.prepareCreate({actor,request:requestInput}),operation=accounted.preparedReport(prepared),entry={prepared,operation,result:null};creates.set(key,entry);
    await live(authority);entry.result=await accounted.commitPrepared(prepared);check(entry.result.disposition==='COMMITTED','PROOF_AUTHORITY_CREATE_HELD');
    await live(authority);return proofProjection(entry.result.record.upload);
-  });},
+  }));},
   async upload(authority,options){const handle=await producer.decode(authority,options);await producer.publish(authority,handle);return producer.retain(authority,handle);},
   async decode(authority,options){return exclusive(async()=>{
-   check(active.size===0,'PROOF_AUTHORITY_BUSY');const v=engineDataOptions(options,['uploadId','bytes']),r=await live(authority),row=await snapshotR1ProofUpload(o.intake,authority,v.uploadId);
+   check(active.size===0,'PROOF_AUTHORITY_BUSY');const v=engineDataOptions(options,['uploadId','bytes']),r=await live(authority),row=await producer.withProofAccess(authority,()=>snapshotR1ProofUpload(o.intake,authority,v.uploadId));
    check(Buffer.isBuffer(v.bytes)&&row.status==='PREPARED'&&row.attempts===0&&v.bytes.length===row.plan.byteCount&&digest(v.bytes)===row.plan.sha256,'PROOF_AUTHORITY_ACCOUNTED_VALIDATION_REQUIRED');
    const created=[...creates.values()].find(x=>x.result?.disposition==='COMMITTED'&&x.result.record.upload.uploadId===row.uploadId);
    check(created&&same(created.result.record.upload,row),'PROOF_AUTHORITY_ORIGINAL_CREATE_REQUIRED');
@@ -120,7 +138,7 @@ export async function createR1ProofAuthorityProducer(options={}){
   });},
   async publish(authority,handle){return exclusive(async()=>{
    const e=owned(handle,authority,'DECODED');e.phase='PUBLISH_CLAIMING';await live(authority);
-   const row=await snapshotR1ProofUpload(o.intake,authority,e.row.uploadId),observed=assertProofDecoderClientOutcomeBeforeDeadline(e.completion,{client});
+   const row=await producer.withProofAccess(authority,()=>snapshotR1ProofUpload(o.intake,authority,e.row.uploadId)),observed=assertProofDecoderClientOutcomeBeforeDeadline(e.completion,{client});
    // VALIDATE must already be committed by the dedicated accounted gateway.
    // This coordinator never writes proof maps through a generic state writer.
    check(row.status==='VALIDATED'&&same(row,e.validated.upload)&&row.manifest&&same(common(row),common(e.row))&&same(row.manifest.validation,observed.completion.validation),'PROOF_AUTHORITY_VALIDATION_COMMIT_REQUIRED');
@@ -131,7 +149,7 @@ export async function createR1ProofAuthorityProducer(options={}){
    }catch(error){poisoned=true;e.phase='HELD';e.original?.fill(0);e.original=null;throw error;}
   });},
   async retain(authority,handle){return exclusive(async()=>{
-   const e=owned(handle,authority,'PUBLISHED');e.phase='RETAIN_CLAIMING';await live(authority);const row=await snapshotR1ProofUpload(o.intake,authority,e.row.uploadId),found=publisher.lookupOriginal({objectKey:row.objectKey,manifestHash:hash(row.manifest)}),publication=found.publication;
+   const e=owned(handle,authority,'PUBLISHED');e.phase='RETAIN_CLAIMING';await live(authority);const row=await producer.withProofAccess(authority,()=>snapshotR1ProofUpload(o.intake,authority,e.row.uploadId)),found=publisher.lookupOriginal({objectKey:row.objectKey,manifestHash:hash(row.manifest)}),publication=found.publication;
    check(found.observation==='TRACKED_ORIGINAL'&&publication&&same(row,e.row),'PROOF_AUTHORITY_ORIGINAL_REQUIRED');
    const original=publisher.lookupOperation({operationId:e.stage.operationId}).record;check(original?.phase==='COMPLETED','PROOF_AUTHORITY_ORIGINAL_REQUIRED');
    const stage=await claim(authority,'RETAIN',{...common(row),operationId:randomUUID(),objectKey:row.objectKey,manifestHash:hash(row.manifest),validationAttemptId:e.validationAttemptId,decoderRequestId:assertProofDecoderClientOutcome(e.completion,{client}).request.requestId,publicationLedgerId:publisher.status().ledgerId,publicationSessionId:sessionId,publicationOperationId:e.stage.operationId,publicationRevision:original.completedRevision,publicationEvidenceHash:publication.publicationEvidenceHash,qualificationSessionId:binding.qualificationSessionId,expectedUploadHash:hash(row)},e.stage.stageBinding.stageId);
@@ -144,14 +162,14 @@ export async function createR1ProofAuthorityProducer(options={}){
     e.stage=await settle(stage,'COMPLETE',hash(observed));e.phase='RETAINED';active.delete(e);e.signal.removeEventListener('abort',e.abort);return observed.report.record.result;
    }catch(error){e.phase='RETENTION_HELD';throw error;}
   });},
-  async recover(authority,input){
+  async recover(authority,input){return producer.withProofAccess(authority,async()=>{
    check(!closed,'PROOF_AUTHORITY_HELD');const {uploadId}=engineDataOptions(input,['uploadId']);await readR1ProofRequest(authority);
    const original=await recoverR1ProofUpload(o.intake,authority,uploadId);
    if(original.row.status!=='RETAINED'){check(original.row.status==='PREPARED','PROOF_AUTHORITY_RETENTION_HELD');return original.projection;}
    let outcome;try{outcome=await writer.lookupOriginal({operation:original.operation});}catch(error){outcome=error;}
    const found=assertProofRetentionPostgresOutcome(outcome,{writer});check(found.disposition==='COMMITTED'&&same(found.operation,original.operation),'PROOF_AUTHORITY_RETENTION_HELD');
    const current=await recoverR1ProofUpload(o.intake,authority,uploadId);check(same(current.row,original.row)&&same(current.operation,original.operation),'PROOF_AUTHORITY_ORIGINAL_REQUIRED');return current.projection;
-  },
+  });},
   reconcileOriginal(input){const v=engineDataOptions(input,['stageId','claimHash']);return reconcileR1ProofAuthorityOriginal({settlerGateway:settler,retentionWriter:writer,...v});},
   reconcileMutation(input){const v=engineDataOptions(input,['mutationId'],['mutationHash','requestHash']);return reconcileR1ProofAuthorityMutation({revokerGateway:revoker,...v});},
   async mutate(authority,input){

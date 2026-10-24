@@ -1,9 +1,11 @@
 import {createHash} from 'node:crypto';
+import {performance} from 'node:perf_hooks';
 import {canonicalJSON,requireValue} from './contract.mjs';
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {PROOF_AUTHORITY_ROLES,parseProofAuthorityRequest,parseProofAuthorityReply,proofAuthorityRequestHash} from './proof-authority-protocol.mjs';
 
-const adapters=new WeakMap();
+const adapters=new WeakMap(),heldAccess=new WeakMap();
+export function assertProofAuthorityHeldAccess(value,{gateway}){const entry=heldAccess.get(value);check(entry?.gateway===assertProofAuthorityPostgres(gateway,'REQUEST',true)&&entry.active&&entry.current()&&performance.now()<entry.monotonicDeadline&&Date.now()<entry.expiresAt,'PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');return entry.request;}
 export function assertProofAuthorityPostgres(value,role,requireClosure=false){const state=adapters.get(value);requireValue(state&&(!role||state.role===role)&&(!requireClosure||state.completeClosure),'PROOF_AUTHORITY_ADAPTER_REQUIRED');return value;}
 export function assertProofAuthorityCommittedReport(value,{gateway,action}){const state=adapters.get(assertProofAuthorityPostgres(gateway)),entry=state.reports.get(value);requireValue(entry&&entry.action===action,'PROOF_AUTHORITY_COMMITTED_REPORT_REQUIRED');return entry.request;}
 const check=(v,c)=>requireValue(v,c);
@@ -13,11 +15,12 @@ const sha=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 export const PROOF_AUTHORITY_CLOSURE=Object.freeze([
  'canonical_v1(jsonb, integer)','hash_v1(jsonb)','fence_report_v1(atlas_proof_authority.fence)','record_guard_v1()',
  'observation_v1(boolean)','exact_object_v1(jsonb, text[])','lock_canonical_rows_v1(jsonb)',
- 'claim_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','settle_stage_v1(jsonb)',
+ 'observe_access_v1(jsonb)','claim_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','settle_stage_v1(jsonb)',
  'read_drain_v1(uuid)','begin_logout_v1(jsonb)','settle_drain_v1(jsonb)','apply_mutation_v1(uuid, text)',
  'operator_access_v1(jsonb)','authorize_mutation_v1(jsonb)','begin_mutation_v1(jsonb)','reject_unjoined_authority_write()'
 ]);
 const ACTIONS=Object.freeze({
+  observe_access_v1:{signature:'observe_access_v1(jsonb)',sql:'SELECT atlas_proof_authority.observe_access_v1($1::jsonb) AS result',json:true},
   authorize_mutation_v1:{signature:'authorize_mutation_v1(jsonb)',sql:'SELECT atlas_proof_authority.authorize_mutation_v1($1::jsonb) AS result',json:true,write:true,id:'requestId'},
   claim_stage_v1:{signature:'claim_stage_v1(jsonb)',sql:'SELECT atlas_proof_authority.claim_stage_v1($1::jsonb) AS result',json:true,write:true,id:'stageId'},
   lookup_stage_v1:{signature:'lookup_stage_v1(uuid, text)',sql:'SELECT atlas_proof_authority.lookup_stage_v1($1::uuid,$2::text) AS result',keys:['stageId','operationHash']},
@@ -120,12 +123,32 @@ export function createProofAuthorityPostgres(options={}){
       throw cause;
     }finally{if(held)held.release(broken||began&&commitAttempted);if(key)pending.delete(key);}
   }
+  async function withAccess(input,work){
+    check(o.roleKind==='REQUEST'&&closure&&typeof work==='function','PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');
+    const v=parseProofAuthorityRequest('observe_access_v1',input);check(v.schema==='atlas-proof-access-observe-v1','PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');
+    let held,entry,result,output,began=false,broken=false;
+    const invalidate=()=>{if(entry)entry.active=false;};
+    try{
+      held=await acquire();began=true;
+      held.client.on?.('error',invalidate);held.client.on?.('end',invalidate);
+      const {rows}=await held.client.query(ACTIONS.observe_access_v1.sql,[canonicalJSON(v)]);
+      check(rows?.length===1,'PROOF_AUTHORITY_RESPONSE_REFUSED');result=parseProofAuthorityReply(rows[0].result);
+      check(result.schema==='atlas-proof-access-report-v1'&&result.requestHash===proofAuthorityRequestHash('observe_access_v1',v),'PROOF_AUTHORITY_ACCESS_HOLD_REQUIRED');
+      entry={gateway,request:v,active:true,current:()=>!closed&&pool.connect===connect,monotonicDeadline:performance.now()+4000,expiresAt:Math.min(result.deadlineAt,Date.now()+4000)};heldAccess.set(result,entry);
+      output=await work(result);assertProofAuthorityHeldAccess(result,{gateway});
+      // Keep the same transaction alive through the entire callback. No report
+      // is usable after it finishes, and no observed JSON can recreate the hold.
+      await held.client.query('COMMIT');began=false;return output;
+    }catch(error){if(output?.bytes&&Buffer.isBuffer(output.bytes))output.bytes.fill(0);if(began){try{await held.client.query('ROLLBACK');began=false;}catch{broken=true;}}throw error;}
+    finally{invalidate();if(held){held.client.removeListener?.('error',invalidate);held.client.removeListener?.('end',invalidate);held.release(broken||began);}}
+  }
   const methods={
+    observeInstallation:v=>{check(v?.schema==='atlas-proof-installation-observe-v1','PROOF_AUTHORITY_PROTOCOL_INVALID');return invoke('observe_access_v1',v);},
     claimStage:v=>invoke('claim_stage_v1',v),lookupStage:v=>invoke('lookup_stage_v1',v),lookupClaim:v=>invoke('lookup_claim_v1',v),
     settleDrain:v=>invoke('settle_drain_v1',v),beginLogout:v=>invoke('begin_logout_v1',v),settleStage:v=>invoke('settle_stage_v1',v),readDrain:v=>invoke('read_drain_v1',v),
     authorizeMutation:v=>invoke('authorize_mutation_v1',v),beginMutation:v=>invoke('begin_mutation_v1',v),applyMutation:v=>invoke('apply_mutation_v1',v),
   };
   // Expose only this role's finite methods, never a call(sql/action,callback).
-  const publicMethods=Object.fromEntries(Object.entries(methods).filter(([name])=>allowed.some(signature=>({authorizeMutation:'authorize_mutation_v1',settleDrain:'settle_drain_v1',claimStage:'claim_stage_v1',lookupStage:'lookup_stage_v1',lookupClaim:'lookup_claim_v1',beginLogout:'begin_logout_v1',settleStage:'settle_stage_v1',readDrain:'read_drain_v1',beginMutation:'begin_mutation_v1',applyMutation:'apply_mutation_v1'}[name])===signature.split('(')[0])));
-  const gateway=Object.freeze({...publicMethods,classification:'UNQUALIFIED',authority:false,close(){closed=true;}});adapters.set(gateway,{role:o.roleKind,reports,completeClosure:closure!==null});return gateway;
+  const publicMethods=Object.fromEntries(Object.entries(methods).filter(([name])=>allowed.some(signature=>({observeInstallation:'observe_access_v1',authorizeMutation:'authorize_mutation_v1',settleDrain:'settle_drain_v1',claimStage:'claim_stage_v1',lookupStage:'lookup_stage_v1',lookupClaim:'lookup_claim_v1',beginLogout:'begin_logout_v1',settleStage:'settle_stage_v1',readDrain:'read_drain_v1',beginMutation:'begin_mutation_v1',applyMutation:'apply_mutation_v1'}[name])===signature.split('(')[0])));
+  const gateway=Object.freeze({...publicMethods,...(o.roleKind==='REQUEST'?{withAccess}:{}),classification:'UNQUALIFIED',authority:false,close(){closed=true;}});adapters.set(gateway,{role:o.roleKind,reports,completeClosure:closure!==null});return gateway;
 }

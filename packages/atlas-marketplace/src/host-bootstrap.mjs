@@ -19,9 +19,10 @@ export function createMarketplaceHostBootstrap(options={}) {
   const inspection=inspectMarketplaceHostInputs(options);
   requireValue(inspection.configurationComplete,'HOST_BOOTSTRAP_CONFIGURATION_REQUIRED');
   const {manifest:providedManifest,host:hostOptions,finance:financeOptions,existingHandlers,assertReleaseReady}=options;
-  const manifest=immutable(clone(providedManifest)),manifestHash=hash(manifest),hostReady=hostOptions.assertRuntimeReady,financeReady=financeOptions.assertRuntimeReady;
+  const nonPayment=hostOptions.config.operatingMode==='NON_PAYMENT';
+  const manifest=immutable(clone(providedManifest)),manifestHash=hash(manifest),hostReady=hostOptions.assertRuntimeReady,financeReady=financeOptions?.assertRuntimeReady;
   const pin=value=>Object.entries(value),matches=(value,entries)=>Object.keys(value).length===entries.length&&entries.every(([key,item])=>value[key]===item);
-  const hostPin=pin(hostOptions),financePin=pin(financeOptions);
+  const hostPin=pin(hostOptions),financePin=financeOptions?pin(financeOptions):null;
   const originals=Object.fromEntries(surfaces.map(surface=>[surface,existingHandlers[surface]]));
   const binding=immutable({schema:manifest.schema,operation:'OWNED_MARKETPLACE_HOST',environment:manifest.environment,platformAccountId:manifest.platformAccountId,manifestHash,
     sourceRevision:manifest.sourceRevision,...(manifest.physicalConfigHash?{physicalConfigHash:manifest.physicalConfigHash}:{}),hostConfigHash:manifest.hostConfigHash,financeConfigHash:manifest.financeConfigHash,commerceConfigHash:manifest.commerceConfigHash,marketplaceBindingHash:manifest.marketplaceBindingHash});
@@ -31,9 +32,9 @@ export function createMarketplaceHostBootstrap(options={}) {
   function ready() {
     requireValue(!stopping&&!['STOPPED','FAILED'].includes(phase)&&options.enabled===true&&options.manifest===providedManifest&&hash(providedManifest)===manifestHash
       &&options.host===hostOptions&&options.finance===financeOptions&&options.existingHandlers===existingHandlers&&options.assertReleaseReady===assertReleaseReady
-      &&matches(hostOptions,hostPin)&&matches(financeOptions,financePin)&&surfaces.every(surface=>existingHandlers[surface]===originals[surface]),'HOST_BOOTSTRAP_CHANGED');
-    requireValue(hash(hostOptions.config)===manifest.hostConfigHash&&hash(financeOptions.config)===manifest.financeConfigHash,'HOST_BOOTSTRAP_CHANGED');
-    requireValue(hash(hostOptions.marketplace.commerceConfig)===manifest.commerceConfigHash&&hash(hostOptions.marketplace.runtimeApproval.binding)===manifest.marketplaceBindingHash,'HOST_BOOTSTRAP_CHANGED');
+      &&matches(hostOptions,hostPin)&&(nonPayment?financeOptions==null:matches(financeOptions,financePin))&&surfaces.every(surface=>existingHandlers[surface]===originals[surface]),'HOST_BOOTSTRAP_CHANGED');
+    requireValue(hash(hostOptions.config)===manifest.hostConfigHash&&(nonPayment?manifest.financeConfigHash===null:hash(financeOptions.config)===manifest.financeConfigHash),'HOST_BOOTSTRAP_CHANGED');
+    requireValue((nonPayment?manifest.commerceConfigHash===null:hash(hostOptions.marketplace.commerceConfig)===manifest.commerceConfigHash)&&hash(hostOptions.marketplace.runtimeApproval.binding)===manifest.marketplaceBindingHash,'HOST_BOOTSTRAP_CHANGED');
     if(manifest.physicalConfigHash)requireValue(hash(hostOptions.marketplace.physicalConfig)===manifest.physicalConfigHash,'HOST_BOOTSTRAP_CHANGED');
     sync(assertReleaseReady,binding);
   }
@@ -41,7 +42,7 @@ export function createMarketplaceHostBootstrap(options={}) {
   // Unrelated R1 requests still reach the exact original application handler.
   const composition=createR1MarketplaceRouteComposition({enabled:true,maxConcurrent:manifest.limits.maxConcurrent,
     host:{...hostOptions,assertRuntimeReady:value=>{ready();sync(hostReady,value);return true;}},
-    finance:{...financeOptions,assertRuntimeReady:value=>{ready();sync(financeReady,value);return true;}}});
+    finance:nonPayment?undefined:{...financeOptions,assertRuntimeReady:value=>{ready();sync(financeReady,value);return true;}}});
   const wrapped=Object.fromEntries(surfaces.map(surface=>[surface,composition.wrap(surface,originals[surface])]));
   async function dispose() {
     if(disposePromise)return disposePromise;
@@ -72,7 +73,7 @@ export function createMarketplaceHostBootstrap(options={}) {
     let readyNow=false;try{ready();readyNow=true;}catch{}
     return {enabled:readyNow,phase,lastCode,binding:clone(binding),activeHandlers:work.size,openConnections:sockets.size,
       listeners:Object.fromEntries([...servers].filter(([,server])=>server.listening).map(([surface,server])=>[surface,server.address()])),
-      routes:composition.status(),productionReady:false,saleAuthorityAvailable:false};
+      operatingMode:nonPayment?'NON_PAYMENT':'TRADING',checkoutEnabled:!nonPayment,routes:composition.status(),productionReady:false,saleAuthorityAvailable:false};
   }
   function start() {
     requireValue(!stopping&&!['STOPPED','FAILED'].includes(phase),'HOST_BOOTSTRAP_STOPPED');

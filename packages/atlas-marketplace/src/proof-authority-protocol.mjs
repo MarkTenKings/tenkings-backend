@@ -8,7 +8,7 @@ import {parseProofDecoderEngineJSON} from './proof-decoder-engine-json.mjs';
 // capability can be constructed by this module, including from a SQL reply.
 export const PROOF_AUTHORITY_BYTES=16384;
 export const PROOF_AUTHORITY_ROLES=decoderFreeze({
-  REQUEST:['claim_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','begin_logout_v1(jsonb)'],
+  REQUEST:['observe_access_v1(jsonb)','claim_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','begin_logout_v1(jsonb)'],
   SETTLER:['settle_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','read_drain_v1(uuid)','settle_drain_v1(jsonb)'],
   REVOKER:['authorize_mutation_v1(jsonb)','begin_mutation_v1(jsonb)','apply_mutation_v1(uuid, text)','read_drain_v1(uuid)'],
 });
@@ -61,7 +61,10 @@ function change(kind,v){exact(v,changes[kind]);for(const [k,x] of Object.entries
 
 export function parseProofAuthorityRequest(action,input){
   check(typeof action==='string');const v=data(input);
-  if(action==='claim_stage_v1'){
+  if(action==='observe_access_v1'){
+    if(v.schema==='atlas-proof-installation-observe-v1'){exact(v,['schema','installationId']);check(uuid(v.installationId));}
+    else{exact(v,['schema','installationId','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','originalRequestDeadlineAt']);check(v.schema==='atlas-proof-access-observe-v1'&&uuid(v.installationId)&&uuid(v.requestId)&&sha(v.requestBindingHash)&&['STAFF','CUSTOMER'].includes(v.source)&&sha(v.sessionHash)&&sha(v.browserHash)&&positive(v.originalRequestDeadlineAt));config(v.configBinding);}
+  }else if(action==='claim_stage_v1'){
     exact(v,['schema','installationId','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','originalRequestDeadlineAt','stageId','stage','priorStageId','stageInput']);
     check(v.schema==='atlas-proof-stage-claim-v1'&&uuid(v.installationId)&&uuid(v.requestId)&&sha(v.requestBindingHash)&&['STAFF','CUSTOMER'].includes(v.source)&&sha(v.sessionHash)&&sha(v.browserHash)&&positive(v.originalRequestDeadlineAt)&&uuid(v.stageId)&&Object.hasOwn(stages,v.stage));config(v.configBinding);stageInput(v.stage,v.stageInput);
     check(v.stage==='DECODE'?v.priorStageId===null:uuid(v.priorStageId));
@@ -94,6 +97,14 @@ export function parseProofAuthorityReply(input){
     exact(v,['schema','classification','authority','status','reason','requestHash']);
     check(['UNAVAILABLE','ABSENT_HOLD'].includes(v.status)&&['CANONICAL_JOIN_REQUIRED','NO_ORIGINAL_RECORD'].includes(v.reason)&&(v.requestHash===null||sha(v.requestHash)));
     check(v.status==='UNAVAILABLE'?v.reason==='CANONICAL_JOIN_REQUIRED':v.reason==='NO_ORIGINAL_RECORD');
+  }else if(v.schema==='atlas-proof-installation-report-v1'){
+    exact(v,['schema','classification','authority','requestHash','installationId','publisherSessionId','publisherLedgerId','sessionBinding','intakeBinding','staffBinding','customerBinding','controlRevision','reviewerGrants','expiresAt','observedAt']);
+    check(sha(v.requestHash)&&uuid(v.installationId)&&uuid(v.publisherSessionId)&&uuid(v.publisherLedgerId)&&positive(v.controlRevision)&&positive(v.expiresAt)&&positive(v.observedAt)&&v.expiresAt>v.observedAt&&Array.isArray(v.reviewerGrants)&&v.reviewerGrants.length<=16);
+    config(v.staffBinding);config(v.customerBinding);check(v.sessionBinding.installationId===v.installationId&&v.sessionBinding.intakeBindingHash===hash(v.intakeBinding)&&v.sessionBinding.policyHash===v.intakeBinding.policyHash);
+    const ids=new Set();for(const row of v.reviewerGrants){exact(row,['identityId','accessVersion','policyHash','revokedAt']);check(uuid(row.identityId)&&!ids.has(row.identityId)&&positive(row.accessVersion)&&sha(row.policyHash)&&(row.revokedAt===null||positive(row.revokedAt)));ids.add(row.identityId);}
+  }else if(v.schema==='atlas-proof-access-report-v1'){
+    exact(v,['schema','classification','authority','requestHash','installationId','publisherSessionId','policyHash','source','actorId','accessVersion','requestId','requestBindingHash','controlRevision','deadlineAt','observedAt']);
+    check(sha(v.requestHash)&&uuid(v.installationId)&&uuid(v.publisherSessionId)&&sha(v.policyHash)&&['STAFF','CUSTOMER'].includes(v.source)&&uuid(v.actorId)&&positive(v.accessVersion)&&uuid(v.requestId)&&sha(v.requestBindingHash)&&positive(v.controlRevision)&&positive(v.deadlineAt)&&positive(v.observedAt)&&v.deadlineAt>v.observedAt&&v.deadlineAt-v.observedAt<=60000);
   }else if(v.schema==='atlas-proof-operator-report-v1'){
     exact(v,['schema','classification','authority','requestHash','mutationId','operatorAuthorityRef']);check(sha(v.requestHash)&&uuid(v.mutationId)&&sha(v.operatorAuthorityRef));
   }else if(v.schema==='atlas-proof-stage-report-v1'){

@@ -16,7 +16,9 @@ function publicPage(value) {
     requireValue(approvedCard&&idShape(row.id)&&row.status==='ACTIVE'&&row.environment===value.environment&&row.cardId===approvedCard.cardId&&Number.isSafeInteger(row.version)&&row.version>0&&/^[a-f0-9]{64}$/.test(row.bindingHash??'')&&Number.isSafeInteger(row.askingPriceCents)&&row.askingPriceCents>0&&row.currency==='USD'&&row.fulfillmentRoute==='ATLAS_HELD','CATALOG_UNAVAILABLE');
     return {id:row.id,version:row.version,bindingHash:row.bindingHash,status:'ACTIVE',environment:value.environment,cardId:row.cardId,askingPriceCents:row.askingPriceCents,currency:'USD',fulfillmentRoute:'ATLAS_HELD',approvedCard};
   });
-  return {environment:value.environment,items,total:value.total,offset:value.offset,nextOffset:value.nextOffset};
+  const nonPayment=value.capabilities?.operatingMode==='NON_PAYMENT';
+  if(nonPayment)requireValue(['checkoutEnabled','onboardingEnabled','payoutsEnabled','shippingTransactionsEnabled','financeWorkersEnabled'].every(key=>value.capabilities[key]===false),'CATALOG_UNAVAILABLE');
+  return {environment:value.environment,items,total:value.total,offset:value.offset,nextOffset:value.nextOffset,...(nonPayment?{capabilities:{operatingMode:'NON_PAYMENT',checkoutEnabled:false,onboardingEnabled:false,payoutsEnabled:false,shippingTransactionsEnabled:false,financeWorkersEnabled:false}}:{})};
 }
 
 /** Public GET-only composition. No session, actor, mutation, credentials or

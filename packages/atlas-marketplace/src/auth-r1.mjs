@@ -1,15 +1,23 @@
 import { timingSafeEqual, createHash, randomUUID } from 'node:crypto';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {assertProofAuthorityHeldAccess} from './proof-authority-postgres.mjs';
 import { hash, requireValue } from './contract.mjs';
 
 export const R1_SESSION_ACCESS_ACTION = 'marketplace_session_access';
 export const R1_SESSION_ACCESS_SCHEMA = 'atlas-marketplace-session-access-v1';
-const proofRequests=new WeakMap(),proofLogouts=new WeakMap();
+const proofRequests=new WeakMap(),proofLogouts=new WeakMap(),heldProofAccess=new AsyncLocalStorage();
+export function withR1ProofAccess(authority,gateway,report,work){
+ const state=proofRequests.get(authority);unavailable(state?.active&&typeof work==='function');
+ const input=assertProofAuthorityHeldAccess(report,{gateway}),snapshot=state.snapshot(true);
+ unavailable(input.requestId===snapshot.requestId&&input.requestBindingHash===snapshot.requestBindingHash&&input.sessionHash===snapshot.sessionHash&&input.browserHash===snapshot.browserHash&&report.actorId===snapshot.actorId&&report.source===snapshot.source);
+ return heldProofAccess.run({authority,gateway,report},work);
+}
 // These are private origin checks, not a callback/JSON authority constructor.
-export async function readR1ProofRequest(authority){
+export async function readR1ProofRequest(authority,{readOnly=false}={}){
   const state=proofRequests.get(authority);unavailable(state?.active);
   const canonical=state.source==='STAFF'?(await import('../../../frontend/atlas-app/lib/server/access/auth.mjs')).DurableStaffAuth:(await import('../../../frontend/atlas-customer/lib/server/auth.mjs')).CustomerAuth;
   unavailable(state.AuthClass===canonical);
-  await authority.refreshAuthorization();unavailable(state.active);return state.snapshot();
+  await authority.refreshAuthorization();unavailable(state.active);return state.snapshot(readOnly);
 }
 export async function bindR1ProofLogouts(auths,producer){
   const {assertR1ProofAuthorityProducer}=await import('./proof-authority-r1.mjs');assertR1ProofAuthorityProducer(producer);
@@ -181,9 +189,9 @@ export function createR1MarketplaceAuthBridge(options={}) {
         // Provider/service work must never hold R1's authority row locks or its
         // five-second Prisma transaction. A later denial withholds the response
         // but cannot attest rollback of a separately committed effect.
-        const authority=Object.freeze({authorizeCommit:()=>{exactPrincipal(value);return true;},refreshAuthorization:async()=>{exactPrincipal(value);if(isStaff)await revalidateStaffBoundary();await readAccess();exactPrincipal(value);return true;}});
-        const proofState={active:true,AuthClass,source:isStaff?'STAFF':'CUSTOMER',snapshot(){
-          exactPrincipal(value);unavailable(method==='POST'&&csrfVerified&&['STAFF','BUYER'].includes(audience));
+        const authority=Object.freeze({authorizeCommit:()=>{exactPrincipal(value);return true;},refreshAuthorization:async()=>{exactPrincipal(value);const held=heldProofAccess.getStore();if(held?.authority===authority){assertProofAuthorityHeldAccess(held.report,{gateway:held.gateway});return true;}if(isStaff)await revalidateStaffBoundary();await readAccess();exactPrincipal(value);return true;}});
+        const proofState={active:true,AuthClass,source:isStaff?'STAFF':'CUSTOMER',snapshot(readOnly=false){
+          exactPrincipal(value);unavailable((method==='POST'&&csrfVerified||readOnly&&method==='GET')&&['STAFF','BUYER'].includes(audience));
           return Object.freeze({requestId,requestBindingHash:hash({requestId,request:pinnedRequest,config:pinnedConfig,audience,policyHash:policyPin}),source:isStaff?'STAFF':'CUSTOMER',sessionHash:originalAccess.sessionHash,browserHash:originalAccess.browserHash,configBinding:Object.freeze(Object.fromEntries(['mode','origin','deploymentId','releaseSha','configHash'].map(k=>[k,config[k]]))),originalRequestDeadlineAt:Math.min(deadline,originalAccess.expiresAt),actorId:originalAccess.id,actorRole:isStaff?'STAFF':'BUYER',signal:abortController.signal});
         }};
         proofRequests.set(authority,proofState);

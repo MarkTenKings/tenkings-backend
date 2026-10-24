@@ -17,7 +17,7 @@ function syncDirectory(directory) { const fd = openSync(directory, constants.O_R
 /** Owned, encrypted, create-only storage. No environment discovery, public URLs,
  * overwrite or delete operation. A host must qualify backup and physical volume
  * retention separately. Root must already exist with owner-only permissions. */
-export function createEncryptedProofStorage({ directory, encryptionKey, keyId, storageId, environment, retentionRef, maxObjectBytes = 10485760 } = {}) {
+export function createEncryptedProofStorage({ directory, encryptionKey, keyId, storageId, environment, retentionRef, maxObjectBytes = 10485760, readOnly = false } = {}) {
   requireValue(typeof directory === 'string' && isAbsolute(directory), 'PROOF_STORAGE_PATH_REFUSED');
   privateDirectory(directory);
   requireValue(Buffer.isBuffer(encryptionKey) && encryptionKey.length === 32 && typeof keyId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(keyId), 'PROOF_STORAGE_KEY_REQUIRED');
@@ -50,6 +50,7 @@ export function createEncryptedProofStorage({ directory, encryptionKey, keyId, s
   }
   const storage = Object.freeze({ binding,
     put({ objectKey, manifest, bytes }) {
+      requireValue(!readOnly, 'PROOF_STORAGE_READ_ONLY');
       ready(); requireValue(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= maxObjectBytes && manifest?.byteCount === bytes.length && manifest?.sha256 === sha(bytes), 'PROOF_STORAGE_SOURCE_MISMATCH');
       requireValue(manifest.environment === environment && manifest.storageId === storageId && manifest.retentionRef === retentionRef && Number.isSafeInteger(manifest.retainUntil) && manifest.retainUntil > manifest.createdAt, 'PROOF_STORAGE_BINDING_MISMATCH');
       const prior = read(objectKey);

@@ -28,12 +28,14 @@ function selected(url,surface) {
  */
 export function createR1MarketplaceRouteComposition(options={}) {
   const enabled=options.enabled===true,hostOptions=options.host,financeOptions=options.finance;
+  const nonPayment=hostOptions?.config?.operatingMode==='NON_PAYMENT';
   const maxConcurrent=options.maxConcurrent??16;
   if(enabled)requireValue(Number.isSafeInteger(maxConcurrent)&&maxConcurrent>=1&&maxConcurrent<=100,'R1_ROUTE_CONFIGURATION_INVALID');
   let closed=false,initialization=null,host=null,finance=null,active=0,closePromise=null;
   const drained=new Set();
   function current() {
     requireValue(enabled&&!closed&&options.enabled===true&&options.host===hostOptions&&options.finance===financeOptions,'R1_ROUTES_UNAVAILABLE');
+    if(nonPayment)requireValue(financeOptions==null,'NON_PAYMENT_OWNER_REFUSED');
     requireValue(hostOptions?.enabled===true&&hash(hostOptions.config?.routes)===hash(R1_MARKETPLACE_ROUTES),'R1_ROUTE_CONFIGURATION_INVALID');
   }
   async function initialize() {
@@ -67,8 +69,8 @@ export function createR1MarketplaceRouteComposition(options={}) {
     },
     status(){return {enabled:enabled&&!closed,initialized:!!host,activeRequests:active,financeConfigured:!!finance,claimsEnabled:false,historyEnabled:false};},
     async prepare(){await initialize();return this.status();},
-    async financeSnapshot(){await initialize();return finance?finance.snapshot():null;},
-    async startFinance(){await initialize();requireValue(finance,'R1_FINANCE_UNAVAILABLE');return finance.start();},
+    async financeSnapshot(){await initialize();return finance?finance.snapshot():nonPayment?host.store.read(()=>null):null;},
+    async startFinance(){await initialize();if(nonPayment)return{enabled:false,operatingMode:'NON_PAYMENT'};requireValue(finance,'R1_FINANCE_UNAVAILABLE');return finance.start();},
     async stopFinance(){await finance?.stop();},
     close(){
       if(!closePromise){closed=true;closePromise=(async()=>{

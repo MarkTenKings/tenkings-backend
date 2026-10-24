@@ -34,7 +34,7 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA atlas_proof_authority FROM PUBLIC,atlas_pr
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_proof_authority_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA atlas_proof_authority TO atlas_proof_request,atlas_proof_settler,atlas_proof_revoker;
 GRANT EXECUTE ON FUNCTION atlas_proof_authority.claim_stage_v1(jsonb),atlas_proof_authority.lookup_stage_v1(uuid,text),
-  atlas_proof_authority.lookup_claim_v1(uuid,text),atlas_proof_authority.begin_logout_v1(jsonb) TO atlas_proof_request;
+  atlas_proof_authority.lookup_claim_v1(uuid,text),atlas_proof_authority.begin_logout_v1(jsonb),atlas_proof_authority.observe_access_v1(jsonb) TO atlas_proof_request;
 GRANT EXECUTE ON FUNCTION atlas_proof_authority.settle_stage_v1(jsonb),atlas_proof_authority.lookup_stage_v1(uuid,text),
   atlas_proof_authority.lookup_claim_v1(uuid,text),atlas_proof_authority.read_drain_v1(uuid),atlas_proof_authority.settle_drain_v1(jsonb) TO atlas_proof_settler;
 GRANT EXECUTE ON FUNCTION atlas_proof_authority.authorize_mutation_v1(jsonb),atlas_proof_authority.begin_mutation_v1(jsonb),atlas_proof_authority.apply_mutation_v1(uuid,text),

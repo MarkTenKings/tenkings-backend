@@ -26,6 +26,7 @@ export function renderApp(data, ui = {}) {
   const localDemo = data?.mode === 'SYNTHETIC_LOCAL' && data?.runtime !== 'AUTHENTICATED';
   const authenticated = data?.schema === 'atlas-marketplace-workspace-v1' && ['SYNTHETIC_LOCAL', 'PROVIDER_SANDBOX', 'PRODUCTION'].includes(data.environment) && ['BUYER', 'SELLER', 'STAFF'].includes(data.scope?.role);
   if (!localDemo && !authenticated) return `<main class="loading"><p class="eyebrow">ATLAS / LOCAL PILOT</p><h1>Marketplace unavailable</h1><p>Sign-in or the required marketplace service is unavailable. Refresh saved state to check access.</p>${button('refresh', 'Refresh saved state')}</main>`;
+  if(data.capabilities?.operatingMode==='NON_PAYMENT')return renderNonPaymentWorkspace(data,ui);
   const listings = list(data.listings);
   const reservations = list(data.reservations);
   const orders = list(data.orders);
@@ -74,6 +75,17 @@ export function renderApp(data, ui = {}) {
       ${role === 'STAFF' && !localDemo ? renderTaxReporting(data.taxReporting, blocked) : ''}
       <footer><span class="wordmark small-wordmark">ATLAS</span><p>${localDemo ? 'R2 local qualification · Real authority and production routes remain disabled.<br>Physical packaging, coverage, legal policy and provider sandbox acceptance remain separate.' : 'Authenticated ATLAS marketplace workspace.<br>Ownership claims and customer ownership history remain disabled.'}</p></footer>
     </main>`;
+}
+
+function renderNonPaymentWorkspace(data,ui) {
+  const orders=list(data.orders),listings=ui.catalog?.items??list(data.listings),blocked=Boolean(ui.busy||ui.uncertain);
+  return `<div class="local-banner"><strong>ATLAS MARKETPLACE</strong><span>Checkout is disabled.</span></div>
+    <header class="site-header"><a href="#main" class="wordmark">ATLAS<span>MARKETPLACE</span></a><nav aria-label="Marketplace"><a href="#browse">Browse</a><a href="#orders">Saved orders</a></nav></header>
+    <main id="main"><div class="page-heading"><div><p class="eyebrow">${h(data.scope.role)} WORKSPACE</p><h1>Cards and retained evidence.</h1><p>Browse saved records and review available proof. Purchases, seller account setup, withdrawals and shipping actions are unavailable.</p></div>${button('refresh','Refresh saved state','',Boolean(ui.busy),true)}</div>
+    <div class="notice" role="status" aria-live="polite">${h(ui.notice??'Checkout is disabled. No payment or shipping action can be started here.')}</div>
+    <section id="browse" class="catalog-search"><h2>Catalog</h2>${renderCatalogFilters(ui.catalogFilters??{},blocked)}${listings.length?listings.map(item=>{const card=item.approvedCard,report=approvedReportPath(card?.reportUrl,card?.reportVersion);return `<article class="panel"><h3>${h(card?.identity?.name??'Saved card')}</h3><p>${h(item.status)}</p>${report?`<a href="${h(report)}" target="_blank" rel="noopener">Grade Report</a>`:''}</article>`;}).join(''):'<p class="empty-state">No listings are available.</p>'}</section>
+    <section id="orders" class="workflow-section"><h2>Saved orders</h2>${orders.length?orders.map(order=>`<article class="order-panel"><h3>${h(order.approvedCard?.identity?.name??order.orderId)}</h3><p>${h(order.orderId)} · ${h(data.fulfillment?.[order.orderId]?.status??order.status)}</p></article>`).join(''):'<p class="empty-state">No orders are available for this account.</p>'}</section>
+    ${renderPhysicalEvidence(data,ui)}<footer><span class="wordmark small-wordmark">ATLAS</span><p>Checkout remains disabled. Saved records are shown only when available.</p></footer></main>`;
 }
 
 function sellerNet(price, fee) {

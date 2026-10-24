@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {PROOF_AUTHORITY_ROLES,parseProofAuthorityRequest,parseProofAuthorityReply,proofAuthorityRequestHash} from '../src/proof-authority-protocol.mjs';
-import {createProofAuthorityPostgres,assertProofAuthorityCommittedReport} from '../src/proof-authority-postgres.mjs';
+import {createProofAuthorityPostgres,assertProofAuthorityCommittedReport,assertProofAuthorityHeldAccess,PROOF_AUTHORITY_CLOSURE} from '../src/proof-authority-postgres.mjs';
 
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`,h='a'.repeat(64);
 const cfg={mode:'LOCAL_FIXTURE',origin:'http://localhost',deploymentId:'fixture',releaseSha:'b'.repeat(40),configHash:h};
@@ -57,18 +57,22 @@ test('SQL observations stay unqualified; even shaped positive data is rejected',
 
 // A transport-fault model only. It returns UNAVAILABLE/ABSENT_HOLD, never an
 // authenticated principal, native receipt, admitted stage or real PG evidence.
-function model({unsafe=false,extra=false,changed=false,loseCommit=false,positive=false,blockCommit=false}={}){
+function model({unsafe=false,extra=false,changed=false,loseCommit=false,positive=false,blockCommit=false,access=false,closure=false}={}){
   const calls=[],releases=[],definitions=Object.fromEntries(PROOF_AUTHORITY_ROLES.REQUEST.map(n=>[n,`synthetic-definition:${n}`]));
+  const closureDefinitions=Object.fromEntries(PROOF_AUTHORITY_CLOSURE.map(n=>[n,definitions[n]??`synthetic-definition:${n}`]));
   let unblock,commitStarted;const started=new Promise(r=>commitStarted=r),wait=new Promise(r=>unblock=r);
   const client={async query(sql,args){calls.push({sql,args});
     if(sql.includes('current_user AS role'))return {rows:[{role:'atlas_proof_request',database:'fixture',rolsuper:unsafe,rolcreatedb:false,rolcreaterole:false,rolreplication:false,rolbypassrls:false,rolinherit:false,membership:false,database_owner:false}]};
     if(sql.includes('AS gateway_usage'))return {rows:[{gateway_usage:true,database_write:false,schema_write:false,direct_table:false,sequence_access:false}]};
+    if(sql.includes("p.pronamespace='atlas_proof_authority'::regnamespace"))return {rows:Object.entries(closureDefinitions).map(([name,definition])=>({name,owner:'atlas_proof_authority_owner',config:['search_path=pg_catalog'],definition}))};
+    if(sql.includes('FROM pg_catalog.pg_trigger'))return {rows:['atlas_staff.StaffControl','atlas_staff.StaffIdentity','atlas_staff.StaffSession','atlas_staff.StaffBrowser','atlas_customer.CustomerControl','atlas_customer.CustomerAccount','atlas_customer.CustomerSession','atlas_customer.CustomerBrowser','atlas_customer.CustomerServiceControl','atlas_proof_authority.control'].flatMap(name=>[27,34].map(type=>({schema:name.split('.')[0],relation:name.split('.')[1],type,enabled:'O',owner:'atlas_proof_authority_owner',function:'reject_unjoined_authority_write'})))};
+    if(access&&sql.startsWith('SELECT atlas_proof_authority.observe_access_v1')){const v=JSON.parse(args[0]);if(v.schema==='atlas-proof-access-observe-v1')return {rows:[{result:{schema:'atlas-proof-access-report-v1',classification:'UNQUALIFIED',authority:false,requestHash:proofAuthorityRequestHash('observe_access_v1',v),installationId:v.installationId,publisherSessionId:id(80),policyHash:h,source:v.source,actorId:id(81),accessVersion:1,requestId:v.requestId,requestBindingHash:v.requestBindingHash,controlRevision:1,deadlineAt:Date.now()+30000,observedAt:Date.now()}}]};}
     if(sql.includes('pg_get_functiondef'))return {rows:[...Object.entries(definitions).map(([name,definition])=>({schema:'atlas_proof_authority',name,definer:true,config:['search_path=pg_catalog'],owner:'atlas_proof_authority_owner',definition:changed?definition+'x':definition})),...(extra?[{name:'extra()'}]:[])]};
     if(sql.startsWith('SELECT atlas_proof_authority.'))return {rows:[{result:positive?{...unavailable(),authority:true}:sql.includes('lookup_')?absent():unavailable()}]};
     if(sql==='COMMIT'){commitStarted();if(blockCommit)await wait;if(loseCommit){loseCommit=false;throw new Error('synthetic lost reply');}}
     return {rows:[]};
   },release(broken){releases.push(broken);}};
-  const pool={async connect(){return client;}},options={enabled:true,pool,roleKind:'REQUEST',expectedRole:'atlas_proof_request',expectedDatabase:'fixture',expectedFunctionOwner:'atlas_proof_authority_owner',functionHashes:Object.fromEntries(Object.entries(definitions).map(([n,d])=>[n,digest(d)]))};
+  const pool={async connect(){return client;}},options={enabled:true,pool,roleKind:'REQUEST',expectedRole:'atlas_proof_request',expectedDatabase:'fixture',expectedFunctionOwner:'atlas_proof_authority_owner',functionHashes:Object.fromEntries(Object.entries(definitions).map(([n,d])=>[n,digest(d)])),...(closure?{closureHashes:Object.fromEntries(Object.entries(closureDefinitions).map(([n,d])=>[n,digest(d)]))}:{})};
   return {calls,releases,options,started,unblock};
 }
 test('default off and closed invalid options do not connect or admit callbacks',()=>{
@@ -106,4 +110,16 @@ test('audited reply origin is available only after completed COMMIT and never tr
  assert.throws(()=>assertProofAuthorityCommittedReport({...result},{gateway:a,action:'claim_stage_v1'}));
  assert.throws(()=>assertProofAuthorityCommittedReport(result,{gateway:a,action:'lookup_claim_v1'}));
  const other=createProofAuthorityPostgres(model().options);assert.throws(()=>assertProofAuthorityCommittedReport(result,{gateway:other,action:'claim_stage_v1'}));
+});
+
+
+test('read-only access holds are exact, closure audited and usable only inside their original transaction callback',async()=>{
+ const input={schema:'atlas-proof-access-observe-v1',...Object.fromEntries(['installationId','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding'].map(k=>[k,claim()[k]])),originalRequestDeadlineAt:Date.now()+30000};
+ assert.throws(()=>parseProofAuthorityRequest('observe_access_v1',{...input,actorId:id(81)}));
+ const noClosure=createProofAuthorityPostgres(model({access:true}).options);await assert.rejects(noClosure.withAccess(input,()=>assert.fail('no audited closure')));
+ const m=model({access:true,closure:true}),gateway=createProofAuthorityPostgres(m.options);let retained;
+ const value=await gateway.withAccess(input,report=>{retained=report;assert.equal(m.calls.some(row=>row.sql==='COMMIT'),false);assert.deepEqual(assertProofAuthorityHeldAccess(report,{gateway}),input);assert.throws(()=>assertProofAuthorityHeldAccess({...report},{gateway}));return 'retained-read';});
+ assert.equal(value,'retained-read');assert.throws(()=>assertProofAuthorityHeldAccess(retained,{gateway}));assert.equal(m.calls.filter(row=>row.sql==='COMMIT').length,1);
+ const failed=model({access:true,closure:true}),g=createProofAuthorityPostgres(failed.options);await assert.rejects(g.withAccess(input,report=>{g.close();assertProofAuthorityHeldAccess(report,{gateway:g});}));assert.equal(failed.calls.some(row=>row.sql==='COMMIT'),false);assert.ok(failed.calls.some(row=>row.sql==='ROLLBACK'));
+ const wrong=model({access:true,closure:true}),w=createProofAuthorityPostgres(wrong.options);await assert.rejects(w.withAccess({schema:'atlas-proof-installation-observe-v1',installationId:id(1)},()=>assert.fail('bootstrap is not actor access')));assert.equal(wrong.calls.length,0);
 });

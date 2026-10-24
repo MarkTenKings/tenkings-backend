@@ -81,6 +81,7 @@ async function refresh() {
 }
 async function mutate(endpoint, body, success, requestKey,applyResult) {
   if (ui.busy || ui.uncertain) return;
+  if(data?.capabilities?.operatingMode==='NON_PAYMENT'){ui.notice='Checkout and transaction actions are disabled.';render();return;}
   if (!localDemo) {
     const keys = authenticatedFields[endpoint];
     if (!keys) return;
@@ -469,7 +470,7 @@ async function openOnboarding() {
 }
 
 await refresh();
-if (!localDemo && !returnedFromPayment && data?.scope?.role==='BUYER') {
+if (!localDemo && data?.capabilities?.operatingMode!=='NON_PAYMENT' && !returnedFromPayment && data?.scope?.role==='BUYER') {
   const requested=new URLSearchParams(globalThis.location.search).get('listingId');
   if(requested&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(requested)) {
     try {
@@ -483,7 +484,7 @@ if (!localDemo && !returnedFromPayment && data?.scope?.role==='BUYER') {
     render();
   }
 }
-if (!localDemo && returnedFromPayment && data) {
+if (!localDemo && data?.capabilities?.operatingMode!=='NON_PAYMENT' && returnedFromPayment && data) {
   let binding;
   try { const value = globalThis.sessionStorage?.getItem(paymentReturnKey); if (value?.length < 1000) binding = JSON.parse(value); } catch {}
   const rows = Array.isArray(data.reservations) ? data.reservations : Object.values(data.reservations ?? {});
