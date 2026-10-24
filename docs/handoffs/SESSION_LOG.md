@@ -49247,3 +49247,50 @@ Focused Node22 auth-r1/host-r1 checks17/17 pass, including actual canonical iden
 - Ordinary-valid-pair01 PASS. Remote receipt `144492b260bc2147a1b17f86aa61639c8eb117182008e64c312c213491e002fb`; stdout `a2e47d8e33ef5ba67b9285e9042bc75eb7dbd6460cec220e4b462333fe40e48c`. Both PNG5×7/74bytes and JPEG27×19/1356bytes returned SUCCESS/COMPLETE_CLEAN and FINALIZED9, with CREATE201/START204/WAIT0/REMOVE204, exact absence/native empty before original15s deadline; capacity reused sequentially. Broker37186/client37197 exited0. Runtime08/nativee7/repaired101965ad unchanged.
 - All26 prior ledger sets and publisher holds remain byte/inode unchanged. Retained27th ledger has2finalizedrows/20events and final GUARD_SHUTDOWN barrier/poison; emptyEngine, stoppedguard/MainPID0, emptyfrozenparent, latch retained, emptybrokerdirectory, enrollment absent. No external cleanup needed, no old effects replayed.
 - Updated qualification matrix honestly: smallPNG/baselineJPEG current-runtime binding and sequential finalized release observed; all22 whole-case gates remain incomplete/NOT_RUN. Six wholly unrun rows and remaining variant/source joins are listed. Permanent recovery enrollment remains deferred because legacy prerequisites are unmet; native owner primitive does not establish coordinator/Engine recovery. Actual runtime-qualification authority and physical-intake composition remain open. Blocked probe task remains source-only and unexecuted. No production/provider/credential or protected business-data effects.
+
+
+### 2026-10-24T06:18:16.514596+00:00 — Canonical C0 accounted path and real installed gateway source; local qualification planned
+
+- Resumed interrupted canonical source; connected protected CREATE, private accounted RESERVE/SUBMIT/decoder outcome and protected VALIDATE to the C0 coordinator, removing incompatible legacy VALIDATING/lease assumptions. Request lifetime and canonical staff registry pins are retained. No generic document proof-map write is used.
+- Added separate real-environment intake/retention factories and installation SQL, with fixed role/source catalog hashes and exact actual database/installation audit. Original synthetic factories, catalog contract and inert SQL remain unchanged; ordinary generic writer keeps protected-map refusal. New factories remain default-off and are not authority or target qualification.
+- Focused checks so far:35 auth/host/C0 cases pass under ambient Node25, while the request-authority file could not load missing local sharp dependency;21 directly affected C0/intake/accounting cases pass on pinned Node22.16.0. No full suite/build rerun or production UI claim.
+- Planned next action: one fresh owned local PostgreSQL17.11 cluster under the private handoff directory, Unix socket only, new database atlas_c0_installed_check; install exact source into that new isolated database and exercise real roles/installed factories/CREATE/accounted VALIDATE plus protected generic-write refusals using explicitly structural test data. No existing cluster/credential/provider/production operation; retain original failure evidence and stop only the owned PostgreSQL process. Actual canonical policy/target admission stays unqualified.
+
+
+### 2026-10-24T06:21:00.104226+00:00 — Real-environment protected storage factory qualification observed; C0 SQL check planned
+
+- Fresh local PG17.11 actual installed-role qualification PASS:3 focused groups/4 refusals, source-owned CREATE and accounted VALIDATE, revision2/events2; state638921b6138c5a2902a90508b85e0fa645de3391b031563002583b6f1a850954. Receipt c0-installed-storage-01/receipt.json SHA256 b3efd784abdaaf691fdb518c4c18fb6aba841f766f2e780d7cdcc6041fa71540. Owned PostgreSQL exited0 and socket absent. No existing cluster touched. Real identifier/environment shape tested using explicitly structural test records; no private decoder, live canonical authority or production activation claimed.
+- Three new installed-source/refusal/projection checks pass on pinned Node22.16.0. Original fixture checks21/21 remain passed; no unchanged rerun.
+- Planned next: a distinct new owned local PostgreSQL cluster and canonical-shaped structural tables for the changed C0 SQL claim/settle/logout path, exact new role audit and direct-write refusal. No real identities, secrets, production database or native publisher. Canonical operations-audit and true private-producer integration remain separately gated. Stop only its owned process and retain all receipts.
+
+
+### 2026-10-24T06:22:26.161144+00:00 — C0 canonical SQL01 failed safely; exact source correction and distinct qualification planned
+
+- Fresh canonical-shaped SQL01 installed, but initial control binding hit PostgreSQL42702: before_row/after_row in the transaction-permit trigger were ambiguous with table columns. No stage or logout dispatch occurred. Owned PG exited0/socket absent; failed receipt and cluster retained at c0-canonical-sql-01.
+- Qualified those two references to the trigger function scope. Planned one distinct c0-canonical-sql-02 fresh owned local cluster for the same new positive SQL path, without restarting or changing SQL01. No shared or production effect.
+
+
+### 2026-10-24T06:22:46.425401+00:00 — C0 SQL02 explicit-label correction; SQL03 planned
+
+- SQL02 stopped at the same initial control binding: PostgreSQL does not bind these local variables through the implicit function-name scope (42P01). No stage/logout dispatch. PG exited0/socket absent, original evidence retained. Added explicit PL/pgSQL labels to the permit trigger and claim fence loop; this also removes the same latent ambiguity in the claim path.
+- Planned distinct c0-canonical-sql-03 owned cluster; no existing cluster restart, production action or authority claim.
+
+
+### 2026-10-24T06:23:03.619163+00:00 — C0 SQL03 claim/drain observed; apply parameter qualification corrected
+
+- SQL03 actual audited claim committed an OUTSTANDING stage and begin_logout committed DRAINING with one outstanding stage; direct session update refused. The premature-apply assertion uncovered id ambiguity against the control table instead of the intended drain refusal. Original stage/drain retained in the stopped cluster; PG exited0/socket absent.
+- Qualified the control row alias in apply_mutation; planned distinct fresh SQL04 for the remaining settle/apply and revoked-session checks. No prior cluster reset/restart or shared action.
+
+
+### 2026-10-24T06:26:10.359260+00:00 — C0 SQL04 positive structural path passed; cookie generation protection tightened
+
+- SQL04 PASS:17 exact source-verified functions,4 groups/6 refusals; actual restricted REQUEST claim, DRAINING with unresolved stage, blocked premature apply and direct DML, explicit NO_EFFECT settlement, drain settlement and APPLIED customer logout. Revoked request and role misuse refuse. All observations are structural SQL-only; no private canonical/publisher outcome is asserted. PG exited0/socket absent.
+- Tightened installed source to retain canonical rows, prohibit rewriting session/browser original lifetime or reviving a revoked cookie, bind actor digest to actual policy/service/reviewer/request/config, and recheck original deadline after SQL stage insertion. Planned distinct SQL05 with added revoked-cookie rewrite/deletion refusals. No old-cluster or production mutation.
+
+
+### 2026-10-24T06:28:45.512270+00:00 — R2 saved runtime evidence bindings reconciled without execution
+
+- Local join `evidence-binding-01/source-evidence-join.json`, SHA `2f00b9003850e8810eee7c86d0f4e1e1c0c428f02d83c57d69d835451413e093`, verifies93 selected source/evidence files,17 known original stage outputs/receipt hashes and8 profile comparisons. All original timestamps/profile/epoch/status/failures retained. No target action, functional rerun, broad historical scan, canonical-source review or blocked probe.
+- Eight compared profiles have identical policy/resource fields outside image/artifact identities. Later ordinary/control/fault cases bind runtime08/nativee7 exactly; extension differences are2probe modules. Worker inventory comparison proves144/145 file records, native inventory and symlinks identical; removal of one exact JPEG-message classifier line reconstructs the old worker SHA. The audit records specific older poll/cache/diagnostic deltas and retains their original timing/scope.
+- Matrix now separates7 covered finite scopes from real remaining execution variants: PNG,input/pixel bounds,corrupt input,network,root/code readonly,OOM,PID/thread/FD. COVERED is derived reuse coverage, not a rewritten PASS/new single-run result or qualification grant; original PROBE_ONLY fullQualificationCasePassed:false and failed outer receipts remain unchanged. Earlier native-map hashes reuse their original observation time. Independent JPEG pixel parity remains unestablished by dimension/full-decode checks.
+- Remaining execution requirements are explicitly named, including valid-descriptor setns,tmpfs mmap/residue, blocked-call/upload/header deadline variants, running-worker app death,directguarddeath, accepted-worker concurrency,path/peer identity,unrun output/hostpath/crossjob/TERM/unknown-effect/tamper cases and enrolled recovery. Existing permanent-enrollment prerequisites,genuine runtimeauthority and physical-intake composition remain open. Target stays at prior27-ledger stopped/emptyfrozen checkpoint; no new state claim or business-data effect.
