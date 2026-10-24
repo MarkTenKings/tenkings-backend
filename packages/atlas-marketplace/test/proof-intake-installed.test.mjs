@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createHash,randomUUID} from 'node:crypto';
+import {hash} from '../src/contract.mjs';
+import {intakeProtectedOperation,projectIntakeProtectedOperation,intakeProtectedRecord} from '../src/proof-intake-protected-protocol.mjs';
+import {createR1ProofIntakeAccountedPostgres,assertProofIntakeAccountedPostgres,proofIntakeAccountedAttemptSubmission} from '../src/proof-intake-protected-postgres.mjs';
+import {createR1ProofIntakeAccountedConnectionOwner,createR1ProofRetentionIntakeConnectionOwner,createProofIntakeAccountedConnectionOwner} from '../src/proof-retention-postgres-connection.mjs';
+import {createR1ProofRetentionIntakePostgresWriter} from '../src/proof-retention-postgres-writer.mjs';
+
+// Real-environment shape coverage only. These data are not installed policy,
+// canonical actors, private decoder results, or a qualification capability.
+function fixture(){
+ const actorId=randomUUID(),now=Date.now(),policy={environment:'PROVIDER_SANDBOX',id:'STRUCTURAL_TEST_ONLY',version:'v1',approvalRef:'UNQUALIFIED',retentionRef:'UNQUALIFIED',reviewerAuthorityRef:'UNQUALIFIED',effectiveAt:now-1000,expiresAt:now+600000,retentionMs:86400000,maxObjectBytes:10485760,maxProofsPerOrder:2,maxRetainedObjects:10,uploadTtlMs:300000,validationLeaseMs:15000};
+ const storage={schema:'atlas-marketplace-proof-encrypted-v1',storageId:'STRUCTURAL_TEST_ONLY',environment:policy.environment,retentionRef:policy.retentionRef,keyId:'structural',maxObjectBytes:10485760};
+ const installation={schema:'atlas-proof-intake-installed-v1',binding:{schema:'atlas-marketplace-proof-intake-v1',environment:policy.environment,policyHash:hash(policy),storageHash:hash(storage)},policy,storage,maxOperations:4};
+ const order={orderId:'atlas_order_test',cardId:'atlas_card_test',buyerId:actorId,sellerId:randomUUID(),bindingHash:hash('structural'),policyVersion:'v1',paymentIntentId:'atlas_payment_test'};
+ const state={journals:[],events:[],orders:{[order.orderId]:order},intents:{[order.paymentIntentId]:{kind:'PAYMENT',status:'SUCCEEDED',confirmed:true,orderId:order.orderId,bindingHash:order.bindingHash}},fulfillment:{[order.orderId]:{deliveredAt:now-1000,releaseNotBefore:now-1000+86400000}}};
+ const operation={schema:'atlas-proof-intake-operation-v1',operationId:randomUUID(),kind:'CREATE',atMs:now,bindingHash:hash(installation.binding),actor:{id:actorId,role:'BUYER'},request:{requestId:'atlas_request_test',orderId:order.orderId,purpose:'RETURN_REQUEST',declaredType:'image/png',byteCount:68,sha256:hash('structural-original')}};
+ return {installation,state,operation};
+}
+test('real-environment protected projection preserves UUID actor, atlas key and retained-v1 manifest',()=>{
+ const f=fixture(),capacity={schema:'atlas-proof-intake-capacity-v1',operations:0,creates:0,validations:0,reservedValidations:0},p=projectIntakeProtectedOperation(f.state,f.operation,f.installation,null,capacity);
+ assert.match(p.upload.uploadId,/^atlas_upload_[a-f0-9]{32}$/);assert.match(p.upload.proofId,/^atlas_proof_[a-f0-9]{32}$/);assert.equal(p.upload.actorId,f.operation.actor.id);
+ const record={schema:'atlas-proof-intake-record-v1',operation:f.operation,operationHash:hash(f.operation),dispatchKey:p.dispatchKey,upload:p.upload,uploadHash:hash(p.upload),revision:1};assert.deepEqual(intakeProtectedRecord(record,f.installation),record);
+ for(const patch of [{actor:{...f.operation.actor,id:'demo_buyer'}},{request:{...f.operation.request,requestId:'demo_request'}},{request:{...f.operation.request,orderId:'constructor'}}])assert.throws(()=>intakeProtectedOperation({...f.operation,...patch},f.installation));
+});
+test('installed factories are default-off, reject callback transports and do not promote fixture factories',()=>{
+ for(const factory of [createR1ProofIntakeAccountedPostgres,createR1ProofIntakeAccountedConnectionOwner,createR1ProofRetentionIntakeConnectionOwner,createR1ProofRetentionIntakePostgresWriter]){assert.equal(factory(),null);for(const key of ['pool','query','authorize','clock','catalogHashes'])assert.throws(()=>factory({[key]:()=>assert.fail('called')}));}
+ const f=fixture(),accounting={schema:'atlas-proof-intake-accounting-installed-v1',intakeInstallationHash:hash(f.installation),operationalLimit:2};
+ assert.throws(()=>createProofIntakeAccountedConnectionOwner({enabled:true,installation:f.installation,accounting}),{code:'INTAKE_PROTECTED_AUTHORITY_NOT_IMPLEMENTED'});
+ const copied={binding:{installedIntake:f.installation},decoderAttemptReport:()=>assert.fail('called')};assert.throws(()=>assertProofIntakeAccountedPostgres(copied));assert.throws(()=>proofIntakeAccountedAttemptSubmission(copied,{}));
+});
+test('installed SQL function bodies match fixed source pins and keep guarded installation plus distinct roles',()=>{
+ const sql=fs.readFileSync(new URL('../sql/r1-proof-intake-installation.sql',import.meta.url),'utf8'),source=fs.readFileSync(new URL('../src/proof-intake-protected-catalog.mjs',import.meta.url),'utf8');
+ const pins=JSON.parse(source.match(/const INSTALLED_FUNCTION_HASHES=Object.freeze\((.*)\);/)[1]);let count=0;
+ for(const m of sql.matchAll(/CREATE FUNCTION atlas_marketplace\.(\w+)\((.*?)\)\s*RETURNS\s+(.*?)\s+LANGUAGE\s+(sql|plpgsql)(.*?)AS \$\$(.*?)\$\$;/gs)){const [,name,args,,,,body]=m,signature=name+'('+(args?args.split(',').map(a=>a.trim().split(/\s+/)[1]).join(', '):'')+')';assert.equal(pins[signature],createHash('sha256').update(body).digest('hex'));count++;}
+ assert.equal(count,16);assert.equal(Object.keys(pins).length,16);assert.ok(sql.indexOf('R1_PROOF_INTAKE_INSTALLATION_REQUIRES_OPERATOR')<sql.indexOf('CREATE TABLE'));
+ assert.match(sql,/PROVIDER_SANDBOX','PRODUCTION/);assert.doesNotMatch(sql,/GRANT .* ON TABLE|CREATE OR REPLACE/);
+});

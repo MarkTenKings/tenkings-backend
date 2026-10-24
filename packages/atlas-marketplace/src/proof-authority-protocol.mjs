@@ -1,5 +1,7 @@
 import {canonicalJSON,hash,requireValue} from './contract.mjs';
 import {decoderContractData,decoderExact,decoderFreeze} from './proof-decoder-profile.mjs';
+import {publicationStageBinding,publicationScope} from './proof-publication-lifecycle.mjs';
+import {retentionPreparedOperation} from './proof-retention-postgres-writer.mjs';
 import {parseProofDecoderEngineJSON} from './proof-decoder-engine-json.mjs';
 
 // Closed, UNVERIFIED data only. No request, reviewer, publisher or decoder
@@ -7,7 +9,7 @@ import {parseProofDecoderEngineJSON} from './proof-decoder-engine-json.mjs';
 export const PROOF_AUTHORITY_BYTES=16384;
 export const PROOF_AUTHORITY_ROLES=decoderFreeze({
   REQUEST:['claim_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','begin_logout_v1(jsonb)'],
-  SETTLER:['settle_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','read_drain_v1(uuid)'],
+  SETTLER:['settle_stage_v1(jsonb)','lookup_stage_v1(uuid, text)','lookup_claim_v1(uuid, text)','read_drain_v1(uuid)','settle_drain_v1(jsonb)'],
   REVOKER:['begin_mutation_v1(jsonb)','apply_mutation_v1(uuid, text)','read_drain_v1(uuid)'],
 });
 const check=(v,c='PROOF_AUTHORITY_PROTOCOL_INVALID')=>requireValue(v,c);
@@ -65,6 +67,7 @@ export function parseProofAuthorityRequest(action,input){
     check(v.stage==='DECODE'?v.priorStageId===null:uuid(v.priorStageId));
   }else if(['lookup_stage_v1','lookup_claim_v1','apply_mutation_v1'].includes(action)){
     const id=action==='apply_mutation_v1'?'mutationId':'stageId',digest=action==='lookup_claim_v1'?'claimHash':action==='apply_mutation_v1'?'mutationHash':'operationHash';exact(v,[id,digest]);check(uuid(v[id])&&sha(v[digest]));
+  }else if(action==='settle_drain_v1'){exact(v,['schema','mutationId','mutationHash','barrierHash']);check(v.schema==='atlas-proof-drain-settle-v1'&&uuid(v.mutationId)&&sha(v.mutationHash)&&sha(v.barrierHash));
   }else if(action==='read_drain_v1'){exact(v,['mutationId']);check(uuid(v.mutationId));
   }else if(action==='begin_logout_v1'){
     exact(v,['schema','requestId','requestBindingHash','source','sessionHash','browserHash','configBinding','mutationId']);check(v.schema==='atlas-proof-logout-begin-v1'&&uuid(v.requestId)&&uuid(v.mutationId)&&sha(v.requestBindingHash)&&['STAFF','CUSTOMER'].includes(v.source)&&sha(v.sessionHash)&&sha(v.browserHash));config(v.configBinding);
@@ -77,12 +80,28 @@ export function parseProofAuthorityRequest(action,input){
 }
 export function proofAuthorityRequestHash(action,input){return hash(parseProofAuthorityRequest(action,input));}
 
-// This tranche accepts only truthful unavailable/absence observations. Positive
-// runtime reports need the missing canonical producer and a reviewed parser
-// extension; even a correctly shaped positive JSON reply is refused today.
+// SQL reports remain data. Only the concrete transport can attest that a
+// particular report came from its audited transaction and completed COMMIT.
 export function parseProofAuthorityReply(input){
-  const v=data(input);exact(v,['schema','classification','authority','status','reason','requestHash']);
-  check(v.schema==='atlas-proof-authority-observation-v1'&&v.classification==='UNQUALIFIED'&&v.authority===false&&['UNAVAILABLE','ABSENT_HOLD'].includes(v.status)&&['CANONICAL_JOIN_REQUIRED','NO_ORIGINAL_RECORD'].includes(v.reason)&&(v.requestHash===null||sha(v.requestHash)));
-  check(v.status==='UNAVAILABLE'?v.reason==='CANONICAL_JOIN_REQUIRED':v.reason==='NO_ORIGINAL_RECORD');
+  const v=data(input);
+  check(v.classification==='UNQUALIFIED'&&v.authority===false);
+  if(v.schema==='atlas-proof-authority-observation-v1'){
+    exact(v,['schema','classification','authority','status','reason','requestHash']);
+    check(['UNAVAILABLE','ABSENT_HOLD'].includes(v.status)&&['CANONICAL_JOIN_REQUIRED','NO_ORIGINAL_RECORD'].includes(v.reason)&&(v.requestHash===null||sha(v.requestHash)));
+    check(v.status==='UNAVAILABLE'?v.reason==='CANONICAL_JOIN_REQUIRED':v.reason==='NO_ORIGINAL_RECORD');
+  }else if(v.schema==='atlas-proof-stage-report-v1'){
+    exact(v,['schema','classification','authority','requestHash','stage','state','stageBinding','operationId','retentionOperation','intakeBinding','publisherSessionId','deadlineAt','observedAt']);
+    check(sha(v.requestHash)&&Object.hasOwn(stages,v.stage)&&['OUTSTANDING','SETTLED_COMPLETE','SETTLED_NO_EFFECT','UNKNOWN_HELD'].includes(v.state)&&uuid(v.operationId)&&uuid(v.publisherSessionId)&&positive(v.deadlineAt)&&positive(v.observedAt));
+    const b=v.stageBinding,session=Object.fromEntries(['installationId','qualificationSessionId','qualificationEvidenceHash','sourceClosureHash','policyHash','intakeBindingHash'].map(k=>[k,b[k]]));
+    publicationStageBinding(b,session);check(hash(v.intakeBinding)===b.intakeBindingHash);
+    if(v.stage==='RETAIN'){const o=retentionPreparedOperation(v.retentionOperation,v.intakeBinding);check(hash(o)===b.operationHash&&o.operationId===v.operationId&&o.retentionFenceRevision===b.stageRevision&&o.actorAccessBindingHash===b.actorAccessBindingHash&&o.publicationSessionId===v.publisherSessionId);}
+    else check(v.retentionOperation===null);
+  }else if(v.schema==='atlas-proof-drain-report-v1'){
+    exact(v,['schema','classification','authority','requestHash','mutationId','mutationHash','state','barrierRevision','publisherSessionId','fences','outstandingStages','barrierHash']);
+    check(sha(v.requestHash)&&uuid(v.mutationId)&&sha(v.mutationHash)&&['DRAINING','SETTLED','APPLIED','UNKNOWN_HELD'].includes(v.state)&&positive(v.barrierRevision)&&uuid(v.publisherSessionId)&&Array.isArray(v.fences)&&v.fences.length<=12&&Array.isArray(v.outstandingStages)&&v.outstandingStages.length<=1&&(v.barrierHash===null||sha(v.barrierHash)));
+    const ids=new Set();for(const f of v.fences){publicationScope(f);check(!ids.has(f.fenceId)&&f.revision<v.barrierRevision);ids.add(f.fenceId);}
+    for(const r of v.outstandingStages){const stage=parseProofAuthorityReply(r);check(stage.schema==='atlas-proof-stage-report-v1'&&stage.publisherSessionId===v.publisherSessionId&&stage.stageBinding.fences.some(f=>ids.has(f.fenceId)));}
+    check(!['SETTLED','APPLIED'].includes(v.state)||v.barrierHash!==null&&v.outstandingStages.length===0);
+  }else check(false);
   return decoderFreeze(v);
 }

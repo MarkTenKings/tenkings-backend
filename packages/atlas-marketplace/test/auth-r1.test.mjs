@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
-import { createR1MarketplaceAuthBridge, R1_SESSION_ACCESS_ACTION, R1_SESSION_ACCESS_SCHEMA } from '../src/auth-r1.mjs';
+import {EventEmitter} from 'node:events';
+import { createHmac,createHash } from 'node:crypto';
+import { createR1MarketplaceAuthBridge, R1_SESSION_ACCESS_ACTION, R1_SESSION_ACCESS_SCHEMA,readR1ProofRequest } from '../src/auth-r1.mjs';
 import { DurableStaffAuth as CanonicalStaffAuth } from '../../../frontend/atlas-app/lib/server/access/auth.mjs';
+import { CustomerAuth as CanonicalCustomerAuth } from '../../../frontend/atlas-customer/lib/server/auth.mjs';
 
 const id='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222';
 const sessionHash='1'.repeat(64),browserHash='2'.repeat(64),cookie='opaque_fixture_cookie';
@@ -167,4 +169,29 @@ test('staff request detects registry, roster and identity helper replacement bef
   ];
   for(const change of changes){const f=fixture({role:'STAFF',existingIdentityOnly:true}),ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);change(f.options.staff.state.auth);
     await assert.rejects(ctx.withAuthorized(principal,()=>assert.fail('changed identity binding dispatched')),{code:'AUTH_BOUNDARY_UNAVAILABLE'});ctx.close();}
+});
+
+test('actual socket close ends an admitted request even when the request aborted flag is not set',async()=>{
+ const f=fixture({role:'STAFF',method:'POST'});f.request.socket=Object.assign(new EventEmitter(),{remoteAddress:'127.0.0.1'});const ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);await f.csrf(ctx,principal);
+ await assert.rejects(ctx.withAuthorized(principal,async(_actor,capability)=>{f.request.socket.emit('close');assert.equal(f.request.aborted,undefined);await capability.refreshAuthorization();}),{code:'SIGN_IN_REQUIRED'});
+ ctx.close();assert.equal(f.request.socket.listenerCount('close'),0);
+});
+
+test('canonical staff request owns the private proof lifetime; copied or completed authority cannot be reused',async()=>{
+ const now=Date.now(),token=Buffer.alloc(32,1).toString('base64url'),browser=Buffer.alloc(32,2).toString('base64url'),sha=v=>createHash('sha256').update(v).digest('hex'),phoneHash='3'.repeat(64);
+ const config={mode:'LOCAL_FIXTURE',origin:'http://127.0.0.1:4318',deploymentId:'STRUCTURAL_ONLY',releaseSha:'a'.repeat(40),configHash:'b'.repeat(64),sessionKey:Buffer.alloc(32,3),cookies:{session:'fixture_session',browser:'fixture_browser'},existingIdentityOnly:true,phoneByHash:new Map([[phoneHash,'STRUCTURAL_ONLY']]),identityIdForPhoneHash:()=>id,phoneHash:()=>phoneHash,phoneIdentityRegistry:{version:1}};
+ const identity={id,role:'REVIEWER',accessVersion:1,phoneHash},session={tokenHash:sha(token),browserHash:sha(browser),identityId:id,accessVersion:1,controlRevision:1,expiresAt:new Date(now+60000),browser:{controlRevision:1,expiresAt:new Date(now+60000)}};
+ const database={async transaction(work){return work({now:new Date(now),control:{revision:1},tx:{staffSession:{findUnique:async()=>session},$queryRaw:async()=>[identity]}});}},auth=new CanonicalStaffAuth({database,config}),socket=new EventEmitter(),request={method:'POST',url:'/admin/marketplace/api/proofs/prepare',headers:{cookie:`fixture_session=${token}; fixture_browser=${browser}`,origin:config.origin},socket};
+ const boundary={async transaction(_,work){const context={principal:{id,role:'REVIEWER',accessVersion:1},refresh:async()=>context};return work(context);}},bridge=createR1MarketplaceAuthBridge({enabled:true,environment:'PROVIDER_SANDBOX',policy:{approved:true,approvalRef:'STRUCTURAL_ONLY',environment:'PROVIDER_SANDBOX',r1Mode:'LOCAL_FIXTURE',staffRoles:['REVIEWER'],customerRoles:['BUYER']},staff:{state:{auth,assertRequest(){}},boundary,DurableStaffAuth:CanonicalStaffAuth},clock:()=>now,admitRequest:async()=>true}),ctx=bridge.open(request,{audience:'STAFF'});
+ const principal=await ctx.resolveSession({cookie:request.headers.cookie,method:'POST',path:'/proofs/prepare'});await ctx.admitRequest({sessionId:principal.sessionId,actorId:id,method:'POST',path:'/proofs/prepare'});await ctx.verifyCsrf({principal,method:'POST',path:'/proofs/prepare',token:await ctx.issueCsrf(principal)});
+ let retained,signal;await ctx.withAuthorized(principal,async(actor,authority)=>{retained=authority;const proof=await readR1ProofRequest(authority);assert.equal(proof.actorId,actor.id);assert.equal(proof.sessionHash,session.tokenHash);assert.equal(proof.browserHash,session.browserHash);signal=proof.signal;assert.equal(signal.aborted,false);await assert.rejects(readR1ProofRequest({...authority}),{code:'AUTH_BOUNDARY_UNAVAILABLE'});});
+ assert.equal(signal.aborted,true);await assert.rejects(readR1ProofRequest(retained),{code:'AUTH_BOUNDARY_UNAVAILABLE'});ctx.close();assert.equal(socket.listenerCount('close'),0);
+});
+
+test('feature-off canonical staff and customer logout retain their original database path and DTO',async()=>{
+ const token=Buffer.alloc(32,4).toString('base64url'),browser=Buffer.alloc(32,5).toString('base64url'),config={sessionKey:Buffer.alloc(32,6),cookies:{session:'fixture_session',browser:'fixture_browser'}},header=`fixture_session=${token}; fixture_browser=${browser}`,sha=v=>createHash('sha256').update(v).digest('hex');let updates=0,audits=0;
+ const staff=new CanonicalStaffAuth({config,database:{async transaction(work){return work({now:new Date(),tx:{staffSession:{findUnique:async()=>({tokenHash:sha(token),browserHash:sha(browser),challengeId:'structural',identityId:id}),update:async()=>{updates++;}},staffAudit:{create:async()=>{audits++;}}}});}}});
+ assert.equal(await staff.logout(header,staff.digest(`session:${token}`)),undefined);assert.equal(updates,1);assert.equal(audits,1);
+ let calls=0;const customer=new CanonicalCustomerAuth({config,database:{async call(action,value){calls++;assert.equal(action,'logout');assert.deepEqual(value,{sessionHash:sha(token),browserHash:sha(browser)});return {signedOut:true};}}});
+ assert.deepEqual(await customer.logout(header,customer.digest(`session:${token}`)),{signedOut:true});assert.equal(calls,1);
 });

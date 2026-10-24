@@ -6,7 +6,7 @@ import {requireValue} from './contract.mjs';
 const active=new AsyncLocalStorage();
 export function withMarketplaceRequestAuthority(actor,authority,work) {
   requireValue(typeof authority?.authorizeCommit==='function'&&typeof work==='function','AUTH_BOUNDARY_UNAVAILABLE');
-  const scope=Object.freeze({id:actor.id,role:actor.role,authorizeCommit:authority.authorizeCommit,refreshAuthorization:authority.refreshAuthorization});
+  const scope=Object.freeze({authority,id:actor.id,role:actor.role,authorizeCommit:authority.authorizeCommit,refreshAuthorization:authority.refreshAuthorization});
   return active.run(scope,work);
 }
 export function assertMarketplaceRequestAuthority(actor) {
@@ -21,3 +21,7 @@ export async function refreshMarketplaceRequestAuthority() {
   if(scope.refreshAuthorization)requireValue(await scope.refreshAuthorization()===true,'SIGN_IN_REQUIRED');
   return assertMarketplaceRequestAuthority();
 }
+
+// The concrete R1 producer validates private origin; a generic callback scope
+// returned here still cannot pass readR1ProofRequest.
+export function currentMarketplaceRequestAuthority(){const scope=active.getStore();requireValue(scope,'AUTH_BOUNDARY_UNAVAILABLE');assertMarketplaceRequestAuthority();return scope.authority;}

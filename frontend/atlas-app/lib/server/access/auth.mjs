@@ -1,3 +1,4 @@
+import {r1ProofLogout} from '../../../../../packages/atlas-marketplace/src/auth-r1.mjs';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { cookies, deny, equal, hash, identifier, strictObject } from '../policy.mjs';
 import { phoneInput } from '../../phone.mjs';
@@ -250,6 +251,8 @@ export class DurableStaffAuth {
     async logout(header, csrf) {
         const jar = this.jar(header), token = jar[this.config.cookies.session], browser = jar[this.config.cookies.browser];
         if (!tokenShape(token) || !tokenShape(browser) || !equal(csrf, this.digest(`session:${token}`))) deny(403, 'CSRF_REQUIRED');
+        const proofLogout=r1ProofLogout(this);
+        if(proofLogout)return proofLogout({sessionHash:hash(token),browserHash:hash(browser)});
         await this.database.transaction(async ({ tx, now }) => {
             const session = await tx.staffSession.findUnique({ where: { tokenHash: hash(token) } });
             if (!session || session.browserHash !== hash(browser)) deny(401, 'SIGN_IN_REQUIRED');

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {PROOF_AUTHORITY_ROLES,parseProofAuthorityRequest,parseProofAuthorityReply,proofAuthorityRequestHash} from '../src/proof-authority-protocol.mjs';
-import {createProofAuthorityPostgres} from '../src/proof-authority-postgres.mjs';
+import {createProofAuthorityPostgres,assertProofAuthorityCommittedReport} from '../src/proof-authority-postgres.mjs';
 
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`,h='a'.repeat(64);
 const cfg={mode:'LOCAL_FIXTURE',origin:'http://localhost',deploymentId:'fixture',releaseSha:'b'.repeat(40),configHash:h};
@@ -97,4 +97,13 @@ test('pending duplicate, changed-ID payload, capacity and close all refuse witho
   await assert.rejects(a.claimStage(claim()),e=>e.code==='PROOF_AUTHORITY_PENDING_HOLD');m.unblock();await first;
   await assert.rejects(a.claimStage({...claim(),requestBindingHash:'b'.repeat(64)}),e=>e.code==='PROOF_AUTHORITY_ID_CONFLICT');
   await assert.rejects(a.claimStage({...claim(),stageId:id(90)}),e=>e.code==='PROOF_AUTHORITY_CAPACITY_HOLD');a.close();await assert.rejects(a.lookupClaim({stageId:id(1),claimHash:h}));assert.equal(m.calls.filter(x=>x.sql.startsWith('SELECT atlas_proof_authority.claim_stage')).length,1);
+});
+
+test('audited reply origin is available only after completed COMMIT and never transfers to a JSON copy',async()=>{
+ const m=model({blockCommit:true}),a=createProofAuthorityPostgres(m.options),pending=a.claimStage(claim());await m.started;
+ assert.throws(()=>assertProofAuthorityCommittedReport(unavailable(),{gateway:a,action:'claim_stage_v1'}));m.unblock();const result=await pending;
+ assert.deepEqual(assertProofAuthorityCommittedReport(result,{gateway:a,action:'claim_stage_v1'}),claim());
+ assert.throws(()=>assertProofAuthorityCommittedReport({...result},{gateway:a,action:'claim_stage_v1'}));
+ assert.throws(()=>assertProofAuthorityCommittedReport(result,{gateway:a,action:'lookup_claim_v1'}));
+ const other=createProofAuthorityPostgres(model().options);assert.throws(()=>assertProofAuthorityCommittedReport(result,{gateway:other,action:'claim_stage_v1'}));
 });

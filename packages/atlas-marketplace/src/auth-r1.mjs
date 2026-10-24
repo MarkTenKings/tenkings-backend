@@ -1,8 +1,25 @@
-import { timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash, randomUUID } from 'node:crypto';
 import { hash, requireValue } from './contract.mjs';
 
 export const R1_SESSION_ACCESS_ACTION = 'marketplace_session_access';
 export const R1_SESSION_ACCESS_SCHEMA = 'atlas-marketplace-session-access-v1';
+const proofRequests=new WeakMap(),proofLogouts=new WeakMap();
+// These are private origin checks, not a callback/JSON authority constructor.
+export async function readR1ProofRequest(authority){
+  const state=proofRequests.get(authority);unavailable(state?.active);
+  const canonical=state.source==='STAFF'?(await import('../../../frontend/atlas-app/lib/server/access/auth.mjs')).DurableStaffAuth:(await import('../../../frontend/atlas-customer/lib/server/auth.mjs')).CustomerAuth;
+  unavailable(state.AuthClass===canonical);
+  await authority.refreshAuthorization();unavailable(state.active);return state.snapshot();
+}
+export async function bindR1ProofLogouts(auths,producer){
+  const {assertR1ProofAuthorityProducer}=await import('./proof-authority-r1.mjs');assertR1ProofAuthorityProducer(producer);
+  unavailable(Array.isArray(auths)&&auths.length>=1&&auths.length<=2&&new Set(auths).size===auths.length);
+  // Validate every canonical target before installing either logout hook.
+  const handlers=auths.map(auth=>{unavailable(!proofLogouts.has(auth));return producer.bindLogout(auth);});
+  auths.forEach((auth,index)=>proofLogouts.set(auth,handlers[index]));
+}
+export const bindR1ProofLogout=(auth,producer)=>bindR1ProofLogouts([auth],producer);
+export const r1ProofLogout=auth=>proofLogouts.get(auth)??null;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
@@ -72,7 +89,12 @@ export function createR1MarketplaceAuthBridge(options={}) {
     requireValue(!req.headers?.origin||req.headers.origin===config.origin,'ORIGIN_REFUSED');
     requireValue(!req.headers?.['sec-fetch-site']||['same-origin','none'].includes(req.headers['sec-fetch-site']),'CROSS_SITE_REFUSED');
     if(method==='POST') requireValue(req.headers?.origin===config.origin,'ORIGIN_REFUSED');
+    const requestId=randomUUID(),abortController=new AbortController();
     let ended=false, principal=null, staffHandle=null, originalAccess=null, csrfVerified=false, admitted=false, dispatched=false, normalizedPath=null;
+    function end(){ended=true;abortController.abort();}
+    const socket=req.socket,onClose=()=>end();
+    if(typeof req.once==='function')req.once('aborted',onClose);
+    if(typeof socket?.once==='function')socket.once('close',onClose);
     function current() {
       configured(); signedIn(!ended&&!req.aborted&&now()<deadline);
       unavailable(source.state===state && state.auth===auth && auth.config===config && auth.database===database && state.assertRequest===guard && configPin(config)===pinnedConfig && requestPin(req)===pinnedRequest && auth.digest===digest && AuthClass.prototype.digest===digest);
@@ -160,11 +182,15 @@ export function createR1MarketplaceAuthBridge(options={}) {
         // five-second Prisma transaction. A later denial withholds the response
         // but cannot attest rollback of a separately committed effect.
         const authority=Object.freeze({authorizeCommit:()=>{exactPrincipal(value);return true;},refreshAuthorization:async()=>{exactPrincipal(value);if(isStaff)await revalidateStaffBoundary();await readAccess();exactPrincipal(value);return true;}});
-        const output=await work(principal.actor,authority);
-        if(isStaff) await revalidateStaffBoundary();
-        await readAccess(); return output;
+        const proofState={active:true,AuthClass,source:isStaff?'STAFF':'CUSTOMER',snapshot(){
+          exactPrincipal(value);unavailable(method==='POST'&&csrfVerified&&['STAFF','BUYER'].includes(audience));
+          return Object.freeze({requestId,requestBindingHash:hash({requestId,request:pinnedRequest,config:pinnedConfig,audience,policyHash:policyPin}),source:isStaff?'STAFF':'CUSTOMER',sessionHash:originalAccess.sessionHash,browserHash:originalAccess.browserHash,configBinding:Object.freeze(Object.fromEntries(['mode','origin','deploymentId','releaseSha','configHash'].map(k=>[k,config[k]]))),originalRequestDeadlineAt:Math.min(deadline,originalAccess.expiresAt),actorId:originalAccess.id,actorRole:isStaff?'STAFF':'BUYER',signal:abortController.signal});
+        }};
+        proofRequests.set(authority,proofState);
+        try {const output=await work(principal.actor,authority);if(isStaff)await revalidateStaffBoundary();await readAccess();return output;}
+        finally {proofState.active=false;abortController.abort();}
       },
-      close() { ended=true; principal=null; staffHandle=null; originalAccess=null; },
+      close() { end();if(typeof req.removeListener==='function')req.removeListener('aborted',onClose);if(typeof socket?.removeListener==='function')socket.removeListener('close',onClose); principal=null; staffHandle=null; originalAccess=null; },
     });
   } });
 }

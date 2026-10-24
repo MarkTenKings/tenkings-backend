@@ -142,3 +142,8 @@ test('actual route composition is cold by default and keeps original R1 requests
   }finally{await composition.close();await new Promise(resolve=>server.close(resolve));}
   assert.equal(fallback,3);
 });
+
+test('enabling C0 without the concrete owned physical join refuses without a legacy fallback',async()=>{
+ const f=await fixture();f.options.config.proofAuthority={enabled:true};f.options.proofAuthority={approved:true,upload:()=>assert.fail('unowned upload')};
+ await assert.rejects(createR1MarketplaceHost(f.options),{code:'R1_HOST_UNAVAILABLE'});assert.equal(f.providerCalls,0);assert.equal(f.connects,0);
+});

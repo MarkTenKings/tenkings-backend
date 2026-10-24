@@ -1,4 +1,4 @@
-import {assertMarketplaceRequestAuthority,refreshMarketplaceRequestAuthority} from './request-authority.mjs';
+import {assertMarketplaceRequestAuthority,refreshMarketplaceRequestAuthority,currentMarketplaceRequestAuthority} from './request-authority.mjs';
 import { clone, hash, requireValue, cents } from './contract.mjs';
 import {assertMarketplaceProofIntake,PROOF_EVIDENCE_KINDS} from './proof-intake.mjs';
 import {assertShippingLifecycle} from './shipping-lifecycle.mjs';
@@ -26,7 +26,7 @@ export const intentId = (kind, value, context) => `${authorityContext(context).e
 
 // Trusted composition boundary. No production auth, eligibility or credentials
 // are discovered here. Every runtime must explicitly provide its own ports.
-export function createMarketplacePilot({ enabled = false, environment, store, eligibility = createUnavailableEligibilityAdapter(), quoteProvider, destinations, taxLifecycle, proofIntake, shippingLifecycle, feeCalculator, instantPolicy,assertInstantPayoutReady,quoteInstantPayoutFee,readInstantFeeSettlement, provider, listingPolicy, financePolicy, fulfillmentPolicy, platformAccountId, context: suppliedContext, runtimeApproval, assertRuntimeReady, sellerAccount, onboarding, readEvidence, validateEvidence, webhook, recoverySettlementCapability, clock = Date.now } = {}) {
+export function createMarketplacePilot({ enabled = false, environment, store, eligibility = createUnavailableEligibilityAdapter(), quoteProvider, destinations, taxLifecycle, proofIntake, proofAuthority, shippingLifecycle, feeCalculator, instantPolicy,assertInstantPayoutReady,quoteInstantPayoutFee,readInstantFeeSettlement, provider, listingPolicy, financePolicy, fulfillmentPolicy, platformAccountId, context: suppliedContext, runtimeApproval, assertRuntimeReady, sellerAccount, onboarding, readEvidence, validateEvidence, webhook, recoverySettlementCapability, clock = Date.now } = {}) {
   const context = authorityContext(suppliedContext), rawStore = store;
   if (rawStore) store = { read: (...args) => rawStore.read(...args), transaction: fn => rawStore.transaction(tx => fn({ ...tx, context })) };
   const idFor = (kind,value) => intentId(kind,value,context);
@@ -189,9 +189,9 @@ export function createMarketplacePilot({ enabled = false, environment, store, el
     // Runtime qualification never establishes global title/custody authority.
     // Each sale action must independently obtain its exact current assertion.
     status() { let active=false; try { gate(); active=true; } catch {} return { enabled: active, environment: environment ?? null, realAuthorityEnabled: false, authorityStatus: 'PER_ACTION_VERIFICATION_REQUIRED', ownershipClaimsEnabled: false, ownershipHistoryEnabled: false }; },
-    async prepareProof(actor,input){authorize(actor,['BUYER','STAFF']);return proofReady().prepare(actor,input,proofAuthorization(actor));},
-    async uploadProof(actor,input){authorize(actor,['BUYER','STAFF']);return proofReady().upload(actor,input,proofAuthorization(actor));},
-    async recoverProof(actor,input){authorize(actor,['BUYER','STAFF']);return proofReady().recover(actor,input,proofAuthorization(actor));},
+    async prepareProof(actor,input){authorize(actor,['BUYER','STAFF']);proofReady();if(proofAuthority)return proofAuthority.prepare(currentMarketplaceRequestAuthority(),input);return proofIntake.prepare(actor,input,proofAuthorization(actor));},
+    async uploadProof(actor,input){authorize(actor,['BUYER','STAFF']);proofReady();if(proofAuthority)return proofAuthority.upload(currentMarketplaceRequestAuthority(),input);return proofIntake.upload(actor,input,proofAuthorization(actor));},
+    async recoverProof(actor,input){authorize(actor,['BUYER','STAFF']);requireValue(!proofAuthority,'PROOF_AUTHORITY_EXACT_RECOVERY_REQUIRED');return proofReady().recover(actor,input,proofAuthorization(actor));},
     async readProof(actor,input){authorize(actor,['BUYER','STAFF']);return proofReady().read(actor,input,proofAuthorization(actor));},
     async listProofs(actor,input){authorize(actor,['BUYER','STAFF']);return proofReady().list(actor,input,proofAuthorization(actor));},
     async reviewProof(actor,input){authorize(actor,['STAFF']);return proofReady().review(actor,input,proofAuthorization(actor));},

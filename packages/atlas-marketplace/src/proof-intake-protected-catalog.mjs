@@ -2,7 +2,7 @@
 // retention-only audit unchanged, then validate this exact additional closure.
 import {canonicalJSON,requireValue} from './contract.mjs';
 import {decoderContractData,decoderExact,decoderFreeze} from './proof-decoder-profile.mjs';
-import {RETENTION_PROTECTED_CATALOG_QUERIES,RETENTION_PROTECTED_CLOSURE_HASH,validateRetentionProtectedCatalog} from './proof-retention-protected-catalog.mjs';
+import {RETENTION_PROTECTED_CATALOG_QUERIES,RETENTION_PROTECTED_CLOSURE_HASH,RETENTION_PROTECTED_DATABASE,validateRetentionProtectedCatalog} from './proof-retention-protected-catalog.mjs';
 import {createHash} from 'node:crypto';
 const OWNER='atlas_marketplace_owner',ROLE='atlas_proof_intake_writer',RETENTION='atlas_proof_retention_writer';
 export const INTAKE_PROTECTED_ROLE=ROLE;
@@ -17,15 +17,19 @@ const triggers={proof_intake_accounting_binding_immutable:['proof_intake_account
 export const INTAKE_PROTECTED_CATALOG_QUERIES=Object.freeze(Object.fromEntries(Object.entries(RETENTION_PROTECTED_CATALOG_QUERIES).map(([k,v])=>[k,v.replaceAll("'atlas_proof_retention_writer'","'atlas_proof_retention_writer','atlas_proof_intake_writer'")])));
 export function validateIntakeProtectedCatalog(input){return validateExtension(input,ROLE);}
 export function validateRetentionIntakeProtectedCatalog(input){return validateExtension(input,RETENTION);}
-function validateExtension(input,expectedRole){
+const INSTALLED_FUNCTION_HASHES=Object.freeze({"check_intake_configuration_v1(jsonb)":"0e8df35618b67c1bc1c17b352822efe2af095de44a79464b51a138c7d311ee39","project_intake_operation_v1(jsonb, jsonb, jsonb, jsonb)":"b4e28226dd84215cbbc8697884f50d08d96c154372e6ae6ad32ff086088114a8","read_intake_configuration_v1()":"d065b77bd0dbfea199a73768a6128c2c0e5846bbdbceb3773456553225b4c184","read_intake_state_v1()":"e36032db17566b7c0866b242875b711e7133aceee0aebd2acb5d3f657e86bea0","lookup_intake_operation_v1(uuid, text)":"33144a7df3710a39537c110caab2e3d1f06ee26950b2cba32ce19940886aff06","read_intake_capacity_v1()":"92b6f8c207f61f4ef8a27f228899bc0998e6cf1b56282e30d84b403bbeb4e5d6","commit_intake_operation_v1(bigint, text, jsonb, jsonb, text)":"9d0cc4515a697a1df1d601a4f565bc8507b5fa50c2e3b5119f0977bc7d164071","read_intake_accounting_configuration_v1()":"9d56189239ae5a91f7538667143e5d9992b80d6094d63b9d2f54715f683f2077","intake_accounting_initial_v1(jsonb, jsonb)":"df5d8f7b59875eff8f44b5584bda78281bc3453c4f50e251bafbbf589a871f43","intake_accounting_apply_v1(jsonb, jsonb)":"1a9c8fead6fa520f2b3789b5d43b7ff89680f26eb9918b1f89e049fc2a97ca2a","check_intake_accounting_entry_v1(jsonb, jsonb)":"1e93ae94cbae6e3574061238bdec1b4f50039297e096a2f6d82a56c31290aa75","read_intake_accounting_v1(uuid, text)":"1d132f52eb5fb94afc3ca22fcc16e0ac6e9bffcc1887ec0aec6852d335dababc","intake_accounting_head_hash_v1(jsonb)":"0e38fa4c520015daafd94961f41c86bee71ea8a068168b622473031375d33131","commit_intake_accounting_v1(uuid, text, text, jsonb, jsonb)":"e62edd26203a3b7aaf47ec33abedf10823087f201a7e1c10b1689861bf9662d0","check_intake_accounted_validation_v1(jsonb)":"85ad8eb44f9a29c9213fe4fed59e3d1efb6c3dc3149401c34c3e834438acc416","commit_accounted_intake_validation_v1(bigint, text, jsonb, jsonb, text)":"6812fe80093308e73eef3967a00d473a9c71befe5dd07640b24a82e80bb31c7f"});
+export function validateR1IntakeInstalledCatalog(input,database){return validateExtension(input,ROLE,database);}
+export function validateR1RetentionIntakeInstalledCatalog(input,database){return validateExtension(input,RETENTION,database);}
+function validateExtension(input,expectedRole,installedDatabase=null){
  const s=decoderContractData(input);decoderExact(s,Object.keys(INTAKE_PROTECTED_CATALOG_QUERIES));
  check(Buffer.byteLength(canonicalJSON(s))<=262144&&Object.values(s).every(v=>Array.isArray(v)&&v.length<=64));
  check(s.identity.length===1&&s.schema.length===1&&s.identity[0].role===expectedRole&&s.identity[0].session_role===expectedRole,'INTAKE_PROTECTED_IDENTITY');
+ if(installedDatabase!==null)check(typeof installedDatabase==='string'&&/^[a-z][a-z0-9_]{0,62}$/.test(installedDatabase)&&installedDatabase!==RETENTION_PROTECTED_DATABASE&&s.identity[0].database===installedDatabase,'INTAKE_INSTALLED_DATABASE');
  const observedRole={name:ROLE,login:true,super:false,inherit:false,createDb:false,createRole:false,replication:false,bypass:false};
  check(s.identity[0].roles?.filter(r=>r.name===ROLE).length===1&&same(s.identity[0].roles.find(r=>r.name===ROLE),observedRole));
  const privilege={role:ROLE,database_write:false,schema_write:false,table_access:false,sequence_access:false,other_functions:false,usage:true};
  check(s.privileges.filter(r=>r.role===ROLE).length===1&&same(s.privileges.find(r=>r.role===ROLE),privilege),'INTAKE_PROTECTED_PRIVILEGES');
- for(const f of FUNCTIONS){const expected={...f,config:['search_path=pg_catalog'],owner:OWNER,kind:'f',strict:false,leakproof:false,parallel:'u',binary:null,no_support:true,no_sqlbody:true,simple_arguments:true,cost:'100',rows:f.setof?'1000':'0',acl:[OWNER+':EXECUTE:false',...(publicFunctions.includes(f.name)?[ROLE+':EXECUTE:false']:[]),...(f.name==='read_intake_configuration_v1()'?[RETENTION+':EXECUTE:false']:[])].sort()};check(s.functions.filter(r=>r.name===f.name).length===1&&same(s.functions.find(r=>r.name===f.name),expected),'INTAKE_PROTECTED_FUNCTION');}
+ for(const f of FUNCTIONS){const expected={...f,...(installedDatabase!==null?{bodyHash:INSTALLED_FUNCTION_HASHES[f.name]}:{}),config:['search_path=pg_catalog'],owner:OWNER,kind:'f',strict:false,leakproof:false,parallel:'u',binary:null,no_support:true,no_sqlbody:true,simple_arguments:true,cost:'100',rows:f.setof?'1000':'0',acl:[OWNER+':EXECUTE:false',...(publicFunctions.includes(f.name)?[ROLE+':EXECUTE:false']:[]),...(f.name==='read_intake_configuration_v1()'?[RETENTION+':EXECUTE:false']:[])].sort()};check(s.functions.filter(r=>r.name===f.name).length===1&&same(s.functions.find(r=>r.name===f.name),expected),'INTAKE_PROTECTED_FUNCTION');}
  const tableACL=['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'].map(v=>OWNER+':'+v+':false').sort();
  for(const [name,columns] of Object.entries(tableColumns)){
   const expected={name,kind:'r',owner:OWNER,persistence:'p',rls:false,force_rls:false,partition:false,options:null,rules:false,access_method:'heap',replica_identity:'d',inheritance:false,acl:tableACL,columns:columns.map(([name,type])=>({name,type,notnull:true,default:name==='id'?'true':null,identity:'',generated:'',dropped:false,acl:null,collation:type==='text'?'pg_catalog.default':null}))};
@@ -50,6 +54,9 @@ function validateExtension(input,expectedRole){
  const base=structuredClone(s);base.identity[0].role=RETENTION;base.identity[0].session_role=RETENTION;base.identity[0].roles=base.identity[0].roles.filter(r=>r.name!==ROLE);
  base.privileges=base.privileges.filter(r=>r.role!==ROLE);base.schema[0].acl=base.schema[0].acl.filter(v=>v!==ROLE+':USAGE:false');
  base.functions=base.functions.filter(r=>!FUNCTIONS.some(f=>f.name===r.name));base.relations=base.relations.filter(r=>!Object.hasOwn(tableColumns,r.name));base.indexes=base.indexes.filter(r=>!Object.hasOwn(indexes,r.name));base.constraints=base.constraints.filter(r=>!Object.hasOwn(indexes,r.name)&&!Object.hasOwn(checks,r.name));base.triggers=base.triggers.filter(r=>!Object.hasOwn(triggers,r.name));
+ if(installedDatabase!==null)base.identity[0].database=RETENTION_PROTECTED_DATABASE;
  validateRetentionProtectedCatalog(base);
 }
 export const INTAKE_PROTECTED_CLOSURE_HASH=createHash('sha256').update(canonicalJSON({base:RETENTION_PROTECTED_CLOSURE_HASH,functions:FUNCTIONS,publicFunctions,retentionReadonly:'read_intake_configuration_v1()',tableColumns,indexes,checks,triggers,queries:INTAKE_PROTECTED_CATALOG_QUERIES})).digest('hex');
+
+export const R1_INTAKE_INSTALLED_CLOSURE_HASH=createHash('sha256').update(canonicalJSON({base:INTAKE_PROTECTED_CLOSURE_HASH,installedFunctions:INSTALLED_FUNCTION_HASHES})).digest('hex');

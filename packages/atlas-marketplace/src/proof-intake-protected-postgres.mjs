@@ -6,17 +6,22 @@ import {canonicalJSON,hash,requireValue} from './contract.mjs';
 import {assertJournal} from './ledger.mjs';
 import {engineDataOptions} from './proof-decoder-engine-json.mjs';
 import {decoderFreeze} from './proof-decoder-profile.mjs';
-import {createProofIntakeProtectedConnectionOwner,createProofIntakeAccountedConnectionOwner} from './proof-retention-postgres-connection.mjs';
+import {createProofIntakeProtectedConnectionOwner,createProofIntakeAccountedConnectionOwner,createR1ProofIntakeAccountedConnectionOwner} from './proof-retention-postgres-connection.mjs';
 import {intakeProtectedInstallation,intakeProtectedOperation,intakeProtectedRecord,intakeProtectedUploadId,projectIntakeProtectedOperation} from './proof-intake-protected-protocol.mjs';
 import {intakeAccountingInstallation,intakeAccountingRead,intakeAccountingOutcome,projectIntakeAccounting,intakeAccountingValidation} from './proof-intake-accounting.mjs';
 const check=(v,c)=>requireValue(v,c),same=(a,b)=>canonicalJSON(a)===canonicalJSON(b);
-const decoderClaims=new WeakMap();
+const decoderClaims=new WeakMap(),accountedAdapters=new WeakMap();
+// Private adapter/attempt origin only. Neither the installation document nor
+// a copied attempt report can supply a live prepared decoder submission.
+export function assertProofIntakeAccountedPostgres(value){check(accountedAdapters.has(value),'INTAKE_ACCOUNTED_ADAPTER_REQUIRED');return value;}
+export function proofIntakeAccountedAttemptSubmission(value,handle){const owned=accountedAdapters.get(assertProofIntakeAccountedPostgres(value));return owned.submission(handle);}
 const markers={classification:'UNQUALIFIED',customerPublicationAuthority:false,canonicalAuthorityTested:false,decoderAuthority:false};
 export function createProofIntakeProtectedPostgres(options={}){return createIntake(options,false);}
 export function createProofIntakeAccountedPostgres(options={}){return createIntake(options,true);}
-function createIntake(options,accounted){
+export function createR1ProofIntakeAccountedPostgres(options={}){return createIntake(options,true,true);}
+function createIntake(options,accounted,installed=false){
  const input=engineDataOptions(options,[],['enabled','configuration','installation',...(accounted?['accounting']:[])]);if(input.enabled!==true)return null;
- const installation=intakeProtectedInstallation(input.installation),accounting=accounted?intakeAccountingInstallation(input.accounting,installation):null,owner=accounted?createProofIntakeAccountedConnectionOwner({enabled:true,configuration:input.configuration,installation,accounting}):createProofIntakeProtectedConnectionOwner({enabled:true,configuration:input.configuration,installation});
+ const installation=intakeProtectedInstallation(input.installation),accounting=accounted?intakeAccountingInstallation(input.accounting,installation):null,owner=installed?createR1ProofIntakeAccountedConnectionOwner({enabled:true,configuration:input.configuration,installation,accounting}):accounted?createProofIntakeAccountedConnectionOwner({enabled:true,configuration:input.configuration,installation,accounting}):createProofIntakeProtectedConnectionOwner({enabled:true,configuration:input.configuration,installation});
  const handles=new WeakMap(),attemptHandles=new WeakMap(),openAttempts=new Set(),heldCreates=new Set(),decoderOwner=Object.freeze({});let closed=false,active=false,preparedCount=0;
  const ready=()=>check(!closed,'INTAKE_PROTECTED_CLOSED');
  function fresh(evidence){if(evidence)assertProofDecoderClientOutcomeBeforeDeadline(evidence.outcome,{client:evidence.client});}
@@ -73,7 +78,7 @@ function createIntake(options,accounted){
    // The original public key is deleted synchronously. Only this closure keeps
    // its replacement, so no concurrent caller can submit while SQL is pending.
    const transferred=takeProofDecoderPreparedSubmission(v.prepared,{client:v.client}),at=Date.now(),leaseUntil=Math.min(at+Number((BigInt(request.deadlineBootNs)-BigInt(transferred.observedAtBootNs))/1000000n),create.atMs+installation.policy.uploadTtlMs,installation.policy.expiresAt);
-   const uploadId=intakeProtectedUploadId(create),h={create,client:v.client,prepared:transferred.handle,request,attemptId:randomUUID(),leaseId:randomUUID(),phase:'CLAIMED',originalHash:hash({uploadId,objectKey:hash({binding:installation.binding,uploadId}),plan:request.plan}),last:null,observation:null,outcome:null,validationClaimed:false};
+   const uploadId=intakeProtectedUploadId(create,installation),h={create,client:v.client,prepared:transferred.handle,request,attemptId:randomUUID(),leaseId:randomUUID(),phase:'CLAIMED',originalHash:hash({uploadId,objectKey:hash({binding:installation.binding,uploadId}),plan:request.plan}),last:null,observation:null,outcome:null,validationClaimed:false};
    h.reserve=entryFor(h,'RESERVE',{at,leaseUntil});const handle=Object.freeze({});attemptHandles.set(handle,h);openAttempts.add(h);active=true;
    try{check(leaseUntil>at,'INTAKE_ACCOUNTING_EXPIRED');h.last=await persistAccounting(h,h.reserve,true);h.phase='RESERVED';}
    catch{h.phase='UNKNOWN';heldCreates.add(h.create.operationId);discardAttempt(h);openAttempts.delete(h);}finally{active=false;}
@@ -128,7 +133,7 @@ function createIntake(options,accounted){
    }catch{throw Object.assign(new Error('INTAKE_DECODER_PREPARATION_HOLD'),{code:'INTAKE_DECODER_PREPARATION_HOLD',preparation:claim});}
    finally{connection?.release();active=false;}
  }
- return Object.freeze({...markers,binding:owner.binding,
+ const adapter=Object.freeze({...markers,binding:owner.binding,
   prepareCreate(value){return prepare('CREATE',value);},
   ...(!accounted?{prepareValidation(value){return prepare('VALIDATE',value);},prepareValidationFromDecoder(options){return prepareDecoded(options);}}:accountedMethods),
   preparedReport(handle){return owned(handle).operation;},
@@ -138,7 +143,7 @@ function createIntake(options,accounted){
     check(Date.now()-h.operation.atMs<=15000,'INTAKE_PROTECTED_EXPIRED');fresh(h.evidence);client=await owner.connect();ready();fresh(h.evidence);
     await client.query('BEGIN');began=true;await client.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='15s'; SET LOCAL idle_in_transaction_session_timeout='15s'");
     const {rows}=await client.query('SELECT * FROM atlas_marketplace.read_intake_state_v1()');check(rows.length===1,'INTAKE_PROTECTED_STATE');const row=rows[0];
-    check(row.format==='atlas-marketplace-v2'&&row.environment==='SYNTHETIC_LOCAL'&&Number.isSafeInteger(Number(row.revision))&&Number(row.revision)>=0&&hash(row.document)===row.state_hash,'INTAKE_PROTECTED_STATE');assertJournal(row.document.journals);
+    check(row.format==='atlas-marketplace-v2'&&row.environment===installation.binding.environment&&Number.isSafeInteger(Number(row.revision))&&Number(row.revision)>=0&&hash(row.document)===row.state_hash,'INTAKE_PROTECTED_STATE');assertJournal(row.document.journals);
     let created=null;
     if(h.operation.kind==='VALIDATE'){
      // The actual immutable CREATE record is read by ID. The projection is
@@ -164,4 +169,6 @@ function createIntake(options,accounted){
   async lookupOriginal(value){return lookup(intakeProtectedOperation(value,installation));},
   async close(){closed=true;const endings=[];for(const h of openAttempts){heldCreates.add(h.create.operationId);if(h.phase==='RUNNING')endings.push(h.client.close());else discardAttempt(h);}try{await owner.close();}finally{await Promise.allSettled(endings);}}
  });
+ if(accounted)accountedAdapters.set(adapter,{submission(handle){const h=attemptOwned(handle);check(!active&&h.phase==='RESERVED'&&h.prepared,'INTAKE_ACCOUNTING_SUBMISSION_HELD');assertProofDecoderPreparedSubmissionBeforeDeadline(h.prepared,{client:h.client});return h.prepared;}});
+ return adapter;
 }

@@ -186,8 +186,13 @@ export function createMarketplaceProofIntake({enabled=false,store,context:suppli
     },
     assertInTransaction(tx,request,options={}){return assertEvidence(tx,request,options);}
   });
-  instances.set(intake,{store,context});return intake;
+  instances.set(intake,{store,context,async authorizeCreate(authority,input){const {readR1ProofRequest}=await import('./auth-r1.mjs');const request=await readR1ProofRequest(authority),actor={id:request.actorId,role:request.actorRole};await refresh(actor,'PREPARE',{orderId:input.orderId,purpose:input.purpose},authority);return store.read(state=>{authorizedOrder(state,actor,input.orderId,input.purpose,true);check(actor,'PREPARE',{orderId:input.orderId,purpose:input.purpose},authority);return actor;});},async snapshot(authority,uploadId){const {readR1ProofRequest}=await import('./auth-r1.mjs');const request=await readR1ProofRequest(authority),actor={id:request.actorId,role:request.actorRole};await refresh(actor,'UPLOAD',{},authority);return store.read(state=>{const row=uploadRow(state,actor,uploadId,true);check(actor,'UPLOAD',{orderId:row.orderId,purpose:row.purpose},authority);requireValue(clock()<row.expiresAt,'PROOF_UPLOAD_EXPIRED');return clone(row);});}});return intake;
 }
 import { createHash } from 'node:crypto';
 const createDigest=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function assertMarketplaceProofIntake(intake,{store,context}={}) {const trusted=instances.get(intake);requireValue(trusted&&trusted.store===store&&trusted.context===authorityContext(context),'PROOF_INTAKE_UNAVAILABLE');return intake;}
+
+// Original rows are read through this owned intake and a live canonical request.
+export async function snapshotR1ProofUpload(intake,authority,uploadId){const state=instances.get(intake);requireValue(state,'PROOF_INTAKE_UNAVAILABLE');return state.snapshot(authority,uploadId);}
+
+export async function authorizeR1ProofCreate(intake,authority,input){const state=instances.get(intake);requireValue(state,'PROOF_INTAKE_UNAVAILABLE');return state.authorizeCreate(authority,input);}

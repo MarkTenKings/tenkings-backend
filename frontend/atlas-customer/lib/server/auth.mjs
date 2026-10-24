@@ -1,3 +1,4 @@
+import {r1ProofLogout} from '../../../../packages/atlas-marketplace/src/auth-r1.mjs';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { cookies, deny, equal, hash, keys, normalizePhone, tokenShape, UUID } from './policy.mjs';
 const opaque = () => randomBytes(32).toString('base64url');
@@ -59,6 +60,6 @@ export class CustomerAuth {
         return this.database.call('email_confirm', { ...this.authority(header, undefined, 'browser'),
             tokenHash: hash(input.token), mode: input.mode, clientHash: hash(client ?? 'unknown') });
     }
-    logout(header, csrf) { return this.database.call('logout', this.authority(header, csrf)); }
+    logout(header, csrf) { const authority=this.authority(header,csrf),proofLogout=r1ProofLogout(this);return proofLogout?proofLogout(authority):this.database.call('logout',authority); }
     call(header, action, data, csrf) { return this.database.call(action, { ...data, ...this.authority(header, csrf) }); }
 }

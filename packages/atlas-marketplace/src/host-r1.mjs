@@ -1,4 +1,4 @@
-import { createR1MarketplaceAuthBridge, assertMarketplaceSignedTarget } from './auth-r1.mjs';
+import { createR1MarketplaceAuthBridge, assertMarketplaceSignedTarget, bindR1ProofLogouts } from './auth-r1.mjs';
 import { createPostgresStore } from './store-postgres.mjs';
 import { createMarketplacePilot } from './service.mjs';
 import { createMarketplaceNodeHandler } from './runtime-node.mjs';
@@ -124,7 +124,7 @@ export async function createR1MarketplaceHost(options={}) {
   }
   current();
   const store=createPostgresStore({...database,environment:env,clock,enabled:true});
-  let commerce=null,physical=null;
+  let commerce=null,physical=null,proofAuthority=null;
   try {
   let settlementCapability;
   if(config.settlement?.enabled===true) {
@@ -134,7 +134,12 @@ export async function createR1MarketplaceHost(options={}) {
   } else check(config.settlement===undefined||config.settlement===null||config.settlement.enabled===false);
   if(marketplace.createCommercePorts)commerce=instantiateMarketplaceCommerce(marketplace.createCommercePorts,{store,context,environment:env,platformAccountId:marketplace.platformAccountId,clock});
   if(marketplace.createPhysicalPorts)physical=instantiateMarketplacePhysical(marketplace.createPhysicalPorts,{store,context,environment:env,clock});
-  const service=createMarketplacePilot({...marketplace,...(physical?{proofIntake:physical.proofIntake,shippingLifecycle:physical.shippingLifecycle}:{}),...(commerce?{quoteProvider:commerce.quoteProvider,destinations:commerce.destinations,taxLifecycle:commerce.taxLifecycle}:{}),enabled:true,environment:env,store,clock,recoverySettlementCapability:settlementCapability,
+  if(config.proofAuthority?.enabled===true){
+    check(physical&&options.proofAuthority);
+    const {createR1ProofAuthorityProducer}=await import('./proof-authority-r1.mjs');
+    proofAuthority=await createR1ProofAuthorityProducer({...options.proofAuthority,enabled:true,expectedDatabase:database.expectedDatabase,intake:physical.proofIntake});
+  }else check(config.proofAuthority===undefined||config.proofAuthority===null||config.proofAuthority.enabled===false);
+  const service=createMarketplacePilot({...marketplace,proofAuthority,...(physical?{proofIntake:physical.proofIntake,shippingLifecycle:physical.shippingLifecycle}:{}),...(commerce?{quoteProvider:commerce.quoteProvider,destinations:commerce.destinations,taxLifecycle:commerce.taxLifecycle}:{}),enabled:true,environment:env,store,clock,recoverySettlementCapability:settlementCapability,
     // R1 has not supplied qualified title/custody/Fingerprint sale authority.
     // No configuration ref or collection label may promote this candidate.
     eligibility:createR1AuthorityCompatibilityAdapter(),
@@ -144,7 +149,8 @@ export async function createR1MarketplaceHost(options={}) {
     staff:{state:staffState,boundary,DurableStaffAuth:canonical.DurableStaffAuth},
     customer:{state:customerState,CustomerAuth:canonical.CustomerAuth,CustomerDatabase:canonical.CustomerDatabase},
     admitRequest:r1.admitRequest,clock,requestTtlMs:config.requestTtlMs??30000,maxDatabaseClockSkewMs:config.maxDatabaseClockSkewMs??0});
-  return Object.freeze({store,provider,service,settlementCapability,binding,
+  if(proofAuthority)await bindR1ProofLogouts([staffState.auth,customerState.auth],proofAuthority);
+  return Object.freeze({store,provider,service,settlementCapability,binding,proofAuthority,
     status(){let enabled=false;try{current();enabled=true;}catch{}return {enabled,environment:env,claimsEnabled:false,historyEnabled:false,saleAuthorityAvailable:false};},
     async createHandlers({finance:hostedFinance}={}) {
       current();check(handlers===null);
@@ -193,7 +199,7 @@ export async function createR1MarketplaceHost(options={}) {
       };
       handlers=Object.freeze({listener,publicCatalog:catalog,...nodes});return handlers;
     },
-    async close(){if(closed)return;closed=true;handlers?.publicCatalog.close();for(const role of ['buyer','seller','staff'])handlers?.[role].close();try{await finance?.stop();}finally{await physical?.close();commerce?.close();store.close();}},
+    async close(){if(closed)return;closed=true;handlers?.publicCatalog.close();for(const role of ['buyer','seller','staff'])handlers?.[role].close();try{await finance?.stop();}finally{await proofAuthority?.close();await physical?.close();commerce?.close();store.close();}},
   });
-  } catch(error) {try{await physical?.close();commerce?.close();}finally{store.close();}throw error;}
+  } catch(error) {try{await proofAuthority?.close();await physical?.close();commerce?.close();}finally{store.close();}throw error;}
 }

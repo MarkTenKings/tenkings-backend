@@ -18,10 +18,10 @@ export async function qualifyProofAuthorityPostgres(options){
       assert.equal(result.status,'ABSENT_HOLD');assert.equal(result.authority,false);results.push({case:`${kind}_EXACT_GRANTS_AND_ABSENT_HOLD`,status:'PASS'});
       if(kind==='SETTLER'){
         const v=await a.settleStage({schema:'atlas-proof-stage-settle-v1',installationId:id,stageId:id,operationHash:h,settlementId:id,disposition:'COMPLETE',outcomeHash:h,publisherBarrierId:null,publisherBarrierRevision:null});
-        assert.equal(v.status,'UNAVAILABLE');assert.equal(v.authority,false);results.push({case:'SYNTHETIC_COMPLETE_JSON_NEVER_SETTLES',status:'PASS'});
+        assert.equal(v.status,'ABSENT_HOLD');assert.equal(v.authority,false);results.push({case:'SYNTHETIC_COMPLETE_JSON_NEVER_SETTLES',status:'PASS'});
       }
       if(kind==='REVOKER'){
-        const v=await a.applyMutation({mutationId:id,mutationHash:h});assert.equal(v.status,'UNAVAILABLE');assert.equal(v.authority,false);results.push({case:'NO_APPLY_OR_LOGOUT_WITHOUT_CANONICAL_JOIN',status:'PASS'});
+        const v=await a.applyMutation({mutationId:id,mutationHash:h});assert.equal(v.status,'ABSENT_HOLD');assert.equal(v.authority,false);results.push({case:'NO_APPLY_WITHOUT_ORIGINAL_MUTATION',status:'PASS'});
       }
     }
     return Object.freeze({schema:'atlas-proof-authority-postgres-refusal-evidence-v1',classification:'UNQUALIFIED',authority:false,
