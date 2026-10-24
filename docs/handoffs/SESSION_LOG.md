@@ -49067,3 +49067,32 @@ Socket-only continuation PASS, remote receipt cc358e5c810b3189f21c339ba5038c1828
 ### 2026-10-24T02:20:46.257552+00:00 — R2 qualification scope wording corrected
 
 Corrected the qualification document to distinguish unqualified physical intake from existing grading/Ten Kings, which remain preserved. Ownership claims/history and pricing stay disabled pending Fingerprint plus genuine authority. Documentation only; no behavior or repeated tests. Root also prepared an inert one-case MEMORY_OOM outer draft by reusing existing lifecycle helpers and the installed probe image; actual next-epoch baseline remains null, so it refuses target effects.
+
+
+### 2026-10-24T02:24:33.394979+00:00 — R2 three-mode isolation batch planned
+
+Next isolated VM action: frozen source2696f84d0ce3e6193aa935f593a16e9d81e70764d32b19e1d32010946048e612, 101820 bytes; source-ready38ce865b9d987f240f133652975f14faf815976ea43268f19b72d8b4059c55e9. Root reviewed new staging/current-baseline joins, three mode oracles and final checkpoint effects, reusing the previous bounded ordinary runner. Carries seven new assets and copies21 hash-identical runtime08 modules into a fresh candidate closure. Executes ROOT_CODE_MUTATIONS, PROCESS_NAMESPACE and NETWORK_INVENTORY with actual imported ce77b33d image, original15s deadlines, genuine cleanup/FINALIZED9 and independent kernel observations. Namespace descriptor-open denial leaves valid-fd setns uncovered. Network inventory includes finite loopback/table snapshots and4MiB tmpfs memory charge. All18 earlier ledgers and publisher holds/locks remain preserved; no consumed test replay, shared action or credential read. Stop/freeze at completion; save successful terminal pins for the next planned OOM test, no follow-on effects inferred.
+
+
+### 2026-10-24T02:26:35.435849+00:00 — R2 three-mode isolation observed; native OOM case planned
+
+Three-mode batch PASS, receipt dd1cb05ff09945554cfce246d9683cabfd51f2acbd0067c448267f28af25feb1 (308580 bytes). All three jobs FINALIZED9 with WAIT0/non-OOM/REMOVE204; batch34188 and observers34199/34268/34334 exited0. Root/code mutations and public canary open denied; nine process/namespace creation attempts denied. Own namespace descriptor open was denied, so valid-descriptor setns remains uncovered. Four independent loopback-only/empty network table snapshots and exact4194304-byte shmem/file charge increase observed. All18 old ledgers and publisher holds unchanged; Engine/broker directory empty, guard stopped/frozen. Successful terminal checkpoint saved actual new19th ledger, current controls and evidence pins without an extra inspection roundtrip.
+
+Next isolated action: one MEMORY_OOM case, source 803664d864f8a2eac6e2fb6d2e259cee31503091da95ca9fb00fb8ff64b81e8f (90439 bytes), reusing original961dacfa probe image and frozenruntime08. Root reviewed new held-outcome harness, finite native memory sampler, pure evidence join and exact GET-only Engine state projection; three focused join tests reused, source/header/AST pins checked. Original15s deadline and512MiB/zero-swap limits remain. Expected genuine uncertain/poisoned held row with independent childOOM counter and exited137/OOMKilled observation; no cleanup/finalization/admission inference. Preserve19 prior ledger sets and all publisher holds, stop/freeze, leave exact new container for separately recorded reconciliation. No shared or credential effects.
+
+
+### 2026-10-24T02:27:54.743295+00:00 — R2 native OOM observed; terminal checkpoint capture failed
+
+Actual MEMORY_OOM effect and independent join succeeded: receipt1ad0f18233b9c64852a04ece3207628825d15a1ffe486ede84074a5a3492caa4, child oom_kill delta1, exact512MiB/zero-swap limits, Engine exited137/OOMKilledtrue, unchanged parent-local memory events. Ownedbatch34518/observer34529 exited0; genuine transport uncertainty retains RUNNING4, poison, capacity1 and no cleanup/WAIT. All19 earlier ledgers/publisher holds/runtimepins preserved; finalparentemptyfrozen/guardstopped. Exact container3aed4ae9a1c6bf7d6e4da2e7e99dd3c48eb052d7573fed7036e648310fab5635 retained.
+
+Outer receipt remains FAILED: reused finalizer picked up a newly added terminal_checkpoint call without its definition during source assembly, after the case/evaluation/shutdown completed. No test/effect replay. Supplemental pure evaluation 772d0fd69318a58557d6ad727c19efb82826c41c9ee170ea8e4ddbf7219764ed independently joins only the saved actual records; it does not relabel the failed outer operator or create qualification authority. Next bounded snapshot and exact external cleanup will preserve original row/hold/lock and all failure evidence.
+
+
+### 2026-10-24T02:29:24.912099+00:00 — R2 exact OOM external cleanup planned
+
+Next isolated action: source e6db9a7c8e3b84878be47726818f3f34b8aacc1578d0a2c0dec071e4b6a66203 (83923 bytes), reusing only frozen OOM read helpers and original19-ledger baseline. Bounded read-only preflight verifies original failed outer receipt, two owned exit0 waits, new RUNNING4 row/events and poisoned state, all fixed evidence and unchanged controls; captures the missing20th-ledger checkpoint. Reinspect exact exited137/OOMKilledtrue container with matching labels/image/no restart, fsync new intent, send one non-force/no-volume DELETE, require204 then exact404 and empty inventory. Original held row/lock/capacity and all publisher holds stay unchanged; no broker socket removal, native load, epoch/thaw/restart or shared effects. Root reviewed new cleanup body and frozen header/AST; cleanup receipt includes observed baseline pins for subsequent work.
+
+
+### 2026-10-24T02:30:19.120166+00:00 — R2 OOM external cleanup observed
+
+External cleanup PASS, remote receipt 769b2f1d5a3212d1f8438bc6d08b67371399f8b0cc997ceb9c4f7ab75a92d3e6. One exact non-force/no-volume DELETE204 followed by404 and emptyEngineinventory. Captured original20th-ledger rows/events/fullpins and fixed evidence before action, then verified all20 decoder ledger sets and publisher holds unchanged. Original OOM RUNNING4/poison/capacity1/lock remains; no WAIT backfill, settlement, retry, thaw or guard restart. Empty broker directory, stopped guard and emptyfrozenparent retained. Qualification matrix updated for new finite3mode and nativeOOM observations while preserving outer-reporting failure and all remaining gates.
