@@ -2,14 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createR1MarketplaceAuthBridge, R1_SESSION_ACCESS_ACTION, R1_SESSION_ACCESS_SCHEMA } from '../src/auth-r1.mjs';
+import { DurableStaffAuth as CanonicalStaffAuth } from '../../../frontend/atlas-app/lib/server/access/auth.mjs';
 
 const id='11111111-1111-4111-8111-111111111111', other='22222222-2222-4222-8222-222222222222';
 const sessionHash='1'.repeat(64),browserHash='2'.repeat(64),cookie='opaque_fixture_cookie';
 const denied=code=>Object.assign(new Error(code),{code});
-function fixture({role='BUYER',method='GET',staffRoles=['REVIEWER'],maxDatabaseClockSkewMs=0}={}) {
+function fixture({role='BUYER',method='GET',staffRoles=['REVIEWER'],maxDatabaseClockSkewMs=0,existingIdentityOnly=false}={}) {
   const control={now:1792706400000,revoked:false,accountId:id,staffRole:'REVIEWER',gatewayMissing:false,extraResult:{},calls:[],admissions:0,limited:false,guardCalls:0,refreshes:0,boundaryActive:false,boundaryVisits:0,handle:null};
   const config={mode:'LOCAL_FIXTURE',origin:'http://127.0.0.1:4318',deploymentId:'isolated-auth-contract-test',releaseSha:'a'.repeat(40),configHash:'b'.repeat(64),cookies:{browser:'fixture_browser',session:'fixture_session'}};
   config.binding=Object.fromEntries(['mode','origin','deploymentId','releaseSha','configHash'].map(key=>[key,config[key]]));
+  if(existingIdentityOnly)Object.assign(config,{existingIdentityOnly:true,phoneByHash:new Map([['3'.repeat(64),'ISOLATED_PHONE_FIXTURE']]),phoneHash:()=>'3'.repeat(64),identityIdForPhoneHash:value=>value==='3'.repeat(64)?id:null,
+    phoneIdentityRegistry:{version:1,keyVersion:'fixture',entries:[{newPhoneHash:'4'.repeat(64),canonicalPhoneHash:'3'.repeat(64),identityId:id}]}});
   class CustomerDatabase {
     constructor(){this.config=config;}
     async call(action,data) {
@@ -29,8 +32,9 @@ function fixture({role='BUYER',method='GET',staffRoles=['REVIEWER'],maxDatabaseC
     constructor(){this.config=config;this.database={};this.actors=new WeakMap();}
     digest(value){return createHmac('sha256','ISOLATED_TEST_ONLY_NO_CREDENTIAL').update(value).digest('hex');}
     async authenticate(header){if(header!==cookie||control.revoked)throw denied('SIGN_IN_REQUIRED');const staff={id,role:control.staffRole};this.actors.set(staff,{sessionHash,browserHash});control.handle=staff;return staff;}
-    async withStaff(handle,work){if(!this.actors.has(handle)||control.revoked)throw denied('SIGN_IN_REQUIRED');return work({identity:{id,role:control.staffRole,accessVersion:1},session:{identityId:id,tokenHash:sessionHash,browserHash,accessVersion:1,expiresAt:new Date(control.now+60000)}});}
+    async withStaff(handle,work){if(!this.actors.has(handle)||control.revoked)throw denied('SIGN_IN_REQUIRED');return work({identity:{id,phoneHash:'3'.repeat(64),role:control.staffRole,accessVersion:1},session:{identityId:id,tokenHash:sessionHash,browserHash,accessVersion:1,expiresAt:new Date(control.now+60000)}});}
   }
+  DurableStaffAuth.prototype.identityMatches=CanonicalStaffAuth.prototype.identityMatches;
   const customerAuth=new CustomerAuth(),staffAuth=new DurableStaffAuth();
   const guard=()=>{control.guardCalls++;};
   const boundary={async transaction(handle,work){assert.equal(handle,control.handle);assert.equal(staffAuth.actors.has(handle),true);assert.equal(control.boundaryActive,false);control.boundaryActive=true;control.boundaryVisits++;try{const refresh=async()=>{control.refreshes++;if(control.revoked)throw denied('SIGN_IN_REQUIRED');return {principal:{id,role:control.staffRole,accessVersion:1},now:new Date(control.now)};};const current=await refresh();const result=await work({...current,refresh});await refresh();return result;}finally{control.boundaryActive=false;}}};
@@ -140,4 +144,27 @@ test('scoped refresh rereads revoked canonical customer and staff access before 
     await assert.rejects(ctx.withAuthorized(principal,async(_actor,capability)=>{f.control.revoked=true;await capability.refreshAuthorization();assert.fail('revoked access committed');}),{code:'SIGN_IN_REQUIRED'});
     assert.equal(f.control.boundaryActive,false);ctx.close();
   }
+});
+
+test('rotated staff identity uses the canonical registry mapping and refuses another existing identity',async()=>{
+  const f=fixture({role:'STAFF',existingIdentityOnly:true}),ctx=f.open(),principal=await f.resolve(ctx);
+  await f.admit(ctx,principal);assert.equal(await ctx.withAuthorized(principal,actor=>actor.id),id);ctx.close();
+  const wrong=fixture({role:'STAFF',existingIdentityOnly:true});wrong.options.staff.state.auth.config.identityIdForPhoneHash=()=>other;
+  await assert.rejects(wrong.resolve(wrong.open()),{code:'SIGN_IN_REQUIRED'});
+  const missing=fixture({role:'STAFF',existingIdentityOnly:true});delete missing.options.staff.DurableStaffAuth.prototype.identityMatches;
+  assert.throws(missing.open,{code:'AUTH_BOUNDARY_UNAVAILABLE'});
+});
+
+test('staff request detects registry, roster and identity helper replacement before dispatch',async()=>{
+  const changes=[
+    auth=>{auth.config.existingIdentityOnly=false;},
+    auth=>{auth.config.phoneIdentityRegistry.entries[0].identityId=other;},
+    auth=>{auth.config.phoneByHash.set('3'.repeat(64),'CHANGED_FIXTURE');},
+    auth=>{auth.config.phoneByHash=new Map(auth.config.phoneByHash);},
+    auth=>{auth.config.identityIdForPhoneHash=()=>id;},
+    auth=>{auth.config.phoneHash=()=>'3'.repeat(64);},
+    auth=>{auth.identityMatches=()=>true;},
+  ];
+  for(const change of changes){const f=fixture({role:'STAFF',existingIdentityOnly:true}),ctx=f.open(),principal=await f.resolve(ctx);await f.admit(ctx,principal);change(f.options.staff.state.auth);
+    await assert.rejects(ctx.withAuthorized(principal,()=>assert.fail('changed identity binding dispatched')),{code:'AUTH_BOUNDARY_UNAVAILABLE'});ctx.close();}
 });

@@ -10,7 +10,7 @@ const closed = (value, keys) => plain(value) && Reflect.ownKeys(value).length ==
 const unavailable = value => requireValue(value, 'AUTH_BOUNDARY_UNAVAILABLE');
 const signedIn = value => requireValue(value, 'SIGN_IN_REQUIRED');
 const time = value => value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(value);
-const configPin = config => JSON.stringify([config.mode,config.origin,config.deploymentId,config.releaseSha,config.configHash,config.binding??null,config.cookies,config.basePath??null,config.deploymentHost??null]);
+const configPin = config => JSON.stringify([config.mode,config.origin,config.deploymentId,config.releaseSha,config.configHash,config.binding??null,config.cookies,config.basePath??null,config.deploymentHost??null,config.existingIdentityOnly??false,config.phoneIdentityRegistry??null,config.phoneByHash instanceof Map?[...config.phoneByHash.entries()]:null]);
 const requestPin = req => JSON.stringify([req.method,req.url,Object.entries(req.headers??{}).sort(([a],[b])=>a.localeCompare(b)),req.body??null,Buffer.isBuffer(req.rawBody)?[req.rawBody.length,createHash('sha256').update(req.rawBody).digest('hex')]:req.rawBody??null,req.socket?.remoteAddress??null]);
 const sameToken = (a,b) => typeof a==='string' && typeof b==='string' && HASH.test(a) && HASH.test(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
@@ -47,6 +47,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
     const AuthClass=isStaff?source?.DurableStaffAuth:source?.CustomerAuth;
     const database=auth?.database, DatabaseClass=source?.CustomerDatabase;
     const authenticate=AuthClass?.prototype?.authenticate, withStaff=AuthClass?.prototype?.withStaff;
+    const identityMatches=AuthClass?.prototype?.identityMatches, identityIdForPhoneHash=config?.identityIdForPhoneHash, phoneHash=config?.phoneHash, phoneByHash=config?.phoneByHash;
     const authority=AuthClass?.prototype?.authority, digest=AuthClass?.prototype?.digest, databaseCall=DatabaseClass?.prototype?.call;
     const guard=state?.assertRequest, boundary=source?.boundary, transaction=boundary?.transaction;
     unavailable(typeof AuthClass==='function' && auth instanceof AuthClass && config && typeof digest==='function' && typeof guard==='function');
@@ -54,6 +55,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
     unavailable(config.mode!=='PRODUCTION'||config.origin.startsWith('https://'));
     unavailable(isStaff ? auth.actors instanceof WeakMap && typeof authenticate==='function' && typeof withStaff==='function' && typeof transaction==='function'
       : typeof DatabaseClass==='function' && database instanceof DatabaseClass && database.config===config && typeof authority==='function' && typeof databaseCall==='function' && state.config===config);
+    unavailable(!isStaff||!config.existingIdentityOnly||(typeof identityMatches==='function'&&typeof identityIdForPhoneHash==='function'&&typeof phoneHash==='function'&&phoneByHash instanceof Map&&config.phoneIdentityRegistry?.version===1));
     const allowedRoles=isStaff?policy.staffRoles:policy.customerRoles;
     // STAFF exposes mutations. An approved allowlist cannot promote OBSERVER
     // into this write-capable surface; a future read-only role is separate.
@@ -76,6 +78,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
       unavailable(source.state===state && state.auth===auth && auth.config===config && auth.database===database && state.assertRequest===guard && configPin(config)===pinnedConfig && requestPin(req)===pinnedRequest && auth.digest===digest && AuthClass.prototype.digest===digest);
       unavailable(isStaff ? source.DurableStaffAuth===AuthClass && source.boundary===boundary && boundary.transaction===transaction && auth.authenticate===authenticate && auth.withStaff===withStaff && AuthClass.prototype.authenticate===authenticate && AuthClass.prototype.withStaff===withStaff
         : source.CustomerAuth===AuthClass && source.CustomerDatabase===DatabaseClass && auth.authority===authority && AuthClass.prototype.authority===authority && database.call===databaseCall && DatabaseClass.prototype.call===databaseCall && database.config===config && state.config===config);
+      unavailable(!isStaff||(auth.identityMatches===identityMatches&&AuthClass.prototype.identityMatches===identityMatches&&config.identityIdForPhoneHash===identityIdForPhoneHash&&config.phoneHash===phoneHash&&config.phoneByHash===phoneByHash));
     }
     current();
     const admission=guard.call(state,req);
@@ -96,6 +99,7 @@ export function createR1MarketplaceAuthBridge(options={}) {
         access=await withStaff.call(auth,staffHandle,async context=>{
           current(); const identity=context.identity, session=context.session;
           signedIn(UUID.test(identity?.id??'')&&allowedRoles.includes(identity.role)&&Number.isSafeInteger(identity.accessVersion)&&identity.accessVersion>0&&session?.tokenHash===handle.sessionHash&&session.browserHash===handle.browserHash&&session.identityId===identity.id&&session.accessVersion===identity.accessVersion);
+          signedIn(!config.existingIdentityOnly||(HASH.test(identity.phoneHash??'')&&phoneByHash.has(identity.phoneHash)&&identityIdForPhoneHash(identity.phoneHash)===identity.id&&identityMatches.call(auth,identity,identity.phoneHash)));
           return {id:identity.id,sourceRole:identity.role,accessVersion:identity.accessVersion,sessionHash:handle.sessionHash,browserHash:handle.browserHash,expiresAt:time(session.expiresAt)-maxDatabaseClockSkewMs};
         });
       } else {

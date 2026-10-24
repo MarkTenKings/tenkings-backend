@@ -18,6 +18,10 @@ export class DurableStaffAuth {
         this.actors = new WeakMap();
     }
     digest(value, encoding = 'hex') { return createHmac('sha256', this.config.sessionKey).update(value).digest(encoding); }
+    identityMatches(identity, phoneHash) {
+        return !this.config.existingIdentityOnly || !!identity && identity.phoneHash === phoneHash
+            && identity.id === this.config.identityIdForPhoneHash(phoneHash);
+    }
     async audit(tx, event, subjectId, actorId = null, details = {}) {
         await tx.staffAudit.create({ data: { id: randomUUID(), event, subjectId, actorId, details: JSON.stringify(details) } });
     }
@@ -56,6 +60,7 @@ export class DurableStaffAuth {
             phase = 'IDENTITY_RULES';
             const identity = rows[0];
             if (!identity || identity.revokedAt || identity.accessVersion !== session.accessVersion
+                || !this.identityMatches(identity, identity.phoneHash)
                 || !this.config.phoneByHash.has(identity.phoneHash) || !['REVIEWER', 'OBSERVER'].includes(identity.role)) return null;
             return { identity, session };
         } catch (error) { throw markAccessFailure(error, phase); }
@@ -123,7 +128,7 @@ export class DurableStaffAuth {
             const phoneHash = this.config.phoneHash(phone);
             if (!this.config.phoneByHash.has(phoneHash)) return error(403, 'SIGN_IN_NOT_AVAILABLE');
             const identity = await tx.staffIdentity.findUnique({ where: { phoneHash } });
-            if (identity?.revokedAt) return error(403, 'SIGN_IN_NOT_AVAILABLE');
+            if (identity?.revokedAt || !this.identityMatches(identity, phoneHash)) return error(403, 'SIGN_IN_NOT_AVAILABLE');
             const prior = await tx.staffChallenge.findUnique({ where: { browserHash_requestId: { browserHash: browser.tokenHash, requestId: input.requestId } } });
             if (prior) {
                 if (prior.phoneHash !== phoneHash) return error(409, 'REQUEST_CONFLICT');
@@ -150,7 +155,8 @@ export class DurableStaffAuth {
             if (!challenge || challenge.state !== 'SENDING' || challenge.sendClaimId !== claim.challenge.sendClaimId) return error(409, 'SIGN_IN_RESTART_REQUIRED');
             const bound = { ...challenge, verificationSid: result?.verificationSid };
             const identity = await tx.staffIdentity.findUnique({ where: { phoneHash: challenge.phoneHash } });
-            if (!this.exact(result, bound, 'pending') || challenge.expiresAt <= now || challenge.controlRevision !== control.revision || identity?.revokedAt) {
+            if (!this.exact(result, bound, 'pending') || challenge.expiresAt <= now || challenge.controlRevision !== control.revision
+                || identity?.revokedAt || !this.identityMatches(identity, challenge.phoneHash)) {
                 await tx.staffChallenge.update({ where: { id: challenge.id }, data: { state: 'UNKNOWN' } });
                 await this.audit(tx, 'VERIFY_SEND_UNRESOLVED', challenge.id);
                 return error(503, 'SIGN_IN_RESTART_REQUIRED');
@@ -179,7 +185,8 @@ export class DurableStaffAuth {
                 return { result: { token, staff: this.actor(current, browser.tokenHash), csrf: this.digest(`session:${token}`) } };
             }
             const identity = await tx.staffIdentity.findUnique({ where: { phoneHash: challenge.phoneHash } });
-            if (identity?.revokedAt || challenge.state !== 'PENDING' || challenge.attempts >= 5) return error(400, 'CODE_NOT_ACCEPTED');
+            if (identity?.revokedAt || !this.identityMatches(identity, challenge.phoneHash)
+                || challenge.state !== 'PENDING' || challenge.attempts >= 5) return error(400, 'CODE_NOT_ACCEPTED');
             if (!await this.rate(tx, now, [[`check-phone:${challenge.phoneHash}`, 20]])) return error(429, 'PLEASE_WAIT');
             const checkClaimId = randomUUID();
             await tx.staffChallenge.update({ where: { id: challenge.id }, data: { state: 'CHECKING', checkClaimId, attempts: { increment: 1 } } });
@@ -195,6 +202,7 @@ export class DurableStaffAuth {
             if (!challenge || challenge.state !== 'CHECKING' || challenge.checkClaimId !== claim.checkClaimId) return error(409, 'SIGN_IN_RESTART_REQUIRED');
             const existing = await tx.staffIdentity.findUnique({ where: { phoneHash: challenge.phoneHash } });
             if (challenge.expiresAt <= now || challenge.controlRevision !== control.revision || existing?.revokedAt
+                || !this.identityMatches(existing, challenge.phoneHash)
                 || !this.config.phoneByHash.has(challenge.phoneHash)) {
                 await tx.staffChallenge.update({ where: { id: challenge.id }, data: { state: 'UNKNOWN' } });
                 return error(400, 'CODE_NOT_ACCEPTED');
@@ -211,12 +219,21 @@ export class DurableStaffAuth {
             }
             // Explicit columns keep database-owned role/training defaults out of
             // Prisma's generated upsert INSERT column list.
-            const [identity] = await tx.$queryRaw`INSERT INTO atlas_staff."StaffIdentity" (id,"phoneHash","lastLoginAt")
+            // Replacement-key mode may only touch the pinned existing row. The
+            // UPDATE locks/rechecks it, including a revocation racing the lookup;
+            // absence or a changed pairing can never enroll a new principal.
+            const [identity] = this.config.existingIdentityOnly
+                ? await tx.$queryRaw`UPDATE atlas_staff."StaffIdentity" SET "lastLoginAt"=${now}
+                    WHERE id=${this.config.identityIdForPhoneHash(challenge.phoneHash)}::uuid
+                    AND "phoneHash"=${challenge.phoneHash} AND "revokedAt" IS NULL
+                    AND role IN ('REVIEWER', 'OBSERVER') RETURNING *`
+                : await tx.$queryRaw`INSERT INTO atlas_staff."StaffIdentity" (id,"phoneHash","lastLoginAt")
                 VALUES (${randomUUID()}::uuid,${challenge.phoneHash},${now})
                 ON CONFLICT ("phoneHash") DO UPDATE SET "lastLoginAt"=EXCLUDED."lastLoginAt" RETURNING *`;
             // The upsert holds the identity lock. A revocation that raced the
             // earlier lookup must be observed before a session can be issued.
-            if (identity.revokedAt || !['REVIEWER', 'OBSERVER'].includes(identity.role)) {
+            if (!identity || identity.revokedAt || !this.identityMatches(identity, challenge.phoneHash)
+                || !['REVIEWER', 'OBSERVER'].includes(identity.role)) {
                 await tx.staffChallenge.update({ where: { id: challenge.id }, data: { state: 'UNKNOWN' } });
                 return error(403, 'SIGN_IN_NOT_AVAILABLE');
             }

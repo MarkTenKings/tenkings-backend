@@ -86,6 +86,22 @@ test('host pins approved runtime configuration and independently gates settlemen
   const ready=await createR1MarketplaceHost(allowed.options);assert.ok(ready.settlementCapability);assert.deepEqual(await ready.service.settleRecoveredPayments(ready.settlementCapability,{intentIds:[]}),[]);await ready.close();assert.equal(allowed.providerCalls,0);
 });
 
+test('host keeps rotated staff registry and canonical identity helpers fixed before serving',async()=>{
+  const changes=[
+    auth=>{auth.config.existingIdentityOnly=false;},
+    auth=>{auth.config.phoneIdentityRegistry.entries[0].identityId='22222222-2222-4222-8222-222222222222';},
+    auth=>{auth.config.identityIdForPhoneHash=()=>actorId;},
+    auth=>{auth.config.phoneHash=()=>'3'.repeat(64);},
+    auth=>{auth.identityMatches=()=>true;},
+  ];
+  for(const change of changes){const f=await fixture(),auth=f.options.r1.staffState.auth;
+    Object.assign(auth.config,{existingIdentityOnly:true,phoneHash:()=>'3'.repeat(64),identityIdForPhoneHash:()=>actorId,
+      phoneIdentityRegistry:{version:1,keyVersion:'fixture',entries:[{newPhoneHash:'4'.repeat(64),canonicalPhoneHash:'3'.repeat(64),identityId:actorId}]}});
+    const host=await createR1MarketplaceHost(f.options);assert.equal(host.status().enabled,true);change(auth);
+    assert.equal(host.status().enabled,false);await assert.rejects(host.createHandlers(),{code:'R1_HOST_UNAVAILABLE'});
+    assert.equal(f.connects,0);assert.equal(f.providerCalls,0);await host.close();}
+});
+
 test('R1 and finance hosts share branded original dependencies; cloned, plain and unrelated hosts cannot supply the webhook receiver',async()=>{
   async function joined() {
     const f=await fixture();f.options.config.settlement={enabled:true,approvalRef:'isolated_settlement'};f.options.assertSettlementReady=()=>f.ready;

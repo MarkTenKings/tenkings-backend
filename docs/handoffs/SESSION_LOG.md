@@ -49134,3 +49134,10 @@ Milestone handoff212500a8 sent once to current R1master01a16b93-a30e-7ed2-830c-d
 ### R2 planned isolated native restart build — compile only (2026-10-23)
 - Next dispatch `ops/build_native_restart_reconciliation_01.py` SHA `4a8f0549ac77afaff3cd40c6e1195230306d3fcd7e585a66b7bc152cc3c6ee27` through existing target_exec, fresh stage `native-restart-reconciliation-build-01`; remote output `/opt/atlas-r2-qualification/native-restart-reconciliation-01`. Frozen C `002bf4fce1d8a86f8b721e4d79a88f3389f0f52e67584dcbf2ae0ca455948c68`. Exact same prior compiler recipe/strict flags/pinned gcc13+ld.bfd+2367 archive-verified Node headers, bounded owned compiler30s.
 - This build only creates its fresh private output directory. No native load, recovery enrollment, service/guard/Engine/database change, or shared/production/provider/credential operation. Compiler dependency closure remains NONHERMETIC: cc1, assembler, system headers/CRT/runtime/loader and implicit search inputs are not fully pinned. A successful compile provides no runtime qualification or admission authority.
+
+
+### 2026-10-24T04:01:05.467839+00:00 — Canonical rotated staff identity compatibility for R2
+
+Root copied only the exact qualified0aa2cdf6 canonical staff auth/config files into the isolated R2 composition, then bound its existing marketplace auth bridge and trusted host to identityMatches, existingIdentityOnly, the original registry/roster and helper identities. A changed or mismatched mapping now refuses before dispatch. The actual R1 credential release worktree and all qualified builds are unchanged; no R2 code enters that release.
+
+Focused Node22 auth-r1/host-r1 checks17/17 pass, including actual canonical identityMatches, wrong existing UUID refusal, and registry/roster/helper replacement refusal. Existing31/7 auth and native/web build evidence reused; no broad rerun. C0 positive claim/drain/IPC and protected production installation remain unfinished; this compatibility change does not mint authority or enable physical intake. No production/provider/credential effects.
